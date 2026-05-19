@@ -1,0 +1,169 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model ShiftType {
+  id              String   @id @default(cuid())
+  name            String
+  code            String   @unique
+  defaultHours    Float
+  countsTowardFte Boolean  @default(true)
+  isLeave         Boolean  @default(false)
+  isPaid          Boolean  @default(true)
+  category        String   @default("work") // work, leave, imported, other
+  postShiftRule   String?
+  color           String?
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  assignments         Assignment[]
+  desirabilityWeights DesirabilityWeight[]
+  providerOverrides   ProviderShiftOverride[]
+  eligibleRoles       ShiftTypeRole[]
+  standingCommitments StandingCommitment[]
+
+  @@map("shift_types")
+}
+
+model ShiftTypeRole {
+  id          String @id @default(cuid())
+  shiftTypeId String
+  role        String
+
+  shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftTypeId, role])
+  @@map("shift_type_roles")
+}
+
+model Provider {
+  id                    String   @id @default(cuid())
+  name                  String
+  initials              String   @unique
+  employmentType        String   @default("fte") // fte, fee_basis
+  ftePercentage         Float?   @default(1.0)
+  fteSplit              Json?    // e.g. {"OR": 0.8, "ICU": 0.2}
+  feeBasisHoursPerShift Float?
+  role                  String?
+  specialQualifications String[] @default([])
+  takesCall             Boolean  @default(true)
+  takesLate             Boolean  @default(true)
+  workingDays           Int[]    @default([1, 2, 3, 4, 5]) // 0=Sun..6=Sat
+  isTemporary           Boolean  @default(false)
+  tempStartDate         DateTime?
+  tempEndDate           DateTime?
+  isActive              Boolean  @default(true)
+  sortOrder             Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  assignments         Assignment[]
+  shiftOverrides      ProviderShiftOverride[]
+  standingCommitments StandingCommitment[]
+  dayPreferences      ProviderDayPreference[]
+
+  @@map("providers")
+}
+
+model ProviderShiftOverride {
+  id          String @id @default(cuid())
+  providerId  String
+  shiftTypeId String
+  durationHrs Float
+
+  provider  Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, shiftTypeId])
+  @@map("provider_shift_overrides")
+}
+
+model ProviderDayPreference {
+  id         String @id @default(cuid())
+  providerId String
+  dayOfWeek  Int    // 0=Sun..6=Sat
+  preference String // e.g. "ORC" — preferred shift on this day
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, dayOfWeek])
+  @@map("provider_day_preferences")
+}
+
+model StandingCommitment {
+  id          String @id @default(cuid())
+  providerId  String
+  shiftTypeId String
+  dayOfWeek   Int?      // 0-6, null = any applicable day
+  frequency   String    @default("weekly") // weekly, biweekly, monthly
+  notes       String?
+
+  provider  Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
+
+  @@map("standing_commitments")
+}
+
+model DesirabilityWeight {
+  id          String @id @default(cuid())
+  shiftTypeId String
+  dayOfWeek   Int    // 0=Sun..6=Sat
+  weight      Int    // -2 (very bad) to +2 (very good)
+  reason      String?
+
+  shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftTypeId, dayOfWeek])
+  @@map("desirability_weights")
+}
+
+model StaffingMinimum {
+  id           String @id @default(cuid())
+  role         String
+  dayType      String // weekday, weekend, holiday
+  minimumCount Int
+
+  @@unique([role, dayType])
+  @@map("staffing_minimums")
+}
+
+model PayPeriod {
+  id          String   @id @default(cuid())
+  startDate   DateTime @db.Date
+  endDate     DateTime @db.Date
+  targetHours Float
+
+  @@map("pay_periods")
+}
+
+model Holiday {
+  id   String   @id @default(cuid())
+  date DateTime @unique @db.Date
+  name String
+
+  @@map("holidays")
+}
+
+model Assignment {
+  id          String   @id @default(cuid())
+  providerId  String
+  date        DateTime @db.Date
+  shiftTypeId String
+  isLocked    Boolean  @default(false)
+  source      String   @default("manual") // manual, auto, imported
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  provider  Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, date])
+  @@map("assignments")
+}
