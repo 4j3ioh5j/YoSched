@@ -39,8 +39,6 @@ export default async function Home() {
           <span className="text-sm text-slate-400">Schedule Grid</span>
         </div>
         <div className="flex items-center gap-4 text-sm text-slate-400">
-          <span>{providers.length} providers</span>
-          <span>{shiftTypes.filter((s) => s.category === "work").length} shift types</span>
           <Link href="/staff" className="text-slate-400 hover:text-slate-200 transition-colors">
             Staff
           </Link>

@@ -84,41 +84,33 @@ const MONTH_NAMES = [
 ];
 
 function toDateStr(d: Date): string {
-  return d.toISOString().split("T")[0];
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function parseDate(s: string): Date {
   return new Date(s + "T12:00:00");
 }
 
-function getMonthDateRange(year: number, month: number, payPeriods: PayPeriod[]) {
+function getMonthDateRange(year: number, month: number, _payPeriods: PayPeriod[]) {
   const firstOfMonth = new Date(year, month, 1);
   const lastOfMonth = new Date(year, month + 1, 0);
 
   let start = new Date(firstOfMonth);
   let end = new Date(lastOfMonth);
 
-  for (const pp of payPeriods) {
-    const ppStart = parseDate(pp.startDate);
-    const ppEnd = parseDate(pp.endDate);
-    if (ppStart < firstOfMonth && ppEnd >= firstOfMonth) {
-      if (ppStart < start) start = ppStart;
-    }
-    if (ppEnd > lastOfMonth && ppStart <= lastOfMonth) {
-      if (ppEnd > end) end = ppEnd;
-    }
-  }
-
   const startDow = start.getDay();
-  if (startDow !== 0) {
+  if (startDow !== 6) {
     start = new Date(start);
-    start.setDate(start.getDate() - startDow);
+    start.setDate(start.getDate() - ((startDow + 1) % 7));
   }
 
   const endDow = end.getDay();
-  if (endDow !== 6) {
+  if (endDow !== 0) {
     end = new Date(end);
-    end.setDate(end.getDate() + (6 - endDow));
+    end.setDate(end.getDate() + (7 - endDow));
   }
 
   const dates: string[] = [];
@@ -167,6 +159,7 @@ function buildRowItems(dates: string[], payPeriods: PayPeriod[]): RowItem[] {
       const pp = sortedPPs[ppIdx];
       const ppKey = pp.startDate;
       if (endedPPs.has(ppKey)) continue;
+      if (pp.startDate > dates[dates.length - 1]) continue;
       if (date === pp.endDate || (date <= pp.endDate && (!nextDate || nextDate > pp.endDate))) {
         items.push({ type: "pp-summary", pp, ppIndex: ppIdx });
         endedPPs.add(ppKey);
@@ -204,7 +197,9 @@ export function ScheduleGrid({
   const [saving, setSaving] = useState<string | null>(null);
   const [dragSource, setDragSource] = useState<{ providerId: string; date: string } | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
-  const [activeCell, setActiveCell] = useState<{ providerId: string; date: string } | null>(null);
+  const [activeRow, setActiveRow] = useState<string | null>(null);
+  const [activeCol, setActiveCol] = useState<string | null>(null);
+  const [hoverCol, setHoverCol] = useState<string | null>(null);
 
   // Multi-select state
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -215,6 +210,7 @@ export function ScheduleGrid({
   type UndoEntry = UndoOp[];
   const undoStack = useRef<UndoEntry[]>([]);
   const redoStack = useRef<UndoEntry[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const dates = useMemo(
     () => getMonthDateRange(viewYear, viewMonth, payPeriods),
@@ -223,6 +219,16 @@ export function ScheduleGrid({
 
   const firstOfMonth = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-01`;
   const lastOfMonth = toDateStr(new Date(viewYear, viewMonth + 1, 0));
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const row = el.querySelector(`tr[data-date="${firstOfMonth}"]`) as HTMLElement | null;
+    const thead = el.querySelector("thead") as HTMLElement | null;
+    if (row && thead) {
+      el.scrollTop = row.offsetTop - thead.offsetHeight;
+    }
+  }, [firstOfMonth]);
 
   const rowItems = useMemo(() => buildRowItems(dates, payPeriods), [dates, payPeriods]);
 
@@ -390,7 +396,8 @@ export function ScheduleGrid({
   }
 
   function handleCellClick(providerId: string, date: string, e: React.MouseEvent) {
-    setActiveCell({ providerId, date });
+    setActiveRow(date);
+    setActiveCol(providerId);
     const existing = assignmentMap.get(`${providerId}:${date}`);
     if (existing?.isLocked) return;
 
@@ -863,7 +870,7 @@ export function ScheduleGrid({
       </div>
 
       {/* Scrollable grid area */}
-      <div className="flex-1 overflow-auto">
+      <div ref={scrollRef} className="flex-1 overflow-auto">
         <table className="border-collapse text-sm">
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-800">
@@ -871,15 +878,18 @@ export function ScheduleGrid({
                 Date
               </th>
               {providers.map((p) => {
-                const isActiveCol = activeCell?.providerId === p.id;
+                const isActiveCol = activeCol === p.id;
                 return (
                   <th
                     key={p.id}
                     className={[
-                      "px-1 py-2 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors",
-                      isActiveCol ? "bg-blue-800/50" : "",
+                      "px-1 py-2 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer",
+                      isActiveCol || hoverCol === p.id ? "bg-blue-700/70" : "",
                     ].join(" ")}
                     title={`${p.name} (${p.ftePercentage * 100}% FTE)`}
+                    onClick={() => setActiveCol(activeCol === p.id ? null : p.id)}
+                    onMouseEnter={() => setHoverCol(p.id)}
+                    onMouseLeave={() => setHoverCol(null)}
                   >
                     <span className={[
                       p.employmentType === "fee_basis" ? "text-amber-400" : "text-slate-300",
@@ -958,11 +968,12 @@ export function ScheduleGrid({
 
               const dw = dayWarnings.get(date);
               const staffCount = staffingCounts[date];
-              const isActiveRow = activeCell?.date === date;
+              const isActiveRow = activeRow === date;
 
               return (
                 <tr
                   key={date}
+                  data-date={date}
                   className={[
                     isOutsideMonth ? "opacity-40" : "",
                     isWeekend && !isOutsideMonth ? "bg-slate-800/50" : "",
@@ -973,11 +984,12 @@ export function ScheduleGrid({
                 >
                   <td
                     className={[
-                      "sticky left-0 z-[5] px-2 py-1 text-xs font-mono border-r border-slate-700 whitespace-nowrap",
+                      "sticky left-0 z-[5] px-2 py-1 text-xs font-mono border-r border-slate-700 whitespace-nowrap cursor-pointer",
                       isNewPP ? "border-t-2 border-t-indigo-500" : "",
-                      isActiveRow ? "!bg-blue-800/50" : "",
+                      isActiveRow ? "!bg-blue-700/70" : "",
                     ].join(" ")}
                     style={!isActiveRow ? { background: isOutsideMonth ? "#0d1321" : isWeekend ? "#1a2236" : "#0f172a" } : undefined}
+                    onClick={() => setActiveRow(activeRow === date ? null : date)}
                   >
                     <span className={isActiveRow ? "text-blue-200 font-bold" : isWeekend ? "text-slate-500" : "text-slate-300"}>
                       {label.day}
@@ -1000,6 +1012,7 @@ export function ScheduleGrid({
                     const isDragTarget = dragOver === cellKey;
                     const isDragSrc = dragSource?.providerId === p.id && dragSource?.date === date;
                     const isSelected = selection.has(cellKey);
+                    const isHighlighted = activeCol === p.id || hoverCol === p.id || isActiveRow;
 
                     return (
                       <td
@@ -1007,7 +1020,8 @@ export function ScheduleGrid({
                         className={[
                           "px-0.5 py-0.5 text-center border-slate-700/30 border cursor-pointer relative",
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
-                          ppEven ? "" : "bg-slate-800/20",
+                          ppEven ? "" : (!isHighlighted ? "bg-slate-800/20" : ""),
+                          isHighlighted ? "!bg-blue-700/50" : "",
                           isPickerTarget ? "ring-1 ring-inset ring-blue-400" : "",
                           isSelected ? "ring-2 ring-inset ring-emerald-400 bg-emerald-900/20" : "",
                           isDragTarget ? "ring-2 ring-inset ring-cyan-400 bg-cyan-900/20" : "",
