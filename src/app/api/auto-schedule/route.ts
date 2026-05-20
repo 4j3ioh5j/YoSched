@@ -97,6 +97,7 @@ export async function POST(req: NextRequest) {
       ignoresWorkingDays: st.ignoresWorkingDays,
       eligibilityRule: st.eligibilityRule,
       noConsecutiveGroup: st.noConsecutiveGroup,
+      maxPerDay: st.maxPerDay,
       category: st.category,
       postShiftRule: st.postShiftRule,
     })),

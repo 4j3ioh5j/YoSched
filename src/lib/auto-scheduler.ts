@@ -27,6 +27,7 @@ export type ScheduleShiftType = {
   ignoresWorkingDays: boolean;
   eligibilityRule: string | null;
   noConsecutiveGroup: string | null;
+  maxPerDay: number | null;
   category: string;
   postShiftRule: string | null;
 };
@@ -278,6 +279,7 @@ export function autoSchedule({
       const nextSt = stById.get(next.shiftTypeId);
       if (st.noConsecutiveGroup && nextSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
     }
+    if (st.maxPerDay != null && countAssigned(st.code, date) >= st.maxPerDay) return false;
     return true;
   }
 

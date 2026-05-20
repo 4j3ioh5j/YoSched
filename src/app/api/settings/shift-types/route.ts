@@ -26,6 +26,7 @@ export async function PUT(req: NextRequest) {
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
       eligibilityRule: data.eligibilityRule || null,
       noConsecutiveGroup: data.noConsecutiveGroup || null,
+      maxPerDay: data.maxPerDay ?? null,
     },
   });
   return NextResponse.json(updated);
@@ -58,6 +59,7 @@ export async function POST(req: NextRequest) {
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
       eligibilityRule: data.eligibilityRule || null,
       noConsecutiveGroup: data.noConsecutiveGroup || null,
+      maxPerDay: data.maxPerDay ?? null,
     },
   });
   return NextResponse.json(created);

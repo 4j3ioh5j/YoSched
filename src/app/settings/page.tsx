@@ -59,6 +59,7 @@ export default async function Settings() {
           ignoresWorkingDays: st.ignoresWorkingDays,
           eligibilityRule: st.eligibilityRule,
           noConsecutiveGroup: st.noConsecutiveGroup,
+          maxPerDay: st.maxPerDay,
         }))}
         staffingReqs={staffingReqs.map((r) => ({
           id: r.id,

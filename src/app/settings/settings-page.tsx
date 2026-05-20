@@ -22,6 +22,7 @@ type ShiftType = {
   ignoresWorkingDays: boolean;
   eligibilityRule: string | null;
   noConsecutiveGroup: string | null;
+  maxPerDay: number | null;
 };
 
 type StaffingReq = {
@@ -302,6 +303,7 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
         ignoresWorkingDays: created.ignoresWorkingDays ?? false,
         eligibilityRule: created.eligibilityRule ?? null,
         noConsecutiveGroup: created.noConsecutiveGroup ?? null,
+        maxPerDay: created.maxPerDay ?? null,
       };
       setShifts((prev) => [...prev, newShift]);
       setEditingId(created.id);
@@ -479,6 +481,9 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
               </FieldRow>
               <FieldRow label="No back-to-back group" description="Shifts sharing the same group name cannot be assigned on consecutive days for the same provider. For example, if ORC, ORL, and CALL all share the group 'call-late', a provider can't work ORL on Friday and CALL on Saturday.">
                 <input className="w-32 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={editingShift.noConsecutiveGroup ?? ""} placeholder="None" onChange={(e) => updateField(editingShift.id, "noConsecutiveGroup", e.target.value || null)} />
+              </FieldRow>
+              <FieldRow label="Maximum per day" description="Limit how many providers can be assigned this shift on the same day. Set to 1 if only one person should do this shift per day. Leave blank for no limit.">
+                <input type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center" value={editingShift.maxPerDay ?? ""} placeholder="No limit" onChange={(e) => updateField(editingShift.id, "maxPerDay", e.target.value ? parseInt(e.target.value) : null)} />
               </FieldRow>
             </div>
 

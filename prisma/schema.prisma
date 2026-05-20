@@ -27,6 +27,7 @@ model ShiftType {
   ignoresWorkingDays Boolean  @default(false)
   eligibilityRule    String?
   noConsecutiveGroup String?
+  maxPerDay          Int?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
