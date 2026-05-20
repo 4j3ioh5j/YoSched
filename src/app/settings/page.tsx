@@ -53,6 +53,11 @@ export default async function Settings() {
           color: st.color ?? "#6b7280",
           sortOrder: st.sortOrder,
           schedulePriority: st.schedulePriority,
+          isOffShift: st.isOffShift,
+          isFillShift: st.isFillShift,
+          weekendPaired: st.weekendPaired,
+          ignoresWorkingDays: st.ignoresWorkingDays,
+          eligibilityRule: st.eligibilityRule,
         }))}
         staffingReqs={staffingReqs.map((r) => ({
           id: r.id,

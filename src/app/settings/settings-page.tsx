@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type ShiftType = {
   id: string;
@@ -16,6 +16,11 @@ type ShiftType = {
   color: string;
   sortOrder: number;
   schedulePriority: number | null;
+  isOffShift: boolean;
+  isFillShift: boolean;
+  weekendPaired: boolean;
+  ignoresWorkingDays: boolean;
+  eligibilityRule: string | null;
 };
 
 type StaffingReq = {
@@ -290,6 +295,11 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
         color: created.color ?? "#6b7280",
         sortOrder: created.sortOrder,
         schedulePriority: created.schedulePriority ?? null,
+        isOffShift: created.isOffShift ?? false,
+        isFillShift: created.isFillShift ?? false,
+        weekendPaired: created.weekendPaired ?? false,
+        ignoresWorkingDays: created.ignoresWorkingDays ?? false,
+        eligibilityRule: created.eligibilityRule ?? null,
       };
       setShifts((prev) => [...prev, newShift]);
       setEditingId(created.id);
@@ -352,8 +362,8 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
             {shifts.map((st) => {
               const isEditing = editingId === st.id;
               return (
+                <Fragment key={st.id}>
                 <tr
-                  key={st.id}
                   className={[
                     "hover:bg-slate-700/30 transition-colors",
                     isEditing ? "bg-slate-700/20" : "",
@@ -478,6 +488,75 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
                     )}
                   </td>
                 </tr>
+                {isEditing && (
+                  <tr className="bg-slate-700/20">
+                    <td colSpan={9} className="px-4 py-3">
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Auto-Scheduling</div>
+                      <div className="flex flex-wrap gap-x-6 gap-y-2 items-center text-xs">
+                        <label className="flex items-center gap-1.5">
+                          <span className="text-slate-400">Priority</span>
+                          <input
+                            type="number"
+                            className="w-14 bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs text-center"
+                            value={st.schedulePriority ?? ""}
+                            placeholder="—"
+                            onChange={(e) => updateField(st.id, "schedulePriority", e.target.value ? parseInt(e.target.value) : null)}
+                          />
+                          <span className="text-slate-500">lower = first</span>
+                        </label>
+                        <label className="flex items-center gap-1.5">
+                          <span className="text-slate-400">Eligibility</span>
+                          <select
+                            className="bg-slate-700 border border-slate-600 rounded px-1 py-0.5 text-xs"
+                            value={st.eligibilityRule ?? ""}
+                            onChange={(e) => updateField(st.id, "eligibilityRule", e.target.value || null)}
+                          >
+                            <option value="">All providers</option>
+                            <option value="takesCall">Takes call</option>
+                            <option value="takesLate">Takes late</option>
+                          </select>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={st.weekendPaired}
+                            onChange={(e) => updateField(st.id, "weekendPaired", e.target.checked)}
+                            className="rounded border-slate-600"
+                          />
+                          <span className="text-slate-400">Weekend paired</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={st.ignoresWorkingDays}
+                            onChange={(e) => updateField(st.id, "ignoresWorkingDays", e.target.checked)}
+                            className="rounded border-slate-600"
+                          />
+                          <span className="text-slate-400">Ignores working days</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={st.isFillShift}
+                            onChange={(e) => updateField(st.id, "isFillShift", e.target.checked)}
+                            className="rounded border-slate-600"
+                          />
+                          <span className="text-slate-400">Fill shift</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={st.isOffShift}
+                            onChange={(e) => updateField(st.id, "isOffShift", e.target.checked)}
+                            className="rounded border-slate-600"
+                          />
+                          <span className="text-slate-400">Off shift</span>
+                        </label>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               );
             })}
           </tbody>

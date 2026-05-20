@@ -19,6 +19,12 @@ export async function PUT(req: NextRequest) {
       postShiftRule: data.postShiftRule || null,
       color: data.color,
       sortOrder: data.sortOrder,
+      schedulePriority: data.schedulePriority ?? null,
+      isOffShift: data.isOffShift ?? false,
+      isFillShift: data.isFillShift ?? false,
+      weekendPaired: data.weekendPaired ?? false,
+      ignoresWorkingDays: data.ignoresWorkingDays ?? false,
+      eligibilityRule: data.eligibilityRule || null,
     },
   });
   return NextResponse.json(updated);
@@ -44,6 +50,12 @@ export async function POST(req: NextRequest) {
       postShiftRule: data.postShiftRule || null,
       color: data.color ?? "#6b7280",
       sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
+      schedulePriority: data.schedulePriority ?? null,
+      isOffShift: data.isOffShift ?? false,
+      isFillShift: data.isFillShift ?? false,
+      weekendPaired: data.weekendPaired ?? false,
+      ignoresWorkingDays: data.ignoresWorkingDays ?? false,
+      eligibilityRule: data.eligibilityRule || null,
     },
   });
   return NextResponse.json(created);
