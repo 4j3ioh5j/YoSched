@@ -43,12 +43,21 @@ type Holiday = {
   name: string;
 };
 
+type DesirabilityWeight = {
+  id: string;
+  shiftTypeId: string;
+  dayOfWeek: number;
+  weight: number;
+  reason: string | null;
+};
+
 type Props = {
   shiftTypes: ShiftType[];
   staffingReqs: StaffingReq[];
   payPeriods: PayPeriod[];
   fteTargets: FteTarget[];
   holidays: Holiday[];
+  desirabilityWeights: DesirabilityWeight[];
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -1215,9 +1224,162 @@ function HolidaysSection({ initial, payPeriods, pushUndo }: { initial: Holiday[]
   );
 }
 
+// ─── Shift Desirability Section ─────────────────────────────────────────────
+
+const WEEKDAY_KEYS = [1, 2, 3, 4, 5, 6, 0];
+const WEEKDAY_LABELS: Record<number, string> = {
+  0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat",
+};
+const WEIGHT_LABELS: Record<number, string> = {
+  [-2]: "Very Bad", [-1]: "Bad", 0: "", 1: "Good", 2: "Great",
+};
+const WEIGHT_BG: Record<number, string> = {
+  [-2]: "bg-red-900/40", [-1]: "bg-red-900/20", 0: "", 1: "bg-emerald-900/20", 2: "bg-emerald-900/40",
+};
+
+function DesirabilitySection({
+  initial,
+  shiftTypes,
+  pushUndo,
+}: {
+  initial: DesirabilityWeight[];
+  shiftTypes: ShiftType[];
+  pushUndo: (a: UndoAction) => void;
+}) {
+  const workShifts = shiftTypes.filter((st) => st.category === "work");
+
+  const [grid, setGrid] = useState(() => {
+    const map: Record<string, number> = {};
+    for (const w of initial) map[`${w.shiftTypeId}:${w.dayOfWeek}`] = w.weight;
+    return map;
+  });
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+
+  function getWeight(shiftTypeId: string, day: number): number {
+    return grid[`${shiftTypeId}:${day}`] ?? 0;
+  }
+
+  function setWeight(shiftTypeId: string, day: number, weight: number) {
+    setGrid((prev) => ({ ...prev, [`${shiftTypeId}:${day}`]: weight }));
+  }
+
+  async function save() {
+    const prevGrid = { ...grid };
+    setStatus("saving");
+    try {
+      const weights = workShifts.flatMap((st) =>
+        WEEKDAY_KEYS.map((day) => ({
+          shiftTypeId: st.id,
+          dayOfWeek: day,
+          weight: getWeight(st.id, day),
+        }))
+      );
+      const res = await fetch("/api/settings/desirability", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weights }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+      pushUndo({
+        label: "Updated desirability weights",
+        execute: async () => {
+          const oldWeights = workShifts.flatMap((st) =>
+            WEEKDAY_KEYS.map((day) => ({
+              shiftTypeId: st.id,
+              dayOfWeek: day,
+              weight: prevGrid[`${st.id}:${day}`] ?? 0,
+            }))
+          );
+          await fetch("/api/settings/desirability", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ weights: oldWeights }),
+          });
+          setGrid(prevGrid);
+        },
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
+      setStatus("error");
+    }
+  }
+
+  return (
+    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
+      <SectionHeader
+        title="Shift Desirability"
+        description="Rate how desirable each shift is per day of week. Used by the equity engine and auto-scheduler."
+        status={status}
+        error={error}
+      />
+      <div className="overflow-x-auto">
+        <table className="text-sm">
+          <thead>
+            <tr>
+              <th className="text-left py-2 px-3 text-xs text-slate-400 font-medium w-24">Shift</th>
+              {WEEKDAY_KEYS.map((day) => (
+                <th key={day} className="py-2 px-1 text-center text-xs text-slate-400 font-medium w-[72px]">
+                  {WEEKDAY_LABELS[day]}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-700/30">
+            {workShifts.map((st) => (
+              <tr key={st.id}>
+                <td className="py-1.5 px-3">
+                  <span className="font-mono font-bold text-sm" style={{ color: st.color }}>{st.code}</span>
+                  <span className="ml-2 text-xs text-slate-500">{st.name}</span>
+                </td>
+                {WEEKDAY_KEYS.map((day) => {
+                  const w = getWeight(st.id, day);
+                  return (
+                    <td key={day} className={`py-1.5 px-1 text-center ${WEIGHT_BG[w] ?? ""}`}>
+                      <select
+                        className="bg-transparent border border-slate-600 rounded px-1.5 py-0.5 text-xs text-center cursor-pointer hover:border-slate-400 transition-colors w-14"
+                        value={w}
+                        onChange={(e) => setWeight(st.id, day, parseInt(e.target.value))}
+                        title={WEIGHT_LABELS[w] || "Neutral"}
+                      >
+                        <option value={-2}>-2</option>
+                        <option value={-1}>-1</option>
+                        <option value={0}>0</option>
+                        <option value={1}>+1</option>
+                        <option value={2}>+2</option>
+                      </select>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex items-center gap-4 mt-4">
+        <button
+          onClick={save}
+          className="px-4 py-2 text-sm bg-blue-700 hover:bg-blue-600 rounded transition-colors font-medium"
+        >
+          Save Desirability
+        </button>
+        <div className="flex items-center gap-3 text-[11px] text-slate-500">
+          <span className="inline-block w-3 h-3 rounded bg-red-900/40" /> Very undesirable (-2)
+          <span className="inline-block w-3 h-3 rounded bg-red-900/20" /> Bad (-1)
+          <span className="inline-block w-3 h-3 rounded border border-slate-600" /> Neutral (0)
+          <span className="inline-block w-3 h-3 rounded bg-emerald-900/20" /> Good (+1)
+          <span className="inline-block w-3 h-3 rounded bg-emerald-900/40" /> Great (+2)
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets, holidays }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights }: Props) {
   const undo = useUndo();
 
   return (
@@ -1225,6 +1387,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets,
       <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
         <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} />
         <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
+        <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <FteHoursSection initial={fteTargets} pushUndo={undo.push} />
         <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} />
         <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} />

@@ -5,12 +5,13 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 
 export default async function Settings() {
-  const [shiftTypes, staffingReqs, payPeriods, fteTargets, holidays] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
     prisma.fteTarget.findMany({ orderBy: { ftePercentage: "desc" } }),
     prisma.holiday.findMany({ orderBy: { date: "asc" } }),
+    prisma.desirabilityWeight.findMany(),
   ]);
 
   return (
@@ -66,6 +67,13 @@ export default async function Settings() {
           id: h.id,
           date: h.date.toISOString().split("T")[0],
           name: h.name,
+        }))}
+        desirabilityWeights={desirabilityWeights.map((dw) => ({
+          id: dw.id,
+          shiftTypeId: dw.shiftTypeId,
+          dayOfWeek: dw.dayOfWeek,
+          weight: dw.weight,
+          reason: dw.reason,
         }))}
       />
     </main>
