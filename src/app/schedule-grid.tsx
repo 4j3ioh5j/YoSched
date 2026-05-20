@@ -882,10 +882,8 @@ export function ScheduleGrid({
                 return (
                   <th
                     key={p.id}
-                    className={[
-                      "px-1 py-2 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer",
-                      isActiveCol || hoverCol === p.id ? "bg-blue-700/70" : "",
-                    ].join(" ")}
+                    className="px-1 py-2 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer"
+                    style={isActiveCol || hoverCol === p.id ? { backgroundColor: "rgba(29,78,216,0.7)" } : undefined}
                     title={`${p.name} (${p.ftePercentage * 100}% FTE)`}
                     onClick={() => setActiveCol(activeCol === p.id ? null : p.id)}
                     onMouseEnter={() => setHoverCol(p.id)}
@@ -924,6 +922,7 @@ export function ScheduleGrid({
                       const target = pp.targetHours * p.ftePercentage;
                       const diff = hours - target;
                       const pct = target > 0 ? hours / target : 0;
+                      const isPPHighlighted = activeCol === p.id || hoverCol === p.id;
 
                       let color = "text-slate-500";
                       if (hours > 0) {
@@ -937,6 +936,7 @@ export function ScheduleGrid({
                         <td
                           key={p.id}
                           className="px-0 py-1 text-center border-slate-600/50 border border-y-indigo-500/60"
+                          style={isPPHighlighted ? { backgroundColor: "rgba(29,78,216,0.35)" } : undefined}
                           title={`${p.initials}: ${hours}/${target}hrs (${diff >= 0 ? "+" : ""}${diff})`}
                         >
                           <div className={`text-[10px] font-mono font-bold ${color}`}>
@@ -979,16 +979,15 @@ export function ScheduleGrid({
                     isWeekend && !isOutsideMonth ? "bg-slate-800/50" : "",
                     isHoliday ? "bg-amber-950/20" : "",
                     isToday ? "ring-1 ring-inset ring-blue-500/50" : "",
-                    "hover:bg-slate-800/80 transition-colors",
+                    "transition-colors",
                   ].join(" ")}
                 >
                   <td
                     className={[
-                      "sticky left-0 z-[5] px-2 py-1 text-xs font-mono border-r border-slate-700 whitespace-nowrap cursor-pointer",
+                      "sticky left-0 z-[5] px-2 py-1 text-xs font-mono border-r border-slate-700 whitespace-nowrap cursor-pointer hover:brightness-125",
                       isNewPP ? "border-t-2 border-t-indigo-500" : "",
-                      isActiveRow ? "!bg-blue-700/70" : "",
                     ].join(" ")}
-                    style={!isActiveRow ? { background: isOutsideMonth ? "#0d1321" : isWeekend ? "#1a2236" : "#0f172a" } : undefined}
+                    style={{ background: isActiveRow ? "rgba(29,78,216,0.7)" : isOutsideMonth ? "#0d1321" : isWeekend ? "#1a2236" : "#0f172a" }}
                     onClick={() => setActiveRow(activeRow === date ? null : date)}
                   >
                     <span className={isActiveRow ? "text-blue-200 font-bold" : isWeekend ? "text-slate-500" : "text-slate-300"}>
@@ -1020,14 +1019,14 @@ export function ScheduleGrid({
                         className={[
                           "px-0.5 py-0.5 text-center border-slate-700/30 border cursor-pointer relative",
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
-                          ppEven ? "" : (!isHighlighted ? "bg-slate-800/20" : ""),
-                          isHighlighted ? "!bg-blue-700/50" : "",
+                          !isHighlighted && !ppEven ? "bg-slate-800/20" : "",
                           isPickerTarget ? "ring-1 ring-inset ring-blue-400" : "",
                           isSelected ? "ring-2 ring-inset ring-emerald-400 bg-emerald-900/20" : "",
                           isDragTarget ? "ring-2 ring-inset ring-cyan-400 bg-cyan-900/20" : "",
                           isDragSrc ? "opacity-30" : "",
                           !a && !isSaving ? "hover:bg-slate-700/30" : "",
                         ].join(" ")}
+                        style={isHighlighted ? { backgroundColor: "rgba(29,78,216,0.35)" } : undefined}
                         onClick={(e) => handleCellClick(p.id, date, e)}
                         onDragOver={(e) => handleDragOver(p.id, date, e)}
                         onDragLeave={handleDragLeave}
