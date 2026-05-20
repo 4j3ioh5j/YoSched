@@ -6,7 +6,7 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 
 export default async function Equity() {
-  const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods] =
+  const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs] =
     await Promise.all([
       prisma.provider.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
@@ -14,6 +14,7 @@ export default async function Equity() {
       prisma.holiday.findMany({ orderBy: { date: "asc" } }),
       prisma.desirabilityWeight.findMany(),
       prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
+      prisma.schedulingPreferences.findFirst(),
     ]);
 
   const equity = computeFairness({
@@ -37,6 +38,7 @@ export default async function Equity() {
       takesCall: p.takesCall,
       takesLate: p.takesLate,
       isActive: p.isActive,
+      isAutoScheduled: p.isAutoScheduled,
     })),
     desirabilityWeights: desirabilityWeights.map((dw) => ({
       shiftTypeId: dw.shiftTypeId,
@@ -44,7 +46,15 @@ export default async function Equity() {
       weight: dw.weight,
     })),
     holidays,
+    fairnessDesirabilityWeight: schedPrefs?.fairnessDesirabilityWeight ?? 0.75,
+    fairnessHolidayWeight: schedPrefs?.fairnessHolidayWeight ?? 0.25,
   });
+
+  const equityThresholds = {
+    low: schedPrefs?.equityThresholdLow ?? 0.25,
+    med: schedPrefs?.equityThresholdMed ?? 0.75,
+    high: schedPrefs?.equityThresholdHigh ?? 1.5,
+  };
 
   // Build per-provider shift-code tallies
   const shiftTallies: Record<string, Record<string, number>> = {};
@@ -129,6 +139,7 @@ export default async function Equity() {
         trackedShiftCodes={equity.trackedShiftCodes}
         dateRange={dateRange}
         shiftCodes={shiftCodes}
+        equityThresholds={equityThresholds}
       />
     </main>
   );

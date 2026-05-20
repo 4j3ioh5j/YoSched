@@ -447,11 +447,17 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
               <FieldRow label="Count hours on weekends" description="Include weekend hours in pay period totals">
                 <input type="checkbox" checked={editingShift.countsOnWeekend} onChange={(e) => updateField(editingShift.id, "countsOnWeekend", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
               </FieldRow>
-              <FieldRow label="After this shift" description="What happens the next day">
-                <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={editingShift.postShiftRule ?? ""} onChange={(e) => updateField(editingShift.id, "postShiftRule", e.target.value || null)}>
-                  <option value="">Nothing special</option>
-                  <option value="day_off_after">Must have the next day off</option>
-                </select>
+              <FieldRow label="After this shift" description="What happens the next day. Use a preset or type a custom rule name.">
+                <div className="flex gap-1">
+                  <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm flex-1" value={editingShift.postShiftRule ?? ""} onChange={(e) => updateField(editingShift.id, "postShiftRule", e.target.value || null)}>
+                    <option value="">Nothing special</option>
+                    <option value="day_off_after">Must have the next day off</option>
+                    {editingShift.postShiftRule && !["", "day_off_after"].includes(editingShift.postShiftRule) && (
+                      <option value={editingShift.postShiftRule}>{editingShift.postShiftRule}</option>
+                    )}
+                  </select>
+                  <input type="text" className="w-28 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" placeholder="Custom…" value={editingShift.postShiftRule && !["day_off_after"].includes(editingShift.postShiftRule) ? editingShift.postShiftRule : ""} onChange={(e) => updateField(editingShift.id, "postShiftRule", e.target.value || null)} />
+                </div>
               </FieldRow>
             </div>
 
@@ -460,12 +466,18 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
               <FieldRow label="Scheduling order" description="When auto-scheduling, which shifts get assigned first. Lower numbers go first. Leave blank if this shift should not be auto-scheduled.">
                 <input type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center" value={editingShift.schedulePriority ?? ""} placeholder="None" onChange={(e) => updateField(editingShift.id, "schedulePriority", e.target.value ? parseInt(e.target.value) : null)} />
               </FieldRow>
-              <FieldRow label="Who can be assigned" description="Restrict which staff members are eligible for this shift">
-                <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={editingShift.eligibilityRule ?? ""} onChange={(e) => updateField(editingShift.id, "eligibilityRule", e.target.value || null)}>
-                  <option value="">Anyone</option>
-                  <option value="takesCall">Only staff who take call</option>
-                  <option value="takesLate">Only staff who take late shifts</option>
-                </select>
+              <FieldRow label="Who can be assigned" description="Restrict by staff flag or qualification. Built-in flags: takesCall, takesLate. Custom values match against staff qualifications.">
+                <div className="flex gap-1">
+                  <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm flex-1" value={editingShift.eligibilityRule ?? ""} onChange={(e) => updateField(editingShift.id, "eligibilityRule", e.target.value || null)}>
+                    <option value="">Anyone</option>
+                    <option value="takesCall">Only staff who take call</option>
+                    <option value="takesLate">Only staff who take late shifts</option>
+                    {editingShift.eligibilityRule && !["", "takesCall", "takesLate"].includes(editingShift.eligibilityRule) && (
+                      <option value={editingShift.eligibilityRule}>{editingShift.eligibilityRule}</option>
+                    )}
+                  </select>
+                  <input type="text" className="w-28 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" placeholder="Custom…" value={editingShift.eligibilityRule && !["takesCall", "takesLate"].includes(editingShift.eligibilityRule) ? editingShift.eligibilityRule : ""} onChange={(e) => updateField(editingShift.id, "eligibilityRule", e.target.value || null)} />
+                </div>
               </FieldRow>
               <FieldRow label="Pair Saturday and Sunday" description="Assign the same person to both Saturday and Sunday when filling this shift on weekends">
                 <input type="checkbox" checked={editingShift.weekendPaired} onChange={(e) => updateField(editingShift.id, "weekendPaired", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />

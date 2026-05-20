@@ -17,6 +17,7 @@ export async function PUT(req: NextRequest) {
       takesLate: data.takesLate,
       specialQualifications: data.specialQualifications ?? [],
       isActive: data.isActive,
+      isAutoScheduled: data.isAutoScheduled,
       sortOrder: data.sortOrder,
     },
   });
@@ -42,6 +43,7 @@ export async function POST(req: NextRequest) {
       takesLate: data.takesLate ?? true,
       specialQualifications: data.specialQualifications ?? [],
       isActive: true,
+      isAutoScheduled: data.isAutoScheduled ?? true,
       sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
     },
   });

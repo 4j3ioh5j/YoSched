@@ -441,8 +441,9 @@ export function ScheduleGrid({
     const counts: Record<string, number | null> = {};
     for (const date of dates) {
       const dow = parseDate(date).getDay();
-      const isWeekend = dow === 0 || dow === 6;
-      if (isWeekend || holidaySet.has(date)) {
+      const dayKey = holidaySet.has(date) ? "holiday" : String(dow);
+      const hasReqs = staffingReqs.some((r) => r.dayKey === dayKey && r.minCount > 0);
+      if (!hasReqs) {
         counts[date] = null;
         continue;
       }
@@ -457,7 +458,7 @@ export function ScheduleGrid({
       counts[date] = count;
     }
     return counts;
-  }, [dates, providers, assignmentMap, suggestionMap, holidaySet, staffingCountCodes]);
+  }, [dates, providers, assignmentMap, suggestionMap, holidaySet, staffingCountCodes, staffingReqs]);
 
   function prevMonth() {
     if (viewMonth === 0) {

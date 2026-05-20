@@ -6,7 +6,7 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs] =
+  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs] =
     await Promise.all([
       prisma.provider.findMany({
         where: { isActive: true },
@@ -22,6 +22,7 @@ export default async function Home() {
       prisma.staffingMinimum.findMany(),
       prisma.desirabilityWeight.findMany(),
       prisma.staffingRequirement.findMany(),
+      prisma.schedulingPreferences.findFirst(),
     ]);
 
   const fairness = computeFairness({
@@ -45,6 +46,7 @@ export default async function Home() {
       takesCall: p.takesCall,
       takesLate: p.takesLate,
       isActive: p.isActive,
+      isAutoScheduled: p.isAutoScheduled,
     })),
     desirabilityWeights: desirabilityWeights.map((dw) => ({
       shiftTypeId: dw.shiftTypeId,
@@ -52,6 +54,8 @@ export default async function Home() {
       weight: dw.weight,
     })),
     holidays,
+    fairnessDesirabilityWeight: schedPrefs?.fairnessDesirabilityWeight ?? 0.75,
+    fairnessHolidayWeight: schedPrefs?.fairnessHolidayWeight ?? 0.25,
   });
 
   const fairnessData: Record<string, { metrics: (typeof fairness.metrics)[0]; deviation: { desirability: number; holidayWork: number; overall: number } }> = {};

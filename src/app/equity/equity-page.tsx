@@ -28,6 +28,8 @@ type EquityRow = {
   shiftTally: Record<string, number>;
 };
 
+type EquityThresholds = { low: number; med: number; high: number };
+
 type Props = {
   data: EquityRow[];
   averages: {
@@ -37,31 +39,32 @@ type Props = {
   trackedShiftCodes: string[];
   dateRange: { min: string; max: string };
   shiftCodes: string[];
+  equityThresholds: EquityThresholds;
 };
 
 type SortKey = "initials" | "overall" | "desirability" | "holiday" | "hours" | "workDays" | "leaveDays" | string;
 
-function equityColor(burden: number): string {
-  if (burden > 1.5) return "#ef4444";
-  if (burden > 0.75) return "#f97316";
-  if (burden > 0.25) return "#eab308";
-  if (burden < -1.5) return "#22c55e";
-  if (burden < -0.75) return "#3b82f6";
-  if (burden < -0.25) return "#6366f1";
+function equityColor(burden: number, t: EquityThresholds): string {
+  if (burden > t.high) return "#ef4444";
+  if (burden > t.med) return "#f97316";
+  if (burden > t.low) return "#eab308";
+  if (burden < -t.high) return "#22c55e";
+  if (burden < -t.med) return "#3b82f6";
+  if (burden < -t.low) return "#6366f1";
   return "#6b7280";
 }
 
-function equityLabel(burden: number): string {
-  if (burden > 1.5) return "Low";
-  if (burden > 0.75) return "Below Avg";
-  if (burden > 0.25) return "Slight -";
-  if (burden < -1.5) return "High";
-  if (burden < -0.75) return "Above Avg";
-  if (burden < -0.25) return "Slight +";
+function equityLabel(burden: number, t: EquityThresholds): string {
+  if (burden > t.high) return "Low";
+  if (burden > t.med) return "Below Avg";
+  if (burden > t.low) return "Slight -";
+  if (burden < -t.high) return "High";
+  if (burden < -t.med) return "Above Avg";
+  if (burden < -t.low) return "Slight +";
   return "Balanced";
 }
 
-export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes }: Props) {
+export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("overall");
   const [sortAsc, setSortAsc] = useState(false);
   const [showTallies, setShowTallies] = useState(false);
@@ -160,7 +163,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
             </thead>
             <tbody>
               {sorted.map((row) => {
-                const eqColor = equityColor(row.deviation.overall);
+                const eqColor = equityColor(row.deviation.overall, equityThresholds);
                 return (
                   <tr key={row.providerId} className="border-b border-slate-700/30 hover:bg-slate-800/40 transition-colors">
                     <td className="px-3 py-2">
@@ -177,7 +180,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                     <td className="px-3 py-2 text-center">
                       <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full" style={{ backgroundColor: eqColor + "18" }}>
                         <div className="w-2 h-2 rounded-full" style={{ backgroundColor: eqColor }} />
-                        <span className="text-[11px] font-medium" style={{ color: eqColor }}>{equityLabel(row.deviation.overall)}</span>
+                        <span className="text-[11px] font-medium" style={{ color: eqColor }}>{equityLabel(row.deviation.overall, equityThresholds)}</span>
                       </div>
                     </td>
                     <td className="px-3 py-2 text-right">

@@ -80,6 +80,7 @@ export async function POST(req: NextRequest) {
       takesLate: p.takesLate,
       workingDays: p.workingDays,
       isActive: p.isActive,
+      isAutoScheduled: p.isAutoScheduled,
       specialQualifications: p.specialQualifications,
     })),
     shiftTypes: shiftTypes.map((st) => ({
@@ -153,6 +154,11 @@ export async function POST(req: NextRequest) {
       prefer3DayWeekends: schedulingPrefsRow?.prefer3DayWeekends ?? true,
       prefer4DayWeekends: schedulingPrefsRow?.prefer4DayWeekends ?? true,
       preferSequentialOff: schedulingPrefsRow?.preferSequentialOff ?? true,
+      sequentialOffWeight: schedulingPrefsRow?.sequentialOffWeight ?? 2,
+      threeDayWeekendWeight: schedulingPrefsRow?.threeDayWeekendWeight ?? 5,
+      fourDayWeekendWeight: schedulingPrefsRow?.fourDayWeekendWeight ?? 8,
+      fairnessDesirabilityWeight: schedulingPrefsRow?.fairnessDesirabilityWeight ?? 0.75,
+      fairnessHolidayWeight: schedulingPrefsRow?.fairnessHolidayWeight ?? 0.25,
     },
   });
 

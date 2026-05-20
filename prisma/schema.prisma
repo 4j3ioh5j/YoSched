@@ -68,6 +68,7 @@ model Provider {
   tempStartDate         DateTime?
   tempEndDate           DateTime?
   isActive              Boolean  @default(true)
+  isAutoScheduled       Boolean  @default(true)
   sortOrder             Int      @default(0)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -192,6 +193,14 @@ model SchedulingPreferences {
   prefer3DayWeekends    Boolean @default(true)
   prefer4DayWeekends    Boolean @default(true)
   preferSequentialOff   Boolean @default(true)
+  sequentialOffWeight   Float   @default(2)
+  threeDayWeekendWeight   Float   @default(5)
+  fourDayWeekendWeight  Float   @default(8)
+  fairnessDesirabilityWeight Float @default(0.75)
+  fairnessHolidayWeight      Float @default(0.25)
+  equityThresholdLow    Float   @default(0.25)
+  equityThresholdMed    Float   @default(0.75)
+  equityThresholdHigh   Float   @default(1.5)
 
   @@map("scheduling_preferences")
 }

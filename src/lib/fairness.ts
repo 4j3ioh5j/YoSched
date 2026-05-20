@@ -19,6 +19,7 @@ type Provider = {
   takesCall: boolean;
   takesLate: boolean;
   isActive: boolean;
+  isAutoScheduled: boolean;
 };
 
 type DesirabilityWeight = {
@@ -77,11 +78,15 @@ export function computeFairness({
   providers,
   desirabilityWeights,
   holidays,
+  fairnessDesirabilityWeight = 0.75,
+  fairnessHolidayWeight = 0.25,
 }: {
   assignments: Assignment[];
   providers: Provider[];
   desirabilityWeights: DesirabilityWeight[];
   holidays: Holiday[];
+  fairnessDesirabilityWeight?: number;
+  fairnessHolidayWeight?: number;
 }): FairnessSummary {
   const holidaySet = new Set(holidays.map((h) => toDateStr(h.date)));
 
@@ -109,7 +114,7 @@ export function computeFairness({
   const metrics: FairnessMetrics[] = [];
 
   for (const p of providers) {
-    if (!p.isActive || p.employmentType !== "fte") continue;
+    if (!p.isActive || !p.isAutoScheduled) continue;
 
     const pa = byProvider.get(p.id) || [];
     let desirabilityScore = 0;
@@ -137,7 +142,7 @@ export function computeFairness({
 
       shiftCounts[code] = (shiftCounts[code] || 0) + 1;
 
-      if (isHoliday && code !== "HOL") holidayWorkCount++;
+      if (isHoliday && a.shiftType.countsTowardFte) holidayWorkCount++;
 
       const dwKey = `${a.shiftType.id}:${dow}`;
       const weight = dwMap.get(dwKey) ?? 0;
@@ -182,7 +187,7 @@ export function computeFairness({
     const desirability = -(m.desirabilityScore - averages.desirabilityScore) / desStd;
     const holidayWork = (m.holidayWorkCount - averages.holidayWorkCount) / holStd;
 
-    const overall = 0.75 * desirability + 0.25 * holidayWork;
+    const overall = fairnessDesirabilityWeight * desirability + fairnessHolidayWeight * holidayWork;
 
     deviations.set(m.providerId, { desirability, holidayWork, overall });
   }
@@ -190,22 +195,30 @@ export function computeFairness({
   return { metrics, averages, trackedShiftCodes, deviations };
 }
 
-export function fairnessColor(deviation: number): string {
-  if (deviation > 1.5) return "#ef4444";
-  if (deviation > 0.75) return "#f97316";
-  if (deviation > 0.25) return "#eab308";
-  if (deviation < -1.5) return "#22c55e";
-  if (deviation < -0.75) return "#3b82f6";
-  if (deviation < -0.25) return "#6366f1";
+export type EquityThresholds = {
+  low: number;
+  med: number;
+  high: number;
+};
+
+const DEFAULT_THRESHOLDS: EquityThresholds = { low: 0.25, med: 0.75, high: 1.5 };
+
+export function fairnessColor(deviation: number, t: EquityThresholds = DEFAULT_THRESHOLDS): string {
+  if (deviation > t.high) return "#ef4444";
+  if (deviation > t.med) return "#f97316";
+  if (deviation > t.low) return "#eab308";
+  if (deviation < -t.high) return "#22c55e";
+  if (deviation < -t.med) return "#3b82f6";
+  if (deviation < -t.low) return "#6366f1";
   return "#6b7280";
 }
 
-export function fairnessLabel(burden: number): string {
-  if (burden > 1.5) return "Low equity";
-  if (burden > 0.75) return "Below avg equity";
-  if (burden > 0.25) return "Slightly below";
-  if (burden < -1.5) return "High equity";
-  if (burden < -0.75) return "Above avg equity";
-  if (burden < -0.25) return "Slightly above";
+export function fairnessLabel(burden: number, t: EquityThresholds = DEFAULT_THRESHOLDS): string {
+  if (burden > t.high) return "Low equity";
+  if (burden > t.med) return "Below avg equity";
+  if (burden > t.low) return "Slightly below";
+  if (burden < -t.high) return "High equity";
+  if (burden < -t.med) return "Above avg equity";
+  if (burden < -t.low) return "Slightly above";
   return "Balanced";
 }

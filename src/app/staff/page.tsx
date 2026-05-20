@@ -40,6 +40,7 @@ export default async function Staff() {
           takesLate: p.takesLate,
           specialQualifications: p.specialQualifications,
           isActive: p.isActive,
+          isAutoScheduled: p.isAutoScheduled,
           sortOrder: p.sortOrder,
         }))}
       />
