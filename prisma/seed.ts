@@ -15,7 +15,6 @@ async function main() {
     { code: "ORL",    name: "OR Late",               defaultHours: 12, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#8b5cf6", sortOrder: 3 },
     { code: "ADM",    name: "Administrative",         defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#f59e0b", sortOrder: 4 },
     { code: "PREOP",  name: "Pre-op Clinic",          defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#10b981", sortOrder: 5 },
-    { code: "PPL",    name: "Pre-procedure Lab",      defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#14b8a6", sortOrder: 6 },
     { code: "PAIN",   name: "Pain Service",           defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#ef4444", sortOrder: 7 },
     { code: "ICU",    name: "Intensive Care",          defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#dc2626", sortOrder: 8 },
     { code: "CARD",   name: "Cardiac",                defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#e11d48", sortOrder: 9 },
@@ -28,7 +27,7 @@ async function main() {
     { code: "AL",     name: "Annual Leave",            defaultHours: 8,  countsTowardFte: false, isLeave: true,  isPaid: true,  category: "leave", color: "#84cc16", sortOrder: 20 },
     { code: "SL",     name: "Sick Leave",              defaultHours: 8,  countsTowardFte: false, isLeave: true,  isPaid: true,  category: "leave", color: "#eab308", sortOrder: 21 },
     { code: "HOL",    name: "Holiday",                 defaultHours: 8,  countsTowardFte: false, isLeave: true,  isPaid: true,  category: "leave", color: "#f97316", sortOrder: 22 },
-    { code: "PPL_LV", name: "Paid Parental Leave",     defaultHours: 8,  countsTowardFte: false, isLeave: true,  isPaid: true,  category: "leave", color: "#a3e635", sortOrder: 23 },
+    { code: "PPL",    name: "Paid Parental Leave",     defaultHours: 8,  countsTowardFte: false, isLeave: true,  isPaid: true,  category: "leave", color: "#a3e635", sortOrder: 23 },
     { code: "AA",     name: "Authorized Absence",      defaultHours: 8,  countsTowardFte: false, isLeave: true,  isPaid: true,  category: "leave", color: "#fbbf24", sortOrder: 24 },
     { code: "ILD",    name: "Banked Hours Day Off",    defaultHours: 8,  countsTowardFte: false, isLeave: true,  isPaid: true,  category: "leave", color: "#34d399", sortOrder: 25 },
     { code: "JD",     name: "Jury Duty",               defaultHours: 8,  countsTowardFte: false, isLeave: true,  isPaid: true,  category: "leave", color: "#fcd34d", sortOrder: 26 },
@@ -141,7 +140,7 @@ async function main() {
   }
   console.log(`Seeded ${weights.length} desirability weights`);
 
-  // --- Staffing Minimums (placeholder — scheduler will configure) ---
+  // --- Staffing Minimums (legacy) ---
   const staffingMins = [
     { role: "attending", dayType: "weekday", minimumCount: 6 },
     { role: "attending", dayType: "weekend", minimumCount: 1 },
@@ -157,9 +156,78 @@ async function main() {
   }
   console.log(`Seeded ${staffingMins.length} staffing minimums`);
 
+  // --- Shift Count Rules (legacy) ---
+  const shiftCountRules = [
+    { shiftCode: "ORC", dayType: "weekday", exactCount: 1 },
+    { shiftCode: "ORC", dayType: "holiday", exactCount: 1 },
+    { shiftCode: "ORC", dayType: "weekend", exactCount: 0 },
+    { shiftCode: "ORL", dayType: "weekday", exactCount: 1 },
+    { shiftCode: "ORL", dayType: "holiday", exactCount: 0 },
+    { shiftCode: "ORL", dayType: "weekend", exactCount: 0 },
+  ];
+
+  for (const rule of shiftCountRules) {
+    await prisma.shiftCountRule.upsert({
+      where: { shiftCode_dayType: { shiftCode: rule.shiftCode, dayType: rule.dayType } },
+      update: rule,
+      create: rule,
+    });
+  }
+  console.log(`Seeded ${shiftCountRules.length} shift count rules`);
+
+  // --- Staffing Requirements (per day-of-week grid) ---
+  const WEEKDAYS = ["1", "2", "3", "4", "5"]; // Mon-Fri
+  const WEEKENDS = ["0", "6"]; // Sun, Sat
+  const staffReqs: { shiftCode: string; dayKey: string; minCount: number }[] = [];
+
+  for (const day of WEEKDAYS) {
+    staffReqs.push({ shiftCode: "OR", dayKey: day, minCount: 4 });
+    staffReqs.push({ shiftCode: "ORC", dayKey: day, minCount: 1 });
+    staffReqs.push({ shiftCode: "ORL", dayKey: day, minCount: 1 });
+    staffReqs.push({ shiftCode: "CALL", dayKey: day, minCount: 0 });
+  }
+  for (const day of WEEKENDS) {
+    staffReqs.push({ shiftCode: "OR", dayKey: day, minCount: 0 });
+    staffReqs.push({ shiftCode: "ORC", dayKey: day, minCount: 0 });
+    staffReqs.push({ shiftCode: "ORL", dayKey: day, minCount: 0 });
+    staffReqs.push({ shiftCode: "CALL", dayKey: day, minCount: 1 });
+  }
+  staffReqs.push({ shiftCode: "OR", dayKey: "holiday", minCount: 0 });
+  staffReqs.push({ shiftCode: "ORC", dayKey: "holiday", minCount: 0 });
+  staffReqs.push({ shiftCode: "ORL", dayKey: "holiday", minCount: 0 });
+  staffReqs.push({ shiftCode: "CALL", dayKey: "holiday", minCount: 1 });
+
+  for (const req of staffReqs) {
+    await prisma.staffingRequirement.upsert({
+      where: { shiftCode_dayKey: { shiftCode: req.shiftCode, dayKey: req.dayKey } },
+      update: req,
+      create: req,
+    });
+  }
+  console.log(`Seeded ${staffReqs.length} staffing requirements`);
+
+  // --- FTE Targets ---
+  const baseHours = 80;
+  const fteTargets = [
+    { ftePercentage: 1.0, targetHours: baseHours },
+    { ftePercentage: 0.8, targetHours: baseHours * 0.8 },
+    { ftePercentage: 0.6, targetHours: baseHours * 0.6 },
+    { ftePercentage: 0.4, targetHours: baseHours * 0.4 },
+    { ftePercentage: 0.2, targetHours: baseHours * 0.2 },
+  ];
+
+  for (const ft of fteTargets) {
+    await prisma.fteTarget.upsert({
+      where: { ftePercentage: ft.ftePercentage },
+      update: ft,
+      create: ft,
+    });
+  }
+  console.log(`Seeded ${fteTargets.length} FTE targets`);
+
   // --- Pay Periods (biweekly, 2026) ---
-  // Starting Sunday Jan 4, 2026 — generates 26 biweekly periods
-  const ppStart = new Date("2026-01-04T00:00:00Z");
+  // Starting Sunday Dec 14, 2025 — generates 26 biweekly periods
+  const ppStart = new Date("2025-12-14T00:00:00Z");
   let seededPPs = 0;
   for (let i = 0; i < 26; i++) {
     const start = new Date(ppStart);

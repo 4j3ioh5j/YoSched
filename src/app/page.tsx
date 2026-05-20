@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { ScheduleGrid } from "./schedule-grid";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,12 @@ export default async function Home() {
         <div className="flex items-center gap-4 text-sm text-slate-400">
           <span>{providers.length} providers</span>
           <span>{shiftTypes.filter((s) => s.category === "work").length} shift types</span>
+          <Link href="/staff" className="text-slate-400 hover:text-slate-200 transition-colors">
+            Staff
+          </Link>
+          <Link href="/settings" className="text-slate-400 hover:text-slate-200 transition-colors">
+            Settings
+          </Link>
         </div>
       </header>
 

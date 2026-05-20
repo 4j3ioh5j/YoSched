@@ -206,6 +206,10 @@ export function ScheduleGrid({
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [activeCell, setActiveCell] = useState<{ providerId: string; date: string } | null>(null);
 
+  // Multi-select state
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [selectionAnchor, setSelectionAnchor] = useState<{ providerId: string; date: string } | null>(null);
+
   // Undo/redo stacks — each entry is a group of changes applied together
   type UndoOp = { providerId: string; date: string; prev: AssignmentData | null; next: AssignmentData | null };
   type UndoEntry = UndoOp[];
@@ -389,6 +393,64 @@ export function ScheduleGrid({
     setActiveCell({ providerId, date });
     const existing = assignmentMap.get(`${providerId}:${date}`);
     if (existing?.isLocked) return;
+
+    const cellKey = `${providerId}:${date}`;
+
+    if (e.shiftKey) {
+      // Shift+click: range select, no picker
+      if (selectionAnchor && selectionAnchor.providerId === providerId) {
+        const anchorIdx = dates.indexOf(selectionAnchor.date);
+        const targetIdx = dates.indexOf(date);
+        if (anchorIdx !== -1 && targetIdx !== -1) {
+          const start = Math.min(anchorIdx, targetIdx);
+          const end = Math.max(anchorIdx, targetIdx);
+          const newSel = new Set<string>();
+          for (let i = start; i <= end; i++) {
+            const k = `${providerId}:${dates[i]}`;
+            const a = assignmentMap.get(k);
+            if (!a?.isLocked) newSel.add(k);
+          }
+          setSelection(newSel);
+        }
+      } else {
+        // No anchor or different provider — start fresh selection
+        setSelection(new Set([cellKey]));
+        setSelectionAnchor({ providerId, date });
+      }
+      return;
+    }
+
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd+click: toggle cell in selection, no picker
+      setSelection((prev) => {
+        const next = new Set(prev);
+        if (next.has(cellKey)) {
+          next.delete(cellKey);
+        } else {
+          const firstKey = [...next][0];
+          if (firstKey) {
+            const existingProvider = firstKey.split(":")[0];
+            if (existingProvider !== providerId) {
+              return new Set([cellKey]);
+            }
+          }
+          next.add(cellKey);
+        }
+        return next;
+      });
+      if (!selectionAnchor) setSelectionAnchor({ providerId, date });
+      return;
+    }
+
+    // Plain click on a selected cell — open picker for the selection
+    if (selection.size > 0 && selection.has(cellKey)) {
+      setPicker({ providerId, date, x: e.clientX, y: e.clientY });
+      return;
+    }
+
+    // Plain click on non-selected cell — clear selection, single-cell picker
+    setSelection(new Set());
+    setSelectionAnchor({ providerId, date });
     setPicker({ providerId, date, x: e.clientX, y: e.clientY });
   }
 
@@ -459,84 +521,165 @@ export function ScheduleGrid({
         e.preventDefault();
         redoRef.current();
       }
+      if (e.key === "Escape" && !picker) {
+        setSelection(new Set());
+        setSelectionAnchor(null);
+      }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [picker]);
 
   const handleSelect = useCallback(async (shiftTypeId: string) => {
     if (!picker) return;
-    const { providerId, date } = picker;
-    const key = `${providerId}:${date}`;
     const st = shiftTypeMap.get(shiftTypeId);
     if (!st) return;
 
-    const prev = assignmentMap.get(key) ?? null;
-    const next: AssignmentData = {
-      id: `temp-${key}`,
-      providerId,
-      date,
-      shiftTypeId,
-      isLocked: false,
-      code: st.code,
-      color: st.color,
-    };
-    pushUndo([{ providerId, date, prev, next }]);
+    // Determine cells to assign: selection or single cell
+    const cells: { providerId: string; date: string }[] = [];
+    if (selection.size > 0) {
+      for (const key of selection) {
+        const [pid, d] = key.split(":");
+        cells.push({ providerId: pid, date: d });
+      }
+    } else {
+      cells.push({ providerId: picker.providerId, date: picker.date });
+    }
+
+    // Build undo group
+    const undoOps: UndoOp[] = cells.map(({ providerId, date }) => {
+      const key = `${providerId}:${date}`;
+      const prev = assignmentMap.get(key) ?? null;
+      const next: AssignmentData = {
+        id: `temp-${key}`,
+        providerId,
+        date,
+        shiftTypeId,
+        isLocked: false,
+        code: st.code,
+        color: st.color,
+      };
+      return { providerId, date, prev, next };
+    });
+    pushUndo(undoOps);
 
     setPicker(null);
-    setSaving(key);
+    setSelection(new Set());
+    setSelectionAnchor(null);
+    setSaving("bulk");
 
+    // Optimistic update
     setLocalAssignments((prev) => {
-      const filtered = prev.filter((a) => !(a.providerId === providerId && a.date === date));
-      return [...filtered, next];
+      const keys = new Set(cells.map((c) => `${c.providerId}:${c.date}`));
+      const filtered = prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`));
+      const temps = cells.map((c) => ({
+        id: `temp-${c.providerId}:${c.date}`,
+        providerId: c.providerId,
+        date: c.date,
+        shiftTypeId,
+        isLocked: false,
+        code: st.code,
+        color: st.color,
+      }));
+      return [...filtered, ...temps];
     });
 
     try {
-      const res = await fetch("/api/assignments", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerId, date, shiftTypeId }),
-      });
-      const saved = await res.json();
-      setLocalAssignments((prev) =>
-        prev.map((a) => (a.providerId === providerId && a.date === date ? saved : a)),
-      );
+      if (cells.length === 1) {
+        const { providerId, date } = cells[0];
+        const res = await fetch("/api/assignments", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ providerId, date, shiftTypeId }),
+        });
+        const saved = await res.json();
+        setLocalAssignments((prev) =>
+          prev.map((a) => (a.providerId === providerId && a.date === date ? saved : a)),
+        );
+      } else {
+        const res = await fetch("/api/assignments/bulk", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cells, shiftTypeId }),
+        });
+        const saved: AssignmentData[] = await res.json();
+        setLocalAssignments((prev) => {
+          const keys = new Set(saved.map((s) => `${s.providerId}:${s.date}`));
+          const filtered = prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`));
+          return [...filtered, ...saved];
+        });
+      }
     } catch {
-      setLocalAssignments((prev) => prev.filter((a) => a.id !== `temp-${key}`));
+      // Revert temps on failure
+      setLocalAssignments((prev) => prev.filter((a) => !a.id.startsWith("temp-")));
     } finally {
       setSaving(null);
     }
-  }, [picker, shiftTypeMap, assignmentMap]);
+  }, [picker, shiftTypeMap, assignmentMap, selection]);
 
   const handleClear = useCallback(async () => {
     if (!picker) return;
-    const { providerId, date } = picker;
-    const key = `${providerId}:${date}`;
 
-    const prev = assignmentMap.get(key) ?? null;
-    pushUndo([{ providerId, date, prev, next: null }]);
+    // Determine cells to clear: selection or single cell
+    const cells: { providerId: string; date: string }[] = [];
+    if (selection.size > 0) {
+      for (const key of selection) {
+        const [pid, d] = key.split(":");
+        if (assignmentMap.has(key)) cells.push({ providerId: pid, date: d });
+      }
+    } else {
+      const { providerId, date } = picker;
+      if (assignmentMap.has(`${providerId}:${date}`)) {
+        cells.push({ providerId, date });
+      }
+    }
+
+    if (cells.length === 0) { setPicker(null); return; }
+
+    // Build undo group
+    const undoOps: UndoOp[] = cells.map(({ providerId, date }) => ({
+      providerId,
+      date,
+      prev: assignmentMap.get(`${providerId}:${date}`) ?? null,
+      next: null,
+    }));
+    pushUndo(undoOps);
 
     setPicker(null);
-    setSaving(key);
+    setSelection(new Set());
+    setSelectionAnchor(null);
+    setSaving("bulk");
 
+    // Optimistic removal
+    const keys = new Set(cells.map((c) => `${c.providerId}:${c.date}`));
     setLocalAssignments((prev) =>
-      prev.filter((a) => !(a.providerId === providerId && a.date === date)),
+      prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`)),
     );
 
     try {
-      await fetch("/api/assignments", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerId, date }),
-      });
+      if (cells.length === 1) {
+        await fetch("/api/assignments", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cells[0]),
+        });
+      } else {
+        await fetch("/api/assignments/bulk", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cells }),
+        });
+      }
     } catch {
       window.location.reload();
     } finally {
       setSaving(null);
     }
-  }, [picker]);
+  }, [picker, assignmentMap, selection]);
 
-  const closePicker = useCallback(() => setPicker(null), []);
+  const closePicker = useCallback(() => {
+    setPicker(null);
+  }, []);
 
   function handleDragStart(providerId: string, date: string, e: React.DragEvent) {
     const a = assignmentMap.get(`${providerId}:${date}`);
@@ -635,7 +778,7 @@ export function ScheduleGrid({
     }
   }, [dragSource, assignmentMap]);
 
-  // Compute warnings for picker preview
+  // Compute warnings for picker preview (uses picker cell for single, first selected cell for bulk)
   const pickerWarnings = useMemo(() => {
     if (!picker) return new Map<string, Warning[]>();
     const { providerId, date } = picker;
@@ -662,6 +805,9 @@ export function ScheduleGrid({
     }
     return result;
   }, [picker, providerMap, shiftTypes, shiftTypeMap, assignmentMap, providers, holidaySet, staffingMins]);
+
+  // Selection count for picker header
+  const selectionCount = selection.size;
 
   let lastPPKey = "";
 
@@ -693,7 +839,12 @@ export function ScheduleGrid({
         <span className="ml-2 text-xs text-slate-500">
           {dates[0]} – {dates[dates.length - 1]}
         </span>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-2">
+          {selection.size > 0 && (
+            <span className="text-xs text-emerald-400 font-medium">
+              {selection.size} selected
+            </span>
+          )}
           <button
             onClick={handleUndo}
             className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-400"
@@ -726,13 +877,13 @@ export function ScheduleGrid({
                     key={p.id}
                     className={[
                       "px-1 py-2 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors",
-                      isActiveCol ? "bg-blue-900/40" : "",
+                      isActiveCol ? "bg-blue-800/50" : "",
                     ].join(" ")}
                     title={`${p.name} (${p.ftePercentage * 100}% FTE)`}
                   >
                     <span className={[
                       p.employmentType === "fee_basis" ? "text-amber-400" : "text-slate-300",
-                      isActiveCol ? "!text-blue-300 font-bold" : "",
+                      isActiveCol ? "!text-blue-200 font-bold" : "",
                     ].join(" ")}>
                       {p.initials}
                     </span>
@@ -824,14 +975,14 @@ export function ScheduleGrid({
                     className={[
                       "sticky left-0 z-[5] px-2 py-1 text-xs font-mono border-r border-slate-700 whitespace-nowrap",
                       isNewPP ? "border-t-2 border-t-indigo-500" : "",
-                      isActiveRow ? "!bg-blue-900/40" : "",
+                      isActiveRow ? "!bg-blue-800/50" : "",
                     ].join(" ")}
                     style={!isActiveRow ? { background: isOutsideMonth ? "#0d1321" : isWeekend ? "#1a2236" : "#0f172a" } : undefined}
                   >
-                    <span className={isActiveRow ? "text-blue-300 font-bold" : isWeekend ? "text-slate-500" : "text-slate-300"}>
+                    <span className={isActiveRow ? "text-blue-200 font-bold" : isWeekend ? "text-slate-500" : "text-slate-300"}>
                       {label.day}
                     </span>{" "}
-                    <span className={isActiveRow ? "text-blue-300" : isOutsideMonth ? "text-slate-600" : "text-slate-400"}>
+                    <span className={isActiveRow ? "text-blue-200" : isOutsideMonth ? "text-slate-600" : "text-slate-400"}>
                       {label.date}
                     </span>
                     {isHoliday && (
@@ -848,6 +999,7 @@ export function ScheduleGrid({
                     const cw = cellWarnings.get(cellKey);
                     const isDragTarget = dragOver === cellKey;
                     const isDragSrc = dragSource?.providerId === p.id && dragSource?.date === date;
+                    const isSelected = selection.has(cellKey);
 
                     return (
                       <td
@@ -857,6 +1009,7 @@ export function ScheduleGrid({
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
                           ppEven ? "" : "bg-slate-800/20",
                           isPickerTarget ? "ring-1 ring-inset ring-blue-400" : "",
+                          isSelected ? "ring-2 ring-inset ring-emerald-400 bg-emerald-900/20" : "",
                           isDragTarget ? "ring-2 ring-inset ring-cyan-400 bg-cyan-900/20" : "",
                           isDragSrc ? "opacity-30" : "",
                           !a && !isSaving ? "hover:bg-slate-700/30" : "",
@@ -943,12 +1096,13 @@ export function ScheduleGrid({
       {picker && (
         <ShiftPicker
           shiftTypes={shiftTypes}
-          currentShiftTypeId={assignmentMap.get(`${picker.providerId}:${picker.date}`)?.shiftTypeId ?? null}
+          currentShiftTypeId={selectionCount > 1 ? null : (assignmentMap.get(`${picker.providerId}:${picker.date}`)?.shiftTypeId ?? null)}
           position={{ x: picker.x, y: picker.y }}
           onSelect={handleSelect}
           onClear={handleClear}
           onClose={closePicker}
           warnings={pickerWarnings}
+          bulkCount={selectionCount > 1 ? selectionCount : undefined}
         />
       )}
     </div>

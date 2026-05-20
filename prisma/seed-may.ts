@@ -72,14 +72,27 @@ async function main() {
     shiftMap.set(s.code, s.id);
   }
 
-  // Add holiday for Memorial Day
-  const memorialDay = new Date("2026-05-25T00:00:00Z");
-  await prisma.holiday.upsert({
-    where: { date: memorialDay },
-    update: { name: "Memorial Day" },
-    create: { date: memorialDay, name: "Memorial Day" },
-  });
-  console.log("Added Memorial Day holiday");
+  // Add 2026 federal holidays
+  const federalHolidays = [
+    { date: "2026-01-01", name: "New Year's Day" },
+    { date: "2026-01-19", name: "Martin Luther King Jr. Day" },
+    { date: "2026-02-16", name: "Presidents' Day" },
+    { date: "2026-05-25", name: "Memorial Day" },
+    { date: "2026-07-03", name: "Independence Day (observed)" },
+    { date: "2026-09-07", name: "Labor Day" },
+    { date: "2026-10-12", name: "Columbus Day" },
+    { date: "2026-11-11", name: "Veterans Day" },
+    { date: "2026-11-26", name: "Thanksgiving Day" },
+    { date: "2026-12-25", name: "Christmas Day" },
+  ];
+  for (const h of federalHolidays) {
+    await prisma.holiday.upsert({
+      where: { date: new Date(h.date + "T00:00:00Z") },
+      update: { name: h.name },
+      create: { date: new Date(h.date + "T00:00:00Z"), name: h.name },
+    });
+  }
+  console.log(`Seeded ${federalHolidays.length} federal holidays`);
 
   let created = 0;
   let skipped = 0;

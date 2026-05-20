@@ -133,6 +133,26 @@ model StaffingMinimum {
   @@map("staffing_minimums")
 }
 
+model ShiftCountRule {
+  id         String @id @default(cuid())
+  shiftCode  String
+  dayType    String // weekday, weekend, holiday
+  exactCount Int
+
+  @@unique([shiftCode, dayType])
+  @@map("shift_count_rules")
+}
+
+model StaffingRequirement {
+  id        String @id @default(cuid())
+  shiftCode String
+  dayKey    String // "0"=Sun, "1"=Mon, ..., "6"=Sat, "holiday"
+  minCount  Int    @default(0)
+
+  @@unique([shiftCode, dayKey])
+  @@map("staffing_requirements")
+}
+
 model PayPeriod {
   id          String   @id @default(cuid())
   startDate   DateTime @db.Date
@@ -140,6 +160,14 @@ model PayPeriod {
   targetHours Float
 
   @@map("pay_periods")
+}
+
+model FteTarget {
+  id            String @id @default(cuid())
+  ftePercentage Float  @unique
+  targetHours   Float
+
+  @@map("fte_targets")
 }
 
 model Holiday {

@@ -20,6 +20,7 @@ type Props = {
   onClear: () => void;
   onClose: () => void;
   warnings?: Map<string, Warning[]>;
+  bulkCount?: number;
 };
 
 function ShiftButton({
@@ -59,7 +60,7 @@ function ShiftButton({
   );
 }
 
-export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect, onClear, onClose, warnings }: Props) {
+export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect, onClear, onClose, warnings, bulkCount }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -85,10 +86,10 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     if (rect.right > vw) {
-      ref.current.style.left = `${position.x - rect.width}px`;
+      ref.current.style.left = `${position.x - rect.width - 12}px`;
     }
     if (rect.bottom > vh) {
-      ref.current.style.top = `${position.y - rect.height}px`;
+      ref.current.style.top = `${position.y - rect.height - 12}px`;
     }
   }, [position]);
 
@@ -99,9 +100,14 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
   return (
     <div
       ref={ref}
-      className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-2 min-w-[180px] max-h-[400px] overflow-y-auto"
-      style={{ left: position.x, top: position.y }}
+      className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-2 min-w-[200px] max-h-[400px] overflow-y-auto"
+      style={{ left: position.x + 12, top: position.y + 12 }}
     >
+      {bulkCount && (
+        <div className="text-[10px] font-semibold text-emerald-400 px-2 py-1 border-b border-slate-700 mb-1">
+          Assign {bulkCount} cells
+        </div>
+      )}
       <div className="text-[10px] uppercase tracking-wider text-slate-500 px-2 py-1">Work</div>
       <div className="grid grid-cols-3 gap-0.5">
         {workShifts.map((st) => (
@@ -141,13 +147,13 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
           </button>
         </div>
       )}
-      {currentShiftTypeId && (
+      {(currentShiftTypeId || bulkCount) && (
         <div className="border-t border-slate-700 mt-1 pt-1">
           <button
             onClick={onClear}
             className="w-full px-2 py-1.5 text-xs text-red-400 hover:bg-red-900/30 rounded transition-colors"
           >
-            Clear
+            {bulkCount ? `Clear ${bulkCount} cells` : "Clear"}
           </button>
         </div>
       )}
