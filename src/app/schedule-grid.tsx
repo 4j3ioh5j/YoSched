@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
+import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 
 type Provider = {
   id: string;
@@ -61,6 +62,34 @@ type StaffingMin = {
   minimumCount: number;
 };
 
+type FairnessDeviation = {
+  weekendCall: number;
+  weekdayOrc: number;
+  weekdayOrl: number;
+  holidayWork: number;
+  desirability: number;
+  overall: number;
+};
+
+type FairnessMetrics = {
+  providerId: string;
+  initials: string;
+  weekendCallCount: number;
+  weekdayOrcCount: number;
+  weekdayOrlCount: number;
+  holidayWorkCount: number;
+  desirabilityScore: number;
+  undesirableShiftCount: number;
+  desirableShiftCount: number;
+  totalWorkDays: number;
+  totalLeaveDays: number;
+};
+
+type FairnessEntry = {
+  metrics: FairnessMetrics;
+  deviation: FairnessDeviation;
+};
+
 type Props = {
   providers: Provider[];
   assignments: AssignmentData[];
@@ -69,6 +98,14 @@ type Props = {
   holidays: Holiday[];
   providerOverrides: ProviderOverride[];
   staffingMins: StaffingMin[];
+  fairnessData?: Record<string, FairnessEntry>;
+  fairnessAverages?: {
+    weekendCallCount: number;
+    weekdayOrcCount: number;
+    weekdayOrlCount: number;
+    holidayWorkCount: number;
+    desirabilityScore: number;
+  };
 };
 
 type PickerState = {
@@ -189,6 +226,8 @@ export function ScheduleGrid({
   holidays,
   providerOverrides,
   staffingMins,
+  fairnessData,
+  fairnessAverages,
 }: Props) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
@@ -201,6 +240,18 @@ export function ScheduleGrid({
   const [activeRow, setActiveRow] = useState<string | null>(null);
   const [activeCol, setActiveCol] = useState<string | null>(null);
   const [hoverCol, setHoverCol] = useState<string | null>(null);
+  const [autoSuggestions, setAutoSuggestions] = useState<Array<{
+    providerId: string;
+    date: string;
+    shiftTypeId: string;
+    code: string;
+    reason: string;
+    step: string;
+    confidence: number;
+  }> | null>(null);
+  const [autoWarnings, setAutoWarnings] = useState<string[]>([]);
+  const [autoStats, setAutoStats] = useState<{ totalSlotsFilled: number; byStep: Record<string, number> } | null>(null);
+  const [autoLoading, setAutoLoading] = useState(false);
 
   // Multi-select state
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -822,6 +873,59 @@ export function ScheduleGrid({
   // Selection count for picker header
   const selectionCount = selection.size;
 
+  async function runAutoSchedule() {
+    setAutoLoading(true);
+    try {
+      const res = await fetch("/api/auto-schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          startDate: dates[0],
+          endDate: dates[dates.length - 1],
+        }),
+      });
+      const data = await res.json();
+      setAutoSuggestions(data.suggestions);
+      setAutoWarnings(data.warnings || []);
+      setAutoStats(data.stats || null);
+    } catch (e) {
+      console.error("Auto-schedule failed:", e);
+    } finally {
+      setAutoLoading(false);
+    }
+  }
+
+  async function applyAutoSuggestions() {
+    if (!autoSuggestions?.length) return;
+    setAutoLoading(true);
+    try {
+      const res = await fetch("/api/auto-schedule", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suggestions: autoSuggestions }),
+      });
+      await res.json();
+      window.location.reload();
+    } catch (e) {
+      console.error("Apply failed:", e);
+    } finally {
+      setAutoLoading(false);
+    }
+  }
+
+  const suggestionSet = useMemo(() => {
+    if (!autoSuggestions) return new Set<string>();
+    return new Set(autoSuggestions.map((s) => `${s.providerId}:${s.date}`));
+  }, [autoSuggestions]);
+
+  type SuggestionEntry = NonNullable<typeof autoSuggestions>[0];
+  const suggestionMap = useMemo(() => {
+    if (!autoSuggestions) return new Map<string, SuggestionEntry>();
+    const m = new Map<string, SuggestionEntry>();
+    for (const s of autoSuggestions) m.set(`${s.providerId}:${s.date}`, s);
+    return m;
+  }, [autoSuggestions]);
+
   let lastPPKey = "";
 
   return (
@@ -859,6 +963,14 @@ export function ScheduleGrid({
             </span>
           )}
           <button
+            onClick={runAutoSchedule}
+            disabled={autoLoading}
+            className="px-3 py-1 text-sm bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 rounded transition-colors text-emerald-100 font-medium"
+            title="Auto-fill empty slots using fairness-weighted scheduling"
+          >
+            {autoLoading ? "Working..." : "Auto-Schedule"}
+          </button>
+          <button
             onClick={handleUndo}
             className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-400"
             title="Undo (Ctrl+Z)"
@@ -875,6 +987,44 @@ export function ScheduleGrid({
         </div>
       </div>
 
+      {/* Auto-schedule review panel */}
+      {autoSuggestions && (
+        <div className="px-6 py-3 bg-emerald-950/50 border-b border-emerald-800 shrink-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <span className="text-sm font-semibold text-emerald-300">
+                Auto-Schedule: {autoSuggestions.length} suggestions
+              </span>
+              {autoStats && (
+                <span className="text-xs text-emerald-400/70">
+                  {Object.entries(autoStats.byStep).map(([k, v]) => `${k}: ${v}`).join(" | ")}
+                </span>
+              )}
+              {autoWarnings.length > 0 && (
+                <span className="text-xs text-amber-400" title={autoWarnings.join("\n")}>
+                  {autoWarnings.length} warning{autoWarnings.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={applyAutoSuggestions}
+                disabled={autoLoading}
+                className="px-3 py-1 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded transition-colors text-white font-medium"
+              >
+                Accept All
+              </button>
+              <button
+                onClick={() => { setAutoSuggestions(null); setAutoWarnings([]); setAutoStats(null); }}
+                className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Scrollable grid area */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
         <table className="border-collapse text-sm">
@@ -885,12 +1035,24 @@ export function ScheduleGrid({
               </th>
               {providers.map((p) => {
                 const isActiveCol = activeCol === p.id;
+                const fe = fairnessData?.[p.id];
+                const fColor = fe ? fairnessColor(fe.deviation.overall) : undefined;
+                const fLabel = fe ? fairnessLabel(fe.deviation.overall) : undefined;
+                const fTooltip = fe
+                  ? `${p.name} (${p.ftePercentage * 100}% FTE)\n` +
+                    `Fairness: ${fLabel}\n` +
+                    `Wknd CALL: ${fe.metrics.weekendCallCount} (avg ${fairnessAverages?.weekendCallCount.toFixed(1)})\n` +
+                    `ORC: ${fe.metrics.weekdayOrcCount} (avg ${fairnessAverages?.weekdayOrcCount.toFixed(1)})\n` +
+                    `ORL: ${fe.metrics.weekdayOrlCount} (avg ${fairnessAverages?.weekdayOrlCount.toFixed(1)})\n` +
+                    `Holiday: ${fe.metrics.holidayWorkCount} (avg ${fairnessAverages?.holidayWorkCount.toFixed(1)})\n` +
+                    `Desirability: ${fe.metrics.desirabilityScore > 0 ? "+" : ""}${fe.metrics.desirabilityScore}`
+                  : `${p.name} (${p.ftePercentage * 100}% FTE)`;
                 return (
                   <th
                     key={p.id}
-                    className="px-1 py-2 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer"
+                    className="px-1 py-1 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer"
                     style={isActiveCol || hoverCol === p.id ? { backgroundColor: "rgba(29,78,216,0.7)" } : undefined}
-                    title={`${p.name} (${p.ftePercentage * 100}% FTE)`}
+                    title={fTooltip}
                     onClick={() => setActiveCol(activeCol === p.id ? null : p.id)}
                     onMouseEnter={() => setHoverCol(p.id)}
                     onMouseLeave={() => setHoverCol(null)}
@@ -901,6 +1063,14 @@ export function ScheduleGrid({
                     ].join(" ")}>
                       {p.initials}
                     </span>
+                    {fColor && (
+                      <div className="flex justify-center mt-0.5">
+                        <div
+                          className="w-2 h-2 rounded-full"
+                          style={{ backgroundColor: fColor }}
+                        />
+                      </div>
+                    )}
                   </th>
                 );
               })}
@@ -1018,6 +1188,8 @@ export function ScheduleGrid({
                     const isDragSrc = dragSource?.providerId === p.id && dragSource?.date === date;
                     const isSelected = selection.has(cellKey);
                     const isHighlighted = activeCol === p.id || hoverCol === p.id || isActiveRow;
+                    const suggestion = suggestionMap.get(cellKey);
+                    const isSuggested = !!suggestion;
 
                     return (
                       <td
@@ -1030,7 +1202,8 @@ export function ScheduleGrid({
                           isSelected ? "ring-2 ring-inset ring-emerald-400 bg-emerald-900/20" : "",
                           isDragTarget ? "ring-2 ring-inset ring-cyan-400 bg-cyan-900/20" : "",
                           isDragSrc ? "opacity-30" : "",
-                          !a && !isSaving ? "hover:bg-slate-700/30" : "",
+                          isSuggested && !a ? "bg-emerald-900/30" : "",
+                          !a && !isSaving && !isSuggested ? "hover:bg-slate-700/30" : "",
                         ].join(" ")}
                         style={isHighlighted ? { backgroundColor: "rgba(29,78,216,0.35)" } : undefined}
                         onClick={(e) => handleCellClick(p.id, date, e)}
@@ -1059,6 +1232,17 @@ export function ScheduleGrid({
                             }
                           >
                             {a.code}
+                          </div>
+                        ) : isSuggested ? (
+                          <div
+                            className="text-[11px] font-bold rounded px-1 py-0.5 leading-tight border border-dashed border-emerald-500/50"
+                            style={{
+                              backgroundColor: (shiftTypes.find((s) => s.id === suggestion!.shiftTypeId)?.color ?? "#6b7280") + "15",
+                              color: (shiftTypes.find((s) => s.id === suggestion!.shiftTypeId)?.color ?? "#6b7280") + "90",
+                            }}
+                            title={`Suggested: ${suggestion!.code}\n${suggestion!.reason}`}
+                          >
+                            {suggestion!.code}
                           </div>
                         ) : isSaving ? (
                           <div className="text-[11px] text-slate-600">...</div>

@@ -1,11 +1,12 @@
 import { prisma } from "@/lib/prisma";
+import { computeFairness } from "@/lib/fairness";
 import { ScheduleGrid } from "./schedule-grid";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins] =
+  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights] =
     await Promise.all([
       prisma.provider.findMany({
         where: { isActive: true },
@@ -19,7 +20,45 @@ export default async function Home() {
       prisma.holiday.findMany({ orderBy: { date: "asc" } }),
       prisma.providerShiftOverride.findMany(),
       prisma.staffingMinimum.findMany(),
+      prisma.desirabilityWeight.findMany(),
     ]);
+
+  const fairness = computeFairness({
+    assignments: assignments.map((a) => ({
+      providerId: a.providerId,
+      date: a.date.toISOString().split("T")[0],
+      shiftType: {
+        id: a.shiftType.id,
+        code: a.shiftType.code,
+        defaultHours: a.shiftType.defaultHours,
+        countsTowardFte: a.shiftType.countsTowardFte,
+        isLeave: a.shiftType.isLeave,
+      },
+    })),
+    providers: providers.map((p) => ({
+      id: p.id,
+      initials: p.initials,
+      employmentType: p.employmentType,
+      ftePercentage: p.ftePercentage ?? 1.0,
+      takesCall: p.takesCall,
+      takesLate: p.takesLate,
+      isActive: p.isActive,
+    })),
+    desirabilityWeights: desirabilityWeights.map((dw) => ({
+      shiftTypeId: dw.shiftTypeId,
+      dayOfWeek: dw.dayOfWeek,
+      weight: dw.weight,
+    })),
+    holidays,
+  });
+
+  const fairnessData: Record<string, { metrics: (typeof fairness.metrics)[0]; deviation: { weekendCall: number; weekdayOrc: number; weekdayOrl: number; holidayWork: number; desirability: number; overall: number } }> = {};
+  for (const m of fairness.metrics) {
+    const dev = fairness.deviations.get(m.providerId);
+    if (dev) {
+      fairnessData[m.providerId] = { metrics: m, deviation: dev };
+    }
+  }
 
   const shiftColorMap: Record<string, string> = {};
   for (const st of shiftTypes) {
@@ -99,6 +138,8 @@ export default async function Home() {
           dayType: sm.dayType,
           minimumCount: sm.minimumCount,
         }))}
+        fairnessData={fairnessData}
+        fairnessAverages={fairness.averages}
       />
     </main>
   );
