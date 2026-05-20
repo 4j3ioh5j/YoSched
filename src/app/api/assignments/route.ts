@@ -1,6 +1,18 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
+function formatAssignment(a: { id: string; providerId: string; shiftTypeId: string; isLocked: boolean; shiftType: { code: string; color: string | null } }, date: string) {
+  return {
+    id: a.id,
+    providerId: a.providerId,
+    date,
+    shiftTypeId: a.shiftTypeId,
+    isLocked: a.isLocked,
+    code: a.shiftType.code,
+    color: a.shiftType.color ?? "#6b7280",
+  };
+}
+
 export async function PUT(req: NextRequest) {
   const { providerId, date, shiftTypeId } = await req.json();
 
@@ -22,15 +34,83 @@ export async function PUT(req: NextRequest) {
     include: { shiftType: true },
   });
 
-  return NextResponse.json({
-    id: assignment.id,
-    providerId: assignment.providerId,
-    date,
-    shiftTypeId: assignment.shiftTypeId,
-    isLocked: assignment.isLocked,
-    code: assignment.shiftType.code,
-    color: assignment.shiftType.color ?? "#6b7280",
-  });
+  return NextResponse.json(formatAssignment(assignment, date));
+}
+
+export async function POST(req: NextRequest) {
+  const { action, from, to } = await req.json();
+
+  if (action === "swap" && from && to) {
+    const fromDate = new Date(from.date + "T00:00:00Z");
+    const toDate = new Date(to.date + "T00:00:00Z");
+
+    const [fromAssignment, toAssignment] = await Promise.all([
+      prisma.assignment.findUnique({
+        where: { providerId_date: { providerId: from.providerId, date: fromDate } },
+      }),
+      prisma.assignment.findUnique({
+        where: { providerId_date: { providerId: to.providerId, date: toDate } },
+      }),
+    ]);
+
+    if (!fromAssignment) {
+      return NextResponse.json({ error: "Source assignment not found" }, { status: 404 });
+    }
+
+    if (fromAssignment.isLocked || toAssignment?.isLocked) {
+      return NextResponse.json({ error: "Cannot move locked assignments" }, { status: 400 });
+    }
+
+    const results: Record<string, unknown> = {};
+
+    if (toAssignment) {
+      // Swap: move both
+      await Promise.all([
+        prisma.assignment.delete({ where: { id: fromAssignment.id } }),
+        prisma.assignment.delete({ where: { id: toAssignment.id } }),
+      ]);
+      const [newFrom, newTo] = await Promise.all([
+        prisma.assignment.create({
+          data: {
+            providerId: to.providerId,
+            date: toDate,
+            shiftTypeId: fromAssignment.shiftTypeId,
+            source: "manual",
+          },
+          include: { shiftType: true },
+        }),
+        prisma.assignment.create({
+          data: {
+            providerId: from.providerId,
+            date: fromDate,
+            shiftTypeId: toAssignment.shiftTypeId,
+            source: "manual",
+          },
+          include: { shiftType: true },
+        }),
+      ]);
+      results.moved = formatAssignment(newFrom, to.date);
+      results.swapped = formatAssignment(newTo, from.date);
+    } else {
+      // Move: delete source, create at target
+      await prisma.assignment.delete({ where: { id: fromAssignment.id } });
+      const newAssignment = await prisma.assignment.create({
+        data: {
+          providerId: to.providerId,
+          date: toDate,
+          shiftTypeId: fromAssignment.shiftTypeId,
+          source: "manual",
+        },
+        include: { shiftType: true },
+      });
+      results.moved = formatAssignment(newAssignment, to.date);
+      results.cleared = { providerId: from.providerId, date: from.date };
+    }
+
+    return NextResponse.json(results);
+  }
+
+  return NextResponse.json({ error: "Unknown action" }, { status: 400 });
 }
 
 export async function DELETE(req: NextRequest) {

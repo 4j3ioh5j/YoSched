@@ -202,6 +202,8 @@ export function ScheduleGrid({
   const [localAssignments, setLocalAssignments] = useState(initialAssignments);
   const [picker, setPicker] = useState<PickerState>(null);
   const [saving, setSaving] = useState<string | null>(null);
+  const [dragSource, setDragSource] = useState<{ providerId: string; date: string } | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
 
   const dates = useMemo(
     () => getMonthDateRange(viewYear, viewMonth, payPeriods),
@@ -441,6 +443,97 @@ export function ScheduleGrid({
 
   const closePicker = useCallback(() => setPicker(null), []);
 
+  function handleDragStart(providerId: string, date: string, e: React.DragEvent) {
+    const a = assignmentMap.get(`${providerId}:${date}`);
+    if (!a || a.isLocked) { e.preventDefault(); return; }
+    setDragSource({ providerId, date });
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", `${providerId}:${date}`);
+  }
+
+  function handleDragOver(providerId: string, date: string, e: React.DragEvent) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const key = `${providerId}:${date}`;
+    if (dragOver !== key) setDragOver(key);
+  }
+
+  function handleDragLeave() {
+    setDragOver(null);
+  }
+
+  function handleDragEnd() {
+    setDragSource(null);
+    setDragOver(null);
+  }
+
+  const handleDrop = useCallback(async (toProviderId: string, toDate: string, e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(null);
+
+    if (!dragSource) return;
+    const { providerId: fromProviderId, date: fromDate } = dragSource;
+    setDragSource(null);
+
+    if (fromProviderId === toProviderId && fromDate === toDate) return;
+
+    const fromA = assignmentMap.get(`${fromProviderId}:${fromDate}`);
+    const toA = assignmentMap.get(`${toProviderId}:${toDate}`);
+    if (!fromA || fromA.isLocked || toA?.isLocked) return;
+
+    const fromKey = `${fromProviderId}:${fromDate}`;
+    const toKey = `${toProviderId}:${toDate}`;
+    setSaving(fromKey);
+
+    // Optimistic update
+    setLocalAssignments((prev) => {
+      let next = prev.filter(
+        (a) => !(a.providerId === fromProviderId && a.date === fromDate) &&
+               !(a.providerId === toProviderId && a.date === toDate)
+      );
+      // Move source to target
+      next.push({ ...fromA, providerId: toProviderId, date: toDate, id: `temp-${toKey}` });
+      // If target had assignment, move it to source (swap)
+      if (toA) {
+        next.push({ ...toA, providerId: fromProviderId, date: fromDate, id: `temp-${fromKey}` });
+      }
+      return next;
+    });
+
+    try {
+      const res = await fetch("/api/assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "swap",
+          from: { providerId: fromProviderId, date: fromDate },
+          to: { providerId: toProviderId, date: toDate },
+        }),
+      });
+      if (!res.ok) throw new Error("Swap failed");
+      const result = await res.json();
+
+      setLocalAssignments((prev) => {
+        let next = prev.filter(
+          (a) => !a.id.startsWith("temp-")
+            || (a.providerId !== fromProviderId && a.providerId !== toProviderId)
+        );
+        // Replace temps with server responses
+        next = next.filter(
+          (a) => !(a.providerId === toProviderId && a.date === toDate) &&
+                 !(a.providerId === fromProviderId && a.date === fromDate)
+        );
+        if (result.moved) next.push(result.moved);
+        if (result.swapped) next.push(result.swapped);
+        return next;
+      });
+    } catch {
+      window.location.reload();
+    } finally {
+      setSaving(null);
+    }
+  }, [dragSource, assignmentMap]);
+
   // Compute warnings for picker preview
   const pickerWarnings = useMemo(() => {
     if (!picker) return new Map<string, Warning[]>();
@@ -625,6 +718,8 @@ export function ScheduleGrid({
                     const isSaving = saving === cellKey;
                     const isPickerTarget = picker?.providerId === p.id && picker?.date === date;
                     const cw = cellWarnings.get(cellKey);
+                    const isDragTarget = dragOver === cellKey;
+                    const isDragSrc = dragSource?.providerId === p.id && dragSource?.date === date;
 
                     return (
                       <td
@@ -634,15 +729,23 @@ export function ScheduleGrid({
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
                           ppEven ? "" : "bg-slate-800/20",
                           isPickerTarget ? "ring-1 ring-inset ring-blue-400" : "",
+                          isDragTarget ? "ring-2 ring-inset ring-cyan-400 bg-cyan-900/20" : "",
+                          isDragSrc ? "opacity-30" : "",
                           !a && !isSaving ? "hover:bg-slate-700/30" : "",
                         ].join(" ")}
                         onClick={(e) => handleCellClick(p.id, date, e)}
+                        onDragOver={(e) => handleDragOver(p.id, date, e)}
+                        onDragLeave={handleDragLeave}
+                        onDrop={(e) => handleDrop(p.id, date, e)}
                       >
                         {a ? (
                           <div
+                            draggable={!a.isLocked}
+                            onDragStart={(e) => handleDragStart(p.id, date, e)}
+                            onDragEnd={handleDragEnd}
                             className={[
                               "text-[11px] font-bold rounded px-1 py-0.5 leading-tight",
-                              a.isLocked ? "ring-1 ring-yellow-500/50 cursor-not-allowed" : "hover:brightness-125",
+                              a.isLocked ? "ring-1 ring-yellow-500/50 cursor-not-allowed" : "hover:brightness-125 cursor-grab active:cursor-grabbing",
                               isSaving ? "opacity-50" : "",
                             ].join(" ")}
                             style={{
@@ -711,7 +814,7 @@ export function ScheduleGrid({
       {/* Shift picker popover */}
       {picker && (
         <ShiftPicker
-          shiftTypes={shiftTypes.filter((st) => st.category !== "other")}
+          shiftTypes={shiftTypes}
           currentShiftTypeId={assignmentMap.get(`${picker.providerId}:${picker.date}`)?.shiftTypeId ?? null}
           position={{ x: picker.x, y: picker.y }}
           onSelect={handleSelect}

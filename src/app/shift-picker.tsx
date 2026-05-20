@@ -94,6 +94,7 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
 
   const workShifts = shiftTypes.filter((s) => s.category === "work");
   const leaveShifts = shiftTypes.filter((s) => s.category === "leave");
+  const offShift = shiftTypes.find((s) => s.code === "X");
 
   return (
     <div
@@ -127,16 +128,27 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
         ))}
       </div>
 
-      {currentShiftTypeId && (
-        <div className="border-t border-slate-700 mt-2 pt-1">
+      <div className="border-t border-slate-700 mt-2 pt-1 flex gap-1">
+        {offShift && (
+          <button
+            onClick={() => onSelect(offShift.id)}
+            className={[
+              "flex-1 px-2 py-1.5 text-xs font-bold rounded text-center text-slate-400 bg-slate-700/50 hover:bg-slate-600/50 transition-colors",
+              offShift.id === currentShiftTypeId ? "ring-2 ring-white/50" : "",
+            ].join(" ")}
+          >
+            OFF
+          </button>
+        )}
+        {currentShiftTypeId && (
           <button
             onClick={onClear}
-            className="w-full px-2 py-1.5 text-xs text-red-400 hover:bg-red-900/30 rounded transition-colors"
+            className="flex-1 px-2 py-1.5 text-xs text-red-400 hover:bg-red-900/30 rounded transition-colors"
           >
             Clear
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
