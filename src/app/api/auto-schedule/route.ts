@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
     providerOverrides,
     dayPreferences,
     historicalAssignments,
+    staffingRequirements,
   ] = await Promise.all([
     prisma.provider.findMany({ where: { isActive: true } }),
     prisma.shiftType.findMany(),
@@ -48,6 +49,7 @@ export async function POST(req: NextRequest) {
       },
       include: { shiftType: true },
     }),
+    prisma.staffingRequirement.findMany(),
   ]);
 
   const start = new Date(startDate + "T12:00:00");
@@ -86,6 +88,12 @@ export async function POST(req: NextRequest) {
       countsTowardFte: st.countsTowardFte,
       countsOnWeekend: st.countsOnWeekend,
       isLeave: st.isLeave,
+      isOffShift: st.isOffShift,
+      isFillShift: st.isFillShift,
+      schedulePriority: st.schedulePriority,
+      weekendPaired: st.weekendPaired,
+      ignoresWorkingDays: st.ignoresWorkingDays,
+      eligibilityRule: st.eligibilityRule,
       category: st.category,
       postShiftRule: st.postShiftRule,
     })),
@@ -131,6 +139,11 @@ export async function POST(req: NextRequest) {
       shiftTypeId: a.shiftTypeId,
       code: shiftCodeMap.get(a.shiftTypeId) ?? "?",
       isLocked: a.isLocked,
+    })),
+    staffingRequirements: staffingRequirements.map((sr) => ({
+      shiftCode: sr.shiftCode,
+      dayKey: sr.dayKey,
+      minCount: sr.minCount,
     })),
   });
 

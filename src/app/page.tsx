@@ -34,6 +34,7 @@ export default async function Home() {
         defaultHours: a.shiftType.defaultHours,
         countsTowardFte: a.shiftType.countsTowardFte,
         isLeave: a.shiftType.isLeave,
+        isOffShift: a.shiftType.isOffShift,
       },
     })),
     providers: providers.map((p) => ({
@@ -118,6 +119,8 @@ export default async function Home() {
           color: st.color ?? "#6b7280",
           category: st.category,
           isLeave: st.isLeave,
+          isOffShift: st.isOffShift,
+          ignoresWorkingDays: st.ignoresWorkingDays,
           defaultHours: st.defaultHours,
           countsTowardFte: st.countsTowardFte,
           countsOnWeekend: st.countsOnWeekend,

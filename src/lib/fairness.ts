@@ -7,6 +7,7 @@ type Assignment = {
     defaultHours: number;
     countsTowardFte: boolean;
     isLeave: boolean;
+    isOffShift?: boolean;
   };
 };
 
@@ -125,7 +126,7 @@ export function computeFairness({
       const dow = getDow(a.date);
       const isHoliday = holidaySet.has(dateStr);
 
-      if (code === "X") continue;
+      if (a.shiftType.isOffShift) continue;
 
       if (a.shiftType.isLeave) {
         totalLeaveDays++;

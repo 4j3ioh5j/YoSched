@@ -10,6 +10,7 @@ type ShiftType = {
   color: string;
   category: string;
   isLeave: boolean;
+  isOffShift: boolean;
 };
 
 type Props = {
@@ -95,7 +96,7 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
 
   const workShifts = shiftTypes.filter((s) => s.category === "work");
   const leaveShifts = shiftTypes.filter((s) => s.category === "leave");
-  const offShift = shiftTypes.find((s) => s.code === "X");
+  const offShift = shiftTypes.find((s) => s.isOffShift);
 
   return (
     <div

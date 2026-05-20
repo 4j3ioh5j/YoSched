@@ -15,6 +15,7 @@ type ShiftType = {
   postShiftRule: string | null;
   color: string;
   sortOrder: number;
+  schedulePriority: number | null;
 };
 
 type StaffingReq = {
@@ -268,7 +269,7 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
       });
       if (!res.ok) throw new Error(await res.text());
       const created = await res.json();
-      const newShift = {
+      const newShift: ShiftType = {
         id: created.id,
         code: created.code,
         name: created.name,
@@ -281,6 +282,7 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
         postShiftRule: created.postShiftRule,
         color: created.color ?? "#6b7280",
         sortOrder: created.sortOrder,
+        schedulePriority: created.schedulePriority ?? null,
       };
       setShifts((prev) => [...prev, newShift]);
       setEditingId(created.id);
@@ -510,11 +512,17 @@ function StaffingSection({
 
   const [columns, setColumns] = useState(() => {
     const codes = [...new Set(initial.map((r) => r.shiftCode))];
-    if (codes.length === 0) return ["OR", "ORC", "ORL", "CALL"];
-    // Ensure CALL is always last, preserve order of others
-    const withoutCall = codes.filter((c) => c !== "CALL");
-    if (codes.includes("CALL")) withoutCall.push("CALL");
-    return withoutCall;
+    if (codes.length === 0) {
+      return shiftTypes
+        .filter((st) => st.schedulePriority != null)
+        .sort((a, b) => (a.schedulePriority ?? 0) - (b.schedulePriority ?? 0))
+        .map((st) => st.code);
+    }
+    return codes.sort((a, b) => {
+      const stA = shiftTypes.find((st) => st.code === a);
+      const stB = shiftTypes.find((st) => st.code === b);
+      return (stA?.schedulePriority ?? 999) - (stB?.schedulePriority ?? 999);
+    });
   });
 
   const [editingCol, setEditingCol] = useState<string | null>(null);

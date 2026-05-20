@@ -33,6 +33,8 @@ type ShiftType = {
   color: string;
   category: string;
   isLeave: boolean;
+  isOffShift: boolean;
+  ignoresWorkingDays: boolean;
   defaultHours: number;
   countsTowardFte: boolean;
   countsOnWeekend: boolean;
@@ -398,6 +400,7 @@ export function ScheduleGrid({
         date,
         providers,
         assignmentMap,
+        shiftTypeMap,
         holidaySet,
         staffingMins,
         staffingReqs,
@@ -407,7 +410,7 @@ export function ScheduleGrid({
       }
     }
     return map;
-  }, [dates, providers, assignmentMap, holidaySet, staffingMins, staffingReqs]);
+  }, [dates, providers, assignmentMap, shiftTypeMap, holidaySet, staffingMins, staffingReqs]);
 
   const staffingCountCodes = useMemo(() => {
     const codes = new Set<string>();
@@ -1249,8 +1252,8 @@ export function ScheduleGrid({
                               isSaving ? "opacity-50" : "",
                             ].join(" ")}
                             style={{
-                              backgroundColor: a.code === "X" ? "transparent" : a.color + "30",
-                              color: a.code === "X" ? "#475569" : a.color,
+                              backgroundColor: shiftTypeMap.get(a.shiftTypeId)?.isOffShift ? "transparent" : a.color + "30",
+                              color: shiftTypeMap.get(a.shiftTypeId)?.isOffShift ? "#475569" : a.color,
                             }}
                             title={
                               cw && cw.length > 0

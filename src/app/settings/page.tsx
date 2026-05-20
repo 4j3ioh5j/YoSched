@@ -45,6 +45,7 @@ export default async function Settings() {
           postShiftRule: st.postShiftRule,
           color: st.color ?? "#6b7280",
           sortOrder: st.sortOrder,
+          schedulePriority: st.schedulePriority,
         }))}
         staffingReqs={staffingReqs.map((r) => ({
           id: r.id,

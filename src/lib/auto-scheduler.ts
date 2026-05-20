@@ -20,6 +20,12 @@ export type ScheduleShiftType = {
   countsTowardFte: boolean;
   countsOnWeekend: boolean;
   isLeave: boolean;
+  isOffShift: boolean;
+  isFillShift: boolean;
+  schedulePriority: number | null;
+  weekendPaired: boolean;
+  ignoresWorkingDays: boolean;
+  eligibilityRule: string | null;
   category: string;
   postShiftRule: string | null;
 };
@@ -63,6 +69,12 @@ type DayPreference = {
   providerId: string;
   dayOfWeek: number;
   preference: string;
+};
+
+type StaffingRequirement = {
+  shiftCode: string;
+  dayKey: string;
+  minCount: number;
 };
 
 export type Suggestion = {
@@ -133,6 +145,7 @@ export function autoSchedule({
   providerOverrides,
   dayPreferences,
   historicalAssignments,
+  staffingRequirements,
 }: {
   dates: string[];
   providers: ScheduleProvider[];
@@ -145,6 +158,7 @@ export function autoSchedule({
   providerOverrides: ProviderOverride[];
   dayPreferences: DayPreference[];
   historicalAssignments: ScheduleAssignment[];
+  staffingRequirements: StaffingRequirement[];
 }): AutoScheduleResult {
   const suggestions: Suggestion[] = [];
   const warnings: string[] = [];
@@ -159,6 +173,8 @@ export function autoSchedule({
     stByCode.set(st.code, st);
     stById.set(st.id, st);
   }
+
+  const offShift = shiftTypes.find((st) => st.isOffShift);
 
   const overrideMap = new Map<string, number>();
   for (const o of providerOverrides) {
@@ -177,8 +193,6 @@ export function autoSchedule({
   const activeProviders = providers.filter(
     (p) => p.isActive && p.employmentType === "fte"
   );
-  const callProviders = activeProviders.filter((p) => p.takesCall);
-  const lateProviders = activeProviders.filter((p) => p.takesLate);
 
   const dwMap = new Map<string, number>();
   for (const dw of desirabilityWeights) {
@@ -188,6 +202,18 @@ export function autoSchedule({
   const prefMap = new Map<string, string>();
   for (const dp of dayPreferences) {
     prefMap.set(`${dp.providerId}:${dp.dayOfWeek}`, dp.preference);
+  }
+
+  // Build staffing requirements lookup: shiftCode → Map<dayKey, minCount>
+  const reqsByShift = new Map<string, Map<string, number>>();
+  for (const sr of staffingRequirements) {
+    if (sr.minCount <= 0) continue;
+    let dayMap = reqsByShift.get(sr.shiftCode);
+    if (!dayMap) {
+      dayMap = new Map();
+      reqsByShift.set(sr.shiftCode, dayMap);
+    }
+    dayMap.set(sr.dayKey, sr.minCount);
   }
 
   const fairness = computeFairness({
@@ -226,10 +252,12 @@ export function autoSchedule({
     return grid.has(`${providerId}:${date}`);
   }
 
-  function isAvailable(provider: ScheduleProvider, date: string): boolean {
+  function isAvailable(provider: ScheduleProvider, date: string, st: ScheduleShiftType): boolean {
     if (isAssigned(provider.id, date)) return false;
-    const dow = getDow(date);
-    if (!provider.workingDays.includes(dow)) return false;
+    if (!st.ignoresWorkingDays) {
+      const dow = getDow(date);
+      if (!provider.workingDays.includes(dow)) return false;
+    }
     const prev = getCell(provider.id, prevDate(date));
     if (prev) {
       const prevSt = stById.get(prev.shiftTypeId);
@@ -282,20 +310,36 @@ export function autoSchedule({
     return hours;
   }
 
-  function findPPForDate(date: string): PayPeriod | null {
-    for (const pp of payPeriods) {
-      if (date >= pp.startDate && date <= pp.endDate) return pp;
-    }
-    return null;
-  }
-
   function fairnessScore(providerId: string): number {
     return fairness.deviations.get(providerId)?.overall ?? 0;
   }
 
-  // Sort by fairness: most underloaded first (lowest overall deviation)
   function sortByFairness(pIds: string[]): string[] {
     return [...pIds].sort((a, b) => fairnessScore(a) - fairnessScore(b));
+  }
+
+  function eligibleProviders(st: ScheduleShiftType): ScheduleProvider[] {
+    if (!st.eligibilityRule) return activeProviders;
+    return activeProviders.filter((p) => {
+      if (st.eligibilityRule === "takesCall") return p.takesCall;
+      if (st.eligibilityRule === "takesLate") return p.takesLate;
+      return true;
+    });
+  }
+
+  function getRequiredCount(st: ScheduleShiftType, date: string): number {
+    const dayMap = reqsByShift.get(st.code);
+    if (!dayMap) return 0;
+    const dayKey = holidaySet.has(date) ? "holiday" : String(getDow(date));
+    return dayMap.get(dayKey) ?? 0;
+  }
+
+  function countAssigned(code: string, date: string): number {
+    let count = 0;
+    for (const [k, v] of grid.entries()) {
+      if (k.endsWith(`:${date}`) && v.code === code) count++;
+    }
+    return count;
   }
 
   // ── STEP 1: Apply standing commitments ──
@@ -326,129 +370,120 @@ export function autoSchedule({
     }
   }
 
-  // ── STEP 2: Weekend CALL (fairness-weighted) ──
-  const callSt = stByCode.get("CALL");
-  if (callSt) {
-    const weekendDates = dates.filter((d) => isWeekend(d));
-    const saturdayDates = weekendDates.filter((d) => getDow(d) === 6);
+  // ── STEP 2: Fill staffing requirements (data-driven) ──
+  // Get all shift types that have a schedulePriority and are not fill shifts
+  const scheduledShifts = shiftTypes
+    .filter((st) => st.schedulePriority != null && !st.isFillShift && !st.isOffShift)
+    .sort((a, b) => (a.schedulePriority ?? 0) - (b.schedulePriority ?? 0));
 
-    for (const sat of saturdayDates) {
-      const sun = nextDate(sat);
-      if (!dateSet.has(sun)) continue;
+  for (const st of scheduledShifts) {
+    const eligible = eligibleProviders(st);
+    const stepName = st.code.toLowerCase();
 
-      const eligible = callProviders.filter(
-        (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun)
-      );
+    if (st.weekendPaired) {
+      // Paired weekend scheduling: assign same provider to Sat+Sun
+      const saturdayDates = dates.filter((d) => getDow(d) === 6);
 
-      if (eligible.length === 0) {
-        warnings.push(`No eligible CALL provider for ${sat}/${sun}`);
-        continue;
+      for (const sat of saturdayDates) {
+        const sun = nextDate(sat);
+        const satRequired = getRequiredCount(st, sat);
+        const sunRequired = getRequiredCount(st, sun);
+        if (satRequired <= 0 && sunRequired <= 0) continue;
+        if (!dateSet.has(sun)) continue;
+
+        const satCount = countAssigned(st.code, sat);
+        const sunCount = countAssigned(st.code, sun);
+        if (satCount >= satRequired && sunCount >= sunRequired) continue;
+
+        const available = eligible.filter(
+          (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun)
+        );
+
+        if (available.length === 0) {
+          warnings.push(`No eligible ${st.code} provider for ${sat}/${sun}`);
+          continue;
+        }
+
+        const sorted = sortByFairness(available.map((p) => p.id));
+        const chosen = sorted[0];
+        const provider = providers.find((p) => p.id === chosen)!;
+
+        assign(chosen, sat, st, `Weekend ${st.code} (fairness pick — ${provider.initials} is underloaded)`, `weekend-${stepName}`, 0.8);
+        assign(chosen, sun, st, `Weekend ${st.code} (fairness pick — ${provider.initials} is underloaded)`, `weekend-${stepName}`, 0.8);
       }
 
-      const sorted = sortByFairness(eligible.map((p) => p.id));
-      const chosen = sorted[0];
-      const provider = providers.find((p) => p.id === chosen)!;
+      // Also fill holiday requirements for paired shifts
+      for (const date of dates) {
+        if (!holidaySet.has(date) || isWeekend(date)) continue;
+        const required = getRequiredCount(st, date);
+        if (required <= 0) continue;
+        const current = countAssigned(st.code, date);
+        if (current >= required) continue;
 
-      assign(chosen, sat, callSt, `Weekend CALL (fairness pick — ${provider.initials} is underloaded)`, "weekend-call", 0.8);
-      assign(chosen, sun, callSt, `Weekend CALL (fairness pick — ${provider.initials} is underloaded)`, "weekend-call", 0.8);
-    }
-  }
+        const available = eligible.filter((p) => !isAssigned(p.id, date));
+        if (available.length === 0) {
+          warnings.push(`No eligible ${st.code} provider for holiday ${date}`);
+          continue;
+        }
 
-  // ── STEP 3: Respect locked/imported cells (already in grid) ──
-  // No action needed — locked cells are already in the grid and won't be overwritten.
-
-  // ── STEP 4: Distribute ORC (one per weekday, fairness-weighted) ──
-  const orcSt = stByCode.get("ORC");
-  if (orcSt) {
-    const weekdays = dates.filter(
-      (d) => !isWeekend(d) && !holidaySet.has(d)
-    );
-
-    for (const date of weekdays) {
-      const existing = [...grid.entries()].find(
-        ([k, v]) => k.endsWith(`:${date}`) && v.code === "ORC"
-      );
-      if (existing) continue;
-
-      const eligible = callProviders.filter((p) => isAvailable(p, date));
-      if (eligible.length === 0) {
-        warnings.push(`No eligible ORC provider for ${date}`);
-        continue;
+        const sorted = sortByFairness(available.map((p) => p.id));
+        const chosen = sorted[0];
+        const provider = providers.find((p) => p.id === chosen)!;
+        assign(chosen, date, st, `Holiday ${st.code} (fairness pick — ${provider.initials})`, `holiday-${stepName}`, 0.8);
       }
+    } else {
+      // Standard per-day scheduling
+      for (const date of dates) {
+        const required = getRequiredCount(st, date);
+        if (required <= 0) continue;
 
-      const dow = getDow(date);
-      const preferred = eligible.filter(
-        (p) => prefMap.get(`${p.id}:${dow}`) === "ORC"
-      );
+        const current = countAssigned(st.code, date);
+        if (current >= required) continue;
 
-      let pool = preferred.length > 0 ? preferred : eligible;
-      const sorted = sortByFairness(pool.map((p) => p.id));
+        const needed = required - current;
+        const available = eligible.filter((p) => isAvailable(p, date, st));
 
-      const desirability = dwMap.get(`${orcSt.id}:${dow}`) ?? 0;
-      const chosen = sorted[0];
-      const provider = providers.find((p) => p.id === chosen)!;
+        if (available.length === 0) {
+          warnings.push(`No eligible ${st.code} provider for ${date}`);
+          continue;
+        }
 
-      assign(
-        chosen,
-        date,
-        orcSt,
-        `ORC (fairness${desirability !== 0 ? `, desirability ${desirability > 0 ? "+" : ""}${desirability}` : ""})`,
-        "orc",
-        0.7
-      );
+        const dow = getDow(date);
+        const preferred = available.filter(
+          (p) => prefMap.get(`${p.id}:${dow}`) === st.code
+        );
 
-      // Post-shift: mark next day as off if provider works that day
-      if (orcSt.postShiftRule === "day_off_after") {
-        const next = nextDate(date);
-        if (dateSet.has(next) && !isAssigned(chosen, next)) {
-          const xSt = stByCode.get("X");
-          if (xSt) {
-            assign(chosen, next, xSt, `Day off after ORC`, "orc-recovery", 0.95);
+        const pool = preferred.length > 0 ? preferred : available;
+        const sorted = sortByFairness(pool.map((p) => p.id));
+        const desirability = dwMap.get(`${st.id}:${dow}`) ?? 0;
+
+        for (let i = 0; i < needed && i < sorted.length; i++) {
+          const chosen = sorted[i];
+          const provider = providers.find((p) => p.id === chosen)!;
+
+          assign(
+            chosen,
+            date,
+            st,
+            `${st.code} (fairness${desirability !== 0 ? `, desirability ${desirability > 0 ? "+" : ""}${desirability}` : ""})`,
+            stepName,
+            0.7
+          );
+
+          if (st.postShiftRule === "day_off_after" && offShift) {
+            const next = nextDate(date);
+            if (dateSet.has(next) && !isAssigned(chosen, next)) {
+              assign(chosen, next, offShift, `Day off after ${st.code}`, `${stepName}-recovery`, 0.95);
+            }
           }
         }
       }
     }
   }
 
-  // ── STEP 5: Distribute ORL (one per weekday, fairness-weighted) ──
-  const orlSt = stByCode.get("ORL");
-  if (orlSt) {
-    const weekdays = dates.filter(
-      (d) => !isWeekend(d) && !holidaySet.has(d)
-    );
-
-    for (const date of weekdays) {
-      const existing = [...grid.entries()].find(
-        ([k, v]) => k.endsWith(`:${date}`) && v.code === "ORL"
-      );
-      if (existing) continue;
-
-      const eligible = lateProviders.filter((p) => isAvailable(p, date));
-      if (eligible.length === 0) {
-        warnings.push(`No eligible ORL provider for ${date}`);
-        continue;
-      }
-
-      const dow = getDow(date);
-      const desirability = dwMap.get(`${orlSt.id}:${dow}`) ?? 0;
-      const sorted = sortByFairness(eligible.map((p) => p.id));
-      const chosen = sorted[0];
-      const provider = providers.find((p) => p.id === chosen)!;
-
-      assign(
-        chosen,
-        date,
-        orlSt,
-        `ORL (fairness${desirability !== 0 ? `, desirability ${desirability > 0 ? "+" : ""}${desirability}` : ""})`,
-        "orl",
-        0.7
-      );
-    }
-  }
-
-  // ── STEP 6: Fill OR to hit FTE hour targets ──
-  const orSt = stByCode.get("OR");
-  if (orSt) {
+  // ── STEP 3: Fill shift to hit FTE hour targets ──
+  const fillShift = shiftTypes.find((st) => st.isFillShift);
+  if (fillShift) {
     const sortedPPs = [...payPeriods]
       .filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate))
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
@@ -470,19 +505,19 @@ export function autoSchedule({
         if (currentHours >= target) continue;
 
         const availableDates = ppDates.filter((d) =>
-          isAvailable(provider, d)
+          isAvailable(provider, d, fillShift)
         );
 
         for (const date of availableDates) {
           if (currentHours >= target) break;
 
-          const hours = getShiftHours(provider.id, orSt, overrideMap);
+          const hours = getShiftHours(provider.id, fillShift, overrideMap);
           assign(
             provider.id,
             date,
-            orSt,
-            `OR to fill hours (${currentHours}/${target}hrs)`,
-            "or-fill",
+            fillShift,
+            `${fillShift.code} to fill hours (${currentHours}/${target}hrs)`,
+            "fill",
             0.6
           );
           currentHours += hours;

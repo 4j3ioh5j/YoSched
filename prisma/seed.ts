@@ -10,15 +10,15 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   // --- Shift Types ---
   const shiftTypes = [
-    { code: "OR",     name: "Operating Room",       defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#3b82f6", sortOrder: 1 },
-    { code: "ORC",    name: "OR Call",               defaultHours: 16, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#6366f1", sortOrder: 2, postShiftRule: "day_off_after" },
-    { code: "ORL",    name: "OR Late",               defaultHours: 12, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#8b5cf6", sortOrder: 3 },
+    { code: "OR",     name: "Operating Room",       defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#3b82f6", sortOrder: 1, isFillShift: true, schedulePriority: 100 },
+    { code: "ORC",    name: "OR Call",               defaultHours: 16, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#6366f1", sortOrder: 2, postShiftRule: "day_off_after", schedulePriority: 20, eligibilityRule: "takesCall" },
+    { code: "ORL",    name: "OR Late",               defaultHours: 12, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#8b5cf6", sortOrder: 3, schedulePriority: 30, eligibilityRule: "takesLate" },
     { code: "ADM",    name: "Administrative",         defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#f59e0b", sortOrder: 4 },
     { code: "PREOP",  name: "Pre-op Clinic",          defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#10b981", sortOrder: 5 },
     { code: "PAIN",   name: "Pain Service",           defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#ef4444", sortOrder: 7 },
     { code: "ICU",    name: "Intensive Care",          defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#dc2626", sortOrder: 8 },
     { code: "CARD",   name: "Cardiac",                defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#e11d48", sortOrder: 9 },
-    { code: "CALL",   name: "Weekend Call",            defaultHours: 0,  countsTowardFte: false, isLeave: false, isPaid: false, category: "work",  color: "#a855f7", sortOrder: 10 },
+    { code: "CALL",   name: "Weekend Call",            defaultHours: 0,  countsTowardFte: false, isLeave: false, isPaid: false, category: "work",  color: "#a855f7", sortOrder: 10, schedulePriority: 10, weekendPaired: true, ignoresWorkingDays: true, eligibilityRule: "takesCall" },
     { code: "QA",     name: "Quality Assurance",       defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#0ea5e9", sortOrder: 11 },
     { code: "TEL",    name: "Telehealth",              defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#06b6d4", sortOrder: 12 },
     { code: "UCLA",   name: "UCLA Rotation",           defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#2563eb", sortOrder: 13 },
@@ -31,7 +31,7 @@ async function main() {
     { code: "AA",     name: "Authorized Absence",      defaultHours: 8,  countsTowardFte: false, isLeave: true,  isPaid: true,  category: "leave", color: "#fbbf24", sortOrder: 24 },
     { code: "ILD",    name: "Banked Hours Day Off",    defaultHours: 8,  countsTowardFte: false, isLeave: true,  isPaid: true,  category: "leave", color: "#34d399", sortOrder: 25 },
     { code: "JD",     name: "Jury Duty",               defaultHours: 8,  countsTowardFte: false, isLeave: true,  isPaid: true,  category: "leave", color: "#fcd34d", sortOrder: 26 },
-    { code: "X",      name: "Off",                     defaultHours: 0,  countsTowardFte: false, isLeave: false, isPaid: false, category: "other", color: "#d1d5db", sortOrder: 99 },
+    { code: "X",      name: "Off",                     defaultHours: 0,  countsTowardFte: false, isLeave: false, isPaid: false, category: "other", color: "#d1d5db", sortOrder: 99, isOffShift: true },
   ];
 
   for (const st of shiftTypes) {

@@ -9,6 +9,8 @@ type ShiftType = {
   defaultHours: number;
   countsTowardFte: boolean;
   postShiftRule: string | null;
+  isOffShift: boolean;
+  ignoresWorkingDays: boolean;
 };
 
 type Provider = {
@@ -98,7 +100,7 @@ export function checkCellWarnings({
   const dow = parseDate(date).getDay();
 
   // Non-working day
-  if (!provider.workingDays.includes(dow) && st.code !== "X" && st.code !== "CALL") {
+  if (!provider.workingDays.includes(dow) && !st.isOffShift && !st.ignoresWorkingDays) {
     warnings.push({
       type: "non-working-day",
       message: `${provider.initials} doesn't normally work on ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dow]}s`,
@@ -110,7 +112,7 @@ export function checkCellWarnings({
   const prevAssignment = assignmentMap.get(`${providerId}:${prevDate}`);
   if (prevAssignment) {
     const prevSt = shiftTypeMap.get(prevAssignment.shiftTypeId);
-    if (prevSt?.postShiftRule === "day_off_after" && st.code !== "X") {
+    if (prevSt?.postShiftRule === "day_off_after" && !st.isOffShift) {
       warnings.push({
         type: "post-shift",
         message: `Should be off — ${provider.initials} had ${prevSt.code} yesterday`,
@@ -124,7 +126,7 @@ export function checkCellWarnings({
     const nextAssignment = assignmentMap.get(`${providerId}:${nextDate}`);
     if (nextAssignment) {
       const nextSt = shiftTypeMap.get(nextAssignment.shiftTypeId);
-      if (nextSt && nextSt.code !== "X") {
+      if (nextSt && !nextSt.isOffShift) {
         warnings.push({
           type: "post-shift",
           message: `${st.code} requires day off after — ${provider.initials} is scheduled ${nextSt.code} tomorrow`,
@@ -140,6 +142,7 @@ export function checkDayStaffing({
   date,
   providers,
   assignmentMap,
+  shiftTypeMap,
   holidaySet,
   staffingMins,
   staffingReqs,
@@ -147,6 +150,7 @@ export function checkDayStaffing({
   date: string;
   providers: Provider[];
   assignmentMap: AssignmentLookup;
+  shiftTypeMap: Map<string, ShiftType>;
   holidaySet: Set<string>;
   staffingMins: StaffingMinimum[];
   staffingReqs?: StaffingRequirement[];
@@ -155,13 +159,17 @@ export function checkDayStaffing({
   const dayType = getDayType(date, holidaySet);
   const dow = parseDate(date).getDay();
 
+  function isOff(a: { shiftTypeId: string }): boolean {
+    return shiftTypeMap.get(a.shiftTypeId)?.isOffShift ?? false;
+  }
+
   if (staffingReqs && staffingReqs.length > 0) {
     const dayKey = holidaySet.has(date) ? "holiday" : String(dow);
 
     const shiftCounts = new Map<string, number>();
     for (const p of providers) {
       const a = assignmentMap.get(`${p.id}:${date}`);
-      if (a && a.code !== "X") {
+      if (a && !isOff(a)) {
         shiftCounts.set(a.code, (shiftCounts.get(a.code) || 0) + 1);
       }
     }
@@ -185,7 +193,7 @@ export function checkDayStaffing({
     let staffed = 0;
     for (const p of providers) {
       const a = assignmentMap.get(`${p.id}:${date}`);
-      if (a && a.code !== "X") staffed++;
+      if (a && !isOff(a)) staffed++;
     }
     if (staffed < min.minimumCount) {
       warnings.push({

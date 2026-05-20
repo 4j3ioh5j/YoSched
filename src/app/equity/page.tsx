@@ -26,6 +26,7 @@ export default async function Equity() {
         defaultHours: a.shiftType.defaultHours,
         countsTowardFte: a.shiftType.countsTowardFte,
         isLeave: a.shiftType.isLeave,
+        isOffShift: a.shiftType.isOffShift,
       },
     })),
     providers: providers.map((p) => ({
@@ -51,7 +52,7 @@ export default async function Equity() {
     const pid = a.providerId;
     if (!shiftTallies[pid]) shiftTallies[pid] = {};
     const code = a.shiftType.code;
-    if (code === "X") continue;
+    if (a.shiftType.isOffShift) continue;
     shiftTallies[pid][code] = (shiftTallies[pid][code] || 0) + 1;
   }
 
