@@ -255,6 +255,19 @@ export function ScheduleGrid({
   const [autoStats, setAutoStats] = useState<{ totalSlotsFilled: number; byStep: Record<string, number> } | null>(null);
   const [autoLoading, setAutoLoading] = useState(false);
 
+  type SuggestionEntry = NonNullable<typeof autoSuggestions>[0];
+  const suggestionSet = useMemo(() => {
+    if (!autoSuggestions) return new Set<string>();
+    return new Set(autoSuggestions.map((s) => `${s.providerId}:${s.date}`));
+  }, [autoSuggestions]);
+
+  const suggestionMap = useMemo(() => {
+    if (!autoSuggestions) return new Map<string, SuggestionEntry>();
+    const m = new Map<string, SuggestionEntry>();
+    for (const s of autoSuggestions) m.set(`${s.providerId}:${s.date}`, s);
+    return m;
+  }, [autoSuggestions]);
+
   // Multi-select state
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [selectionAnchor, setSelectionAnchor] = useState<{ providerId: string; date: string } | null>(null);
@@ -348,13 +361,16 @@ export function ScheduleGrid({
         const end = parseDate(pp.endDate);
         while (cursor <= end) {
           const dateStr = toDateStr(cursor);
-          const a = assignmentMap.get(`${p.id}:${dateStr}`);
-          if (a && shiftCountsTowardFte(a.shiftTypeId)) {
+          const key = `${p.id}:${dateStr}`;
+          const a = assignmentMap.get(key);
+          const sug = !a ? suggestionMap.get(key) : null;
+          const stId = a?.shiftTypeId ?? sug?.shiftTypeId;
+          if (stId && shiftCountsTowardFte(stId)) {
             const dow = cursor.getDay();
             const isWeekend = dow === 0 || dow === 6;
-            const st = shiftTypeMap.get(a.shiftTypeId);
+            const st = shiftTypeMap.get(stId);
             if (!isWeekend || st?.countsOnWeekend) {
-              hours += getHoursForAssignment(p.id, a.shiftTypeId);
+              hours += getHoursForAssignment(p.id, stId);
             }
           }
           cursor.setDate(cursor.getDate() + 1);
@@ -364,7 +380,7 @@ export function ScheduleGrid({
       result.set(pp.startDate, providerHours);
     }
     return result;
-  }, [sortedPPs, providers, assignmentMap, overrideMap, shiftTypeMap]);
+  }, [sortedPPs, providers, assignmentMap, suggestionMap, overrideMap, shiftTypeMap]);
 
   // Compute all cell warnings
   const cellWarnings = useMemo(() => {
@@ -975,19 +991,6 @@ export function ScheduleGrid({
       setAutoLoading(false);
     }
   }
-
-  const suggestionSet = useMemo(() => {
-    if (!autoSuggestions) return new Set<string>();
-    return new Set(autoSuggestions.map((s) => `${s.providerId}:${s.date}`));
-  }, [autoSuggestions]);
-
-  type SuggestionEntry = NonNullable<typeof autoSuggestions>[0];
-  const suggestionMap = useMemo(() => {
-    if (!autoSuggestions) return new Map<string, SuggestionEntry>();
-    const m = new Map<string, SuggestionEntry>();
-    for (const s of autoSuggestions) m.set(`${s.providerId}:${s.date}`, s);
-    return m;
-  }, [autoSuggestions]);
 
   const alerts = useMemo(() => {
     const items: Array<{ date: string; label: string; type: "error" | "warn" }> = [];
