@@ -334,18 +334,26 @@ export function ScheduleGrid({
     return map;
   }, [dates, providers, assignmentMap, holidaySet, staffingMins]);
 
+  const OR_CODES = new Set(["OR", "ORC", "ORL"]);
+
   const staffingCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
+    const counts: Record<string, number | null> = {};
     for (const date of dates) {
+      const dow = parseDate(date).getDay();
+      const isWeekend = dow === 0 || dow === 6;
+      if (isWeekend || holidaySet.has(date)) {
+        counts[date] = null;
+        continue;
+      }
       let count = 0;
       for (const p of providers) {
         const a = assignmentMap.get(`${p.id}:${date}`);
-        if (a && a.code !== "X") count++;
+        if (a && OR_CODES.has(a.code)) count++;
       }
       counts[date] = count;
     }
     return counts;
-  }, [dates, providers, assignmentMap]);
+  }, [dates, providers, assignmentMap, holidaySet]);
 
   function prevMonth() {
     if (viewMonth === 0) {
@@ -680,7 +688,7 @@ export function ScheduleGrid({
               const ppEven = ppIdx !== -1 && ppIdx % 2 === 0;
 
               const dw = dayWarnings.get(date);
-              const staffCount = staffingCounts[date] || 0;
+              const staffCount = staffingCounts[date];
 
               return (
                 <tr
@@ -771,11 +779,11 @@ export function ScheduleGrid({
                     className={[
                       "px-2 py-1 text-center text-xs font-mono border-l border-slate-700",
                       isNewPP ? "border-t-2 border-t-indigo-500" : "",
-                      dw && dw.length > 0 ? "text-red-400" : "text-slate-400",
+                      staffCount === null ? "text-slate-600" : dw && dw.length > 0 ? "text-red-400" : "text-slate-400",
                     ].join(" ")}
                     title={dw ? dw.map((w) => w.message).join("\n") : undefined}
                   >
-                    {staffCount}
+                    {staffCount !== null ? staffCount : "–"}
                   </td>
                 </tr>
               );

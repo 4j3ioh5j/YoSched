@@ -145,25 +145,27 @@ export function checkDayStaffing({
 }): Warning[] {
   const warnings: Warning[] = [];
   const dayType = getDayType(date, holidaySet);
+  const isHoliday = holidaySet.has(date);
+  const dow = parseDate(date).getDay();
+  const isWeekend = dow === 0 || dow === 6;
+  const OR_CODES = new Set(["OR", "ORC", "ORL"]);
 
-  let staffed = 0;
-  for (const p of providers) {
-    const a = assignmentMap.get(`${p.id}:${date}`);
-    if (a && a.code !== "X") staffed++;
-  }
+  if (!isWeekend && !isHoliday) {
+    let staffed = 0;
+    for (const p of providers) {
+      const a = assignmentMap.get(`${p.id}:${date}`);
+      if (a && OR_CODES.has(a.code)) staffed++;
+    }
 
-  for (const min of staffingMins) {
-    if (min.dayType === dayType && staffed < min.minimumCount) {
-      warnings.push({
-        type: "understaffed",
-        message: `${staffed}/${min.minimumCount} ${min.role} staffed (${dayType})`,
-      });
+    for (const min of staffingMins) {
+      if (min.dayType === dayType && staffed < min.minimumCount) {
+        warnings.push({
+          type: "understaffed",
+          message: `${staffed}/${min.minimumCount} ${min.role} in OR/ORC/ORL (${dayType})`,
+        });
+      }
     }
   }
-
-  // ORC/ORL daily count constraints
-  const isHoliday = holidaySet.has(date);
-  const isWeekend = parseDate(date).getDay() === 0 || parseDate(date).getDay() === 6;
 
   if (!isWeekend) {
     let orcCount = 0;
