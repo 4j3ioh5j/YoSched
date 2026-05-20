@@ -143,9 +143,9 @@ async function main() {
 
   // --- Staffing Minimums (placeholder — scheduler will configure) ---
   const staffingMins = [
-    { role: "attending", dayType: "weekday", minimumCount: 12 },
-    { role: "attending", dayType: "weekend", minimumCount: 2 },
-    { role: "attending", dayType: "holiday", minimumCount: 2 },
+    { role: "attending", dayType: "weekday", minimumCount: 6 },
+    { role: "attending", dayType: "weekend", minimumCount: 1 },
+    { role: "attending", dayType: "holiday", minimumCount: 1 },
   ];
 
   for (const sm of staffingMins) {

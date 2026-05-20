@@ -1,5 +1,5 @@
 export type Warning = {
-  type: "understaffed" | "post-shift" | "non-working-day" | "over-hours";
+  type: "understaffed" | "post-shift" | "non-working-day" | "over-hours" | "shift-count";
   message: string;
 };
 
@@ -92,7 +92,7 @@ export function checkCellWarnings({
   const dow = parseDate(date).getDay();
 
   // Non-working day
-  if (!provider.workingDays.includes(dow) && st.code !== "X" && !st.countsTowardFte === false) {
+  if (!provider.workingDays.includes(dow) && st.code !== "X" && st.code !== "CALL") {
     warnings.push({
       type: "non-working-day",
       message: `${provider.initials} doesn't normally work on ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dow]}s`,
@@ -158,6 +158,43 @@ export function checkDayStaffing({
         type: "understaffed",
         message: `${staffed}/${min.minimumCount} ${min.role} staffed (${dayType})`,
       });
+    }
+  }
+
+  // ORC/ORL daily count constraints
+  const isHoliday = holidaySet.has(date);
+  const isWeekend = parseDate(date).getDay() === 0 || parseDate(date).getDay() === 6;
+
+  if (!isWeekend) {
+    let orcCount = 0;
+    let orlCount = 0;
+    for (const p of providers) {
+      const a = assignmentMap.get(`${p.id}:${date}`);
+      if (a?.code === "ORC") orcCount++;
+      if (a?.code === "ORL") orlCount++;
+    }
+
+    if (orcCount !== 1) {
+      warnings.push({
+        type: "shift-count",
+        message: `${orcCount} ORC assigned (need exactly 1)`,
+      });
+    }
+
+    if (isHoliday) {
+      if (orlCount > 0) {
+        warnings.push({
+          type: "shift-count",
+          message: `${orlCount} ORL assigned — holidays should have no ORL`,
+        });
+      }
+    } else {
+      if (orlCount !== 1) {
+        warnings.push({
+          type: "shift-count",
+          message: `${orlCount} ORL assigned (need exactly 1)`,
+        });
+      }
     }
   }
 
