@@ -357,17 +357,47 @@ export function autoSchedule({
     return null;
   }
 
-  function wouldExceedPPHours(providerId: string, date: string, st: ScheduleShiftType): boolean {
+  function wouldBreakPPHours(providerId: string, date: string, st: ScheduleShiftType): boolean {
     if (!st.countsTowardFte) return false;
     const pp = findPPForDate(date);
-    if (!pp) return false;
+    if (!pp || !fillShift) return false;
     const provider = activeProviders.find((p) => p.id === providerId);
     if (!provider) return false;
     const target = pp.targetHours * provider.ftePercentage;
-    const current = ppHoursForProvider(providerId, pp);
+    if (target <= 0) return false;
+
     const addHours = getShiftHours(providerId, st, overrideMap);
-    return current + addHours > target;
+    const current = ppHoursForProvider(providerId, pp);
+    if (current + addHours > target) return true;
+
+    // Check if taking this shift + its recovery day leaves enough fill days to hit target
+    const fillHrs = getShiftHours(providerId, fillShift, overrideMap);
+    let assignedDays = 0;
+    let availDays = 0;
+    const cur = new Date(pp.startDate + "T12:00:00");
+    const end = new Date(pp.endDate + "T12:00:00");
+    while (cur <= end) {
+      const d = toDateStr(cur);
+      const dow = cur.getDay();
+      if (provider.workingDays.includes(dow) && !holidaySet.has(d)) {
+        if (isAssigned(providerId, d)) assignedDays++;
+        else availDays++;
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    // This shift consumes 1 day (+ 1 recovery if applicable)
+    let daysConsumed = 1;
+    if (st.postShiftRule === "day_off_after") daysConsumed = 2;
+    const remainingAvail = availDays - daysConsumed;
+    const hoursAfterAssign = current + addHours;
+    const hoursStillNeeded = target - hoursAfterAssign;
+    const maxFillable = remainingAvail * fillHrs;
+
+    return hoursStillNeeded > 0 && maxFillable < hoursStillNeeded;
   }
+
+  const fillShift = shiftTypes.find((st) => st.isFillShift) ?? null;
 
   // ── STEP 1: Apply standing commitments ──
   for (const sc of standingCommitments) {
@@ -461,7 +491,7 @@ export function autoSchedule({
 
         const available = eligible.filter(
           (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
-            !wouldExceedPPHours(p.id, sat, st)
+            !wouldBreakPPHours(p.id, sat, st)
         );
 
         if (available.length === 0) {
@@ -494,7 +524,7 @@ export function autoSchedule({
         if (current >= required) continue;
 
         let available = eligible.filter(
-          (p) => !isAssigned(p.id, date) && !wouldExceedPPHours(p.id, date, st)
+          (p) => !isAssigned(p.id, date) && !wouldBreakPPHours(p.id, date, st)
         );
         if (available.length === 0) {
           available = eligible.filter((p) => !isAssigned(p.id, date));
@@ -518,7 +548,7 @@ export function autoSchedule({
 
         const needed = required - current;
         let available = eligible.filter(
-          (p) => isAvailable(p, date, st) && !wouldExceedPPHours(p.id, date, st)
+          (p) => isAvailable(p, date, st) && !wouldBreakPPHours(p.id, date, st)
         );
         if (available.length === 0) {
           // Relax hours constraint
@@ -569,7 +599,15 @@ export function autoSchedule({
   }
 
   // ── STEP 3: Fill shift to hit FTE hour targets (smart day-off clustering) ──
-  const fillShift = shiftTypes.find((st) => st.isFillShift);
+  // Build a map of work shift hours we can substitute to hit exact targets
+  const substituteShifts = shiftTypes.filter(
+    (st) => st.countsTowardFte && !st.isLeave && !st.isOffShift && !st.isFillShift && st.category === "work"
+  );
+  const shiftsByHours = new Map<number, ScheduleShiftType>();
+  for (const st of substituteShifts) {
+    if (!shiftsByHours.has(st.defaultHours)) shiftsByHours.set(st.defaultHours, st);
+  }
+
   if (fillShift) {
     const sortedPPs = [...payPeriods]
       .filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate))
@@ -683,15 +721,47 @@ export function autoSchedule({
 
         const hoursPerDay = getShiftHours(provider.id, fillShift, overrideMap);
         const hoursNeeded = target - currentHours;
-        const daysNeeded = Math.ceil(hoursNeeded / hoursPerDay);
+
+        // Plan shift mix: if fill shifts alone can't hit target exactly,
+        // substitute one fill day with a longer shift (e.g., ORL 12hrs
+        // instead of OR 8hrs to cover a 4-hour gap)
+        const baseDays = Math.floor(hoursNeeded / hoursPerDay);
+        const remainder = hoursNeeded - baseDays * hoursPerDay;
+        let subShift: ScheduleShiftType | null = null;
+        let totalDaysNeeded: number;
+
+        if (remainder === 0) {
+          totalDaysNeeded = baseDays;
+        } else {
+          const subHours = hoursPerDay + remainder;
+          subShift = shiftsByHours.get(subHours) ?? null;
+          if (subShift) {
+            totalDaysNeeded = baseDays + 1;
+          } else {
+            totalDaysNeeded = baseDays;
+          }
+        }
 
         const availableDates = ppDates.filter((d) =>
           isAvailable(provider, d, fillShift)
         );
 
-        if (daysNeeded >= availableDates.length) {
+        if (totalDaysNeeded >= availableDates.length) {
+          let subUsed = false;
           for (const date of availableDates) {
             if (currentHours >= target) break;
+            if (subShift && !subUsed && currentHours + subShift.defaultHours <= target) {
+              const afterSub = currentHours + subShift.defaultHours;
+              const daysAfter = availableDates.length - availableDates.indexOf(date) - 1;
+              if (afterSub + daysAfter * hoursPerDay >= target) {
+                assign(provider.id, date, subShift,
+                  `${subShift.code} to fill hours (${currentHours}/${target}hrs)`,
+                  "fill-sub", 0.6);
+                currentHours += subShift.defaultHours;
+                subUsed = true;
+                continue;
+              }
+            }
             if (currentHours + hoursPerDay > target) break;
             assign(provider.id, date, fillShift,
               `${fillShift.code} to fill hours (${currentHours}/${target}hrs)`,
@@ -701,10 +771,8 @@ export function autoSchedule({
           continue;
         }
 
-        const daysOff = availableDates.length - daysNeeded;
+        const daysOff = availableDates.length - totalDaysNeeded;
 
-        // For small combo counts, enumerate all and pick the best
-        // C(10,3)=120, C(10,4)=210 — both fast
         const indices = availableDates.map((_, i) => i);
         let bestOffIndices: number[] = [];
         let bestScore = -Infinity;
@@ -714,8 +782,6 @@ export function autoSchedule({
         for (const offIndices of combinations(indices, daysOff)) {
           comboCount++;
 
-          // Check staffing constraint: would taking these days off leave
-          // any day below its staffing requirement?
           let feasible = true;
           for (const idx of offIndices) {
             const date = availableDates[idx];
@@ -744,13 +810,22 @@ export function autoSchedule({
         const offDaySet = new Set(bestOffIndices.map((i) => availableDates[i]));
         const workDates = availableDates.filter((d) => !offDaySet.has(d));
 
+        let subUsed = false;
         for (const date of workDates) {
           if (currentHours >= target) break;
-          if (currentHours + hoursPerDay > target) break;
-          assign(provider.id, date, fillShift,
-            `${fillShift.code} to fill hours (${currentHours}/${target}hrs)`,
-            "fill", 0.6);
-          currentHours += hoursPerDay;
+          if (subShift && !subUsed && currentHours + subShift.defaultHours <= target) {
+            assign(provider.id, date, subShift,
+              `${subShift.code} to fill hours (${currentHours}/${target}hrs)`,
+              "fill-sub", 0.6);
+            currentHours += subShift.defaultHours;
+            subUsed = true;
+          } else {
+            if (currentHours + hoursPerDay > target) break;
+            assign(provider.id, date, fillShift,
+              `${fillShift.code} to fill hours (${currentHours}/${target}hrs)`,
+              "fill", 0.6);
+            currentHours += hoursPerDay;
+          }
         }
       }
     }
