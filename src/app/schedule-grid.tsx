@@ -900,6 +900,30 @@ export function ScheduleGrid({
     return result;
   }, [picker, providerMap, shiftTypes, shiftTypeMap, assignmentMap, providers, holidaySet, staffingMins]);
 
+  function renderSuggestion(sug: SuggestionEntry, stMap: Map<string, ShiftType>) {
+    const st = stMap.get(sug.shiftTypeId);
+    const color = st?.color ?? "#6b7280";
+    const isHeavy = !!st?.noConsecutiveGroup;
+    const isOff = st?.isOffShift;
+    return (
+      <div
+        className={[
+          "font-bold rounded px-1 py-0.5 leading-tight border border-dashed",
+          isHeavy ? "text-[12px]" : "text-[11px]",
+        ].join(" ")}
+        style={{
+          backgroundColor: isOff ? "transparent" : color + (isHeavy ? "50" : "30"),
+          color: isOff ? "#64748b" : color,
+          borderColor: isHeavy ? color + "90" : color + "40",
+          borderStyle: isHeavy ? "solid" : "dashed",
+        }}
+        title={`Suggested: ${sug.code}\n${sug.reason}`}
+      >
+        {sug.code}
+      </div>
+    );
+  }
+
   // Selection count for picker header
   const selectionCount = selection.size;
 
@@ -1332,16 +1356,7 @@ export function ScheduleGrid({
                             {a.code}
                           </div>
                         ) : isSuggested ? (
-                          <div
-                            className="text-[11px] font-bold rounded px-1 py-0.5 leading-tight border border-dashed border-emerald-500/50"
-                            style={{
-                              backgroundColor: (shiftTypes.find((s) => s.id === suggestion!.shiftTypeId)?.color ?? "#6b7280") + "15",
-                              color: (shiftTypes.find((s) => s.id === suggestion!.shiftTypeId)?.color ?? "#6b7280") + "90",
-                            }}
-                            title={`Suggested: ${suggestion!.code}\n${suggestion!.reason}`}
-                          >
-                            {suggestion!.code}
-                          </div>
+                          renderSuggestion(suggestion!, shiftTypeMap)
                         ) : isSaving ? (
                           <div className="text-[11px] text-slate-600">...</div>
                         ) : null}
