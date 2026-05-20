@@ -1,0 +1,133 @@
+import { prisma } from "@/lib/prisma";
+import { computeFairness } from "@/lib/fairness";
+import { EquityPage } from "./equity-page";
+import Link from "next/link";
+
+export const dynamic = "force-dynamic";
+
+export default async function Equity() {
+  const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods] =
+    await Promise.all([
+      prisma.provider.findMany({ orderBy: { sortOrder: "asc" } }),
+      prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
+      prisma.assignment.findMany({ include: { shiftType: true } }),
+      prisma.holiday.findMany({ orderBy: { date: "asc" } }),
+      prisma.desirabilityWeight.findMany(),
+      prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
+    ]);
+
+  const equity = computeFairness({
+    assignments: assignments.map((a) => ({
+      providerId: a.providerId,
+      date: a.date.toISOString().split("T")[0],
+      shiftType: {
+        id: a.shiftType.id,
+        code: a.shiftType.code,
+        defaultHours: a.shiftType.defaultHours,
+        countsTowardFte: a.shiftType.countsTowardFte,
+        isLeave: a.shiftType.isLeave,
+      },
+    })),
+    providers: providers.map((p) => ({
+      id: p.id,
+      initials: p.initials,
+      employmentType: p.employmentType,
+      ftePercentage: p.ftePercentage ?? 1.0,
+      takesCall: p.takesCall,
+      takesLate: p.takesLate,
+      isActive: p.isActive,
+    })),
+    desirabilityWeights: desirabilityWeights.map((dw) => ({
+      shiftTypeId: dw.shiftTypeId,
+      dayOfWeek: dw.dayOfWeek,
+      weight: dw.weight,
+    })),
+    holidays,
+  });
+
+  // Build per-provider shift-code tallies
+  const shiftTallies: Record<string, Record<string, number>> = {};
+  for (const a of assignments) {
+    const pid = a.providerId;
+    if (!shiftTallies[pid]) shiftTallies[pid] = {};
+    const code = a.shiftType.code;
+    if (code === "X") continue;
+    shiftTallies[pid][code] = (shiftTallies[pid][code] || 0) + 1;
+  }
+
+  // Compute total hours per provider
+  const providerHours: Record<string, number> = {};
+  const overrides = await prisma.providerShiftOverride.findMany();
+  const overrideMap = new Map<string, number>();
+  for (const o of overrides) overrideMap.set(`${o.providerId}:${o.shiftTypeId}`, o.durationHrs);
+
+  const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
+
+  for (const a of assignments) {
+    const st = stMap.get(a.shiftTypeId);
+    if (!st || !st.countsTowardFte) continue;
+    const dateStr = a.date.toISOString().split("T")[0];
+    const dow = new Date(dateStr + "T12:00:00").getDay();
+    const isWknd = dow === 0 || dow === 6;
+    if (isWknd && !st.countsOnWeekend) continue;
+    const hrs = overrideMap.get(`${a.providerId}:${a.shiftTypeId}`) ?? st.defaultHours;
+    providerHours[a.providerId] = (providerHours[a.providerId] || 0) + hrs;
+  }
+
+  const dateRange = {
+    min: assignments.length > 0
+      ? assignments.reduce((min, a) => a.date < min ? a.date : min, assignments[0].date).toISOString().split("T")[0]
+      : "",
+    max: assignments.length > 0
+      ? assignments.reduce((max, a) => a.date > max ? a.date : max, assignments[0].date).toISOString().split("T")[0]
+      : "",
+  };
+
+  const equityData = equity.metrics.map((m) => {
+    const dev = equity.deviations.get(m.providerId)!;
+    const p = providers.find((p) => p.id === m.providerId)!;
+    return {
+      ...m,
+      deviation: dev,
+      name: p.name,
+      employmentType: p.employmentType,
+      ftePercentage: p.ftePercentage ?? 1.0,
+      takesCall: p.takesCall,
+      takesLate: p.takesLate,
+      totalHours: providerHours[m.providerId] || 0,
+      shiftTally: shiftTallies[m.providerId] || {},
+    };
+  });
+
+  const shiftCodes = [...new Set(
+    Object.values(shiftTallies).flatMap((t) => Object.keys(t))
+  )].sort();
+
+  return (
+    <main className="flex flex-col h-screen">
+      <header className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-900 shrink-0">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-bold tracking-tight">YoSched</h1>
+          <span className="text-sm text-slate-400">Statistics</span>
+        </div>
+        <div className="flex items-center gap-4 text-sm text-slate-400">
+          <Link href="/" className="text-slate-400 hover:text-slate-200 transition-colors">
+            Schedule
+          </Link>
+          <Link href="/staff" className="text-slate-400 hover:text-slate-200 transition-colors">
+            Staff
+          </Link>
+          <Link href="/settings" className="text-slate-400 hover:text-slate-200 transition-colors">
+            Settings
+          </Link>
+        </div>
+      </header>
+      <EquityPage
+        data={equityData}
+        averages={equity.averages}
+        dateRange={dateRange}
+        shiftCodes={shiftCodes}
+      />
+    </main>
+  );
+}

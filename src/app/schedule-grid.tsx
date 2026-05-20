@@ -1040,7 +1040,7 @@ export function ScheduleGrid({
                 const fLabel = fe ? fairnessLabel(fe.deviation.overall) : undefined;
                 const fTooltip = fe
                   ? `${p.name} (${p.ftePercentage * 100}% FTE)\n` +
-                    `Fairness: ${fLabel}\n` +
+                    `Equity: ${fLabel}\n` +
                     `Wknd CALL: ${fe.metrics.weekendCallCount} (avg ${fairnessAverages?.weekendCallCount.toFixed(1)})\n` +
                     `ORC: ${fe.metrics.weekdayOrcCount} (avg ${fairnessAverages?.weekdayOrcCount.toFixed(1)})\n` +
                     `ORL: ${fe.metrics.weekdayOrlCount} (avg ${fairnessAverages?.weekdayOrlCount.toFixed(1)})\n` +

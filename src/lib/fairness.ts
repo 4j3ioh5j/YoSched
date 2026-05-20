@@ -240,12 +240,12 @@ export function fairnessColor(deviation: number): string {
   return "#6b7280";
 }
 
-export function fairnessLabel(deviation: number): string {
-  if (deviation > 1.5) return "heavy";
-  if (deviation > 0.75) return "above avg";
-  if (deviation > 0.25) return "slightly above";
-  if (deviation < -1.5) return "light";
-  if (deviation < -0.75) return "below avg";
-  if (deviation < -0.25) return "slightly below";
-  return "balanced";
+export function fairnessLabel(burden: number): string {
+  if (burden > 1.5) return "Low equity";
+  if (burden > 0.75) return "Below avg equity";
+  if (burden > 0.25) return "Slightly below";
+  if (burden < -1.5) return "High equity";
+  if (burden < -0.75) return "Above avg equity";
+  if (burden < -0.25) return "Slightly above";
+  return "Balanced";
 }
