@@ -381,6 +381,15 @@ export function autoSchedule({
 
     // Check if taking this shift + its recovery day leaves enough fill days to hit target
     const fillHrs = getShiftHours(providerId, fillShift, overrideMap);
+    let maxFillHrsPerDay = fillHrs;
+    for (const sub of shiftTypes) {
+      if (!sub.countsTowardFte || sub.isLeave || sub.isOffShift || sub.isFillShift) continue;
+      if (sub.category !== "work" || sub.defaultHours <= maxFillHrsPerDay) continue;
+      if (sub.schedulePriority == null || sub.postShiftRule) continue;
+      if (sub.eligibilityRule === "takesCall" && !provider.takesCall) continue;
+      if (sub.eligibilityRule === "takesLate" && !provider.takesLate) continue;
+      maxFillHrsPerDay = sub.defaultHours;
+    }
     let assignedDays = 0;
     let availDays = 0;
     const cur = new Date(pp.startDate + "T12:00:00");
@@ -401,7 +410,7 @@ export function autoSchedule({
     const remainingAvail = availDays - daysConsumed;
     const hoursAfterAssign = current + addHours;
     const hoursStillNeeded = target - hoursAfterAssign;
-    const maxFillable = remainingAvail * fillHrs;
+    const maxFillable = remainingAvail * maxFillHrsPerDay;
 
     return hoursStillNeeded > 0 && maxFillable < hoursStillNeeded;
   }
@@ -625,14 +634,113 @@ export function autoSchedule({
     }
   }
 
-  // ── STEP 3: Fill shift to hit FTE hour targets (smart day-off clustering) ──
-  // Build a map of work shift hours we can substitute to hit exact targets
-  const substituteShifts = shiftTypes.filter(
-    (st) => st.countsTowardFte && !st.isLeave && !st.isOffShift && !st.isFillShift && st.category === "work"
-  );
-  const shiftsByHours = new Map<number, ScheduleShiftType>();
-  for (const st of substituteShifts) {
-    if (!shiftsByHours.has(st.defaultHours)) shiftsByHours.set(st.defaultHours, st);
+  // ── STEP 3: Fill shift to hit FTE hour targets (shift mix + day-off clustering) ──
+  //
+  // For each provider, compute the optimal mix of OR + ORL (+ ORC) that hits
+  // exact target hours while minimizing work days. Multiple ORLs per pay period
+  // are allowed — each one traded for a day off improves quality of life.
+  //
+  // Key: fill substitutions skip the maxPerDay check. That constraint is a
+  // staffing cap for Step 2 (how many people NEED the shift), not a capacity
+  // limit on who can work longer days.
+
+  // Like isAvailable but skips maxPerDay for fill substitutions
+  function isAvailableForFill(provider: ScheduleProvider, date: string, st: ScheduleShiftType): boolean {
+    if (isAssigned(provider.id, date)) return false;
+    if (!st.ignoresWorkingDays) {
+      const dow = getDow(date);
+      if (!provider.workingDays.includes(dow)) return false;
+    }
+    const prev = getCell(provider.id, prevDate(date));
+    if (prev) {
+      const prevSt = stById.get(prev.shiftTypeId);
+      if (prevSt?.postShiftRule === "day_off_after") return false;
+      if (st.noConsecutiveGroup && prevSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
+    }
+    const next = getCell(provider.id, nextDate(date));
+    if (next) {
+      const nextSt = stById.get(next.shiftTypeId);
+      if (st.noConsecutiveGroup && nextSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
+    }
+    return true;
+  }
+
+  function getProviderSubs(provider: ScheduleProvider, fillHrs: number): { shift: ScheduleShiftType; extra: number }[] {
+    return shiftTypes
+      .filter((st) => {
+        if (!st.countsTowardFte || st.isLeave || st.isOffShift || st.isFillShift) return false;
+        if (st.category !== "work" || st.defaultHours <= fillHrs) return false;
+        if (st.schedulePriority == null) return false;
+        if (st.postShiftRule) return false;
+        if (st.eligibilityRule === "takesCall" && !provider.takesCall) return false;
+        if (st.eligibilityRule === "takesLate" && !provider.takesLate) return false;
+        return true;
+      })
+      .map((st) => ({ shift: st, extra: st.defaultHours - fillHrs }))
+      .sort((a, b) => a.extra - b.extra);
+  }
+
+  function solveDeficit(
+    deficit: number,
+    subs: { shift: ScheduleShiftType; extra: number }[],
+    maxSlots: number
+  ): { shift: ScheduleShiftType; count: number }[] | null {
+    if (deficit === 0) return [];
+    if (deficit < 0 || subs.length === 0) return null;
+
+    if (subs.length === 1) {
+      if (deficit % subs[0].extra === 0) {
+        const count = deficit / subs[0].extra;
+        return count <= maxSlots ? [{ shift: subs[0].shift, count }] : null;
+      }
+      return null;
+    }
+
+    const [smaller, larger] = subs[0].extra <= subs[1].extra ? [subs[0], subs[1]] : [subs[1], subs[0]];
+    for (let nLarge = 0; nLarge <= Math.floor(deficit / larger.extra); nLarge++) {
+      const rem = deficit - nLarge * larger.extra;
+      if (rem % smaller.extra === 0) {
+        const nSmall = rem / smaller.extra;
+        if (nLarge + nSmall <= maxSlots) {
+          const result: { shift: ScheduleShiftType; count: number }[] = [];
+          if (nSmall > 0) result.push({ shift: smaller.shift, count: nSmall });
+          if (nLarge > 0) result.push({ shift: larger.shift, count: nLarge });
+          return result;
+        }
+      }
+    }
+    return null;
+  }
+
+  function tryPlaceSubs(
+    provider: ScheduleProvider,
+    candidateDates: string[],
+    subs: { shift: ScheduleShiftType; count: number }[]
+  ): { date: string; shift: ScheduleShiftType }[] | null {
+    const placed: { date: string; shift: ScheduleShiftType }[] = [];
+    const usedDates = new Set<string>();
+
+    for (const { shift, count } of subs) {
+      let remaining = count;
+      for (const date of candidateDates) {
+        if (remaining <= 0) break;
+        if (usedDates.has(date)) continue;
+        if (!isAvailableForFill(provider, date, shift)) continue;
+        if (shift.noConsecutiveGroup) {
+          const pDate = prevDate(date);
+          const nDate = nextDate(date);
+          if (placed.some((p) =>
+            (p.date === pDate || p.date === nDate) &&
+            p.shift.noConsecutiveGroup === shift.noConsecutiveGroup
+          )) continue;
+        }
+        placed.push({ date, shift });
+        usedDates.add(date);
+        remaining--;
+      }
+      if (remaining > 0) return null;
+    }
+    return placed;
   }
 
   if (fillShift) {
@@ -640,8 +748,6 @@ export function autoSchedule({
       .filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate))
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
-    // Build a per-date staffing demand counter so we know which days are
-    // constrained (need more workers) vs flexible (can afford someone off)
     const fillReqsByDay = new Map<string, number>();
     const fillReqs = reqsByShift.get(fillShift.code);
     if (fillReqs) {
@@ -661,8 +767,6 @@ export function autoSchedule({
       return fillReqsByDay.get(dayKey) ?? 0;
     }
 
-    // Score a set of off-days for quality (higher = better)
-    // Uses provider's workingDays to determine which days are naturally off
     function scoreOffDays(offDays: Set<string>, allWorkdaysInPP: string[], providerWorkingDays: number[]): number {
       if (offDays.size === 0) return 0;
 
@@ -670,7 +774,6 @@ export function autoSchedule({
       const firstDate = allWorkdaysInPP[0];
       const lastDate = allWorkdaysInPP[allWorkdaysInPP.length - 1];
 
-      // Extend calendar to include surrounding non-working days
       const start = new Date(firstDate + "T12:00:00");
       start.setDate(start.getDate() - 3);
       const end = new Date(lastDate + "T12:00:00");
@@ -715,7 +818,6 @@ export function autoSchedule({
       return score;
     }
 
-    // Generate combinations of indices: choose k from n
     function* combinations(indices: number[], k: number): Generator<number[]> {
       if (k === 0) { yield []; return; }
       if (k > indices.length) return;
@@ -726,15 +828,13 @@ export function autoSchedule({
       }
     }
 
+    const MAX_COMBOS = 5000;
+
     for (const pp of sortedPPs) {
       const ppDates = dates.filter(
-        (d) =>
-          d >= pp.startDate &&
-          d <= pp.endDate &&
-          !holidaySet.has(d)
+        (d) => d >= pp.startDate && d <= pp.endDate && !holidaySet.has(d)
       );
 
-      // Sort providers by fairness so the most underloaded get first pick
       const sortedProviders = sortByFairness(activeProviders.map((p) => p.id))
         .map((id) => activeProviders.find((p) => p.id === id)!)
         .filter(Boolean);
@@ -743,118 +843,127 @@ export function autoSchedule({
         const target = pp.targetHours * provider.ftePercentage;
         if (target <= 0) continue;
 
-        let currentHours = ppHoursForProvider(provider.id, pp);
+        const currentHours = ppHoursForProvider(provider.id, pp);
         if (currentHours >= target) continue;
 
         const hoursPerDay = getShiftHours(provider.id, fillShift, overrideMap);
         const hoursNeeded = target - currentHours;
-
-        // Plan shift mix: if fill shifts alone can't hit target exactly,
-        // substitute one fill day with a longer shift (e.g., ORL 12hrs
-        // instead of OR 8hrs to cover a 4-hour gap)
-        const baseDays = Math.floor(hoursNeeded / hoursPerDay);
-        const remainder = hoursNeeded - baseDays * hoursPerDay;
-        let subShift: ScheduleShiftType | null = null;
-        let totalDaysNeeded: number;
-
-        if (remainder === 0) {
-          totalDaysNeeded = baseDays;
-        } else {
-          const subHours = hoursPerDay + remainder;
-          subShift = shiftsByHours.get(subHours) ?? null;
-          if (subShift) {
-            totalDaysNeeded = baseDays + 1;
-          } else {
-            totalDaysNeeded = baseDays;
-          }
-        }
+        const providerSubs = getProviderSubs(provider, hoursPerDay);
+        const maxShiftHrs = providerSubs.length > 0
+          ? Math.max(hoursPerDay, ...providerSubs.map((s) => s.shift.defaultHours))
+          : hoursPerDay;
 
         const availableDates = ppDates.filter((d) =>
           isAvailable(provider, d, fillShift)
         );
 
-        if (totalDaysNeeded >= availableDates.length) {
-          let subUsed = false;
-          for (const date of availableDates) {
-            if (currentHours >= target) break;
-            if (subShift && !subUsed && currentHours + subShift.defaultHours <= target &&
-                isAvailable(provider, date, subShift)) {
-              const afterSub = currentHours + subShift.defaultHours;
-              const daysAfter = availableDates.length - availableDates.indexOf(date) - 1;
-              if (afterSub + daysAfter * hoursPerDay >= target) {
-                assign(provider.id, date, subShift,
-                  `${subShift.code} to fill hours (${currentHours}/${target}hrs)`,
-                  "fill-sub", 0.6);
-                currentHours += subShift.defaultHours;
-                subUsed = true;
-                continue;
-              }
-            }
-            if (currentHours + hoursPerDay > target) break;
-            assign(provider.id, date, fillShift,
-              `${fillShift.code} to fill hours (${currentHours}/${target}hrs)`,
-              "fill", 0.6);
-            currentHours += hoursPerDay;
+        if (availableDates.length === 0) {
+          if (hoursNeeded > 0) {
+            warnings.push(`${provider.initials}: needs ${hoursNeeded}hrs but no available days in PP ${pp.startDate}`);
           }
           continue;
         }
 
-        const daysOff = availableDates.length - totalDaysNeeded;
+        if (availableDates.length * maxShiftHrs < hoursNeeded) {
+          warnings.push(
+            `${provider.initials}: cannot reach ${target}hrs — max ${currentHours + availableDates.length * maxShiftHrs}hrs with ${availableDates.length} days`
+          );
+        }
 
-        const indices = availableDates.map((_, i) => i);
-        let bestOffIndices: number[] = [];
-        let bestScore = -Infinity;
-        let comboCount = 0;
-        const MAX_COMBOS = 5000;
+        // Find the shift mix with fewest work days (most days off).
+        // For d work days: deficit = hoursNeeded - d * fillHrs.
+        // Subs must cover the deficit exactly. Fewer d = more subs = more days off.
+        let bestPlan: {
+          workDays: number;
+          subPlacements: { date: string; shift: ScheduleShiftType }[];
+          fillCount: number;
+        } | null = null;
 
-        for (const offIndices of combinations(indices, daysOff)) {
-          comboCount++;
+        const minWorkDays = Math.max(1, Math.ceil(hoursNeeded / maxShiftHrs));
 
-          let feasible = true;
-          for (const idx of offIndices) {
-            const date = availableDates[idx];
-            const required = fillRequiredOnDate(date);
-            if (required > 0) {
-              const currentStaffed = fillStaffedCount(date);
-              if (currentStaffed < required) {
+        for (let d = minWorkDays; d <= availableDates.length; d++) {
+          const deficit = hoursNeeded - d * hoursPerDay;
+          if (deficit < 0) continue;
+
+          if (deficit === 0) {
+            bestPlan = { workDays: d, subPlacements: [], fillCount: d };
+            break;
+          }
+
+          const solution = solveDeficit(deficit, providerSubs, d);
+          if (!solution) continue;
+
+          const placement = tryPlaceSubs(provider, availableDates, solution);
+          if (placement) {
+            const subDays = solution.reduce((s, x) => s + x.count, 0);
+            bestPlan = { workDays: d, subPlacements: placement, fillCount: d - subDays };
+            break;
+          }
+        }
+
+        if (!bestPlan) {
+          const maxDays = Math.min(availableDates.length, Math.floor(hoursNeeded / hoursPerDay));
+          bestPlan = { workDays: maxDays, subPlacements: [], fillCount: maxDays };
+          const filled = maxDays * hoursPerDay;
+          if (filled < hoursNeeded) {
+            warnings.push(`${provider.initials}: ${hoursNeeded - filled}hrs short — no valid shift mix found`);
+          }
+        }
+
+        const subDateSet = new Set(bestPlan.subPlacements.map((p) => p.date));
+        const nonSubDates = availableDates.filter((d) => !subDateSet.has(d));
+        const daysOff = nonSubDates.length - bestPlan.fillCount;
+
+        let fillDates: string[];
+        if (daysOff > 0 && daysOff < nonSubDates.length) {
+          const indices = nonSubDates.map((_, i) => i);
+          let bestOffIndices: number[] = [];
+          let bestScore = -Infinity;
+          let comboCount = 0;
+
+          for (const offIndices of combinations(indices, daysOff)) {
+            comboCount++;
+            let feasible = true;
+            for (const idx of offIndices) {
+              const date = nonSubDates[idx];
+              const required = fillRequiredOnDate(date);
+              if (required > 0 && fillStaffedCount(date) < required) {
                 feasible = false;
                 break;
               }
             }
+            if (!feasible) continue;
+
+            const offSet = new Set(offIndices.map((i) => nonSubDates[i]));
+            const score = scoreOffDays(offSet, availableDates, provider.workingDays);
+            if (score > bestScore) {
+              bestScore = score;
+              bestOffIndices = offIndices;
+            }
+            if (comboCount >= MAX_COMBOS) break;
           }
-          if (!feasible) continue;
 
-          const offSet = new Set(offIndices.map((i) => availableDates[i]));
-          const score = scoreOffDays(offSet, availableDates, provider.workingDays);
-
-          if (score > bestScore) {
-            bestScore = score;
-            bestOffIndices = offIndices;
-          }
-
-          if (comboCount >= MAX_COMBOS) break;
+          const offDaySet = new Set(bestOffIndices.map((i) => nonSubDates[i]));
+          fillDates = nonSubDates.filter((d) => !offDaySet.has(d));
+        } else {
+          fillDates = nonSubDates.slice(0, bestPlan.fillCount);
         }
 
-        const offDaySet = new Set(bestOffIndices.map((i) => availableDates[i]));
-        const workDates = availableDates.filter((d) => !offDaySet.has(d));
+        let hours = currentHours;
+        for (const { date, shift } of bestPlan.subPlacements) {
+          assign(provider.id, date, shift,
+            `${shift.code} to fill hours (${hours}/${target}hrs)`,
+            "fill-sub", 0.6);
+          hours += shift.defaultHours;
+        }
 
-        let subUsed = false;
-        for (const date of workDates) {
-          if (currentHours >= target) break;
-          if (subShift && !subUsed && currentHours + subShift.defaultHours <= target &&
-              isAvailable(provider, date, subShift)) {
-            assign(provider.id, date, subShift,
-              `${subShift.code} to fill hours (${currentHours}/${target}hrs)`,
-              "fill-sub", 0.6);
-            currentHours += subShift.defaultHours;
-            subUsed = true;
-          } else {
-            if (currentHours + hoursPerDay > target) break;
-            assign(provider.id, date, fillShift,
-              `${fillShift.code} to fill hours (${currentHours}/${target}hrs)`,
-              "fill", 0.6);
-            currentHours += hoursPerDay;
-          }
+        for (const date of fillDates) {
+          if (hours >= target) break;
+          if (hours + hoursPerDay > target) break;
+          assign(provider.id, date, fillShift,
+            `${fillShift.code} to fill hours (${hours}/${target}hrs)`,
+            "fill", 0.6);
+          hours += hoursPerDay;
         }
       }
     }
