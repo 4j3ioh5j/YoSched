@@ -334,6 +334,20 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
     setEditingId(null);
   }
 
+  const editingShift = editingId ? shifts.find((s) => s.id === editingId) : null;
+
+  function FieldRow({ label, description, children }: { label: string; description: string; children: React.ReactNode }) {
+    return (
+      <div className="flex items-start gap-4 py-3 border-b border-slate-700/50 last:border-0">
+        <div className="w-48 shrink-0 pt-0.5">
+          <div className="text-sm text-slate-200">{label}</div>
+          <div className="text-xs text-slate-500 mt-0.5">{description}</div>
+        </div>
+        <div className="flex-1">{children}</div>
+      </div>
+    );
+  }
+
   return (
     <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
       <SectionHeader
@@ -350,218 +364,144 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
               <th className="text-left py-2 px-2 w-16">Code</th>
               <th className="text-left py-2 px-2">Name</th>
               <th className="text-center py-2 px-2 w-16">Hours</th>
-              <th className="text-center py-2 px-2 w-14">Wknd</th>
               <th className="text-center py-2 px-2 w-20">Category</th>
               <th className="text-center py-2 px-2 w-12">Color</th>
-              <th className="text-center py-2 px-2 w-14">Leave</th>
               <th className="text-center py-2 px-2 w-24">Post-shift</th>
-              <th className="text-center py-2 px-2 w-16"></th>
+              <th className="text-center py-2 px-2 w-28">Auto-schedule</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-700/50">
-            {shifts.map((st) => {
-              const isEditing = editingId === st.id;
-              return (
-                <Fragment key={st.id}>
-                <tr
-                  className={[
-                    "hover:bg-slate-700/30 transition-colors",
-                    isEditing ? "bg-slate-700/20" : "",
-                  ].join(" ")}
-                  onClick={() => !isEditing && setEditingId(st.id)}
-                >
-                  <td className="py-2 px-2">
-                    {isEditing ? (
-                      <input
-                        className="w-14 bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs font-mono"
-                        value={st.code}
-                        onChange={(e) => updateField(st.id, "code", e.target.value.toUpperCase())}
-                      />
-                    ) : (
-                      <span className="font-mono font-bold" style={{ color: st.color }}>{st.code}</span>
-                    )}
-                  </td>
-                  <td className="py-2 px-2">
-                    {isEditing ? (
-                      <input
-                        className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-xs"
-                        value={st.name}
-                        onChange={(e) => updateField(st.id, "name", e.target.value)}
-                      />
-                    ) : (
-                      <span className="text-slate-300">{st.name}</span>
-                    )}
-                  </td>
-                  <td className="py-2 px-2 text-center">
-                    {isEditing ? (
-                      <input
-                        type="number"
-                        className="w-14 bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs text-center"
-                        value={st.defaultHours}
-                        onChange={(e) => updateField(st.id, "defaultHours", parseFloat(e.target.value) || 0)}
-                      />
-                    ) : (
-                      <span className="text-slate-300 font-mono">{st.defaultHours}</span>
-                    )}
-                  </td>
-                  <td className="py-2 px-2 text-center">
-                    <input
-                      type="checkbox"
-                      checked={st.countsOnWeekend}
-                      disabled={!isEditing}
-                      onChange={(e) => updateField(st.id, "countsOnWeekend", e.target.checked)}
-                      className="rounded border-slate-600"
-                    />
-                  </td>
-                  <td className="py-2 px-2 text-center">
-                    {isEditing ? (
-                      <select
-                        className="bg-slate-700 border border-slate-600 rounded px-1 py-0.5 text-xs"
-                        value={st.category}
-                        onChange={(e) => updateField(st.id, "category", e.target.value)}
-                      >
-                        <option value="work">work</option>
-                        <option value="leave">leave</option>
-                        <option value="other">other</option>
-                      </select>
-                    ) : (
-                      <span className="text-xs text-slate-400">{st.category}</span>
-                    )}
-                  </td>
-                  <td className="py-2 px-2 text-center">
-                    {isEditing ? (
-                      <input
-                        type="color"
-                        className="w-6 h-6 rounded cursor-pointer border-0"
-                        value={st.color}
-                        onChange={(e) => updateField(st.id, "color", e.target.value)}
-                      />
-                    ) : (
-                      <span className="inline-block w-4 h-4 rounded" style={{ backgroundColor: st.color }} />
-                    )}
-                  </td>
-                  <td className="py-2 px-2 text-center">
-                    <input
-                      type="checkbox"
-                      checked={st.isLeave}
-                      disabled={!isEditing}
-                      onChange={(e) => updateField(st.id, "isLeave", e.target.checked)}
-                      className="rounded border-slate-600"
-                    />
-                  </td>
-                  <td className="py-2 px-2 text-center">
-                    {isEditing ? (
-                      <select
-                        className="bg-slate-700 border border-slate-600 rounded px-1 py-0.5 text-xs"
-                        value={st.postShiftRule ?? ""}
-                        onChange={(e) => updateField(st.id, "postShiftRule", e.target.value || null)}
-                      >
-                        <option value="">None</option>
-                        <option value="day_off_after">Day off after</option>
-                      </select>
-                    ) : (
-                      <span className="text-xs text-slate-500">{st.postShiftRule ? "Day off" : "—"}</span>
-                    )}
-                  </td>
-                  <td className="py-2 px-2 text-center">
-                    {isEditing && (
-                      <div className="flex gap-1">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); saveShift(st); }}
-                          className="px-2 py-0.5 text-xs bg-emerald-700 hover:bg-emerald-600 rounded transition-colors"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); cancelEdit(); }}
-                          className="px-2 py-0.5 text-xs bg-slate-600 hover:bg-slate-500 rounded transition-colors"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); deleteShift(st.id); }}
-                          className="px-2 py-0.5 text-xs bg-red-800 hover:bg-red-700 rounded transition-colors"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-                {isEditing && (
-                  <tr className="bg-slate-700/20">
-                    <td colSpan={9} className="px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2">Auto-Scheduling</div>
-                      <div className="flex flex-wrap gap-x-6 gap-y-2 items-center text-xs">
-                        <label className="flex items-center gap-1.5">
-                          <span className="text-slate-400">Priority</span>
-                          <input
-                            type="number"
-                            className="w-14 bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs text-center"
-                            value={st.schedulePriority ?? ""}
-                            placeholder="—"
-                            onChange={(e) => updateField(st.id, "schedulePriority", e.target.value ? parseInt(e.target.value) : null)}
-                          />
-                          <span className="text-slate-500">lower = first</span>
-                        </label>
-                        <label className="flex items-center gap-1.5">
-                          <span className="text-slate-400">Eligibility</span>
-                          <select
-                            className="bg-slate-700 border border-slate-600 rounded px-1 py-0.5 text-xs"
-                            value={st.eligibilityRule ?? ""}
-                            onChange={(e) => updateField(st.id, "eligibilityRule", e.target.value || null)}
-                          >
-                            <option value="">All providers</option>
-                            <option value="takesCall">Takes call</option>
-                            <option value="takesLate">Takes late</option>
-                          </select>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={st.weekendPaired}
-                            onChange={(e) => updateField(st.id, "weekendPaired", e.target.checked)}
-                            className="rounded border-slate-600"
-                          />
-                          <span className="text-slate-400">Weekend paired</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={st.ignoresWorkingDays}
-                            onChange={(e) => updateField(st.id, "ignoresWorkingDays", e.target.checked)}
-                            className="rounded border-slate-600"
-                          />
-                          <span className="text-slate-400">Ignores working days</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={st.isFillShift}
-                            onChange={(e) => updateField(st.id, "isFillShift", e.target.checked)}
-                            className="rounded border-slate-600"
-                          />
-                          <span className="text-slate-400">Fill shift</span>
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={st.isOffShift}
-                            onChange={(e) => updateField(st.id, "isOffShift", e.target.checked)}
-                            className="rounded border-slate-600"
-                          />
-                          <span className="text-slate-400">Off shift</span>
-                        </label>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-                </Fragment>
-              );
-            })}
+            {shifts.map((st) => (
+              <tr
+                key={st.id}
+                className="hover:bg-slate-700/30 transition-colors cursor-pointer"
+                onClick={() => setEditingId(st.id)}
+              >
+                <td className="py-2 px-2">
+                  <span className="font-mono font-bold" style={{ color: st.color }}>{st.code}</span>
+                </td>
+                <td className="py-2 px-2 text-slate-300">{st.name}</td>
+                <td className="py-2 px-2 text-center text-slate-300 font-mono">{st.defaultHours}</td>
+                <td className="py-2 px-2 text-center text-xs text-slate-400">{st.category}</td>
+                <td className="py-2 px-2 text-center">
+                  <span className="inline-block w-4 h-4 rounded" style={{ backgroundColor: st.color }} />
+                </td>
+                <td className="py-2 px-2 text-center text-xs text-slate-500">
+                  {st.postShiftRule ? "Day off after" : "—"}
+                </td>
+                <td className="py-2 px-2 text-center text-xs text-slate-500">
+                  {st.schedulePriority != null ? `#${st.schedulePriority}` : "—"}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
+
+      {editingShift && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => cancelEdit()}>
+          <div
+            className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+              <div className="flex items-center gap-3">
+                <span className="inline-block w-4 h-4 rounded" style={{ backgroundColor: editingShift.color }} />
+                <span className="font-mono font-bold text-lg" style={{ color: editingShift.color }}>{editingShift.code}</span>
+                <span className="text-slate-400">{editingShift.name}</span>
+              </div>
+              <button onClick={cancelEdit} className="text-slate-500 hover:text-slate-300 text-lg">x</button>
+            </div>
+
+            <div className="px-6 py-4">
+              <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Basic Info</div>
+              <FieldRow label="Code" description="Short code shown on the grid">
+                <input className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono" value={editingShift.code} onChange={(e) => updateField(editingShift.id, "code", e.target.value.toUpperCase())} />
+              </FieldRow>
+              <FieldRow label="Name" description="Full name of this shift type">
+                <input className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={editingShift.name} onChange={(e) => updateField(editingShift.id, "name", e.target.value)} />
+              </FieldRow>
+              <FieldRow label="Hours per shift" description="How many hours this shift counts for">
+                <input type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center" value={editingShift.defaultHours} onChange={(e) => updateField(editingShift.id, "defaultHours", parseFloat(e.target.value) || 0)} />
+              </FieldRow>
+              <FieldRow label="Category" description="Work shifts, leave, or other">
+                <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={editingShift.category} onChange={(e) => updateField(editingShift.id, "category", e.target.value)}>
+                  <option value="work">Work</option>
+                  <option value="leave">Leave</option>
+                  <option value="other">Other</option>
+                </select>
+              </FieldRow>
+              <FieldRow label="Color" description="Display color on the grid">
+                <input type="color" className="w-8 h-8 rounded cursor-pointer border-0" value={editingShift.color} onChange={(e) => updateField(editingShift.id, "color", e.target.value)} />
+              </FieldRow>
+              <FieldRow label="This is a leave type" description="Check if this represents time off (AL, SL, etc.)">
+                <input type="checkbox" checked={editingShift.isLeave} onChange={(e) => updateField(editingShift.id, "isLeave", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </FieldRow>
+              <FieldRow label="Counts toward FTE hours" description="Include these hours in pay period totals">
+                <input type="checkbox" checked={editingShift.countsTowardFte} onChange={(e) => updateField(editingShift.id, "countsTowardFte", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </FieldRow>
+              <FieldRow label="Count hours on weekends" description="Include weekend hours in pay period totals">
+                <input type="checkbox" checked={editingShift.countsOnWeekend} onChange={(e) => updateField(editingShift.id, "countsOnWeekend", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </FieldRow>
+              <FieldRow label="After this shift" description="What happens the next day">
+                <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={editingShift.postShiftRule ?? ""} onChange={(e) => updateField(editingShift.id, "postShiftRule", e.target.value || null)}>
+                  <option value="">Nothing special</option>
+                  <option value="day_off_after">Must have the next day off</option>
+                </select>
+              </FieldRow>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-700">
+              <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Auto-Scheduling Behavior</div>
+              <FieldRow label="Scheduling order" description="When auto-scheduling, which shifts get assigned first. Lower numbers go first. Leave blank if this shift should not be auto-scheduled.">
+                <input type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center" value={editingShift.schedulePriority ?? ""} placeholder="None" onChange={(e) => updateField(editingShift.id, "schedulePriority", e.target.value ? parseInt(e.target.value) : null)} />
+              </FieldRow>
+              <FieldRow label="Who can be assigned" description="Restrict which staff members are eligible for this shift">
+                <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={editingShift.eligibilityRule ?? ""} onChange={(e) => updateField(editingShift.id, "eligibilityRule", e.target.value || null)}>
+                  <option value="">Anyone</option>
+                  <option value="takesCall">Only staff who take call</option>
+                  <option value="takesLate">Only staff who take late shifts</option>
+                </select>
+              </FieldRow>
+              <FieldRow label="Pair Saturday and Sunday" description="Assign the same person to both Saturday and Sunday when filling this shift on weekends">
+                <input type="checkbox" checked={editingShift.weekendPaired} onChange={(e) => updateField(editingShift.id, "weekendPaired", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </FieldRow>
+              <FieldRow label="Can be assigned on days off" description="Allow this shift to be assigned even on a provider's non-working days (e.g., weekend call)">
+                <input type="checkbox" checked={editingShift.ignoresWorkingDays} onChange={(e) => updateField(editingShift.id, "ignoresWorkingDays", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </FieldRow>
+              <FieldRow label="Default shift for filling hours" description="Use this shift to fill remaining hours when a provider is under their pay period target">
+                <input type="checkbox" checked={editingShift.isFillShift} onChange={(e) => updateField(editingShift.id, "isFillShift", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </FieldRow>
+              <FieldRow label="Represents a day off" description="This shift means the provider is not working (used for post-shift recovery days)">
+                <input type="checkbox" checked={editingShift.isOffShift} onChange={(e) => updateField(editingShift.id, "isOffShift", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </FieldRow>
+            </div>
+
+            <div className="flex items-center justify-between px-6 py-4 border-t border-slate-700">
+              <button
+                onClick={() => deleteShift(editingShift.id)}
+                className="px-3 py-1.5 text-sm bg-red-900/50 hover:bg-red-800 text-red-300 rounded transition-colors"
+              >
+                Delete Shift Type
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={cancelEdit}
+                  className="px-4 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => saveShift(editingShift)}
+                  className="px-4 py-1.5 text-sm bg-blue-700 hover:bg-blue-600 rounded transition-colors font-medium"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <button
         onClick={addShift}
