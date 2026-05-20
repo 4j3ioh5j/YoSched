@@ -206,8 +206,9 @@ export function ScheduleGrid({
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [activeCell, setActiveCell] = useState<{ providerId: string; date: string } | null>(null);
 
-  // Undo/redo stacks
-  type UndoEntry = { type: "set"; providerId: string; date: string; prev: AssignmentData | null; next: AssignmentData | null };
+  // Undo/redo stacks — each entry is a group of changes applied together
+  type UndoOp = { providerId: string; date: string; prev: AssignmentData | null; next: AssignmentData | null };
+  type UndoEntry = UndoOp[];
   const undoStack = useRef<UndoEntry[]>([]);
   const redoStack = useRef<UndoEntry[]>([]);
 
@@ -391,8 +392,8 @@ export function ScheduleGrid({
     setPicker({ providerId, date, x: e.clientX, y: e.clientY });
   }
 
-  function pushUndo(entry: UndoEntry) {
-    undoStack.current.push(entry);
+  function pushUndo(ops: UndoOp[]) {
+    undoStack.current.push(ops);
     redoStack.current = [];
   }
 
@@ -430,17 +431,17 @@ export function ScheduleGrid({
   }
 
   async function handleUndo() {
-    const entry = undoStack.current.pop();
-    if (!entry) return;
-    redoStack.current.push(entry);
-    await applyAssignment(entry.providerId, entry.date, entry.prev);
+    const group = undoStack.current.pop();
+    if (!group) return;
+    redoStack.current.push(group);
+    await Promise.all(group.map((op) => applyAssignment(op.providerId, op.date, op.prev)));
   }
 
   async function handleRedo() {
-    const entry = redoStack.current.pop();
-    if (!entry) return;
-    undoStack.current.push(entry);
-    await applyAssignment(entry.providerId, entry.date, entry.next);
+    const group = redoStack.current.pop();
+    if (!group) return;
+    undoStack.current.push(group);
+    await Promise.all(group.map((op) => applyAssignment(op.providerId, op.date, op.next)));
   }
 
   const undoRef = useRef(handleUndo);
@@ -480,7 +481,7 @@ export function ScheduleGrid({
       code: st.code,
       color: st.color,
     };
-    pushUndo({ type: "set", providerId, date, prev, next });
+    pushUndo([{ providerId, date, prev, next }]);
 
     setPicker(null);
     setSaving(key);
@@ -513,7 +514,7 @@ export function ScheduleGrid({
     const key = `${providerId}:${date}`;
 
     const prev = assignmentMap.get(key) ?? null;
-    pushUndo({ type: "set", providerId, date, prev, next: null });
+    pushUndo([{ providerId, date, prev, next: null }]);
 
     setPicker(null);
     setSaving(key);
@@ -578,10 +579,10 @@ export function ScheduleGrid({
     const fromKey = `${fromProviderId}:${fromDate}`;
     const toKey = `${toProviderId}:${toDate}`;
 
-    // Push undo entries for both cells
-    // After drag: source gets toA (or null), target gets fromA
-    pushUndo({ type: "set", providerId: fromProviderId, date: fromDate, prev: fromA, next: toA ?? null });
-    pushUndo({ type: "set", providerId: toProviderId, date: toDate, prev: toA ?? null, next: { ...fromA, providerId: toProviderId, date: toDate, id: `temp-${toKey}` } });
+    pushUndo([
+      { providerId: fromProviderId, date: fromDate, prev: fromA, next: toA ?? null },
+      { providerId: toProviderId, date: toDate, prev: toA ?? null, next: { ...fromA, providerId: toProviderId, date: toDate, id: `temp-${toKey}` } },
+    ]);
 
     setSaving(fromKey);
 
