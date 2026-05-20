@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
 
@@ -204,6 +204,12 @@ export function ScheduleGrid({
   const [saving, setSaving] = useState<string | null>(null);
   const [dragSource, setDragSource] = useState<{ providerId: string; date: string } | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
+  const [activeCell, setActiveCell] = useState<{ providerId: string; date: string } | null>(null);
+
+  // Undo/redo stacks
+  type UndoEntry = { type: "set"; providerId: string; date: string; prev: AssignmentData | null; next: AssignmentData | null };
+  const undoStack = useRef<UndoEntry[]>([]);
+  const redoStack = useRef<UndoEntry[]>([]);
 
   const dates = useMemo(
     () => getMonthDateRange(viewYear, viewMonth, payPeriods),
@@ -379,10 +385,78 @@ export function ScheduleGrid({
   }
 
   function handleCellClick(providerId: string, date: string, e: React.MouseEvent) {
+    setActiveCell({ providerId, date });
     const existing = assignmentMap.get(`${providerId}:${date}`);
     if (existing?.isLocked) return;
     setPicker({ providerId, date, x: e.clientX, y: e.clientY });
   }
+
+  function pushUndo(entry: UndoEntry) {
+    undoStack.current.push(entry);
+    redoStack.current = [];
+  }
+
+  async function applyAssignment(providerId: string, date: string, assignment: AssignmentData | null) {
+    setSaving(`${providerId}:${date}`);
+    if (assignment) {
+      setLocalAssignments((prev) => {
+        const filtered = prev.filter((a) => !(a.providerId === providerId && a.date === date));
+        return [...filtered, assignment];
+      });
+      try {
+        const res = await fetch("/api/assignments", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ providerId, date, shiftTypeId: assignment.shiftTypeId }),
+        });
+        const saved = await res.json();
+        setLocalAssignments((prev) =>
+          prev.map((a) => (a.providerId === providerId && a.date === date ? saved : a)),
+        );
+      } catch { /* optimistic stays */ }
+    } else {
+      setLocalAssignments((prev) =>
+        prev.filter((a) => !(a.providerId === providerId && a.date === date)),
+      );
+      try {
+        await fetch("/api/assignments", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ providerId, date }),
+        });
+      } catch { /* optimistic stays */ }
+    }
+    setSaving(null);
+  }
+
+  const handleUndo = useCallback(async () => {
+    const entry = undoStack.current.pop();
+    if (!entry) return;
+    redoStack.current.push(entry);
+    await applyAssignment(entry.providerId, entry.date, entry.prev);
+  }, []);
+
+  const handleRedo = useCallback(async () => {
+    const entry = redoStack.current.pop();
+    if (!entry) return;
+    undoStack.current.push(entry);
+    await applyAssignment(entry.providerId, entry.date, entry.next);
+  }, []);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+        e.preventDefault();
+        handleRedo();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [handleUndo, handleRedo]);
 
   const handleSelect = useCallback(async (shiftTypeId: string) => {
     if (!picker) return;
@@ -391,20 +465,24 @@ export function ScheduleGrid({
     const st = shiftTypeMap.get(shiftTypeId);
     if (!st) return;
 
+    const prev = assignmentMap.get(key) ?? null;
+    const next: AssignmentData = {
+      id: `temp-${key}`,
+      providerId,
+      date,
+      shiftTypeId,
+      isLocked: false,
+      code: st.code,
+      color: st.color,
+    };
+    pushUndo({ type: "set", providerId, date, prev, next });
+
     setPicker(null);
     setSaving(key);
 
     setLocalAssignments((prev) => {
       const filtered = prev.filter((a) => !(a.providerId === providerId && a.date === date));
-      return [...filtered, {
-        id: `temp-${key}`,
-        providerId,
-        date,
-        shiftTypeId,
-        isLocked: false,
-        code: st.code,
-        color: st.color,
-      }];
+      return [...filtered, next];
     });
 
     try {
@@ -422,12 +500,15 @@ export function ScheduleGrid({
     } finally {
       setSaving(null);
     }
-  }, [picker, shiftTypeMap]);
+  }, [picker, shiftTypeMap, assignmentMap]);
 
   const handleClear = useCallback(async () => {
     if (!picker) return;
     const { providerId, date } = picker;
     const key = `${providerId}:${date}`;
+
+    const prev = assignmentMap.get(key) ?? null;
+    pushUndo({ type: "set", providerId, date, prev, next: null });
 
     setPicker(null);
     setSaving(key);
@@ -600,6 +681,22 @@ export function ScheduleGrid({
         <span className="ml-2 text-xs text-slate-500">
           {dates[0]} – {dates[dates.length - 1]}
         </span>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            onClick={handleUndo}
+            className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-400"
+            title="Undo (Ctrl+Z)"
+          >
+            ↩
+          </button>
+          <button
+            onClick={handleRedo}
+            className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-400"
+            title="Redo (Ctrl+Shift+Z)"
+          >
+            ↪
+          </button>
+        </div>
       </div>
 
       {/* Scrollable grid area */}
@@ -610,17 +707,26 @@ export function ScheduleGrid({
               <th className="sticky left-0 z-20 bg-slate-800 px-3 py-2 text-left text-xs font-medium text-slate-400 border-b border-r border-slate-700 w-[88px] min-w-[88px]">
                 Date
               </th>
-              {providers.map((p) => (
-                <th
-                  key={p.id}
-                  className="px-1 py-2 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px]"
-                  title={`${p.name} (${p.ftePercentage * 100}% FTE)`}
-                >
-                  <span className={p.employmentType === "fee_basis" ? "text-amber-400" : "text-slate-300"}>
-                    {p.initials}
-                  </span>
-                </th>
-              ))}
+              {providers.map((p) => {
+                const isActiveCol = activeCell?.providerId === p.id;
+                return (
+                  <th
+                    key={p.id}
+                    className={[
+                      "px-1 py-2 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors",
+                      isActiveCol ? "bg-blue-900/40" : "",
+                    ].join(" ")}
+                    title={`${p.name} (${p.ftePercentage * 100}% FTE)`}
+                  >
+                    <span className={[
+                      p.employmentType === "fee_basis" ? "text-amber-400" : "text-slate-300",
+                      isActiveCol ? "!text-blue-300 font-bold" : "",
+                    ].join(" ")}>
+                      {p.initials}
+                    </span>
+                  </th>
+                );
+              })}
               <th className="px-2 py-2 text-center text-xs font-medium text-slate-400 border-b border-l border-slate-700 w-[32px] min-w-[32px]">
                 #
               </th>
@@ -689,6 +795,7 @@ export function ScheduleGrid({
 
               const dw = dayWarnings.get(date);
               const staffCount = staffingCounts[date];
+              const isActiveRow = activeCell?.date === date;
 
               return (
                 <tr
@@ -705,13 +812,14 @@ export function ScheduleGrid({
                     className={[
                       "sticky left-0 z-[5] px-2 py-1 text-xs font-mono border-r border-slate-700 whitespace-nowrap",
                       isNewPP ? "border-t-2 border-t-indigo-500" : "",
+                      isActiveRow ? "!bg-blue-900/40" : "",
                     ].join(" ")}
-                    style={{ background: isOutsideMonth ? "#0d1321" : isWeekend ? "#1a2236" : "#0f172a" }}
+                    style={!isActiveRow ? { background: isOutsideMonth ? "#0d1321" : isWeekend ? "#1a2236" : "#0f172a" } : undefined}
                   >
-                    <span className={isWeekend ? "text-slate-500" : "text-slate-300"}>
+                    <span className={isActiveRow ? "text-blue-300 font-bold" : isWeekend ? "text-slate-500" : "text-slate-300"}>
                       {label.day}
                     </span>{" "}
-                    <span className={isOutsideMonth ? "text-slate-600" : "text-slate-400"}>
+                    <span className={isActiveRow ? "text-blue-300" : isOutsideMonth ? "text-slate-600" : "text-slate-400"}>
                       {label.date}
                     </span>
                     {isHoliday && (
