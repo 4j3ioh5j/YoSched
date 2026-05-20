@@ -4,7 +4,7 @@ import { ScheduleGrid } from "./schedule-grid";
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides] =
+  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins] =
     await Promise.all([
       prisma.provider.findMany({
         where: { isActive: true },
@@ -17,6 +17,7 @@ export default async function Home() {
       prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
       prisma.holiday.findMany({ orderBy: { date: "asc" } }),
       prisma.providerShiftOverride.findMany(),
+      prisma.staffingMinimum.findMany(),
     ]);
 
   const shiftColorMap: Record<string, string> = {};
@@ -49,6 +50,9 @@ export default async function Home() {
           name: p.name,
           employmentType: p.employmentType,
           ftePercentage: p.ftePercentage ?? 1.0,
+          workingDays: p.workingDays,
+          takesCall: p.takesCall,
+          takesLate: p.takesLate,
         }))}
         assignments={assignments.map((a) => ({
           id: a.id,
@@ -68,6 +72,7 @@ export default async function Home() {
           isLeave: st.isLeave,
           defaultHours: st.defaultHours,
           countsTowardFte: st.countsTowardFte,
+          postShiftRule: st.postShiftRule,
         }))}
         payPeriods={payPeriods.map((pp) => ({
           startDate: pp.startDate.toISOString().split("T")[0],
@@ -82,6 +87,11 @@ export default async function Home() {
           providerId: o.providerId,
           shiftTypeId: o.shiftTypeId,
           durationHrs: o.durationHrs,
+        }))}
+        staffingMins={staffingMins.map((sm) => ({
+          role: sm.role,
+          dayType: sm.dayType,
+          minimumCount: sm.minimumCount,
         }))}
       />
     </main>

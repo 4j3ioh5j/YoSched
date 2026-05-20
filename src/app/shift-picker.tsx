@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import type { Warning } from "@/lib/constraints";
 
 type ShiftType = {
   id: string;
@@ -18,9 +19,47 @@ type Props = {
   onSelect: (shiftTypeId: string) => void;
   onClear: () => void;
   onClose: () => void;
+  warnings?: Map<string, Warning[]>;
 };
 
-export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect, onClear, onClose }: Props) {
+function ShiftButton({
+  st,
+  isCurrent,
+  warnings,
+  onSelect,
+}: {
+  st: ShiftType;
+  isCurrent: boolean;
+  warnings?: Warning[];
+  onSelect: (id: string) => void;
+}) {
+  const hasWarning = warnings && warnings.length > 0;
+  const hasError = warnings?.some((w) => w.type === "post-shift" || w.type === "over-hours");
+
+  return (
+    <button
+      onClick={() => onSelect(st.id)}
+      className={[
+        "px-2 py-1.5 text-xs font-bold rounded text-center transition-colors relative",
+        isCurrent ? "ring-2 ring-white/50" : "",
+      ].join(" ")}
+      style={{
+        backgroundColor: st.color + "30",
+        color: st.color,
+      }}
+      title={hasWarning ? warnings!.map((w) => w.message).join("\n") : st.name}
+    >
+      {st.code}
+      {hasWarning && (
+        <span
+          className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${hasError ? "bg-red-500" : "bg-amber-500"}`}
+        />
+      )}
+    </button>
+  );
+}
+
+export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect, onClear, onClose, warnings }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -65,56 +104,38 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
       <div className="text-[10px] uppercase tracking-wider text-slate-500 px-2 py-1">Work</div>
       <div className="grid grid-cols-3 gap-0.5">
         {workShifts.map((st) => (
-          <button
+          <ShiftButton
             key={st.id}
-            onClick={() => onSelect(st.id)}
-            className={[
-              "px-2 py-1.5 text-xs font-bold rounded text-center transition-colors",
-              st.id === currentShiftTypeId ? "ring-2 ring-white/50" : "",
-            ].join(" ")}
-            style={{
-              backgroundColor: st.color + "30",
-              color: st.color,
-            }}
-            title={st.name}
-          >
-            {st.code}
-          </button>
+            st={st}
+            isCurrent={st.id === currentShiftTypeId}
+            warnings={warnings?.get(st.id)}
+            onSelect={onSelect}
+          />
         ))}
       </div>
 
       <div className="text-[10px] uppercase tracking-wider text-slate-500 px-2 py-1 mt-1">Leave</div>
       <div className="grid grid-cols-3 gap-0.5">
         {leaveShifts.map((st) => (
-          <button
+          <ShiftButton
             key={st.id}
-            onClick={() => onSelect(st.id)}
-            className={[
-              "px-2 py-1.5 text-xs font-bold rounded text-center transition-colors",
-              st.id === currentShiftTypeId ? "ring-2 ring-white/50" : "",
-            ].join(" ")}
-            style={{
-              backgroundColor: st.color + "30",
-              color: st.color,
-            }}
-            title={st.name}
-          >
-            {st.code}
-          </button>
+            st={st}
+            isCurrent={st.id === currentShiftTypeId}
+            warnings={warnings?.get(st.id)}
+            onSelect={onSelect}
+          />
         ))}
       </div>
 
       {currentShiftTypeId && (
-        <>
-          <div className="border-t border-slate-700 mt-2 pt-1">
-            <button
-              onClick={onClear}
-              className="w-full px-2 py-1.5 text-xs text-red-400 hover:bg-red-900/30 rounded transition-colors"
-            >
-              Clear
-            </button>
-          </div>
-        </>
+        <div className="border-t border-slate-700 mt-2 pt-1">
+          <button
+            onClick={onClear}
+            className="w-full px-2 py-1.5 text-xs text-red-400 hover:bg-red-900/30 rounded transition-colors"
+          >
+            Clear
+          </button>
+        </div>
       )}
     </div>
   );

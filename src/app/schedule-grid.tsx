@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
+import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
 
 type Provider = {
   id: string;
@@ -9,6 +10,9 @@ type Provider = {
   name: string;
   employmentType: string;
   ftePercentage: number;
+  workingDays: number[];
+  takesCall: boolean;
+  takesLate: boolean;
 };
 
 type AssignmentData = {
@@ -30,6 +34,7 @@ type ShiftType = {
   isLeave: boolean;
   defaultHours: number;
   countsTowardFte: boolean;
+  postShiftRule: string | null;
 };
 
 type PayPeriod = {
@@ -49,6 +54,12 @@ type ProviderOverride = {
   durationHrs: number;
 };
 
+type StaffingMin = {
+  role: string;
+  dayType: string;
+  minimumCount: number;
+};
+
 type Props = {
   providers: Provider[];
   assignments: AssignmentData[];
@@ -56,6 +67,7 @@ type Props = {
   payPeriods: PayPeriod[];
   holidays: Holiday[];
   providerOverrides: ProviderOverride[];
+  staffingMins: StaffingMin[];
 };
 
 type PickerState = {
@@ -164,6 +176,17 @@ function buildRowItems(dates: string[], payPeriods: PayPeriod[]): RowItem[] {
   return items;
 }
 
+function WarningDot({ warnings }: { warnings: Warning[] }) {
+  if (warnings.length === 0) return null;
+  const hasError = warnings.some((w) => w.type === "post-shift" || w.type === "over-hours");
+  return (
+    <span
+      className={`absolute top-0 right-0 w-1.5 h-1.5 rounded-full ${hasError ? "bg-red-500" : "bg-amber-500"}`}
+      title={warnings.map((w) => w.message).join("\n")}
+    />
+  );
+}
+
 export function ScheduleGrid({
   providers,
   assignments: initialAssignments,
@@ -171,6 +194,7 @@ export function ScheduleGrid({
   payPeriods,
   holidays,
   providerOverrides,
+  staffingMins,
 }: Props) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
@@ -202,6 +226,12 @@ export function ScheduleGrid({
     for (const st of shiftTypes) map.set(st.id, st);
     return map;
   }, [shiftTypes]);
+
+  const providerMap = useMemo(() => {
+    const map = new Map<string, Provider>();
+    for (const p of providers) map.set(p.id, p);
+    return map;
+  }, [providers]);
 
   const overrideMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -257,6 +287,50 @@ export function ScheduleGrid({
     }
     return result;
   }, [sortedPPs, providers, assignmentMap, overrideMap, shiftTypeMap]);
+
+  // Compute all cell warnings
+  const cellWarnings = useMemo(() => {
+    const map = new Map<string, Warning[]>();
+    for (const date of dates) {
+      for (const p of providers) {
+        const a = assignmentMap.get(`${p.id}:${date}`);
+        if (!a) continue;
+        const warnings = checkCellWarnings({
+          providerId: p.id,
+          date,
+          shiftTypeId: a.shiftTypeId,
+          provider: p,
+          shiftTypeMap,
+          assignmentMap,
+          providers,
+          holidaySet,
+          staffingMins,
+        });
+        if (warnings.length > 0) {
+          map.set(`${p.id}:${date}`, warnings);
+        }
+      }
+    }
+    return map;
+  }, [dates, providers, assignmentMap, shiftTypeMap, holidaySet, staffingMins]);
+
+  // Compute per-day staffing warnings
+  const dayWarnings = useMemo(() => {
+    const map = new Map<string, Warning[]>();
+    for (const date of dates) {
+      const warnings = checkDayStaffing({
+        date,
+        providers,
+        assignmentMap,
+        holidaySet,
+        staffingMins,
+      });
+      if (warnings.length > 0) {
+        map.set(date, warnings);
+      }
+    }
+    return map;
+  }, [dates, providers, assignmentMap, holidaySet, staffingMins]);
 
   const staffingCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -366,6 +440,34 @@ export function ScheduleGrid({
   }, [picker]);
 
   const closePicker = useCallback(() => setPicker(null), []);
+
+  // Compute warnings for picker preview
+  const pickerWarnings = useMemo(() => {
+    if (!picker) return new Map<string, Warning[]>();
+    const { providerId, date } = picker;
+    const provider = providerMap.get(providerId);
+    if (!provider) return new Map<string, Warning[]>();
+
+    const result = new Map<string, Warning[]>();
+    for (const st of shiftTypes) {
+      if (st.category === "other") continue;
+      const warnings = checkCellWarnings({
+        providerId,
+        date,
+        shiftTypeId: st.id,
+        provider,
+        shiftTypeMap,
+        assignmentMap,
+        providers,
+        holidaySet,
+        staffingMins,
+      });
+      if (warnings.length > 0) {
+        result.set(st.id, warnings);
+      }
+    }
+    return result;
+  }, [picker, providerMap, shiftTypes, shiftTypeMap, assignmentMap, providers, holidaySet, staffingMins]);
 
   let lastPPKey = "";
 
@@ -484,6 +586,9 @@ export function ScheduleGrid({
               const ppIdx = currentPP ? sortedPPs.indexOf(currentPP) : -1;
               const ppEven = ppIdx !== -1 && ppIdx % 2 === 0;
 
+              const dw = dayWarnings.get(date);
+              const staffCount = staffingCounts[date] || 0;
+
               return (
                 <tr
                   key={date}
@@ -519,12 +624,13 @@ export function ScheduleGrid({
                     const cellKey = `${p.id}:${date}`;
                     const isSaving = saving === cellKey;
                     const isPickerTarget = picker?.providerId === p.id && picker?.date === date;
+                    const cw = cellWarnings.get(cellKey);
 
                     return (
                       <td
                         key={p.id}
                         className={[
-                          "px-0.5 py-0.5 text-center border-slate-700/30 border cursor-pointer",
+                          "px-0.5 py-0.5 text-center border-slate-700/30 border cursor-pointer relative",
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
                           ppEven ? "" : "bg-slate-800/20",
                           isPickerTarget ? "ring-1 ring-inset ring-blue-400" : "",
@@ -543,23 +649,30 @@ export function ScheduleGrid({
                               backgroundColor: a.code === "X" ? "transparent" : a.color + "30",
                               color: a.code === "X" ? "#475569" : a.color,
                             }}
-                            title={`${p.initials}: ${a.code} on ${date}${a.isLocked ? " (locked)" : ""}`}
+                            title={
+                              cw && cw.length > 0
+                                ? cw.map((w) => w.message).join("\n")
+                                : `${p.initials}: ${a.code} on ${date}${a.isLocked ? " (locked)" : ""}`
+                            }
                           >
                             {a.code}
                           </div>
                         ) : isSaving ? (
                           <div className="text-[11px] text-slate-600">...</div>
                         ) : null}
+                        {cw && <WarningDot warnings={cw} />}
                       </td>
                     );
                   })}
                   <td
                     className={[
-                      "px-2 py-1 text-center text-xs font-mono border-l border-slate-700 text-slate-400",
+                      "px-2 py-1 text-center text-xs font-mono border-l border-slate-700",
                       isNewPP ? "border-t-2 border-t-indigo-500" : "",
+                      dw && dw.length > 0 ? "text-red-400" : "text-slate-400",
                     ].join(" ")}
+                    title={dw ? dw.map((w) => w.message).join("\n") : undefined}
                   >
-                    {staffingCounts[date] || 0}
+                    {staffCount}
                   </td>
                 </tr>
               );
@@ -584,10 +697,14 @@ export function ScheduleGrid({
               </span>
             ))}
           <span className="text-slate-600 mx-1">|</span>
-          <span className="text-slate-500 font-medium mr-1">Hours:</span>
-          <span className="text-emerald-400">on target</span>
-          <span className="text-amber-400">under</span>
-          <span className="text-red-400">over</span>
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" />
+            <span className="text-slate-400">rule violation</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
+            <span className="text-slate-400">advisory</span>
+          </span>
         </div>
       </div>
 
@@ -600,6 +717,7 @@ export function ScheduleGrid({
           onSelect={handleSelect}
           onClear={handleClear}
           onClose={closePicker}
+          warnings={pickerWarnings}
         />
       )}
     </div>
