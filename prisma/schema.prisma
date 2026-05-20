@@ -13,6 +13,7 @@ model ShiftType {
   code            String   @unique
   defaultHours    Float
   countsTowardFte Boolean  @default(true)
+  countsOnWeekend Boolean  @default(false)
   isLeave         Boolean  @default(false)
   isPaid          Boolean  @default(true)
   category        String   @default("work") // work, leave, imported, other

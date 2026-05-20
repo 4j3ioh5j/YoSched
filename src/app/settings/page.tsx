@@ -37,6 +37,7 @@ export default async function Settings() {
           name: st.name,
           defaultHours: st.defaultHours,
           countsTowardFte: st.countsTowardFte,
+          countsOnWeekend: st.countsOnWeekend,
           isLeave: st.isLeave,
           isPaid: st.isPaid,
           category: st.category,

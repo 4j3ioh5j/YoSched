@@ -8,6 +8,7 @@ type ShiftType = {
   name: string;
   defaultHours: number;
   countsTowardFte: boolean;
+  countsOnWeekend: boolean;
   isLeave: boolean;
   isPaid: boolean;
   category: string;
@@ -264,6 +265,7 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
         name: created.name,
         defaultHours: created.defaultHours,
         countsTowardFte: created.countsTowardFte,
+        countsOnWeekend: created.countsOnWeekend,
         isLeave: created.isLeave,
         isPaid: created.isPaid,
         category: created.category,
@@ -320,6 +322,7 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
               <th className="text-left py-2 px-2 w-16">Code</th>
               <th className="text-left py-2 px-2">Name</th>
               <th className="text-center py-2 px-2 w-16">Hours</th>
+              <th className="text-center py-2 px-2 w-14">Wknd</th>
               <th className="text-center py-2 px-2 w-20">Category</th>
               <th className="text-center py-2 px-2 w-12">Color</th>
               <th className="text-center py-2 px-2 w-14">Leave</th>
@@ -372,6 +375,15 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
                     ) : (
                       <span className="text-slate-300 font-mono">{st.defaultHours}</span>
                     )}
+                  </td>
+                  <td className="py-2 px-2 text-center">
+                    <input
+                      type="checkbox"
+                      checked={st.countsOnWeekend}
+                      disabled={!isEditing}
+                      onChange={(e) => updateField(st.id, "countsOnWeekend", e.target.checked)}
+                      className="rounded border-slate-600"
+                    />
                   </td>
                   <td className="py-2 px-2 text-center">
                     {isEditing ? (

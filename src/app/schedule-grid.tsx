@@ -34,6 +34,7 @@ type ShiftType = {
   isLeave: boolean;
   defaultHours: number;
   countsTowardFte: boolean;
+  countsOnWeekend: boolean;
   postShiftRule: string | null;
 };
 
@@ -296,7 +297,12 @@ export function ScheduleGrid({
           const dateStr = toDateStr(cursor);
           const a = assignmentMap.get(`${p.id}:${dateStr}`);
           if (a && shiftCountsTowardFte(a.shiftTypeId)) {
-            hours += getHoursForAssignment(p.id, a.shiftTypeId);
+            const dow = cursor.getDay();
+            const isWeekend = dow === 0 || dow === 6;
+            const st = shiftTypeMap.get(a.shiftTypeId);
+            if (!isWeekend || st?.countsOnWeekend) {
+              hours += getHoursForAssignment(p.id, a.shiftTypeId);
+            }
           }
           cursor.setDate(cursor.getDate() + 1);
         }

@@ -77,6 +77,7 @@ export default async function Home() {
           isLeave: st.isLeave,
           defaultHours: st.defaultHours,
           countsTowardFte: st.countsTowardFte,
+          countsOnWeekend: st.countsOnWeekend,
           postShiftRule: st.postShiftRule,
         }))}
         payPeriods={payPeriods.map((pp) => ({
