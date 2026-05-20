@@ -692,7 +692,7 @@ export function autoSchedule({
         if (daysNeeded >= availableDates.length) {
           for (const date of availableDates) {
             if (currentHours >= target) break;
-            if (currentHours + hoursPerDay > target + hoursPerDay / 2) break;
+            if (currentHours + hoursPerDay > target) break;
             assign(provider.id, date, fillShift,
               `${fillShift.code} to fill hours (${currentHours}/${target}hrs)`,
               "fill", 0.6);
@@ -746,7 +746,7 @@ export function autoSchedule({
 
         for (const date of workDates) {
           if (currentHours >= target) break;
-          if (currentHours + hoursPerDay > target + hoursPerDay / 2) break;
+          if (currentHours + hoursPerDay > target) break;
           assign(provider.id, date, fillShift,
             `${fillShift.code} to fill hours (${currentHours}/${target}hrs)`,
             "fill", 0.6);
