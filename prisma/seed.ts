@@ -124,11 +124,21 @@ async function main() {
   // --- Desirability Weights ---
   const orlId = (await prisma.shiftType.findUnique({ where: { code: "ORL" } }))!.id;
 
+  const callId = (await prisma.shiftType.findUnique({ where: { code: "CALL" } }))!.id;
+
   const weights = [
+    { shiftTypeId: callId, dayOfWeek: 6, weight: -2, reason: "Weekend call — gives up Saturday" },
+    { shiftTypeId: callId, dayOfWeek: 0, weight: -2, reason: "Weekend call — gives up Sunday" },
+    { shiftTypeId: orcId, dayOfWeek: 1, weight: -1, reason: "16-hour call shift" },
+    { shiftTypeId: orcId, dayOfWeek: 2, weight: -1, reason: "16-hour call shift" },
+    { shiftTypeId: orcId, dayOfWeek: 3, weight: -1, reason: "16-hour call shift" },
     { shiftTypeId: orcId, dayOfWeek: 4, weight: 2, reason: "Three-day weekend (Fri off after)" },
     { shiftTypeId: orcId, dayOfWeek: 5, weight: -2, reason: "Ruins weekend plans" },
+    { shiftTypeId: orlId, dayOfWeek: 1, weight: -1, reason: "12-hour late shift" },
     { shiftTypeId: orlId, dayOfWeek: 2, weight: 2, reason: "Resident leaves at 3PM" },
     { shiftTypeId: orlId, dayOfWeek: 3, weight: -2, reason: "Nothing starts until 9AM" },
+    { shiftTypeId: orlId, dayOfWeek: 4, weight: -1, reason: "12-hour late shift" },
+    { shiftTypeId: orlId, dayOfWeek: 5, weight: -1, reason: "12-hour late shift" },
   ];
 
   for (const w of weights) {
