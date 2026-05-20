@@ -378,18 +378,55 @@ export function autoSchedule({
     }
   }
 
-  // ── STEP 2: Fill staffing requirements (data-driven) ──
-  // Get all shift types that have a schedulePriority and are not fill shifts
+  // ── STEP 2: Fill staffing requirements (even distribution + equity tiebreak) ──
+  //
+  // For each shift type, distribute assignments evenly across eligible providers
+  // within this scheduling run. Historical per-shift equity only breaks ties when
+  // multiple providers have the same count — it never causes one person to absorb
+  // all the burden just because they're historically underloaded.
+  //
+  // Sort priority: fewest-in-this-run → longest-gap-since-last → fewest-historical
+
   const scheduledShifts = shiftTypes
     .filter((st) => st.schedulePriority != null && !st.isFillShift && !st.isOffShift)
     .sort((a, b) => (a.schedulePriority ?? 0) - (b.schedulePriority ?? 0));
+
+  const historicalShiftCounts = new Map<string, Record<string, number>>();
+  for (const m of fairness.metrics) {
+    historicalShiftCounts.set(m.providerId, m.shiftCounts);
+  }
+
+  function historicalCount(providerId: string, shiftCode: string): number {
+    return historicalShiftCounts.get(providerId)?.[shiftCode] ?? 0;
+  }
 
   for (const st of scheduledShifts) {
     const eligible = eligibleProviders(st);
     const stepName = st.code.toLowerCase();
 
+    // Per-shift tracking for even distribution within this run
+    const runCount = new Map<string, number>();
+    const lastRunDate = new Map<string, string>();
+    for (const p of eligible) runCount.set(p.id, 0);
+
+    function pickProvider(pool: ScheduleProvider[]): ScheduleProvider {
+      pool.sort((a, b) => {
+        const countDiff = (runCount.get(a.id) ?? 0) - (runCount.get(b.id) ?? 0);
+        if (countDiff !== 0) return countDiff;
+        const lastA = lastRunDate.get(a.id) ?? "";
+        const lastB = lastRunDate.get(b.id) ?? "";
+        if (lastA !== lastB) return lastA.localeCompare(lastB);
+        return historicalCount(a.id, st.code) - historicalCount(b.id, st.code);
+      });
+      return pool[0];
+    }
+
+    function recordAssignment(providerId: string, date: string) {
+      runCount.set(providerId, (runCount.get(providerId) ?? 0) + 1);
+      lastRunDate.set(providerId, date);
+    }
+
     if (st.weekendPaired) {
-      // Paired weekend scheduling: assign same provider to Sat+Sun
       const saturdayDates = dates.filter((d) => getDow(d) === 6);
 
       for (const sat of saturdayDates) {
@@ -412,15 +449,12 @@ export function autoSchedule({
           continue;
         }
 
-        const sorted = sortByFairness(available.map((p) => p.id));
-        const chosen = sorted[0];
-        const provider = providers.find((p) => p.id === chosen)!;
-
-        assign(chosen, sat, st, `Weekend ${st.code} (fairness pick — ${provider.initials} is underloaded)`, `weekend-${stepName}`, 0.8);
-        assign(chosen, sun, st, `Weekend ${st.code} (fairness pick — ${provider.initials} is underloaded)`, `weekend-${stepName}`, 0.8);
+        const chosen = pickProvider(available);
+        assign(chosen.id, sat, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
+        assign(chosen.id, sun, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
+        recordAssignment(chosen.id, sat);
       }
 
-      // Also fill holiday requirements for paired shifts
       for (const date of dates) {
         if (!holidaySet.has(date) || isWeekend(date)) continue;
         const required = getRequiredCount(st, date);
@@ -434,13 +468,11 @@ export function autoSchedule({
           continue;
         }
 
-        const sorted = sortByFairness(available.map((p) => p.id));
-        const chosen = sorted[0];
-        const provider = providers.find((p) => p.id === chosen)!;
-        assign(chosen, date, st, `Holiday ${st.code} (fairness pick — ${provider.initials})`, `holiday-${stepName}`, 0.8);
+        const chosen = pickProvider(available);
+        assign(chosen.id, date, st, `Holiday ${st.code} (even dist — ${chosen.initials})`, `holiday-${stepName}`, 0.8);
+        recordAssignment(chosen.id, date);
       }
     } else {
-      // Standard per-day scheduling
       for (const date of dates) {
         const required = getRequiredCount(st, date);
         if (required <= 0) continue;
@@ -461,29 +493,32 @@ export function autoSchedule({
           (p) => prefMap.get(`${p.id}:${dow}`) === st.code
         );
 
-        const pool = preferred.length > 0 ? preferred : available;
-        const sorted = sortByFairness(pool.map((p) => p.id));
+        let pool = preferred.length > 0 ? preferred : available;
         const desirability = dwMap.get(`${st.id}:${dow}`) ?? 0;
 
-        for (let i = 0; i < needed && i < sorted.length; i++) {
-          const chosen = sorted[i];
-          const provider = providers.find((p) => p.id === chosen)!;
+        for (let i = 0; i < needed; i++) {
+          if (pool.length === 0) break;
+          const chosen = pickProvider([...pool]);
+          const provider = providers.find((p) => p.id === chosen.id)!;
 
           assign(
-            chosen,
+            chosen.id,
             date,
             st,
-            `${st.code} (fairness${desirability !== 0 ? `, desirability ${desirability > 0 ? "+" : ""}${desirability}` : ""})`,
+            `${st.code} (even dist${desirability !== 0 ? `, desirability ${desirability > 0 ? "+" : ""}${desirability}` : ""})`,
             stepName,
             0.7
           );
+          recordAssignment(chosen.id, date);
 
           if (st.postShiftRule === "day_off_after" && offShift) {
             const next = nextDate(date);
-            if (dateSet.has(next) && !isAssigned(chosen, next)) {
-              assign(chosen, next, offShift, `Day off after ${st.code}`, `${stepName}-recovery`, 0.95);
+            if (dateSet.has(next) && !isAssigned(chosen.id, next)) {
+              assign(chosen.id, next, offShift, `Day off after ${st.code}`, `${stepName}-recovery`, 0.95);
             }
           }
+
+          pool = pool.filter((p) => p.id !== chosen.id);
         }
       }
     }
