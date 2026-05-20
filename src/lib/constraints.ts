@@ -32,6 +32,12 @@ type StaffingMinimum = {
   minimumCount: number;
 };
 
+type StaffingRequirement = {
+  shiftCode: string;
+  dayKey: string;
+  minCount: number;
+};
+
 type AssignmentLookup = {
   get(key: string): { shiftTypeId: string; code: string } | undefined;
 };
@@ -136,67 +142,56 @@ export function checkDayStaffing({
   assignmentMap,
   holidaySet,
   staffingMins,
+  staffingReqs,
 }: {
   date: string;
   providers: Provider[];
   assignmentMap: AssignmentLookup;
   holidaySet: Set<string>;
   staffingMins: StaffingMinimum[];
+  staffingReqs?: StaffingRequirement[];
 }): Warning[] {
   const warnings: Warning[] = [];
   const dayType = getDayType(date, holidaySet);
-  const isHoliday = holidaySet.has(date);
   const dow = parseDate(date).getDay();
-  const isWeekend = dow === 0 || dow === 6;
-  const OR_CODES = new Set(["OR", "ORC", "ORL"]);
 
-  if (!isWeekend && !isHoliday) {
-    let staffed = 0;
+  if (staffingReqs && staffingReqs.length > 0) {
+    const dayKey = holidaySet.has(date) ? "holiday" : String(dow);
+
+    const shiftCounts = new Map<string, number>();
     for (const p of providers) {
       const a = assignmentMap.get(`${p.id}:${date}`);
-      if (a && OR_CODES.has(a.code)) staffed++;
+      if (a && a.code !== "X") {
+        shiftCounts.set(a.code, (shiftCounts.get(a.code) || 0) + 1);
+      }
     }
 
-    for (const min of staffingMins) {
-      if (min.dayType === dayType && staffed < min.minimumCount) {
+    for (const req of staffingReqs) {
+      if (req.dayKey !== dayKey) continue;
+      if (req.minCount <= 0) continue;
+      const actual = shiftCounts.get(req.shiftCode) || 0;
+      if (actual < req.minCount) {
         warnings.push({
-          type: "understaffed",
-          message: `${staffed}/${min.minimumCount} ${min.role} in OR/ORC/ORL (${dayType})`,
+          type: actual === 0 ? "shift-count" : "understaffed",
+          message: `${actual}/${req.minCount} ${req.shiftCode} (${dayType})`,
         });
       }
     }
   }
 
-  if (!isWeekend) {
-    let orcCount = 0;
-    let orlCount = 0;
+  // Legacy staffing minimums (total staff count across tracked shifts)
+  for (const min of staffingMins) {
+    if (min.dayType !== dayType) continue;
+    let staffed = 0;
     for (const p of providers) {
       const a = assignmentMap.get(`${p.id}:${date}`);
-      if (a?.code === "ORC") orcCount++;
-      if (a?.code === "ORL") orlCount++;
+      if (a && a.code !== "X") staffed++;
     }
-
-    if (orcCount !== 1) {
+    if (staffed < min.minimumCount) {
       warnings.push({
-        type: "shift-count",
-        message: `${orcCount} ORC assigned (need exactly 1)`,
+        type: "understaffed",
+        message: `${staffed}/${min.minimumCount} ${min.role} staffed (${dayType})`,
       });
-    }
-
-    if (isHoliday) {
-      if (orlCount > 0) {
-        warnings.push({
-          type: "shift-count",
-          message: `${orlCount} ORL assigned — holidays should have no ORL`,
-        });
-      }
-    } else {
-      if (orlCount !== 1) {
-        warnings.push({
-          type: "shift-count",
-          message: `${orlCount} ORL assigned (need exactly 1)`,
-        });
-      }
     }
   }
 

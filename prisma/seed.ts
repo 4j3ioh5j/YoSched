@@ -152,9 +152,9 @@ async function main() {
 
   // --- Staffing Minimums (legacy) ---
   const staffingMins = [
-    { role: "attending", dayType: "weekday", minimumCount: 6 },
-    { role: "attending", dayType: "weekend", minimumCount: 1 },
-    { role: "attending", dayType: "holiday", minimumCount: 1 },
+    { role: "staff", dayType: "weekday", minimumCount: 6 },
+    { role: "staff", dayType: "weekend", minimumCount: 1 },
+    { role: "staff", dayType: "holiday", minimumCount: 1 },
   ];
 
   for (const sm of staffingMins) {

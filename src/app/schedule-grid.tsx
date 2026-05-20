@@ -62,6 +62,12 @@ type StaffingMin = {
   minimumCount: number;
 };
 
+type StaffingReq = {
+  shiftCode: string;
+  dayKey: string;
+  minCount: number;
+};
+
 type FairnessDeviation = {
   desirability: number;
   holidayWork: number;
@@ -93,6 +99,7 @@ type Props = {
   holidays: Holiday[];
   providerOverrides: ProviderOverride[];
   staffingMins: StaffingMin[];
+  staffingReqs: StaffingReq[];
   fairnessData?: Record<string, FairnessEntry>;
   fairnessAverages?: {
     desirabilityScore: number;
@@ -218,6 +225,7 @@ export function ScheduleGrid({
   holidays,
   providerOverrides,
   staffingMins,
+  staffingReqs,
   fairnessData,
   fairnessAverages,
 }: Props) {
@@ -392,15 +400,22 @@ export function ScheduleGrid({
         assignmentMap,
         holidaySet,
         staffingMins,
+        staffingReqs,
       });
       if (warnings.length > 0) {
         map.set(date, warnings);
       }
     }
     return map;
-  }, [dates, providers, assignmentMap, holidaySet, staffingMins]);
+  }, [dates, providers, assignmentMap, holidaySet, staffingMins, staffingReqs]);
 
-  const OR_CODES = new Set(["OR", "ORC", "ORL"]);
+  const staffingCountCodes = useMemo(() => {
+    const codes = new Set<string>();
+    for (const req of staffingReqs) {
+      if (req.minCount > 0) codes.add(req.shiftCode);
+    }
+    return codes;
+  }, [staffingReqs]);
 
   const staffingCounts = useMemo(() => {
     const counts: Record<string, number | null> = {};
@@ -414,12 +429,12 @@ export function ScheduleGrid({
       let count = 0;
       for (const p of providers) {
         const a = assignmentMap.get(`${p.id}:${date}`);
-        if (a && OR_CODES.has(a.code)) count++;
+        if (a && staffingCountCodes.has(a.code)) count++;
       }
       counts[date] = count;
     }
     return counts;
-  }, [dates, providers, assignmentMap, holidaySet]);
+  }, [dates, providers, assignmentMap, holidaySet, staffingCountCodes]);
 
   function prevMonth() {
     if (viewMonth === 0) {
@@ -924,42 +939,20 @@ export function ScheduleGrid({
 
     for (const date of dates) {
       const dow = parseDate(date).getDay();
-      const isWeekend = dow === 0 || dow === 6;
-      const isHol = holidaySet.has(date);
       const d = `${DAY[dow]} ${date.slice(5)}`;
-
-      if (!isWeekend && !isHol) {
-        let orcCount = 0;
-        let orlCount = 0;
-        for (const p of providers) {
-          const a = assignmentMap.get(`${p.id}:${date}`);
-          if (a?.code === "ORC") orcCount++;
-          if (a?.code === "ORL") orlCount++;
-        }
-        if (orcCount === 0) items.push({ date, label: `${d} — no ORC`, type: "error" });
-        if (orlCount === 0) items.push({ date, label: `${d} — no ORL`, type: "error" });
-      }
-
-      if (isWeekend) {
-        let hasCall = false;
-        for (const p of providers) {
-          const a = assignmentMap.get(`${p.id}:${date}`);
-          if (a?.code === "CALL") { hasCall = true; break; }
-        }
-        if (!hasCall) items.push({ date, label: `${d} — no CALL`, type: "error" });
-      }
-
       const dw = dayWarnings.get(date);
       if (dw) {
         for (const w of dw) {
-          if (w.type === "understaffed") {
-            items.push({ date, label: `${d} — ${w.message}`, type: "warn" });
-          }
+          items.push({
+            date,
+            label: `${d} — ${w.message}`,
+            type: w.type === "shift-count" ? "error" : "warn",
+          });
         }
       }
     }
     return items;
-  }, [dates, providers, assignmentMap, holidaySet, dayWarnings]);
+  }, [dates, dayWarnings]);
 
   let lastPPKey = "";
 
