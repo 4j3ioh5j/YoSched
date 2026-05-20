@@ -26,6 +26,7 @@ export type ScheduleShiftType = {
   weekendPaired: boolean;
   ignoresWorkingDays: boolean;
   eligibilityRule: string | null;
+  noConsecutiveGroup: string | null;
   category: string;
   postShiftRule: string | null;
 };
@@ -270,6 +271,12 @@ export function autoSchedule({
     if (prev) {
       const prevSt = stById.get(prev.shiftTypeId);
       if (prevSt?.postShiftRule === "day_off_after") return false;
+      if (st.noConsecutiveGroup && prevSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
+    }
+    const next = getCell(provider.id, nextDate(date));
+    if (next) {
+      const nextSt = stById.get(next.shiftTypeId);
+      if (st.noConsecutiveGroup && nextSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
     }
     return true;
   }
@@ -489,15 +496,33 @@ export function autoSchedule({
         const sunCount = countAssigned(st.code, sun);
         if (satCount >= satRequired && sunCount >= sunRequired) continue;
 
+        function noGroupConflict(providerId: string, sat: string, sun: string): boolean {
+          if (!st.noConsecutiveGroup) return true;
+          const fri = prevDate(sat);
+          const mon = nextDate(sun);
+          const friCell = getCell(providerId, fri);
+          if (friCell) {
+            const friSt = stById.get(friCell.shiftTypeId);
+            if (friSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
+          }
+          const monCell = getCell(providerId, mon);
+          if (monCell) {
+            const monSt = stById.get(monCell.shiftTypeId);
+            if (monSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
+          }
+          return true;
+        }
+
         const available = eligible.filter(
           (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
+            noGroupConflict(p.id, sat, sun) &&
             !wouldBreakPPHours(p.id, sat, st)
         );
 
         if (available.length === 0) {
-          // Relax hours constraint — someone must cover
           const fallback = eligible.filter(
-            (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun)
+            (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
+              noGroupConflict(p.id, sat, sun)
           );
           if (fallback.length === 0) {
             warnings.push(`No eligible ${st.code} provider for ${sat}/${sun}`);
@@ -750,7 +775,8 @@ export function autoSchedule({
           let subUsed = false;
           for (const date of availableDates) {
             if (currentHours >= target) break;
-            if (subShift && !subUsed && currentHours + subShift.defaultHours <= target) {
+            if (subShift && !subUsed && currentHours + subShift.defaultHours <= target &&
+                isAvailable(provider, date, subShift)) {
               const afterSub = currentHours + subShift.defaultHours;
               const daysAfter = availableDates.length - availableDates.indexOf(date) - 1;
               if (afterSub + daysAfter * hoursPerDay >= target) {
@@ -813,7 +839,8 @@ export function autoSchedule({
         let subUsed = false;
         for (const date of workDates) {
           if (currentHours >= target) break;
-          if (subShift && !subUsed && currentHours + subShift.defaultHours <= target) {
+          if (subShift && !subUsed && currentHours + subShift.defaultHours <= target &&
+              isAvailable(provider, date, subShift)) {
             assign(provider.id, date, subShift,
               `${subShift.code} to fill hours (${currentHours}/${target}hrs)`,
               "fill-sub", 0.6);

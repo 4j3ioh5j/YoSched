@@ -121,6 +121,7 @@ export default async function Home() {
           isLeave: st.isLeave,
           isOffShift: st.isOffShift,
           ignoresWorkingDays: st.ignoresWorkingDays,
+          noConsecutiveGroup: st.noConsecutiveGroup,
           defaultHours: st.defaultHours,
           countsTowardFte: st.countsTowardFte,
           countsOnWeekend: st.countsOnWeekend,

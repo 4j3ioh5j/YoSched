@@ -58,6 +58,7 @@ export default async function Settings() {
           weekendPaired: st.weekendPaired,
           ignoresWorkingDays: st.ignoresWorkingDays,
           eligibilityRule: st.eligibilityRule,
+          noConsecutiveGroup: st.noConsecutiveGroup,
         }))}
         staffingReqs={staffingReqs.map((r) => ({
           id: r.id,

@@ -21,6 +21,7 @@ type ShiftType = {
   weekendPaired: boolean;
   ignoresWorkingDays: boolean;
   eligibilityRule: string | null;
+  noConsecutiveGroup: string | null;
 };
 
 type StaffingReq = {
@@ -300,6 +301,7 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
         weekendPaired: created.weekendPaired ?? false,
         ignoresWorkingDays: created.ignoresWorkingDays ?? false,
         eligibilityRule: created.eligibilityRule ?? null,
+        noConsecutiveGroup: created.noConsecutiveGroup ?? null,
       };
       setShifts((prev) => [...prev, newShift]);
       setEditingId(created.id);
@@ -474,6 +476,9 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
               </FieldRow>
               <FieldRow label="Represents a day off" description="This shift means the provider is not working (used for post-shift recovery days)">
                 <input type="checkbox" checked={editingShift.isOffShift} onChange={(e) => updateField(editingShift.id, "isOffShift", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </FieldRow>
+              <FieldRow label="No back-to-back group" description="Shifts sharing the same group name cannot be assigned on consecutive days for the same provider. For example, if ORC, ORL, and CALL all share the group 'call-late', a provider can't work ORL on Friday and CALL on Saturday.">
+                <input className="w-32 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={editingShift.noConsecutiveGroup ?? ""} placeholder="None" onChange={(e) => updateField(editingShift.id, "noConsecutiveGroup", e.target.value || null)} />
               </FieldRow>
             </div>
 

@@ -96,6 +96,7 @@ export async function POST(req: NextRequest) {
       weekendPaired: st.weekendPaired,
       ignoresWorkingDays: st.ignoresWorkingDays,
       eligibilityRule: st.eligibilityRule,
+      noConsecutiveGroup: st.noConsecutiveGroup,
       category: st.category,
       postShiftRule: st.postShiftRule,
     })),

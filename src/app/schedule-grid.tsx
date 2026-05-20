@@ -35,6 +35,7 @@ type ShiftType = {
   isLeave: boolean;
   isOffShift: boolean;
   ignoresWorkingDays: boolean;
+  noConsecutiveGroup: string | null;
   defaultHours: number;
   countsTowardFte: boolean;
   countsOnWeekend: boolean;
