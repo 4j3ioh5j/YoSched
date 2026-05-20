@@ -63,26 +63,21 @@ type StaffingMin = {
 };
 
 type FairnessDeviation = {
-  weekendCall: number;
-  weekdayOrc: number;
-  weekdayOrl: number;
-  holidayWork: number;
   desirability: number;
+  holidayWork: number;
   overall: number;
 };
 
 type FairnessMetrics = {
   providerId: string;
   initials: string;
-  weekendCallCount: number;
-  weekdayOrcCount: number;
-  weekdayOrlCount: number;
-  holidayWorkCount: number;
   desirabilityScore: number;
   undesirableShiftCount: number;
   desirableShiftCount: number;
+  holidayWorkCount: number;
   totalWorkDays: number;
   totalLeaveDays: number;
+  shiftCounts: Record<string, number>;
 };
 
 type FairnessEntry = {
@@ -100,11 +95,8 @@ type Props = {
   staffingMins: StaffingMin[];
   fairnessData?: Record<string, FairnessEntry>;
   fairnessAverages?: {
-    weekendCallCount: number;
-    weekdayOrcCount: number;
-    weekdayOrlCount: number;
-    holidayWorkCount: number;
     desirabilityScore: number;
+    holidayWorkCount: number;
   };
 };
 
@@ -1041,11 +1033,9 @@ export function ScheduleGrid({
                 const fTooltip = fe
                   ? `${p.name} (${p.ftePercentage * 100}% FTE)\n` +
                     `Equity: ${fLabel}\n` +
-                    `Wknd CALL: ${fe.metrics.weekendCallCount} (avg ${fairnessAverages?.weekendCallCount.toFixed(1)})\n` +
-                    `ORC: ${fe.metrics.weekdayOrcCount} (avg ${fairnessAverages?.weekdayOrcCount.toFixed(1)})\n` +
-                    `ORL: ${fe.metrics.weekdayOrlCount} (avg ${fairnessAverages?.weekdayOrlCount.toFixed(1)})\n` +
-                    `Holiday: ${fe.metrics.holidayWorkCount} (avg ${fairnessAverages?.holidayWorkCount.toFixed(1)})\n` +
-                    `Desirability: ${fe.metrics.desirabilityScore > 0 ? "+" : ""}${fe.metrics.desirabilityScore}`
+                    `Desirability: ${fe.metrics.desirabilityScore > 0 ? "+" : ""}${fe.metrics.desirabilityScore} (avg ${fairnessAverages?.desirabilityScore.toFixed(1)})\n` +
+                    `Holiday work: ${fe.metrics.holidayWorkCount} (avg ${fairnessAverages?.holidayWorkCount.toFixed(1)})\n` +
+                    `Work days: ${fe.metrics.totalWorkDays} | Leave: ${fe.metrics.totalLeaveDays}`
                   : `${p.name} (${p.ftePercentage * 100}% FTE)`;
                 return (
                   <th

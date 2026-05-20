@@ -33,38 +33,28 @@ type Holiday = {
 export type FairnessMetrics = {
   providerId: string;
   initials: string;
-
-  weekendCallCount: number;
-  weekdayOrcCount: number;
-  weekdayOrlCount: number;
-  holidayWorkCount: number;
-
   desirabilityScore: number;
   undesirableShiftCount: number;
   desirableShiftCount: number;
-
+  holidayWorkCount: number;
   totalWorkDays: number;
   totalLeaveDays: number;
+  shiftCounts: Record<string, number>;
 };
 
 export type FairnessSummary = {
   metrics: FairnessMetrics[];
   averages: {
-    weekendCallCount: number;
-    weekdayOrcCount: number;
-    weekdayOrlCount: number;
-    holidayWorkCount: number;
     desirabilityScore: number;
+    holidayWorkCount: number;
   };
+  trackedShiftCodes: string[];
   deviations: Map<string, FairnessDeviation>;
 };
 
 export type FairnessDeviation = {
-  weekendCall: number;
-  weekdayOrc: number;
-  weekdayOrl: number;
-  holidayWork: number;
   desirability: number;
+  holidayWork: number;
   overall: number;
 };
 
@@ -99,14 +89,14 @@ export function computeFairness({
     dwMap.set(`${dw.shiftTypeId}:${dw.dayOfWeek}`, dw.weight);
   }
 
-  const callEligible = providers.filter(
-    (p) => p.isActive && p.employmentType === "fte" && p.takesCall
-  );
-  const lateEligible = providers.filter(
-    (p) => p.isActive && p.employmentType === "fte" && p.takesLate
-  );
-  const callIds = new Set(callEligible.map((p) => p.id));
-  const lateIds = new Set(lateEligible.map((p) => p.id));
+  const trackedShiftIds = new Set(desirabilityWeights.map((dw) => dw.shiftTypeId));
+  const shiftIdToCode = new Map<string, string>();
+  for (const a of assignments) {
+    shiftIdToCode.set(a.shiftType.id, a.shiftType.code);
+  }
+  const trackedShiftCodes = [...new Set(
+    [...trackedShiftIds].map((id) => shiftIdToCode.get(id)).filter(Boolean) as string[]
+  )].sort();
 
   const byProvider = new Map<string, Assignment[]>();
   for (const a of assignments) {
@@ -121,21 +111,18 @@ export function computeFairness({
     if (!p.isActive || p.employmentType !== "fte") continue;
 
     const pa = byProvider.get(p.id) || [];
-    let weekendCallCount = 0;
-    let weekdayOrcCount = 0;
-    let weekdayOrlCount = 0;
-    let holidayWorkCount = 0;
     let desirabilityScore = 0;
     let undesirableShiftCount = 0;
     let desirableShiftCount = 0;
+    let holidayWorkCount = 0;
     let totalWorkDays = 0;
     let totalLeaveDays = 0;
+    const shiftCounts: Record<string, number> = {};
 
     for (const a of pa) {
       const code = a.shiftType.code;
       const dateStr = toDateStr(a.date);
       const dow = getDow(a.date);
-      const isWeekend = dow === 0 || dow === 6;
       const isHoliday = holidaySet.has(dateStr);
 
       if (code === "X") continue;
@@ -147,10 +134,9 @@ export function computeFairness({
 
       if (a.shiftType.countsTowardFte) totalWorkDays++;
 
-      if (code === "CALL" && isWeekend) weekendCallCount++;
-      if (code === "ORC" && !isWeekend) weekdayOrcCount++;
-      if (code === "ORL" && !isWeekend) weekdayOrlCount++;
-      if (isHoliday && code !== "HOL" && code !== "X") holidayWorkCount++;
+      shiftCounts[code] = (shiftCounts[code] || 0) + 1;
+
+      if (isHoliday && code !== "HOL") holidayWorkCount++;
 
       const dwKey = `${a.shiftType.id}:${dow}`;
       const weight = dwMap.get(dwKey) ?? 0;
@@ -162,72 +148,45 @@ export function computeFairness({
     metrics.push({
       providerId: p.id,
       initials: p.initials,
-      weekendCallCount,
-      weekdayOrcCount,
-      weekdayOrlCount,
-      holidayWorkCount,
       desirabilityScore,
       undesirableShiftCount,
       desirableShiftCount,
+      holidayWorkCount,
       totalWorkDays,
       totalLeaveDays,
+      shiftCounts,
     });
   }
 
   const n = metrics.length || 1;
   const averages = {
-    weekendCallCount: metrics.reduce((s, m) => s + m.weekendCallCount, 0) / n,
-    weekdayOrcCount: metrics.reduce((s, m) => s + m.weekdayOrcCount, 0) / n,
-    weekdayOrlCount: metrics.reduce((s, m) => s + m.weekdayOrlCount, 0) / n,
-    holidayWorkCount: metrics.reduce((s, m) => s + m.holidayWorkCount, 0) / n,
     desirabilityScore: metrics.reduce((s, m) => s + m.desirabilityScore, 0) / n,
+    holidayWorkCount: metrics.reduce((s, m) => s + m.holidayWorkCount, 0) / n,
   };
 
   const deviations = new Map<string, FairnessDeviation>();
 
   function stddev(values: number[]): number {
-    const mean = values.reduce((a, b) => a + b, 0) / (values.length || 1);
-    const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / (values.length || 1);
+    if (values.length === 0) return 1;
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
     return Math.sqrt(variance) || 1;
   }
 
-  const callStd = stddev(metrics.filter((m) => callIds.has(m.providerId)).map((m) => m.weekendCallCount));
-  const orcStd = stddev(metrics.filter((m) => callIds.has(m.providerId)).map((m) => m.weekdayOrcCount));
-  const orlStd = stddev(metrics.filter((m) => lateIds.has(m.providerId)).map((m) => m.weekdayOrlCount));
-  const holStd = stddev(metrics.map((m) => m.holidayWorkCount));
   const desStd = stddev(metrics.map((m) => m.desirabilityScore));
+  const holStd = stddev(metrics.map((m) => m.holidayWorkCount));
 
   for (const m of metrics) {
-    const weekendCall = callIds.has(m.providerId)
-      ? (m.weekendCallCount - averages.weekendCallCount) / callStd
-      : 0;
-    const weekdayOrc = callIds.has(m.providerId)
-      ? (m.weekdayOrcCount - averages.weekdayOrcCount) / orcStd
-      : 0;
-    const weekdayOrl = lateIds.has(m.providerId)
-      ? (m.weekdayOrlCount - averages.weekdayOrlCount) / orlStd
-      : 0;
-    const holidayWork = (m.holidayWorkCount - averages.holidayWorkCount) / holStd;
+    // Negate desirability: a high desirability score is GOOD (low burden)
     const desirability = -(m.desirabilityScore - averages.desirabilityScore) / desStd;
+    const holidayWork = (m.holidayWorkCount - averages.holidayWorkCount) / holStd;
 
-    const overall =
-      0.30 * weekendCall +
-      0.25 * weekdayOrc +
-      0.20 * weekdayOrl +
-      0.15 * holidayWork +
-      0.10 * desirability;
+    const overall = 0.75 * desirability + 0.25 * holidayWork;
 
-    deviations.set(m.providerId, {
-      weekendCall,
-      weekdayOrc,
-      weekdayOrl,
-      holidayWork,
-      desirability,
-      overall,
-    });
+    deviations.set(m.providerId, { desirability, holidayWork, overall });
   }
 
-  return { metrics, averages, deviations };
+  return { metrics, averages, trackedShiftCodes, deviations };
 }
 
 export function fairnessColor(deviation: number): string {

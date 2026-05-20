@@ -3,11 +3,8 @@
 import { useState } from "react";
 
 type Deviation = {
-  weekendCall: number;
-  weekdayOrc: number;
-  weekdayOrl: number;
-  holidayWork: number;
   desirability: number;
+  holidayWork: number;
   overall: number;
 };
 
@@ -19,34 +16,30 @@ type EquityRow = {
   ftePercentage: number;
   takesCall: boolean;
   takesLate: boolean;
-  weekendCallCount: number;
-  weekdayOrcCount: number;
-  weekdayOrlCount: number;
-  holidayWorkCount: number;
   desirabilityScore: number;
   undesirableShiftCount: number;
   desirableShiftCount: number;
+  holidayWorkCount: number;
   totalWorkDays: number;
   totalLeaveDays: number;
   totalHours: number;
   deviation: Deviation;
+  shiftCounts: Record<string, number>;
   shiftTally: Record<string, number>;
 };
 
 type Props = {
   data: EquityRow[];
   averages: {
-    weekendCallCount: number;
-    weekdayOrcCount: number;
-    weekdayOrlCount: number;
-    holidayWorkCount: number;
     desirabilityScore: number;
+    holidayWorkCount: number;
   };
+  trackedShiftCodes: string[];
   dateRange: { min: string; max: string };
   shiftCodes: string[];
 };
 
-type SortKey = "initials" | "overall" | "weekendCall" | "orc" | "orl" | "holiday" | "desirability" | "hours" | "workDays" | "leaveDays";
+type SortKey = "initials" | "overall" | "desirability" | "holiday" | "hours" | "workDays" | "leaveDays" | string;
 
 function equityColor(burden: number): string {
   if (burden > 1.5) return "#ef4444";
@@ -68,7 +61,7 @@ function equityLabel(burden: number): string {
   return "Balanced";
 }
 
-export function EquityPage({ data, averages, dateRange, shiftCodes }: Props) {
+export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("overall");
   const [sortAsc, setSortAsc] = useState(false);
   const [showTallies, setShowTallies] = useState(false);
@@ -80,17 +73,16 @@ export function EquityPage({ data, averages, dateRange, shiftCodes }: Props) {
 
   const sorted = [...data].sort((a, b) => {
     let cmp = 0;
-    switch (sortKey) {
-      case "initials": cmp = a.initials.localeCompare(b.initials); break;
-      case "overall": cmp = a.deviation.overall - b.deviation.overall; break;
-      case "weekendCall": cmp = a.weekendCallCount - b.weekendCallCount; break;
-      case "orc": cmp = a.weekdayOrcCount - b.weekdayOrcCount; break;
-      case "orl": cmp = a.weekdayOrlCount - b.weekdayOrlCount; break;
-      case "holiday": cmp = a.holidayWorkCount - b.holidayWorkCount; break;
-      case "desirability": cmp = a.desirabilityScore - b.desirabilityScore; break;
-      case "hours": cmp = a.totalHours - b.totalHours; break;
-      case "workDays": cmp = a.totalWorkDays - b.totalWorkDays; break;
-      case "leaveDays": cmp = a.totalLeaveDays - b.totalLeaveDays; break;
+    if (sortKey === "initials") cmp = a.initials.localeCompare(b.initials);
+    else if (sortKey === "overall") cmp = a.deviation.overall - b.deviation.overall;
+    else if (sortKey === "desirability") cmp = a.desirabilityScore - b.desirabilityScore;
+    else if (sortKey === "holiday") cmp = a.holidayWorkCount - b.holidayWorkCount;
+    else if (sortKey === "hours") cmp = a.totalHours - b.totalHours;
+    else if (sortKey === "workDays") cmp = a.totalWorkDays - b.totalWorkDays;
+    else if (sortKey === "leaveDays") cmp = a.totalLeaveDays - b.totalLeaveDays;
+    else if (sortKey.startsWith("shift:")) {
+      const code = sortKey.slice(6);
+      cmp = (a.shiftCounts[code] || 0) - (b.shiftCounts[code] || 0);
     }
     return sortAsc ? cmp : -cmp;
   });
@@ -115,6 +107,12 @@ export function EquityPage({ data, averages, dateRange, shiftCodes }: Props) {
     );
   }
 
+  const shiftAvgs: Record<string, number> = {};
+  for (const code of trackedShiftCodes) {
+    const vals = data.map((d) => d.shiftCounts[code] || 0);
+    shiftAvgs[code] = vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
+  }
+
   return (
     <div className="flex-1 overflow-auto">
       <div className="px-6 py-4 max-w-[1200px]">
@@ -124,7 +122,13 @@ export function EquityPage({ data, averages, dateRange, shiftCodes }: Props) {
             <div className="flex items-center gap-4 mt-1 text-xs text-slate-500">
               <span>{dateRange.min} to {dateRange.max}</span>
               <span>{data.length} providers</span>
-              <span>Avg: CALL {averages.weekendCallCount.toFixed(1)} | ORC {averages.weekdayOrcCount.toFixed(1)} | ORL {averages.weekdayOrlCount.toFixed(1)} | Holiday {averages.holidayWorkCount.toFixed(1)}</span>
+              <span>
+                Avg desirability: {averages.desirabilityScore > 0 ? "+" : ""}{averages.desirabilityScore.toFixed(1)}
+                {" | "}Holiday: {averages.holidayWorkCount.toFixed(1)}
+                {trackedShiftCodes.length > 0 && (
+                  <> | {trackedShiftCodes.map((c) => `${c} ${shiftAvgs[c]?.toFixed(1)}`).join(" | ")}</>
+                )}
+              </span>
             </div>
           </div>
           <button
@@ -141,11 +145,11 @@ export function EquityPage({ data, averages, dateRange, shiftCodes }: Props) {
               <tr className="bg-slate-800/80 border-b border-slate-700">
                 <SortHeader label="Provider" sortId="initials" className="text-left" />
                 <SortHeader label="Equity" sortId="overall" className="text-center" />
-                <SortHeader label="CALL" sortId="weekendCall" className="text-right" />
-                <SortHeader label="ORC" sortId="orc" className="text-right" />
-                <SortHeader label="ORL" sortId="orl" className="text-right" />
-                <SortHeader label="Hol" sortId="holiday" className="text-right" />
                 <SortHeader label="Desir" sortId="desirability" className="text-right" />
+                <SortHeader label="Hol" sortId="holiday" className="text-right" />
+                {trackedShiftCodes.map((code) => (
+                  <SortHeader key={code} label={code} sortId={`shift:${code}`} className="text-right" />
+                ))}
                 <SortHeader label="Hours" sortId="hours" className="text-right" />
                 <SortHeader label="Work" sortId="workDays" className="text-right" />
                 <SortHeader label="Leave" sortId="leaveDays" className="text-right" />
@@ -177,22 +181,18 @@ export function EquityPage({ data, averages, dateRange, shiftCodes }: Props) {
                       </div>
                     </td>
                     <td className="px-3 py-2 text-right">
-                      {row.takesCall ? <Num value={row.weekendCallCount} color="#a78bfa" /> : <Num value={0} dim />}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {row.takesCall ? <Num value={row.weekdayOrcCount} color="#fb923c" /> : <Num value={0} dim />}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      {row.takesLate ? <Num value={row.weekdayOrlCount} color="#22d3ee" /> : <Num value={0} dim />}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <Num value={row.holidayWorkCount} color="#facc15" />
-                    </td>
-                    <td className="px-3 py-2 text-right">
                       <span className={`text-xs font-medium tabular-nums ${row.desirabilityScore > 0 ? "text-emerald-400" : row.desirabilityScore < 0 ? "text-red-400" : "text-slate-600"}`}>
                         {row.desirabilityScore > 0 ? "+" : ""}{row.desirabilityScore}
                       </span>
                     </td>
+                    <td className="px-3 py-2 text-right">
+                      <Num value={row.holidayWorkCount} color="#facc15" />
+                    </td>
+                    {trackedShiftCodes.map((code) => (
+                      <td key={code} className="px-3 py-2 text-right">
+                        <Num value={row.shiftCounts[code] || 0} color="#94a3b8" />
+                      </td>
+                    ))}
                     <td className="px-3 py-2 text-right">
                       <Num value={row.totalHours} color="#93c5fd" />
                     </td>

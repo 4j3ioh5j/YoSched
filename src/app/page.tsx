@@ -52,7 +52,7 @@ export default async function Home() {
     holidays,
   });
 
-  const fairnessData: Record<string, { metrics: (typeof fairness.metrics)[0]; deviation: { weekendCall: number; weekdayOrc: number; weekdayOrl: number; holidayWork: number; desirability: number; overall: number } }> = {};
+  const fairnessData: Record<string, { metrics: (typeof fairness.metrics)[0]; deviation: { desirability: number; holidayWork: number; overall: number } }> = {};
   for (const m of fairness.metrics) {
     const dev = fairness.deviations.get(m.providerId);
     if (dev) {

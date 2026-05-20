@@ -125,6 +125,7 @@ export default async function Equity() {
       <EquityPage
         data={equityData}
         averages={equity.averages}
+        trackedShiftCodes={equity.trackedShiftCodes}
         dateRange={dateRange}
         shiftCodes={shiftCodes}
       />
