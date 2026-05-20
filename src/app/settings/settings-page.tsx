@@ -52,6 +52,12 @@ type DesirabilityWeight = {
   reason: string | null;
 };
 
+type SchedulingPrefs = {
+  prefer3DayWeekends: boolean;
+  prefer4DayWeekends: boolean;
+  preferSequentialOff: boolean;
+};
+
 type Props = {
   shiftTypes: ShiftType[];
   staffingReqs: StaffingReq[];
@@ -59,6 +65,7 @@ type Props = {
   fteTargets: FteTarget[];
   holidays: Holiday[];
   desirabilityWeights: DesirabilityWeight[];
+  schedulingPrefs: SchedulingPrefs;
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -1385,9 +1392,79 @@ function DesirabilitySection({
   );
 }
 
+// ─── Scheduling Preferences Section ─────────────────────────────────────────
+
+function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
+  const [prefs, setPrefs] = useState(initial);
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+
+  async function toggle(key: keyof SchedulingPrefs) {
+    const newValue = !prefs[key];
+    const prev = { ...prefs };
+    setPrefs((p) => ({ ...p, [key]: newValue }));
+    setStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [key]: newValue }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setPrefs(prev);
+      setError(e instanceof Error ? e.message : "Failed");
+      setStatus("error");
+    }
+  }
+
+  const items: { key: keyof SchedulingPrefs; label: string; description: string }[] = [
+    { key: "prefer3DayWeekends", label: "Prefer 3-day weekends", description: "Place days off adjacent to weekends when possible" },
+    { key: "prefer4DayWeekends", label: "Prefer 4-day weekends", description: "Cluster two days off next to a weekend for longer breaks" },
+    { key: "preferSequentialOff", label: "Prefer sequential days off", description: "Group days off together rather than scattering them through the week" },
+  ];
+
+  return (
+    <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
+      <SectionHeader
+        title="Scheduling Preferences"
+        description="Controls how the auto-scheduler places days off. Staffing requirements are always respected first."
+        status={status}
+        error={error}
+      />
+      <div className="space-y-4 mt-4">
+        {items.map(({ key, label, description }) => (
+          <label key={key} className="flex items-start gap-3 cursor-pointer group">
+            <button
+              onClick={() => toggle(key)}
+              className={[
+                "mt-0.5 w-9 h-5 rounded-full transition-colors shrink-0 relative",
+                prefs[key] ? "bg-blue-600" : "bg-slate-600",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform",
+                  prefs[key] ? "translate-x-4" : "translate-x-0.5",
+                ].join(" ")}
+              />
+            </button>
+            <div>
+              <div className="text-sm font-medium text-slate-200 group-hover:text-white transition-colors">{label}</div>
+              <div className="text-xs text-slate-400">{description}</div>
+            </div>
+          </label>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights, schedulingPrefs }: Props) {
   const undo = useUndo();
 
   return (
@@ -1396,6 +1473,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets,
         <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} />
         <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
+        <SchedulingPrefsSection initial={schedulingPrefs} />
         <FteHoursSection initial={fteTargets} pushUndo={undo.push} />
         <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} />
         <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} />

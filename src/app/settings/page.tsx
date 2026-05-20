@@ -5,14 +5,21 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 
 export default async function Settings() {
-  const [shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights, schedulingPrefsRow] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
     prisma.fteTarget.findMany({ orderBy: { ftePercentage: "desc" } }),
     prisma.holiday.findMany({ orderBy: { date: "asc" } }),
     prisma.desirabilityWeight.findMany(),
+    prisma.schedulingPreferences.findFirst(),
   ]);
+
+  const schedulingPrefs = {
+    prefer3DayWeekends: schedulingPrefsRow?.prefer3DayWeekends ?? true,
+    prefer4DayWeekends: schedulingPrefsRow?.prefer4DayWeekends ?? true,
+    preferSequentialOff: schedulingPrefsRow?.preferSequentialOff ?? true,
+  };
 
   return (
     <main className="flex flex-col h-screen">
@@ -76,6 +83,7 @@ export default async function Settings() {
           weight: dw.weight,
           reason: dw.reason,
         }))}
+        schedulingPrefs={schedulingPrefs}
       />
     </main>
   );

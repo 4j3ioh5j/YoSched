@@ -77,6 +77,12 @@ type StaffingRequirement = {
   minCount: number;
 };
 
+type SchedulingPreferences = {
+  prefer3DayWeekends: boolean;
+  prefer4DayWeekends: boolean;
+  preferSequentialOff: boolean;
+};
+
 export type Suggestion = {
   providerId: string;
   date: string;
@@ -146,6 +152,7 @@ export function autoSchedule({
   dayPreferences,
   historicalAssignments,
   staffingRequirements,
+  schedulingPreferences,
 }: {
   dates: string[];
   providers: ScheduleProvider[];
@@ -159,6 +166,7 @@ export function autoSchedule({
   dayPreferences: DayPreference[];
   historicalAssignments: ScheduleAssignment[];
   staffingRequirements: StaffingRequirement[];
+  schedulingPreferences: SchedulingPreferences;
 }): AutoScheduleResult {
   const suggestions: Suggestion[] = [];
   const warnings: string[] = [];
@@ -481,15 +489,102 @@ export function autoSchedule({
     }
   }
 
-  // ── STEP 3: Fill shift to hit FTE hour targets ──
+  // ── STEP 3: Fill shift to hit FTE hour targets (smart day-off clustering) ──
   const fillShift = shiftTypes.find((st) => st.isFillShift);
   if (fillShift) {
     const sortedPPs = [...payPeriods]
       .filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate))
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
+    // Build a per-date staffing demand counter so we know which days are
+    // constrained (need more workers) vs flexible (can afford someone off)
+    const fillReqsByDay = new Map<string, number>();
+    const fillReqs = reqsByShift.get(fillShift.code);
+    if (fillReqs) {
+      for (const [dayKey, min] of fillReqs) fillReqsByDay.set(dayKey, min);
+    }
+
+    function fillStaffedCount(date: string): number {
+      let count = 0;
+      for (const [k, v] of grid.entries()) {
+        if (k.endsWith(`:${date}`) && v.code === fillShift!.code) count++;
+      }
+      return count;
+    }
+
+    function fillRequiredOnDate(date: string): number {
+      const dayKey = holidaySet.has(date) ? "holiday" : String(getDow(date));
+      return fillReqsByDay.get(dayKey) ?? 0;
+    }
+
+    // Score a set of off-days for quality (higher = better)
+    function scoreOffDays(offDays: Set<string>, allWeekdaysInPP: string[]): number {
+      if (offDays.size === 0) return 0;
+
+      // Build a full calendar of the PP including weekends to evaluate runs
+      const firstDate = allWeekdaysInPP[0];
+      const lastDate = allWeekdaysInPP[allWeekdaysInPP.length - 1];
+
+      // Walk from the Saturday before the first weekday to the Sunday after the last
+      const start = new Date(firstDate + "T12:00:00");
+      while (start.getDay() !== 6) start.setDate(start.getDate() - 1);
+      const end = new Date(lastDate + "T12:00:00");
+      while (end.getDay() !== 0) end.setDate(end.getDate() + 1);
+
+      const calendar: { date: string; isOff: boolean }[] = [];
+      const cur = new Date(start);
+      while (cur <= end) {
+        const d = toDateStr(cur);
+        const dow = cur.getDay();
+        const wknd = dow === 0 || dow === 6;
+        const hol = holidaySet.has(d);
+        const isOff = wknd || hol || offDays.has(d);
+        calendar.push({ date: d, isOff });
+        cur.setDate(cur.getDate() + 1);
+      }
+
+      let score = 0;
+      let runLen = 0;
+      let runTouchesWeekend = false;
+
+      for (let i = 0; i <= calendar.length; i++) {
+        const entry = calendar[i];
+        if (entry && entry.isOff) {
+          runLen++;
+          const dow = getDow(entry.date);
+          if (dow === 0 || dow === 6) runTouchesWeekend = true;
+        } else {
+          // End of a run — score it
+          if (runLen >= 2 && schedulingPreferences.preferSequentialOff) {
+            score += (runLen - 1) * 2;
+          }
+          if (runLen >= 3 && runTouchesWeekend && schedulingPreferences.prefer3DayWeekends) {
+            score += 5;
+          }
+          if (runLen >= 4 && runTouchesWeekend && schedulingPreferences.prefer4DayWeekends) {
+            score += 8;
+          }
+          runLen = 0;
+          runTouchesWeekend = false;
+        }
+      }
+
+      return score;
+    }
+
+    // Generate combinations of indices: choose k from n
+    function* combinations(indices: number[], k: number): Generator<number[]> {
+      if (k === 0) { yield []; return; }
+      if (k > indices.length) return;
+      for (let i = 0; i <= indices.length - k; i++) {
+        for (const rest of combinations(indices.slice(i + 1), k - 1)) {
+          yield [indices[i], ...rest];
+        }
+      }
+    }
+
     for (const pp of sortedPPs) {
-      const ppDates = dates.filter(
+      const ppWeekdays = dates.filter(
         (d) =>
           d >= pp.startDate &&
           d <= pp.endDate &&
@@ -497,30 +592,87 @@ export function autoSchedule({
           !holidaySet.has(d)
       );
 
-      for (const provider of activeProviders) {
+      // Sort providers by fairness so the most underloaded get first pick
+      const sortedProviders = sortByFairness(activeProviders.map((p) => p.id))
+        .map((id) => activeProviders.find((p) => p.id === id)!)
+        .filter(Boolean);
+
+      for (const provider of sortedProviders) {
         const target = pp.targetHours * provider.ftePercentage;
         if (target <= 0) continue;
 
         let currentHours = ppHoursForProvider(provider.id, pp);
         if (currentHours >= target) continue;
 
-        const availableDates = ppDates.filter((d) =>
+        const hoursPerDay = getShiftHours(provider.id, fillShift, overrideMap);
+        const hoursNeeded = target - currentHours;
+        const daysNeeded = Math.ceil(hoursNeeded / hoursPerDay);
+
+        const availableDates = ppWeekdays.filter((d) =>
           isAvailable(provider, d, fillShift)
         );
 
-        for (const date of availableDates) {
-          if (currentHours >= target) break;
+        if (daysNeeded >= availableDates.length) {
+          // Must work every available day — no choice to optimize
+          for (const date of availableDates) {
+            if (currentHours >= target) break;
+            assign(provider.id, date, fillShift,
+              `${fillShift.code} to fill hours (${currentHours}/${target}hrs)`,
+              "fill", 0.6);
+            currentHours += hoursPerDay;
+          }
+          continue;
+        }
 
-          const hours = getShiftHours(provider.id, fillShift, overrideMap);
-          assign(
-            provider.id,
-            date,
-            fillShift,
+        const daysOff = availableDates.length - daysNeeded;
+
+        // For small combo counts, enumerate all and pick the best
+        // C(10,3)=120, C(10,4)=210 — both fast
+        const indices = availableDates.map((_, i) => i);
+        let bestOffIndices: number[] = [];
+        let bestScore = -Infinity;
+        let comboCount = 0;
+        const MAX_COMBOS = 5000;
+
+        for (const offIndices of combinations(indices, daysOff)) {
+          comboCount++;
+
+          // Check staffing constraint: would taking these days off leave
+          // any day below its staffing requirement?
+          let feasible = true;
+          for (const idx of offIndices) {
+            const date = availableDates[idx];
+            const required = fillRequiredOnDate(date);
+            if (required > 0) {
+              const currentStaffed = fillStaffedCount(date);
+              if (currentStaffed < required) {
+                feasible = false;
+                break;
+              }
+            }
+          }
+          if (!feasible) continue;
+
+          const offSet = new Set(offIndices.map((i) => availableDates[i]));
+          const score = scoreOffDays(offSet, ppWeekdays);
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestOffIndices = offIndices;
+          }
+
+          if (comboCount >= MAX_COMBOS) break;
+        }
+
+        const offDaySet = new Set(bestOffIndices.map((i) => availableDates[i]));
+        const workDates = availableDates.filter((d) => !offDaySet.has(d));
+
+        for (const date of workDates) {
+          if (currentHours >= target) break;
+          assign(provider.id, date, fillShift,
             `${fillShift.code} to fill hours (${currentHours}/${target}hrs)`,
-            "fill",
-            0.6
-          );
-          currentHours += hours;
+            "fill", 0.6);
+          currentHours += hoursPerDay;
         }
       }
     }

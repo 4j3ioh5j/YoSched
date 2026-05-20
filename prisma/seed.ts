@@ -264,6 +264,14 @@ async function main() {
     }
   }
   console.log(`Seeded ${seededPPs} pay periods`);
+
+  // --- Scheduling Preferences ---
+  await prisma.schedulingPreferences.upsert({
+    where: { id: "default" },
+    update: {},
+    create: { id: "default", prefer3DayWeekends: true, prefer4DayWeekends: true, preferSequentialOff: true },
+  });
+  console.log("Seeded scheduling preferences");
 }
 
 main()

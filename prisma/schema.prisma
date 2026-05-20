@@ -185,6 +185,15 @@ model Holiday {
   @@map("holidays")
 }
 
+model SchedulingPreferences {
+  id                    String  @id @default(cuid())
+  prefer3DayWeekends    Boolean @default(true)
+  prefer4DayWeekends    Boolean @default(true)
+  preferSequentialOff   Boolean @default(true)
+
+  @@map("scheduling_preferences")
+}
+
 model Assignment {
   id          String   @id @default(cuid())
   providerId  String

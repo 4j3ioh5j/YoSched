@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
     dayPreferences,
     historicalAssignments,
     staffingRequirements,
+    schedulingPrefsRow,
   ] = await Promise.all([
     prisma.provider.findMany({ where: { isActive: true } }),
     prisma.shiftType.findMany(),
@@ -50,6 +51,7 @@ export async function POST(req: NextRequest) {
       include: { shiftType: true },
     }),
     prisma.staffingRequirement.findMany(),
+    prisma.schedulingPreferences.findFirst(),
   ]);
 
   const start = new Date(startDate + "T12:00:00");
@@ -145,6 +147,11 @@ export async function POST(req: NextRequest) {
       dayKey: sr.dayKey,
       minCount: sr.minCount,
     })),
+    schedulingPreferences: {
+      prefer3DayWeekends: schedulingPrefsRow?.prefer3DayWeekends ?? true,
+      prefer4DayWeekends: schedulingPrefsRow?.prefer4DayWeekends ?? true,
+      preferSequentialOff: schedulingPrefsRow?.preferSequentialOff ?? true,
+    },
   });
 
   return NextResponse.json(result);
