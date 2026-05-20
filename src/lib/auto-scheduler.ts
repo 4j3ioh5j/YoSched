@@ -759,7 +759,8 @@ export function autoSchedule({
   // ── STEP 4: Fill all remaining empty cells with X (day off) ──
   if (offShift) {
     for (const date of dates) {
-      for (const provider of activeProviders) {
+      for (const provider of providers) {
+        if (!provider.isActive) continue;
         if (!isAssigned(provider.id, date)) {
           assign(provider.id, date, offShift, "Day off", "off", 0.95);
         }
