@@ -1440,14 +1440,14 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
             <button
               onClick={() => toggle(key)}
               className={[
-                "mt-0.5 w-9 h-5 rounded-full transition-colors shrink-0 relative",
+                "mt-0.5 w-10 h-[22px] rounded-full transition-colors shrink-0 relative",
                 prefs[key] ? "bg-blue-600" : "bg-slate-600",
               ].join(" ")}
             >
               <span
                 className={[
-                  "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform",
-                  prefs[key] ? "translate-x-4" : "translate-x-0.5",
+                  "absolute top-[3px] left-[3px] w-4 h-4 rounded-full bg-white transition-transform shadow-sm",
+                  prefs[key] ? "translate-x-[18px]" : "translate-x-0",
                 ].join(" ")}
               />
             </button>
