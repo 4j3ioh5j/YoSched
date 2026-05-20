@@ -350,6 +350,25 @@ export function autoSchedule({
     return count;
   }
 
+  function findPPForDate(date: string): PayPeriod | null {
+    for (const pp of payPeriods) {
+      if (date >= pp.startDate && date <= pp.endDate) return pp;
+    }
+    return null;
+  }
+
+  function wouldExceedPPHours(providerId: string, date: string, st: ScheduleShiftType): boolean {
+    if (!st.countsTowardFte) return false;
+    const pp = findPPForDate(date);
+    if (!pp) return false;
+    const provider = activeProviders.find((p) => p.id === providerId);
+    if (!provider) return false;
+    const target = pp.targetHours * provider.ftePercentage;
+    const current = ppHoursForProvider(providerId, pp);
+    const addHours = getShiftHours(providerId, st, overrideMap);
+    return current + addHours > target;
+  }
+
   // ── STEP 1: Apply standing commitments ──
   for (const sc of standingCommitments) {
     const st = stById.get(sc.shiftTypeId);
@@ -441,15 +460,27 @@ export function autoSchedule({
         if (satCount >= satRequired && sunCount >= sunRequired) continue;
 
         const available = eligible.filter(
-          (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun)
+          (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
+            !wouldExceedPPHours(p.id, sat, st)
         );
 
         if (available.length === 0) {
-          warnings.push(`No eligible ${st.code} provider for ${sat}/${sun}`);
-          continue;
+          // Relax hours constraint — someone must cover
+          const fallback = eligible.filter(
+            (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun)
+          );
+          if (fallback.length === 0) {
+            warnings.push(`No eligible ${st.code} provider for ${sat}/${sun}`);
+            continue;
+          }
+          warnings.push(`${st.code} ${sat}/${sun}: all eligible providers would exceed PP hours`);
         }
 
-        const chosen = pickProvider(available);
+        const pool = available.length > 0 ? available : eligible.filter(
+          (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun)
+        );
+        if (pool.length === 0) continue;
+        const chosen = pickProvider(pool);
         assign(chosen.id, sat, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
         assign(chosen.id, sun, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
         recordAssignment(chosen.id, sat);
@@ -462,7 +493,12 @@ export function autoSchedule({
         const current = countAssigned(st.code, date);
         if (current >= required) continue;
 
-        const available = eligible.filter((p) => !isAssigned(p.id, date));
+        let available = eligible.filter(
+          (p) => !isAssigned(p.id, date) && !wouldExceedPPHours(p.id, date, st)
+        );
+        if (available.length === 0) {
+          available = eligible.filter((p) => !isAssigned(p.id, date));
+        }
         if (available.length === 0) {
           warnings.push(`No eligible ${st.code} provider for holiday ${date}`);
           continue;
@@ -481,7 +517,13 @@ export function autoSchedule({
         if (current >= required) continue;
 
         const needed = required - current;
-        const available = eligible.filter((p) => isAvailable(p, date, st));
+        let available = eligible.filter(
+          (p) => isAvailable(p, date, st) && !wouldExceedPPHours(p.id, date, st)
+        );
+        if (available.length === 0) {
+          // Relax hours constraint
+          available = eligible.filter((p) => isAvailable(p, date, st));
+        }
 
         if (available.length === 0) {
           warnings.push(`No eligible ${st.code} provider for ${date}`);
@@ -648,9 +690,9 @@ export function autoSchedule({
         );
 
         if (daysNeeded >= availableDates.length) {
-          // Must work every available day — no choice to optimize
           for (const date of availableDates) {
             if (currentHours >= target) break;
+            if (currentHours + hoursPerDay > target + hoursPerDay / 2) break;
             assign(provider.id, date, fillShift,
               `${fillShift.code} to fill hours (${currentHours}/${target}hrs)`,
               "fill", 0.6);
@@ -704,6 +746,7 @@ export function autoSchedule({
 
         for (const date of workDates) {
           if (currentHours >= target) break;
+          if (currentHours + hoursPerDay > target + hoursPerDay / 2) break;
           assign(provider.id, date, fillShift,
             `${fillShift.code} to fill hours (${currentHours}/${target}hrs)`,
             "fill", 0.6);
