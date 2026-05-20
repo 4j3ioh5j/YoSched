@@ -429,34 +429,39 @@ export function ScheduleGrid({
     setSaving(null);
   }
 
-  const handleUndo = useCallback(async () => {
+  async function handleUndo() {
     const entry = undoStack.current.pop();
     if (!entry) return;
     redoStack.current.push(entry);
     await applyAssignment(entry.providerId, entry.date, entry.prev);
-  }, []);
+  }
 
-  const handleRedo = useCallback(async () => {
+  async function handleRedo() {
     const entry = redoStack.current.pop();
     if (!entry) return;
     undoStack.current.push(entry);
     await applyAssignment(entry.providerId, entry.date, entry.next);
-  }, []);
+  }
+
+  const undoRef = useRef(handleUndo);
+  const redoRef = useRef(handleRedo);
+  undoRef.current = handleUndo;
+  redoRef.current = handleRedo;
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
-        handleUndo();
+        undoRef.current();
       }
       if ((e.metaKey || e.ctrlKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
         e.preventDefault();
-        handleRedo();
+        redoRef.current();
       }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [handleUndo, handleRedo]);
+  }, []);
 
   const handleSelect = useCallback(async (shiftTypeId: string) => {
     if (!picker) return;
