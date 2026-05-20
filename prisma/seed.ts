@@ -156,6 +156,36 @@ async function main() {
     });
   }
   console.log(`Seeded ${staffingMins.length} staffing minimums`);
+
+  // --- Pay Periods (biweekly, 2026) ---
+  // Starting Sunday Jan 4, 2026 — generates 26 biweekly periods
+  const ppStart = new Date("2026-01-04T00:00:00Z");
+  let seededPPs = 0;
+  for (let i = 0; i < 26; i++) {
+    const start = new Date(ppStart);
+    start.setDate(start.getDate() + i * 14);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 13);
+    const targetHours = 80;
+
+    const startStr = start.toISOString().split("T")[0];
+    const endStr = end.toISOString().split("T")[0];
+
+    const existing = await prisma.payPeriod.findFirst({
+      where: { startDate: new Date(startStr + "T00:00:00Z") },
+    });
+    if (!existing) {
+      await prisma.payPeriod.create({
+        data: {
+          startDate: new Date(startStr + "T00:00:00Z"),
+          endDate: new Date(endStr + "T00:00:00Z"),
+          targetHours,
+        },
+      });
+      seededPPs++;
+    }
+  }
+  console.log(`Seeded ${seededPPs} pay periods`);
 }
 
 main()

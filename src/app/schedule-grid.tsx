@@ -8,6 +8,7 @@ type Provider = {
   initials: string;
   name: string;
   employmentType: string;
+  ftePercentage: number;
 };
 
 type AssignmentData = {
@@ -27,16 +28,25 @@ type ShiftType = {
   color: string;
   category: string;
   isLeave: boolean;
+  defaultHours: number;
+  countsTowardFte: boolean;
 };
 
 type PayPeriod = {
   startDate: string;
   endDate: string;
+  targetHours: number;
 };
 
 type Holiday = {
   date: string;
   name: string;
+};
+
+type ProviderOverride = {
+  providerId: string;
+  shiftTypeId: string;
+  durationHrs: number;
 };
 
 type Props = {
@@ -45,6 +55,7 @@ type Props = {
   shiftTypes: ShiftType[];
   payPeriods: PayPeriod[];
   holidays: Holiday[];
+  providerOverrides: ProviderOverride[];
 };
 
 type PickerState = {
@@ -119,13 +130,38 @@ function formatDateLabel(dateStr: string): { day: string; date: string; dow: num
   };
 }
 
-function getPayPeriodIndex(dateStr: string, payPeriods: PayPeriod[]): number {
-  for (let i = 0; i < payPeriods.length; i++) {
-    if (dateStr >= payPeriods[i].startDate && dateStr <= payPeriods[i].endDate) {
-      return i;
+function findPayPeriod(dateStr: string, payPeriods: PayPeriod[]): PayPeriod | null {
+  for (const pp of payPeriods) {
+    if (dateStr >= pp.startDate && dateStr <= pp.endDate) return pp;
+  }
+  return null;
+}
+
+type RowItem =
+  | { type: "date"; date: string }
+  | { type: "pp-summary"; pp: PayPeriod; ppIndex: number };
+
+function buildRowItems(dates: string[], payPeriods: PayPeriod[]): RowItem[] {
+  const items: RowItem[] = [];
+  const sortedPPs = [...payPeriods].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const endedPPs = new Set<string>();
+
+  for (let i = 0; i < dates.length; i++) {
+    const date = dates[i];
+    items.push({ type: "date", date });
+
+    const nextDate = dates[i + 1];
+    for (let ppIdx = 0; ppIdx < sortedPPs.length; ppIdx++) {
+      const pp = sortedPPs[ppIdx];
+      const ppKey = pp.startDate;
+      if (endedPPs.has(ppKey)) continue;
+      if (date === pp.endDate || (date <= pp.endDate && (!nextDate || nextDate > pp.endDate))) {
+        items.push({ type: "pp-summary", pp, ppIndex: ppIdx });
+        endedPPs.add(ppKey);
+      }
     }
   }
-  return -1;
+  return items;
 }
 
 export function ScheduleGrid({
@@ -134,6 +170,7 @@ export function ScheduleGrid({
   shiftTypes,
   payPeriods,
   holidays,
+  providerOverrides,
 }: Props) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
@@ -150,6 +187,8 @@ export function ScheduleGrid({
   const firstOfMonth = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-01`;
   const lastOfMonth = toDateStr(new Date(viewYear, viewMonth + 1, 0));
 
+  const rowItems = useMemo(() => buildRowItems(dates, payPeriods), [dates, payPeriods]);
+
   const assignmentMap = useMemo(() => {
     const map = new Map<string, AssignmentData>();
     for (const a of localAssignments) {
@@ -164,6 +203,14 @@ export function ScheduleGrid({
     return map;
   }, [shiftTypes]);
 
+  const overrideMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const o of providerOverrides) {
+      map.set(`${o.providerId}:${o.shiftTypeId}`, o.durationHrs);
+    }
+    return map;
+  }, [providerOverrides]);
+
   const holidaySet = useMemo(() => new Set(holidays.map((h) => h.date)), [holidays]);
   const holidayNames = useMemo(() => {
     const map = new Map<string, string>();
@@ -175,6 +222,41 @@ export function ScheduleGrid({
     () => [...payPeriods].sort((a, b) => a.startDate.localeCompare(b.startDate)),
     [payPeriods],
   );
+
+  function getHoursForAssignment(providerId: string, shiftTypeId: string): number {
+    const override = overrideMap.get(`${providerId}:${shiftTypeId}`);
+    if (override !== undefined) return override;
+    const st = shiftTypeMap.get(shiftTypeId);
+    return st?.defaultHours ?? 0;
+  }
+
+  function shiftCountsTowardFte(shiftTypeId: string): boolean {
+    const st = shiftTypeMap.get(shiftTypeId);
+    return st?.countsTowardFte ?? false;
+  }
+
+  const ppHours = useMemo(() => {
+    const result = new Map<string, Map<string, number>>();
+    for (const pp of sortedPPs) {
+      const providerHours = new Map<string, number>();
+      for (const p of providers) {
+        let hours = 0;
+        const cursor = new Date(parseDate(pp.startDate));
+        const end = parseDate(pp.endDate);
+        while (cursor <= end) {
+          const dateStr = toDateStr(cursor);
+          const a = assignmentMap.get(`${p.id}:${dateStr}`);
+          if (a && shiftCountsTowardFte(a.shiftTypeId)) {
+            hours += getHoursForAssignment(p.id, a.shiftTypeId);
+          }
+          cursor.setDate(cursor.getDate() + 1);
+        }
+        providerHours.set(p.id, hours);
+      }
+      result.set(pp.startDate, providerHours);
+    }
+    return result;
+  }, [sortedPPs, providers, assignmentMap, overrideMap, shiftTypeMap]);
 
   const staffingCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -277,7 +359,6 @@ export function ScheduleGrid({
         body: JSON.stringify({ providerId, date }),
       });
     } catch {
-      // Reload on error — state is already stale
       window.location.reload();
     } finally {
       setSaving(null);
@@ -286,7 +367,7 @@ export function ScheduleGrid({
 
   const closePicker = useCallback(() => setPicker(null), []);
 
-  let lastPPIndex = -999;
+  let lastPPKey = "";
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -330,7 +411,7 @@ export function ScheduleGrid({
                 <th
                   key={p.id}
                   className="px-1 py-2 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px]"
-                  title={p.name}
+                  title={`${p.name} (${p.ftePercentage * 100}% FTE)`}
                 >
                   <span className={p.employmentType === "fee_basis" ? "text-amber-400" : "text-slate-300"}>
                     {p.initials}
@@ -343,16 +424,64 @@ export function ScheduleGrid({
             </tr>
           </thead>
           <tbody>
-            {dates.map((date) => {
+            {rowItems.map((item) => {
+              if (item.type === "pp-summary") {
+                const { pp, ppIndex } = item;
+                const provHours = ppHours.get(pp.startDate);
+                return (
+                  <tr key={`pp-${pp.startDate}`} className="bg-slate-800/80">
+                    <td
+                      className="sticky left-0 z-[5] px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider border-r border-slate-600 whitespace-nowrap border-y border-y-indigo-500/60"
+                      style={{ background: "#1a2340" }}
+                    >
+                      <span className="text-indigo-400">PP {ppIndex + 1}</span>
+                      <span className="text-slate-500 ml-1">hrs</span>
+                    </td>
+                    {providers.map((p) => {
+                      const hours = provHours?.get(p.id) ?? 0;
+                      const target = pp.targetHours * p.ftePercentage;
+                      const diff = hours - target;
+                      const pct = target > 0 ? hours / target : 0;
+
+                      let color = "text-slate-500";
+                      if (hours > 0) {
+                        if (pct >= 0.95 && pct <= 1.05) color = "text-emerald-400";
+                        else if (pct > 1.05) color = "text-red-400";
+                        else if (pct >= 0.7) color = "text-amber-400";
+                        else color = "text-slate-400";
+                      }
+
+                      return (
+                        <td
+                          key={p.id}
+                          className="px-0 py-1 text-center border-slate-600/50 border border-y-indigo-500/60"
+                          title={`${p.initials}: ${hours}/${target}hrs (${diff >= 0 ? "+" : ""}${diff})`}
+                        >
+                          <div className={`text-[10px] font-mono font-bold ${color}`}>
+                            {hours > 0 ? hours : "–"}
+                          </div>
+                        </td>
+                      );
+                    })}
+                    <td className="px-2 py-1 text-center text-[10px] font-mono border-l border-slate-600 text-indigo-400/60 border-y border-y-indigo-500/60">
+                      {pp.targetHours}
+                    </td>
+                  </tr>
+                );
+              }
+
+              const { date } = item;
               const label = formatDateLabel(date);
               const isWeekend = label.dow === 0 || label.dow === 6;
               const isHoliday = holidaySet.has(date);
               const isOutsideMonth = date < firstOfMonth || date > lastOfMonth;
               const isToday = date === toDateStr(today);
 
-              const ppIdx = getPayPeriodIndex(date, sortedPPs);
-              const isNewPP = ppIdx !== -1 && ppIdx !== lastPPIndex;
-              if (ppIdx !== -1) lastPPIndex = ppIdx;
+              const currentPP = findPayPeriod(date, sortedPPs);
+              const ppKey = currentPP?.startDate ?? "";
+              const isNewPP = ppKey !== "" && ppKey !== lastPPKey;
+              if (ppKey !== "") lastPPKey = ppKey;
+              const ppIdx = currentPP ? sortedPPs.indexOf(currentPP) : -1;
               const ppEven = ppIdx !== -1 && ppIdx % 2 === 0;
 
               return (
@@ -441,8 +570,8 @@ export function ScheduleGrid({
 
       {/* Legend */}
       <div className="px-6 py-2 border-t border-slate-700 bg-slate-900 shrink-0">
-        <div className="flex flex-wrap gap-3 text-xs">
-          <span className="text-slate-500 font-medium mr-2">Legend:</span>
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <span className="text-slate-500 font-medium mr-1">Shifts:</span>
           {shiftTypes
             .filter((st) => st.category !== "other")
             .map((st) => (
@@ -454,6 +583,11 @@ export function ScheduleGrid({
                 <span className="text-slate-400">{st.code}</span>
               </span>
             ))}
+          <span className="text-slate-600 mx-1">|</span>
+          <span className="text-slate-500 font-medium mr-1">Hours:</span>
+          <span className="text-emerald-400">on target</span>
+          <span className="text-amber-400">under</span>
+          <span className="text-red-400">over</span>
         </div>
       </div>
 
