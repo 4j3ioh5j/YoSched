@@ -918,6 +918,49 @@ export function ScheduleGrid({
     return m;
   }, [autoSuggestions]);
 
+  const alerts = useMemo(() => {
+    const items: Array<{ date: string; label: string; type: "error" | "warn" }> = [];
+    const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+    for (const date of dates) {
+      const dow = parseDate(date).getDay();
+      const isWeekend = dow === 0 || dow === 6;
+      const isHol = holidaySet.has(date);
+      const d = `${DAY[dow]} ${date.slice(5)}`;
+
+      if (!isWeekend && !isHol) {
+        let orcCount = 0;
+        let orlCount = 0;
+        for (const p of providers) {
+          const a = assignmentMap.get(`${p.id}:${date}`);
+          if (a?.code === "ORC") orcCount++;
+          if (a?.code === "ORL") orlCount++;
+        }
+        if (orcCount === 0) items.push({ date, label: `${d} — no ORC`, type: "error" });
+        if (orlCount === 0) items.push({ date, label: `${d} — no ORL`, type: "error" });
+      }
+
+      if (isWeekend) {
+        let hasCall = false;
+        for (const p of providers) {
+          const a = assignmentMap.get(`${p.id}:${date}`);
+          if (a?.code === "CALL") { hasCall = true; break; }
+        }
+        if (!hasCall) items.push({ date, label: `${d} — no CALL`, type: "error" });
+      }
+
+      const dw = dayWarnings.get(date);
+      if (dw) {
+        for (const w of dw) {
+          if (w.type === "understaffed") {
+            items.push({ date, label: `${d} — ${w.message}`, type: "warn" });
+          }
+        }
+      }
+    }
+    return items;
+  }, [dates, providers, assignmentMap, holidaySet, dayWarnings]);
+
   let lastPPKey = "";
 
   return (
@@ -1017,6 +1060,7 @@ export function ScheduleGrid({
         </div>
       )}
 
+      <div className="flex-1 flex overflow-hidden">
       {/* Scrollable grid area */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
         <table className="border-collapse text-sm">
@@ -1256,6 +1300,39 @@ export function ScheduleGrid({
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Alerts sidebar */}
+      {alerts.length > 0 && (
+        <div className="w-52 shrink-0 border-l border-slate-700 bg-slate-900/50 overflow-y-auto">
+          <div className="sticky top-0 bg-slate-900 px-3 py-2 border-b border-slate-700">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              Alerts
+            </span>
+            <span className="ml-1.5 text-[11px] text-slate-500">{alerts.length}</span>
+          </div>
+          <div className="px-2 py-1">
+            {alerts.map((a, i) => (
+              <div
+                key={i}
+                className="flex items-start gap-1.5 px-1.5 py-1 rounded hover:bg-slate-800/50 cursor-pointer transition-colors"
+                onClick={() => {
+                  const row = scrollRef.current?.querySelector(`tr[data-date="${a.date}"]`);
+                  if (row) {
+                    const thead = scrollRef.current?.querySelector("thead");
+                    if (scrollRef.current && thead) {
+                      scrollRef.current.scrollTop = (row as HTMLElement).offsetTop - thead.clientHeight;
+                    }
+                  }
+                }}
+              >
+                <span className={`mt-0.5 w-1.5 h-1.5 rounded-full shrink-0 ${a.type === "error" ? "bg-red-500" : "bg-amber-500"}`} />
+                <span className="text-[11px] text-slate-400 leading-tight">{a.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       </div>
 
       {/* Legend */}
