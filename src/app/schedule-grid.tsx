@@ -577,6 +577,12 @@ export function ScheduleGrid({
 
     const fromKey = `${fromProviderId}:${fromDate}`;
     const toKey = `${toProviderId}:${toDate}`;
+
+    // Push undo entries for both cells
+    // After drag: source gets toA (or null), target gets fromA
+    pushUndo({ type: "set", providerId: fromProviderId, date: fromDate, prev: fromA, next: toA ?? null });
+    pushUndo({ type: "set", providerId: toProviderId, date: toDate, prev: toA ?? null, next: { ...fromA, providerId: toProviderId, date: toDate, id: `temp-${toKey}` } });
+
     setSaving(fromKey);
 
     // Optimistic update
