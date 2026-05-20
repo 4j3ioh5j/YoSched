@@ -914,10 +914,63 @@ export function ScheduleGrid({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ suggestions: autoSuggestions }),
       });
-      await res.json();
-      window.location.reload();
+      const data = await res.json();
+      const applied: AssignmentData[] = data.applied;
+
+      const undoOps: UndoOp[] = applied.map((a) => ({
+        providerId: a.providerId,
+        date: a.date,
+        prev: assignmentMap.get(`${a.providerId}:${a.date}`) ?? null,
+        next: a,
+      }));
+
+      setLocalAssignments((prev) => {
+        const keys = new Set(applied.map((a) => `${a.providerId}:${a.date}`));
+        const filtered = prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`));
+        return [...filtered, ...applied];
+      });
+
+      pushUndo(undoOps);
+      setAutoSuggestions(null);
+      setAutoWarnings([]);
+      setAutoStats(null);
     } catch (e) {
       console.error("Apply failed:", e);
+    } finally {
+      setAutoLoading(false);
+    }
+  }
+
+  async function clearAutoScheduled() {
+    if (!dates.length) return;
+    setAutoLoading(true);
+    try {
+      const res = await fetch("/api/auto-schedule", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startDate: dates[0], endDate: dates[dates.length - 1] }),
+      });
+      const data = await res.json();
+      const removed: AssignmentData[] = data.removed;
+
+      if (removed.length === 0) {
+        setAutoLoading(false);
+        return;
+      }
+
+      const undoOps: UndoOp[] = removed.map((a) => ({
+        providerId: a.providerId,
+        date: a.date,
+        prev: a,
+        next: null,
+      }));
+
+      const keys = new Set(removed.map((a) => `${a.providerId}:${a.date}`));
+      setLocalAssignments((prev) => prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`)));
+
+      pushUndo(undoOps);
+    } catch (e) {
+      console.error("Clear auto-scheduled failed:", e);
     } finally {
       setAutoLoading(false);
     }
@@ -993,6 +1046,14 @@ export function ScheduleGrid({
               {selection.size} selected
             </span>
           )}
+          <button
+            onClick={clearAutoScheduled}
+            disabled={autoLoading}
+            className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded transition-colors text-red-400 font-medium"
+            title="Remove all auto-scheduled assignments (keeps manual entries)"
+          >
+            Clear Auto
+          </button>
           <button
             onClick={runAutoSchedule}
             disabled={autoLoading}

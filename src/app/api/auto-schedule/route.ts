@@ -171,7 +171,10 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "No suggestions to apply" }, { status: 400 });
   }
 
-  const created = [];
+  const shiftTypes = await prisma.shiftType.findMany();
+  const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
+
+  const applied = [];
   for (const s of suggestions) {
     const result = await prisma.assignment.upsert({
       where: {
@@ -188,8 +191,58 @@ export async function PUT(req: NextRequest) {
         source: "auto",
       },
     });
-    created.push(result);
+    const st = stMap.get(result.shiftTypeId);
+    applied.push({
+      id: result.id,
+      providerId: result.providerId,
+      date: result.date.toISOString().split("T")[0],
+      shiftTypeId: result.shiftTypeId,
+      isLocked: result.isLocked,
+      code: st?.code ?? "?",
+      color: st?.color ?? "#6b7280",
+    });
   }
 
-  return NextResponse.json({ applied: created.length });
+  return NextResponse.json({ applied });
+}
+
+export async function DELETE(req: NextRequest) {
+  const body = await req.json();
+  const { startDate, endDate } = body as { startDate: string; endDate: string };
+
+  if (!startDate || !endDate) {
+    return NextResponse.json({ error: "startDate and endDate required" }, { status: 400 });
+  }
+
+  const shiftTypes = await prisma.shiftType.findMany();
+  const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
+
+  const toDelete = await prisma.assignment.findMany({
+    where: {
+      source: "auto",
+      date: {
+        gte: new Date(startDate + "T00:00:00Z"),
+        lte: new Date(endDate + "T00:00:00Z"),
+      },
+    },
+  });
+
+  const removed = toDelete.map((a) => {
+    const st = stMap.get(a.shiftTypeId);
+    return {
+      id: a.id,
+      providerId: a.providerId,
+      date: a.date.toISOString().split("T")[0],
+      shiftTypeId: a.shiftTypeId,
+      isLocked: a.isLocked,
+      code: st?.code ?? "?",
+      color: st?.color ?? "#6b7280",
+    };
+  });
+
+  await prisma.assignment.deleteMany({
+    where: { id: { in: toDelete.map((a) => a.id) } },
+  });
+
+  return NextResponse.json({ removed });
 }
