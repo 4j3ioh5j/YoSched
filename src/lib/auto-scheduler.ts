@@ -383,7 +383,7 @@ export function autoSchedule({
       if (sc.dayOfWeek !== null && sc.dayOfWeek !== dow) continue;
       if (sc.frequency === "weekly" || sc.dayOfWeek === null) {
         if (!provider.workingDays.includes(dow)) continue;
-        if (isWeekend(date) || holidaySet.has(date)) continue;
+        if (holidaySet.has(date)) continue;
 
         assign(
           sc.providerId,
@@ -555,7 +555,9 @@ export function autoSchedule({
 
           if (st.postShiftRule === "day_off_after" && offShift) {
             const next = nextDate(date);
-            if (dateSet.has(next) && !isAssigned(chosen.id, next)) {
+            const nextDow = getDow(next);
+            const providerWorksNext = chosen.workingDays.includes(nextDow);
+            if (dateSet.has(next) && !isAssigned(chosen.id, next) && providerWorksNext) {
               assign(chosen.id, next, offShift, `Day off after ${st.code}`, `${stepName}-recovery`, 0.95);
             }
           }
@@ -595,54 +597,53 @@ export function autoSchedule({
     }
 
     // Score a set of off-days for quality (higher = better)
-    function scoreOffDays(offDays: Set<string>, allWeekdaysInPP: string[]): number {
+    // Uses provider's workingDays to determine which days are naturally off
+    function scoreOffDays(offDays: Set<string>, allWorkdaysInPP: string[], providerWorkingDays: number[]): number {
       if (offDays.size === 0) return 0;
 
-      // Build a full calendar of the PP including weekends to evaluate runs
-      const firstDate = allWeekdaysInPP[0];
-      const lastDate = allWeekdaysInPP[allWeekdaysInPP.length - 1];
+      const workingSet = new Set(providerWorkingDays);
+      const firstDate = allWorkdaysInPP[0];
+      const lastDate = allWorkdaysInPP[allWorkdaysInPP.length - 1];
 
-      // Walk from the Saturday before the first weekday to the Sunday after the last
+      // Extend calendar to include surrounding non-working days
       const start = new Date(firstDate + "T12:00:00");
-      while (start.getDay() !== 6) start.setDate(start.getDate() - 1);
+      start.setDate(start.getDate() - 3);
       const end = new Date(lastDate + "T12:00:00");
-      while (end.getDay() !== 0) end.setDate(end.getDate() + 1);
+      end.setDate(end.getDate() + 3);
 
-      const calendar: { date: string; isOff: boolean }[] = [];
+      const calendar: { date: string; isOff: boolean; isNonWorkDay: boolean }[] = [];
       const cur = new Date(start);
       while (cur <= end) {
         const d = toDateStr(cur);
         const dow = cur.getDay();
-        const wknd = dow === 0 || dow === 6;
+        const isNonWorkDay = !workingSet.has(dow);
         const hol = holidaySet.has(d);
-        const isOff = wknd || hol || offDays.has(d);
-        calendar.push({ date: d, isOff });
+        const isOff = isNonWorkDay || hol || offDays.has(d);
+        calendar.push({ date: d, isOff, isNonWorkDay });
         cur.setDate(cur.getDate() + 1);
       }
 
       let score = 0;
       let runLen = 0;
-      let runTouchesWeekend = false;
+      let runTouchesNonWorkDay = false;
 
       for (let i = 0; i <= calendar.length; i++) {
         const entry = calendar[i];
         if (entry && entry.isOff) {
           runLen++;
-          const dow = getDow(entry.date);
-          if (dow === 0 || dow === 6) runTouchesWeekend = true;
+          if (entry.isNonWorkDay) runTouchesNonWorkDay = true;
         } else {
-          // End of a run — score it
           if (runLen >= 2 && schedulingPreferences.preferSequentialOff) {
             score += (runLen - 1) * 2;
           }
-          if (runLen >= 3 && runTouchesWeekend && schedulingPreferences.prefer3DayWeekends) {
+          if (runLen >= 3 && runTouchesNonWorkDay && schedulingPreferences.prefer3DayWeekends) {
             score += 5;
           }
-          if (runLen >= 4 && runTouchesWeekend && schedulingPreferences.prefer4DayWeekends) {
+          if (runLen >= 4 && runTouchesNonWorkDay && schedulingPreferences.prefer4DayWeekends) {
             score += 8;
           }
           runLen = 0;
-          runTouchesWeekend = false;
+          runTouchesNonWorkDay = false;
         }
       }
 
@@ -661,11 +662,10 @@ export function autoSchedule({
     }
 
     for (const pp of sortedPPs) {
-      const ppWeekdays = dates.filter(
+      const ppDates = dates.filter(
         (d) =>
           d >= pp.startDate &&
           d <= pp.endDate &&
-          !isWeekend(d) &&
           !holidaySet.has(d)
       );
 
@@ -685,7 +685,7 @@ export function autoSchedule({
         const hoursNeeded = target - currentHours;
         const daysNeeded = Math.ceil(hoursNeeded / hoursPerDay);
 
-        const availableDates = ppWeekdays.filter((d) =>
+        const availableDates = ppDates.filter((d) =>
           isAvailable(provider, d, fillShift)
         );
 
@@ -731,7 +731,7 @@ export function autoSchedule({
           if (!feasible) continue;
 
           const offSet = new Set(offIndices.map((i) => availableDates[i]));
-          const score = scoreOffDays(offSet, ppWeekdays);
+          const score = scoreOffDays(offSet, availableDates, provider.workingDays);
 
           if (score > bestScore) {
             bestScore = score;

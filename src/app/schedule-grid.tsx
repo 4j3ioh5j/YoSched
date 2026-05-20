@@ -447,13 +447,16 @@ export function ScheduleGrid({
       }
       let count = 0;
       for (const p of providers) {
-        const a = assignmentMap.get(`${p.id}:${date}`);
-        if (a && staffingCountCodes.has(a.code)) count++;
+        const key = `${p.id}:${date}`;
+        const a = assignmentMap.get(key);
+        const sug = !a ? suggestionMap.get(key) : null;
+        const code = a?.code ?? sug?.code;
+        if (code && staffingCountCodes.has(code)) count++;
       }
       counts[date] = count;
     }
     return counts;
-  }, [dates, providers, assignmentMap, holidaySet, staffingCountCodes]);
+  }, [dates, providers, assignmentMap, suggestionMap, holidaySet, staffingCountCodes]);
 
   function prevMonth() {
     if (viewMonth === 0) {
