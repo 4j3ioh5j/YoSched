@@ -22,7 +22,7 @@ async function main() {
     { code: "CALL",   name: "Weekend Call",            defaultHours: 0,  countsTowardFte: false, isLeave: false, isPaid: false, category: "work",  color: "#a855f7", sortOrder: 10 },
     { code: "QA",     name: "Quality Assurance",       defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#0ea5e9", sortOrder: 11 },
     { code: "TEL",    name: "Telehealth",              defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#06b6d4", sortOrder: 12 },
-    { code: "UCLA",   name: "UCLA Rotation",           defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#2563eb", sortOrder: 13 },
+    { code: "UCLA",   name: "UCLA Rotation",           defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#2563eb", sortOrder: 13 },
     { code: "CITC",   name: "Clinic",                  defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#059669", sortOrder: 14 },
     { code: "RS",     name: "Research",                defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#7c3aed", sortOrder: 15 },
     { code: "AL",     name: "Annual Leave",            defaultHours: 8,  countsTowardFte: false, isLeave: true,  isPaid: true,  category: "leave", color: "#84cc16", sortOrder: 20 },
