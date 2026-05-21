@@ -19,9 +19,6 @@ type Provider = {
   initials: string;
   ftePercentage: number;
   workingDays: number[];
-  takesCall: boolean;
-  takesWeekendCall: boolean;
-  takesLate: boolean;
 };
 
 type PayPeriod = {

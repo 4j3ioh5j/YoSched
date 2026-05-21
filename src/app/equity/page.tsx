@@ -6,7 +6,7 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 
 export default async function Equity() {
-  const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs] =
+  const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs, providerEligibleShifts] =
     await Promise.all([
       prisma.provider.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
@@ -15,6 +15,7 @@ export default async function Equity() {
       prisma.desirabilityWeight.findMany(),
       prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
       prisma.schedulingPreferences.findFirst(),
+      prisma.providerEligibleShift.findMany(),
     ]);
 
   const equity = computeFairness({
@@ -34,8 +35,6 @@ export default async function Equity() {
       id: p.id,
       initials: p.initials,
       ftePercentage: p.ftePercentage ?? 1.0,
-      takesCall: p.takesCall,
-      takesLate: p.takesLate,
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
     })),
@@ -93,6 +92,14 @@ export default async function Equity() {
       : "",
   };
 
+  const eligibilityByProvider = new Map<string, string[]>();
+  for (const pes of providerEligibleShifts) {
+    if (!eligibilityByProvider.has(pes.providerId)) {
+      eligibilityByProvider.set(pes.providerId, []);
+    }
+    eligibilityByProvider.get(pes.providerId)!.push(pes.shiftTypeId);
+  }
+
   const equityData = equity.metrics.map((m) => {
     const dev = equity.deviations.get(m.providerId)!;
     const p = providers.find((p) => p.id === m.providerId)!;
@@ -102,9 +109,7 @@ export default async function Equity() {
       name: p.name,
       isAutoScheduled: p.isAutoScheduled,
       ftePercentage: p.ftePercentage ?? 1.0,
-      takesCall: p.takesCall,
-      takesWeekendCall: p.takesWeekendCall,
-      takesLate: p.takesLate,
+      eligibleShiftTypeIds: eligibilityByProvider.get(m.providerId) ?? [],
       totalHours: providerHours[m.providerId] || 0,
       shiftTally: shiftTallies[m.providerId] || {},
     };
@@ -140,6 +145,12 @@ export default async function Equity() {
         dateRange={dateRange}
         shiftCodes={shiftCodes}
         equityThresholds={equityThresholds}
+        allShiftTypes={shiftTypes.map((st) => ({
+          id: st.id,
+          code: st.code,
+          name: st.name,
+          color: st.color ?? "#6b7280",
+        }))}
       />
     </main>
   );

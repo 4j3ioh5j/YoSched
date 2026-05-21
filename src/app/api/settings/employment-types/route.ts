@@ -2,24 +2,38 @@ import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(req: NextRequest) {
-  const { id, ...data } = await req.json();
+  const { id, defaultEligibleShiftTypeIds, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  const updated = await prisma.employmentType.update({
+  await prisma.employmentType.update({
     where: { id },
     data: {
       name: data.name,
       defaultIsAutoScheduled: data.defaultIsAutoScheduled,
       defaultFtePercentage: data.defaultFtePercentage,
-      defaultTakesCall: data.defaultTakesCall,
-      defaultTakesWeekendCall: data.defaultTakesWeekendCall,
-      defaultTakesLate: data.defaultTakesLate,
       defaultWorkingDays: data.defaultWorkingDays,
       sortOrder: data.sortOrder,
     },
   });
 
-  return NextResponse.json(updated);
+  if (Array.isArray(defaultEligibleShiftTypeIds)) {
+    await prisma.employmentTypeDefaultShift.deleteMany({ where: { employmentTypeId: id } });
+    if (defaultEligibleShiftTypeIds.length > 0) {
+      await prisma.employmentTypeDefaultShift.createMany({
+        data: defaultEligibleShiftTypeIds.map((stId: string) => ({
+          employmentTypeId: id,
+          shiftTypeId: stId,
+        })),
+      });
+    }
+  }
+
+  const result = await prisma.employmentType.findUnique({
+    where: { id },
+    include: { defaultEligibleShifts: true },
+  });
+
+  return NextResponse.json(result);
 }
 
 export async function POST(req: NextRequest) {
@@ -32,15 +46,27 @@ export async function POST(req: NextRequest) {
       name: data.name,
       defaultIsAutoScheduled: data.defaultIsAutoScheduled ?? true,
       defaultFtePercentage: data.defaultFtePercentage ?? 1.0,
-      defaultTakesCall: data.defaultTakesCall ?? true,
-      defaultTakesWeekendCall: data.defaultTakesWeekendCall ?? true,
-      defaultTakesLate: data.defaultTakesLate ?? true,
       defaultWorkingDays: data.defaultWorkingDays ?? [1, 2, 3, 4, 5],
       sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
     },
   });
 
-  return NextResponse.json(created);
+  const allShiftTypes = await prisma.shiftType.findMany({ select: { id: true } });
+  if (allShiftTypes.length > 0) {
+    await prisma.employmentTypeDefaultShift.createMany({
+      data: allShiftTypes.map((st) => ({
+        employmentTypeId: created.id,
+        shiftTypeId: st.id,
+      })),
+    });
+  }
+
+  const result = await prisma.employmentType.findUnique({
+    where: { id: created.id },
+    include: { defaultEligibleShifts: true },
+  });
+
+  return NextResponse.json(result);
 }
 
 export async function DELETE(req: NextRequest) {

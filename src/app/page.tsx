@@ -42,8 +42,6 @@ export default async function Home() {
       id: p.id,
       initials: p.initials,
       ftePercentage: p.ftePercentage ?? 1.0,
-      takesCall: p.takesCall,
-      takesLate: p.takesLate,
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
     })),
@@ -102,9 +100,6 @@ export default async function Home() {
           name: p.name,
           ftePercentage: p.ftePercentage ?? 1.0,
           workingDays: p.workingDays,
-          takesCall: p.takesCall,
-          takesWeekendCall: p.takesWeekendCall,
-          takesLate: p.takesLate,
           isAutoScheduled: p.isAutoScheduled,
         }))}
         assignments={assignments.map((a) => ({

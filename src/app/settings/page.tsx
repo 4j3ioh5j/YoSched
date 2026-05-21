@@ -15,7 +15,7 @@ export default async function Settings() {
     prisma.schedulingPreferences.findFirst(),
     prisma.employmentType.findMany({
       orderBy: { sortOrder: "asc" },
-      include: { _count: { select: { providers: true } } },
+      include: { _count: { select: { providers: true } }, defaultEligibleShifts: true },
     }),
   ]);
 
@@ -61,7 +61,6 @@ export default async function Settings() {
           isFillShift: st.isFillShift,
           weekendPaired: st.weekendPaired,
           ignoresWorkingDays: st.ignoresWorkingDays,
-          eligibilityRule: st.eligibilityRule,
           noConsecutiveGroup: st.noConsecutiveGroup,
           maxPerDay: st.maxPerDay,
         }))}
@@ -100,9 +99,7 @@ export default async function Settings() {
           name: et.name,
           defaultIsAutoScheduled: et.defaultIsAutoScheduled,
           defaultFtePercentage: et.defaultFtePercentage,
-          defaultTakesCall: et.defaultTakesCall,
-          defaultTakesWeekendCall: et.defaultTakesWeekendCall,
-          defaultTakesLate: et.defaultTakesLate,
+          defaultEligibleShiftTypeIds: et.defaultEligibleShifts.map((ds) => ds.shiftTypeId),
           defaultWorkingDays: et.defaultWorkingDays,
           sortOrder: et.sortOrder,
           providerCount: et._count.providers,

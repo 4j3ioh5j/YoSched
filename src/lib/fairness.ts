@@ -15,8 +15,6 @@ type Provider = {
   id: string;
   initials: string;
   ftePercentage: number;
-  takesCall: boolean;
-  takesLate: boolean;
   isActive: boolean;
   isAutoScheduled: boolean;
 };

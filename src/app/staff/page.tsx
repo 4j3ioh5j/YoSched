@@ -5,12 +5,16 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 
 export default async function Staff() {
-  const [providers, employmentTypes] = await Promise.all([
+  const [providers, employmentTypes, allShiftTypes] = await Promise.all([
     prisma.provider.findMany({
       orderBy: { sortOrder: "asc" },
-      include: { employmentType: true },
+      include: { employmentType: true, eligibleShifts: true },
     }),
-    prisma.employmentType.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.employmentType.findMany({
+      orderBy: { sortOrder: "asc" },
+      include: { defaultEligibleShifts: true },
+    }),
+    prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
 
   return (
@@ -41,9 +45,7 @@ export default async function Staff() {
           employmentTypeName: p.employmentType.name,
           ftePercentage: p.ftePercentage ?? 1.0,
           workingDays: p.workingDays,
-          takesCall: p.takesCall,
-          takesWeekendCall: p.takesWeekendCall,
-          takesLate: p.takesLate,
+          eligibleShiftTypeIds: p.eligibleShifts.map((es) => es.shiftTypeId),
           specialQualifications: p.specialQualifications,
           isActive: p.isActive,
           isAutoScheduled: p.isAutoScheduled,
@@ -54,10 +56,16 @@ export default async function Staff() {
           name: et.name,
           defaultIsAutoScheduled: et.defaultIsAutoScheduled,
           defaultFtePercentage: et.defaultFtePercentage,
-          defaultTakesCall: et.defaultTakesCall,
-          defaultTakesWeekendCall: et.defaultTakesWeekendCall,
-          defaultTakesLate: et.defaultTakesLate,
+          defaultEligibleShiftTypeIds: et.defaultEligibleShifts.map((ds) => ds.shiftTypeId),
           defaultWorkingDays: et.defaultWorkingDays,
+        }))}
+        allShiftTypes={allShiftTypes.map((st) => ({
+          id: st.id,
+          code: st.code,
+          name: st.name,
+          color: st.color ?? "#6b7280",
+          category: st.category,
+          isLeave: st.isLeave,
         }))}
       />
     </main>

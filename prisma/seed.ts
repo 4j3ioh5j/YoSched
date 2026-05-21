@@ -11,14 +11,14 @@ async function main() {
   // --- Shift Types ---
   const shiftTypes = [
     { code: "OR",     name: "Operating Room",       defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#3b82f6", sortOrder: 1, isFillShift: true, schedulePriority: 100 },
-    { code: "ORC",    name: "OR Call",               defaultHours: 16, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#6366f1", sortOrder: 2, postShiftRule: "day_off_after", schedulePriority: 20, eligibilityRule: "takesCall", noConsecutiveGroup: "call-late", maxPerDay: 1 },
-    { code: "ORL",    name: "OR Late",               defaultHours: 12, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#8b5cf6", sortOrder: 3, schedulePriority: 30, eligibilityRule: "takesLate", noConsecutiveGroup: "call-late", maxPerDay: 1 },
+    { code: "ORC",    name: "OR Call",               defaultHours: 16, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#6366f1", sortOrder: 2, postShiftRule: "day_off_after", schedulePriority: 20, noConsecutiveGroup: "call-late", maxPerDay: 1 },
+    { code: "ORL",    name: "OR Late",               defaultHours: 12, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#8b5cf6", sortOrder: 3, schedulePriority: 30, noConsecutiveGroup: "call-late", maxPerDay: 1 },
     { code: "ADM",    name: "Administrative",         defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#f59e0b", sortOrder: 4 },
     { code: "PREOP",  name: "Pre-op Clinic",          defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#10b981", sortOrder: 5 },
     { code: "PAIN",   name: "Pain Service",           defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#ef4444", sortOrder: 7 },
     { code: "ICU",    name: "Intensive Care",          defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#dc2626", sortOrder: 8 },
     { code: "CARD",   name: "Cardiac",                defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#e11d48", sortOrder: 9 },
-    { code: "CALL",   name: "Weekend Call",            defaultHours: 0,  countsTowardFte: false, isLeave: false, isPaid: false, category: "work",  color: "#a855f7", sortOrder: 10, postShiftRule: "day_off_after", schedulePriority: 10, weekendPaired: true, ignoresWorkingDays: true, eligibilityRule: "takesWeekendCall", noConsecutiveGroup: "call-late", maxPerDay: 1 },
+    { code: "CALL",   name: "Weekend Call",            defaultHours: 0,  countsTowardFte: false, isLeave: false, isPaid: false, category: "work",  color: "#a855f7", sortOrder: 10, postShiftRule: "day_off_after", schedulePriority: 10, weekendPaired: true, ignoresWorkingDays: true, noConsecutiveGroup: "call-late", maxPerDay: 1 },
     { code: "QA",     name: "Quality Assurance",       defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#0ea5e9", sortOrder: 11 },
     { code: "TEL",    name: "Telehealth",              defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#06b6d4", sortOrder: 12 },
     { code: "UCLA",   name: "UCLA Rotation",           defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#2563eb", sortOrder: 13 },
@@ -47,39 +47,42 @@ async function main() {
   const fteType = await prisma.employmentType.upsert({
     where: { name: "FTE" },
     update: {},
-    create: { name: "FTE", defaultIsAutoScheduled: true, defaultFtePercentage: 1.0, defaultTakesCall: true, defaultTakesWeekendCall: true, defaultTakesLate: true, defaultWorkingDays: [1, 2, 3, 4, 5], sortOrder: 0 },
+    create: { name: "FTE", defaultIsAutoScheduled: true, defaultFtePercentage: 1.0, defaultWorkingDays: [1, 2, 3, 4, 5], sortOrder: 0 },
   });
   const feeBasisType = await prisma.employmentType.upsert({
     where: { name: "Fee Basis" },
     update: {},
-    create: { name: "Fee Basis", defaultIsAutoScheduled: false, defaultFtePercentage: 0, defaultTakesCall: false, defaultTakesWeekendCall: false, defaultTakesLate: false, defaultWorkingDays: [], sortOrder: 1 },
+    create: { name: "Fee Basis", defaultIsAutoScheduled: false, defaultFtePercentage: 0, defaultWorkingDays: [], sortOrder: 1 },
   });
   console.log("Seeded 2 employment types");
 
   // --- Providers ---
+  // Fee basis providers are ineligible for ORC, CALL, ORL
+  const feeBasisInitials = new Set(["CWr", "NH", "PN", "HC"]);
+
   const providers = [
-    { initials: "YA",  name: "YA",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 1 },
-    { initials: "CC",  name: "CC",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 2 },
-    { initials: "SC",  name: "SC",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 3 },
-    { initials: "BC",  name: "BC",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 4 },
-    { initials: "CD",  name: "CD",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 5 },
-    { initials: "RD",  name: "RD",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 6, specialQualifications: ["cardiac"] },
-    { initials: "DH",  name: "DH",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 7 },
-    { initials: "SH",  name: "SH",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 8 },
-    { initials: "AH",  name: "AH",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 9 },
-    { initials: "CL",  name: "CL",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 10 },
-    { initials: "RM",  name: "RM",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 11 },
-    { initials: "LM",  name: "LM",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 12 },
-    { initials: "KO",  name: "KO",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 13 },
-    { initials: "AR",  name: "AR",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 14 },
-    { initials: "SR",  name: "SR",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 15 },
-    { initials: "SS",  name: "SS",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 16, specialQualifications: ["cardiac"] },
-    { initials: "STa", name: "STa", employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 17 },
-    { initials: "KZ",  name: "KZ",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesWeekendCall: true,  takesLate: true,  sortOrder: 18, workingDays: [1, 3] },
-    { initials: "CWr", name: "CWr", employmentTypeId: feeBasisType.id, isAutoScheduled: false, takesCall: false, takesWeekendCall: false, takesLate: false, sortOrder: 19 },
-    { initials: "NH",  name: "NH",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, takesCall: false, takesWeekendCall: false, takesLate: false, sortOrder: 20 },
-    { initials: "PN",  name: "PN",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, takesCall: false, takesWeekendCall: false, takesLate: false, sortOrder: 21 },
-    { initials: "HC",  name: "HC",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, takesCall: false, takesWeekendCall: false, takesLate: false, sortOrder: 22 },
+    { initials: "YA",  name: "YA",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 1 },
+    { initials: "CC",  name: "CC",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 2 },
+    { initials: "SC",  name: "SC",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 3 },
+    { initials: "BC",  name: "BC",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 4 },
+    { initials: "CD",  name: "CD",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 5 },
+    { initials: "RD",  name: "RD",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 6, specialQualifications: ["cardiac"] },
+    { initials: "DH",  name: "DH",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 7 },
+    { initials: "SH",  name: "SH",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 8 },
+    { initials: "AH",  name: "AH",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 9 },
+    { initials: "CL",  name: "CL",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 10 },
+    { initials: "RM",  name: "RM",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 11 },
+    { initials: "LM",  name: "LM",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 12 },
+    { initials: "KO",  name: "KO",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 13 },
+    { initials: "AR",  name: "AR",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 14 },
+    { initials: "SR",  name: "SR",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 15 },
+    { initials: "SS",  name: "SS",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 16, specialQualifications: ["cardiac"] },
+    { initials: "STa", name: "STa", employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 17 },
+    { initials: "KZ",  name: "KZ",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 18, workingDays: [1, 3] },
+    { initials: "CWr", name: "CWr", employmentTypeId: feeBasisType.id, isAutoScheduled: false, sortOrder: 19 },
+    { initials: "NH",  name: "NH",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, sortOrder: 20 },
+    { initials: "PN",  name: "PN",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, sortOrder: 21 },
+    { initials: "HC",  name: "HC",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, sortOrder: 22 },
   ];
 
   for (const p of providers) {
@@ -90,6 +93,34 @@ async function main() {
     });
   }
   console.log(`Seeded ${providers.length} providers`);
+
+  // --- Eligible Shifts (join table) ---
+  const allShiftTypeRecords = await prisma.shiftType.findMany();
+  const allProviderRecords = await prisma.provider.findMany();
+  const restrictedCodes = new Set(["ORC", "CALL", "ORL"]);
+
+  await prisma.providerEligibleShift.deleteMany({});
+  const eligibilityRows: { providerId: string; shiftTypeId: string }[] = [];
+  for (const prov of allProviderRecords) {
+    for (const st of allShiftTypeRecords) {
+      if (feeBasisInitials.has(prov.initials) && restrictedCodes.has(st.code)) continue;
+      eligibilityRows.push({ providerId: prov.id, shiftTypeId: st.id });
+    }
+  }
+  await prisma.providerEligibleShift.createMany({ data: eligibilityRows });
+  console.log(`Seeded ${eligibilityRows.length} provider eligible shifts`);
+
+  // --- Employment Type Default Shifts (join table) ---
+  await prisma.employmentTypeDefaultShift.deleteMany({});
+  const etDefaultRows: { employmentTypeId: string; shiftTypeId: string }[] = [];
+  for (const st of allShiftTypeRecords) {
+    etDefaultRows.push({ employmentTypeId: fteType.id, shiftTypeId: st.id });
+    if (!restrictedCodes.has(st.code)) {
+      etDefaultRows.push({ employmentTypeId: feeBasisType.id, shiftTypeId: st.id });
+    }
+  }
+  await prisma.employmentTypeDefaultShift.createMany({ data: etDefaultRows });
+  console.log(`Seeded ${etDefaultRows.length} employment type default shifts`);
 
   // --- Provider Shift Overrides ---
   const rdId = (await prisma.provider.findUnique({ where: { initials: "RD" } }))!.id;

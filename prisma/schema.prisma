@@ -25,7 +25,6 @@ model ShiftType {
   schedulePriority   Int?
   weekendPaired      Boolean  @default(false)
   ignoresWorkingDays Boolean  @default(false)
-  eligibilityRule    String?
   noConsecutiveGroup String?
   maxPerDay          Int?
   createdAt       DateTime @default(now())
@@ -36,6 +35,8 @@ model ShiftType {
   providerOverrides   ProviderShiftOverride[]
   eligibleRoles       ShiftTypeRole[]
   standingCommitments StandingCommitment[]
+  eligibleProviders            ProviderEligibleShift[]
+  defaultForEmploymentTypes    EmploymentTypeDefaultShift[]
 
   @@map("shift_types")
 }
@@ -56,15 +57,13 @@ model EmploymentType {
   name                   String   @unique
   defaultIsAutoScheduled Boolean  @default(true)
   defaultFtePercentage   Float    @default(1.0)
-  defaultTakesCall       Boolean  @default(true)
-  defaultTakesWeekendCall Boolean @default(true)
-  defaultTakesLate       Boolean  @default(true)
   defaultWorkingDays     Int[]    @default([1, 2, 3, 4, 5])
   sortOrder              Int      @default(0)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
-  providers Provider[]
+  providers              Provider[]
+  defaultEligibleShifts  EmploymentTypeDefaultShift[]
 
   @@map("employment_types")
 }
@@ -79,9 +78,6 @@ model Provider {
   feeBasisHoursPerShift Float?
   role                  String?
   specialQualifications String[] @default([])
-  takesCall             Boolean  @default(true)
-  takesWeekendCall      Boolean  @default(true)
-  takesLate             Boolean  @default(true)
   workingDays           Int[]    @default([1, 2, 3, 4, 5]) // 0=Sun..6=Sat
   isTemporary           Boolean  @default(false)
   tempStartDate         DateTime?
@@ -97,6 +93,7 @@ model Provider {
   shiftOverrides    ProviderShiftOverride[]
   standingCommitments StandingCommitment[]
   dayPreferences    ProviderDayPreference[]
+  eligibleShifts    ProviderEligibleShift[]
 
   @@map("providers")
 }
@@ -241,4 +238,28 @@ model Assignment {
 
   @@unique([providerId, date])
   @@map("assignments")
+}
+
+model ProviderEligibleShift {
+  id          String @id @default(cuid())
+  providerId  String
+  shiftTypeId String
+
+  provider  Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, shiftTypeId])
+  @@map("provider_eligible_shifts")
+}
+
+model EmploymentTypeDefaultShift {
+  id               String @id @default(cuid())
+  employmentTypeId String
+  shiftTypeId      String
+
+  employmentType EmploymentType @relation(fields: [employmentTypeId], references: [id], onDelete: Cascade)
+  shiftType      ShiftType      @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([employmentTypeId, shiftTypeId])
+  @@map("employment_type_default_shifts")
 }

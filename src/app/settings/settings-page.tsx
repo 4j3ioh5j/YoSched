@@ -20,7 +20,6 @@ type ShiftType = {
   isFillShift: boolean;
   weekendPaired: boolean;
   ignoresWorkingDays: boolean;
-  eligibilityRule: string | null;
   noConsecutiveGroup: string | null;
   maxPerDay: number | null;
 };
@@ -70,9 +69,7 @@ type EmploymentTypeData = {
   name: string;
   defaultIsAutoScheduled: boolean;
   defaultFtePercentage: number;
-  defaultTakesCall: boolean;
-  defaultTakesWeekendCall: boolean;
-  defaultTakesLate: boolean;
+  defaultEligibleShiftTypeIds: string[];
   defaultWorkingDays: number[];
   sortOrder: number;
   providerCount: number;
@@ -315,7 +312,6 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
         isFillShift: created.isFillShift ?? false,
         weekendPaired: created.weekendPaired ?? false,
         ignoresWorkingDays: created.ignoresWorkingDays ?? false,
-        eligibilityRule: created.eligibilityRule ?? null,
         noConsecutiveGroup: created.noConsecutiveGroup ?? null,
         maxPerDay: created.maxPerDay ?? null,
       };
@@ -479,20 +475,6 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
               <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Auto-Scheduling Behavior</div>
               <FieldRow label="Scheduling order" description="When auto-scheduling, which shifts get assigned first. Lower numbers go first. Leave blank if this shift should not be auto-scheduled.">
                 <input type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center" value={editingShift.schedulePriority ?? ""} placeholder="None" onChange={(e) => updateField(editingShift.id, "schedulePriority", e.target.value ? parseInt(e.target.value) : null)} />
-              </FieldRow>
-              <FieldRow label="Who can be assigned" description="Restrict by staff flag or qualification. Built-in flags: takesCall, takesWeekendCall, takesLate.">
-                <div className="flex gap-1">
-                  <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm flex-1" value={editingShift.eligibilityRule ?? ""} onChange={(e) => updateField(editingShift.id, "eligibilityRule", e.target.value || null)}>
-                    <option value="">Anyone</option>
-                    <option value="takesCall">Only staff who take call (ORC)</option>
-                    <option value="takesWeekendCall">Only staff who take weekend call</option>
-                    <option value="takesLate">Only staff who take late shifts</option>
-                    {editingShift.eligibilityRule && !["", "takesCall", "takesWeekendCall", "takesLate"].includes(editingShift.eligibilityRule) && (
-                      <option value={editingShift.eligibilityRule}>{editingShift.eligibilityRule}</option>
-                    )}
-                  </select>
-                  <input type="text" className="w-28 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" placeholder="Custom…" value={editingShift.eligibilityRule && !["takesCall", "takesWeekendCall", "takesLate"].includes(editingShift.eligibilityRule) ? editingShift.eligibilityRule : ""} onChange={(e) => updateField(editingShift.id, "eligibilityRule", e.target.value || null)} />
-                </div>
               </FieldRow>
               <FieldRow label="Pair Saturday and Sunday" description="Assign the same person to both Saturday and Sunday when filling this shift on weekends">
                 <input type="checkbox" checked={editingShift.weekendPaired} onChange={(e) => updateField(editingShift.id, "weekendPaired", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
@@ -1524,7 +1506,7 @@ const ET_DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const ET_DAY_INDICES = [0, 1, 2, 3, 4, 5, 6];
 const ET_DAY_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
 
-function EmploymentTypesSection({ initial, pushUndo }: { initial: EmploymentTypeData[]; pushUndo: (a: UndoAction) => void }) {
+function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: EmploymentTypeData[]; pushUndo: (a: UndoAction) => void; shiftTypes: ShiftType[] }) {
   const [types, setTypes] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
@@ -1590,9 +1572,7 @@ function EmploymentTypesSection({ initial, pushUndo }: { initial: EmploymentType
         name: created.name,
         defaultIsAutoScheduled: created.defaultIsAutoScheduled,
         defaultFtePercentage: created.defaultFtePercentage,
-        defaultTakesCall: created.defaultTakesCall,
-        defaultTakesWeekendCall: created.defaultTakesWeekendCall,
-        defaultTakesLate: created.defaultTakesLate,
+        defaultEligibleShiftTypeIds: (created.defaultEligibleShifts ?? []).map((ds: { shiftTypeId: string }) => ds.shiftTypeId),
         defaultWorkingDays: created.defaultWorkingDays,
         sortOrder: created.sortOrder,
         providerCount: 0,
@@ -1670,9 +1650,7 @@ function EmploymentTypesSection({ initial, pushUndo }: { initial: EmploymentType
             <th className="text-left py-2 px-2">Name</th>
             <th className="text-center py-2 px-2 w-16">Auto</th>
             <th className="text-center py-2 px-2 w-16">FTE%</th>
-            <th className="text-center py-2 px-2 w-14">ORC</th>
-            <th className="text-center py-2 px-2 w-14">Wknd</th>
-            <th className="text-center py-2 px-2 w-14">Late</th>
+            <th className="text-left py-2 px-2">Ineligible</th>
             <th className="text-center py-2 px-2 w-14">Staff</th>
           </tr>
         </thead>
@@ -1692,20 +1670,16 @@ function EmploymentTypesSection({ initial, pushUndo }: { initial: EmploymentType
               <td className="py-2 px-2 text-center font-mono text-slate-400">
                 {(t.defaultFtePercentage * 100).toFixed(0)}%
               </td>
-              <td className="py-2 px-2 text-center">
-                <span className={t.defaultTakesCall ? "text-emerald-400" : "text-slate-600"}>
-                  {t.defaultTakesCall ? "✓" : "—"}
-                </span>
-              </td>
-              <td className="py-2 px-2 text-center">
-                <span className={t.defaultTakesWeekendCall ? "text-emerald-400" : "text-slate-600"}>
-                  {t.defaultTakesWeekendCall ? "✓" : "—"}
-                </span>
-              </td>
-              <td className="py-2 px-2 text-center">
-                <span className={t.defaultTakesLate ? "text-emerald-400" : "text-slate-600"}>
-                  {t.defaultTakesLate ? "✓" : "—"}
-                </span>
+              <td className="py-2 px-2">
+                <div className="flex flex-wrap gap-1">
+                  {shiftTypes
+                    .filter((st) => !t.defaultEligibleShiftTypeIds.includes(st.id))
+                    .map((st) => (
+                      <span key={st.id} className="text-[10px] px-1.5 py-px rounded bg-slate-700/50 text-slate-500">
+                        {st.code}
+                      </span>
+                    ))}
+                </div>
               </td>
               <td className="py-2 px-2 text-center text-slate-500 text-xs">{t.providerCount}</td>
             </tr>
@@ -1744,17 +1718,67 @@ function EmploymentTypesSection({ initial, pushUndo }: { initial: EmploymentType
                   ))}
                 </select>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-200">Takes call (ORC)</span>
-                <input type="checkbox" checked={et.defaultTakesCall} onChange={(e) => updateField(et.id, "defaultTakesCall", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-200">Takes weekend call</span>
-                <input type="checkbox" checked={et.defaultTakesWeekendCall} onChange={(e) => updateField(et.id, "defaultTakesWeekendCall", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-200">Takes late (ORL)</span>
-                <input type="checkbox" checked={et.defaultTakesLate} onChange={(e) => updateField(et.id, "defaultTakesLate", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              <div>
+                <div className="text-sm text-slate-200 mb-1">Default eligible shifts</div>
+                <div className="text-xs text-slate-500 mb-2">New staff with this type will be eligible for these shifts.</div>
+                <div className="space-y-2">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Work</div>
+                    <div className="flex flex-wrap gap-1">
+                      {shiftTypes.filter((st) => !st.isLeave).map((st) => {
+                        const isEligible = et.defaultEligibleShiftTypeIds.includes(st.id);
+                        return (
+                          <button
+                            key={st.id}
+                            onClick={() => {
+                              const next = isEligible
+                                ? et.defaultEligibleShiftTypeIds.filter((id) => id !== st.id)
+                                : [...et.defaultEligibleShiftTypeIds, st.id];
+                              updateField(et.id, "defaultEligibleShiftTypeIds", next);
+                            }}
+                            className={`px-2 py-0.5 text-xs font-bold rounded transition-colors border ${isEligible ? "" : "opacity-30"}`}
+                            style={{
+                              backgroundColor: isEligible ? st.color + "25" : undefined,
+                              color: st.color,
+                              borderColor: isEligible ? st.color + "50" : "transparent",
+                            }}
+                          >
+                            {st.code}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {shiftTypes.some((st) => st.isLeave) && (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Leave</div>
+                      <div className="flex flex-wrap gap-1">
+                        {shiftTypes.filter((st) => st.isLeave).map((st) => {
+                          const isEligible = et.defaultEligibleShiftTypeIds.includes(st.id);
+                          return (
+                            <button
+                              key={st.id}
+                              onClick={() => {
+                                const next = isEligible
+                                  ? et.defaultEligibleShiftTypeIds.filter((id) => id !== st.id)
+                                  : [...et.defaultEligibleShiftTypeIds, st.id];
+                                updateField(et.id, "defaultEligibleShiftTypeIds", next);
+                              }}
+                              className={`px-2 py-0.5 text-xs font-bold rounded transition-colors border ${isEligible ? "" : "opacity-30"}`}
+                              style={{
+                                backgroundColor: isEligible ? st.color + "25" : undefined,
+                                color: st.color,
+                                borderColor: isEligible ? st.color + "50" : "transparent",
+                              }}
+                            >
+                              {st.code}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               <div>
                 <div className="text-sm text-slate-200 mb-2">Working days</div>
@@ -1821,7 +1845,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets,
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
         <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} />
-        <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} />
+        <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} shiftTypes={shiftTypes} />
         <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <SchedulingPrefsSection initial={schedulingPrefs} />

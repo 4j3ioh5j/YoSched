@@ -10,9 +10,7 @@ type Provider = {
   employmentTypeName: string;
   ftePercentage: number;
   workingDays: number[];
-  takesCall: boolean;
-  takesWeekendCall: boolean;
-  takesLate: boolean;
+  eligibleShiftTypeIds: string[];
   specialQualifications: string[];
   isActive: boolean;
   isAutoScheduled: boolean;
@@ -24,15 +22,23 @@ type EmploymentType = {
   name: string;
   defaultIsAutoScheduled: boolean;
   defaultFtePercentage: number;
-  defaultTakesCall: boolean;
-  defaultTakesWeekendCall: boolean;
-  defaultTakesLate: boolean;
+  defaultEligibleShiftTypeIds: string[];
   defaultWorkingDays: number[];
+};
+
+type ShiftTypeInfo = {
+  id: string;
+  code: string;
+  name: string;
+  color: string;
+  category: string;
+  isLeave: boolean;
 };
 
 type Props = {
   providers: Provider[];
   employmentTypes: EmploymentType[];
+  allShiftTypes: ShiftTypeInfo[];
 };
 
 type UndoAction = {
@@ -68,7 +74,7 @@ function FieldRow({ label, description, children }: { label: string; description
   );
 }
 
-export function StaffPage({ providers: initial, employmentTypes }: Props) {
+export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }: Props) {
   const [providers, setProviders] = useState(initial);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -113,9 +119,7 @@ export function StaffPage({ providers: initial, employmentTypes }: Props) {
       employmentTypeName: et.name,
       isAutoScheduled: et.defaultIsAutoScheduled,
       ftePercentage: et.defaultFtePercentage,
-      takesCall: et.defaultTakesCall,
-      takesWeekendCall: et.defaultTakesWeekendCall,
-      takesLate: et.defaultTakesLate,
+      eligibleShiftTypeIds: et.defaultEligibleShiftTypeIds,
       workingDays: et.defaultWorkingDays,
     } : p));
   }
@@ -221,9 +225,7 @@ export function StaffPage({ providers: initial, employmentTypes }: Props) {
         employmentTypeName: created.employmentType?.name ?? defaultType?.name ?? "",
         ftePercentage: created.ftePercentage ?? 1.0,
         workingDays: created.workingDays,
-        takesCall: created.takesCall,
-        takesWeekendCall: created.takesWeekendCall,
-        takesLate: created.takesLate,
+        eligibleShiftTypeIds: (created.eligibleShifts ?? []).map((es: { shiftTypeId: string }) => es.shiftTypeId),
         specialQualifications: created.specialQualifications ?? [],
         isActive: created.isActive,
         isAutoScheduled: created.isAutoScheduled ?? true,
@@ -317,9 +319,7 @@ export function StaffPage({ providers: initial, employmentTypes }: Props) {
                   <th className="text-center py-2.5 px-3 w-20">Type</th>
                   <th className="text-center py-2.5 px-3 w-14">FTE</th>
                   <th className="text-center py-2.5 px-3 w-40">Working Days</th>
-                  <th className="text-center py-2.5 px-3 w-12">ORC</th>
-                  <th className="text-center py-2.5 px-3 w-12">Wknd</th>
-                  <th className="text-center py-2.5 px-3 w-12">Late</th>
+                  <th className="text-left py-2.5 px-3">Ineligible</th>
                   <th className="text-center py-2.5 px-3 w-12">Sched</th>
                   <th className="text-center py-2.5 px-3 w-20">Quals</th>
                 </tr>
@@ -364,20 +364,16 @@ export function StaffPage({ providers: initial, employmentTypes }: Props) {
                         ))}
                       </div>
                     </td>
-                    <td className="py-2 px-3 text-center">
-                      <span className={p.takesCall ? "text-emerald-400" : "text-slate-600"}>
-                        {p.takesCall ? "✓" : "—"}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3 text-center">
-                      <span className={p.takesWeekendCall ? "text-emerald-400" : "text-slate-600"}>
-                        {p.takesWeekendCall ? "✓" : "—"}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3 text-center">
-                      <span className={p.takesLate ? "text-emerald-400" : "text-slate-600"}>
-                        {p.takesLate ? "✓" : "—"}
-                      </span>
+                    <td className="py-2 px-3">
+                      <div className="flex flex-wrap gap-1">
+                        {allShiftTypes
+                          .filter((st) => !p.eligibleShiftTypeIds.includes(st.id))
+                          .map((st) => (
+                            <span key={st.id} className="text-[10px] px-1.5 py-px rounded bg-slate-700/50 text-slate-500">
+                              {st.code}
+                            </span>
+                          ))}
+                      </div>
                     </td>
                     <td className="py-2 px-3 text-center">
                       <span className={p.isAutoScheduled ? "text-emerald-400" : "text-slate-600"}>
@@ -404,7 +400,6 @@ export function StaffPage({ providers: initial, employmentTypes }: Props) {
                     <td className="py-2 px-3 text-center"><span className="text-xs text-slate-600">{p.employmentTypeName}</span></td>
                     <td className="py-2 px-3 text-center"><span className="text-xs text-slate-600">—</span></td>
                     <td className="py-2 px-3"><div className="flex gap-0.5 justify-center">{DAY_INDICES.map((d) => (<span key={d} className="w-5 h-5 text-[10px] rounded font-medium flex items-center justify-center bg-slate-700/30 text-slate-700">{DAY_SHORT[d]}</span>))}</div></td>
-                    <td className="py-2 px-3 text-center text-slate-600">—</td>
                     <td className="py-2 px-3 text-center text-slate-600">—</td>
                     <td className="py-2 px-3 text-center text-slate-600">—</td>
                     <td className="py-2 px-3 text-center text-slate-600">—</td>
@@ -479,15 +474,80 @@ export function StaffPage({ providers: initial, employmentTypes }: Props) {
 
             <div className="px-6 py-4 border-t border-slate-700">
               <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Scheduling</div>
-              <FieldRow label="Takes call (ORC)" description="Eligible for weekday OR Call shifts">
-                <input type="checkbox" checked={ep.takesCall} onChange={(e) => updateField(ep.id, "takesCall", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
-              </FieldRow>
-              <FieldRow label="Takes late (ORL)" description="Eligible for late shifts">
-                <input type="checkbox" checked={ep.takesLate} onChange={(e) => updateField(ep.id, "takesLate", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
-              </FieldRow>
-              <FieldRow label="Takes weekend call" description="Eligible for weekend CALL shifts">
-                <input type="checkbox" checked={ep.takesWeekendCall} onChange={(e) => updateField(ep.id, "takesWeekendCall", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
-              </FieldRow>
+              <div className="py-2.5">
+                <div className="text-sm text-slate-200 mb-1">Eligible shifts</div>
+                <div className="text-xs text-slate-500 mb-2">Toggle which shift types this person can work.</div>
+                {(() => {
+                  const workShifts = allShiftTypes.filter((st) => !st.isLeave);
+                  const leaveShifts = allShiftTypes.filter((st) => st.isLeave);
+                  return (
+                    <div className="space-y-2">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Work</div>
+                        <div className="flex flex-wrap gap-1">
+                          {workShifts.map((st) => {
+                            const isEligible = ep.eligibleShiftTypeIds.includes(st.id);
+                            return (
+                              <button
+                                key={st.id}
+                                onClick={() => {
+                                  const next = isEligible
+                                    ? ep.eligibleShiftTypeIds.filter((id) => id !== st.id)
+                                    : [...ep.eligibleShiftTypeIds, st.id];
+                                  updateField(ep.id, "eligibleShiftTypeIds", next);
+                                }}
+                                className={`px-2 py-0.5 text-xs font-bold rounded transition-colors border ${
+                                  isEligible ? "" : "opacity-30"
+                                }`}
+                                style={{
+                                  backgroundColor: isEligible ? st.color + "25" : undefined,
+                                  color: st.color,
+                                  borderColor: isEligible ? st.color + "50" : "transparent",
+                                }}
+                                title={st.name}
+                              >
+                                {st.code}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      {leaveShifts.length > 0 && (
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Leave</div>
+                          <div className="flex flex-wrap gap-1">
+                            {leaveShifts.map((st) => {
+                              const isEligible = ep.eligibleShiftTypeIds.includes(st.id);
+                              return (
+                                <button
+                                  key={st.id}
+                                  onClick={() => {
+                                    const next = isEligible
+                                      ? ep.eligibleShiftTypeIds.filter((id) => id !== st.id)
+                                      : [...ep.eligibleShiftTypeIds, st.id];
+                                    updateField(ep.id, "eligibleShiftTypeIds", next);
+                                  }}
+                                  className={`px-2 py-0.5 text-xs font-bold rounded transition-colors border ${
+                                    isEligible ? "" : "opacity-30"
+                                  }`}
+                                  style={{
+                                    backgroundColor: isEligible ? st.color + "25" : undefined,
+                                    color: st.color,
+                                    borderColor: isEligible ? st.color + "50" : "transparent",
+                                  }}
+                                  title={st.name}
+                                >
+                                  {st.code}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
               <div className="py-2.5">
                 <div className="text-sm text-slate-200 mb-2">Working days</div>
                 <div className="flex gap-1">

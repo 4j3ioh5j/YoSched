@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
     historicalAssignments,
     staffingRequirements,
     schedulingPrefsRow,
+    providerEligibleShifts,
   ] = await Promise.all([
     prisma.provider.findMany({ where: { isActive: true } }),
     prisma.shiftType.findMany(),
@@ -52,6 +53,7 @@ export async function POST(req: NextRequest) {
     }),
     prisma.staffingRequirement.findMany(),
     prisma.schedulingPreferences.findFirst(),
+    prisma.providerEligibleShift.findMany(),
   ]);
 
   const start = new Date(startDate + "T12:00:00");
@@ -69,15 +71,21 @@ export async function POST(req: NextRequest) {
   const shiftCodeMap = new Map<string, string>();
   for (const st of shiftTypes) shiftCodeMap.set(st.id, st.code);
 
+  const eligibilityMap = new Map<string, string[]>();
+  for (const pes of providerEligibleShifts) {
+    if (!eligibilityMap.has(pes.providerId)) {
+      eligibilityMap.set(pes.providerId, []);
+    }
+    eligibilityMap.get(pes.providerId)!.push(pes.shiftTypeId);
+  }
+
   const result = autoSchedule({
     dates,
     providers: providers.map((p) => ({
       id: p.id,
       initials: p.initials,
       ftePercentage: p.ftePercentage ?? 1.0,
-      takesCall: p.takesCall,
-      takesWeekendCall: p.takesWeekendCall,
-      takesLate: p.takesLate,
+      eligibleShiftTypeIds: eligibilityMap.get(p.id) ?? [],
       workingDays: p.workingDays,
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
@@ -96,7 +104,6 @@ export async function POST(req: NextRequest) {
       schedulePriority: st.schedulePriority,
       weekendPaired: st.weekendPaired,
       ignoresWorkingDays: st.ignoresWorkingDays,
-      eligibilityRule: st.eligibilityRule,
       noConsecutiveGroup: st.noConsecutiveGroup,
       maxPerDay: st.maxPerDay,
       category: st.category,

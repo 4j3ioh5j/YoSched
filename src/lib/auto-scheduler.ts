@@ -4,9 +4,7 @@ export type ScheduleProvider = {
   id: string;
   initials: string;
   ftePercentage: number;
-  takesCall: boolean;
-  takesWeekendCall: boolean;
-  takesLate: boolean;
+  eligibleShiftTypeIds: string[];
   workingDays: number[];
   isActive: boolean;
   isAutoScheduled: boolean;
@@ -26,7 +24,6 @@ export type ScheduleShiftType = {
   schedulePriority: number | null;
   weekendPaired: boolean;
   ignoresWorkingDays: boolean;
-  eligibilityRule: string | null;
   noConsecutiveGroup: string | null;
   maxPerDay: number | null;
   category: string;
@@ -260,8 +257,6 @@ export function autoSchedule({
       id: p.id,
       initials: p.initials,
       ftePercentage: p.ftePercentage,
-      takesCall: p.takesCall,
-      takesLate: p.takesLate,
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
     })),
@@ -350,14 +345,13 @@ export function autoSchedule({
     return [...pIds].sort((a, b) => fairnessScore(a) - fairnessScore(b));
   }
 
+  const eligibleShiftSets = new Map<string, Set<string>>();
+  for (const p of providers) {
+    eligibleShiftSets.set(p.id, new Set(p.eligibleShiftTypeIds));
+  }
+
   function eligibleProviders(st: ScheduleShiftType): ScheduleProvider[] {
-    if (!st.eligibilityRule) return activeProviders;
-    return activeProviders.filter((p) => {
-      if (st.eligibilityRule === "takesCall") return p.takesCall;
-      if (st.eligibilityRule === "takesWeekendCall") return p.takesWeekendCall;
-      if (st.eligibilityRule === "takesLate") return p.takesLate;
-      return p.specialQualifications.includes(st.eligibilityRule!);
-    });
+    return activeProviders.filter((p) => eligibleShiftSets.get(p.id)?.has(st.id));
   }
 
   function getRequiredCount(st: ScheduleShiftType, date: string): number {
