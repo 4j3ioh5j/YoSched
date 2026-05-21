@@ -1421,33 +1421,6 @@ export function ScheduleGrid({
       )}
       </div>
 
-      {/* Legend */}
-      <div className="px-6 py-2 border-t border-slate-700 bg-slate-900 shrink-0">
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <span className="text-slate-500 font-medium mr-1">Shifts:</span>
-          {shiftTypes
-            .filter((st) => st.category !== "other")
-            .map((st) => (
-              <span key={st.id} className="flex items-center gap-1">
-                <span
-                  className="inline-block w-2.5 h-2.5 rounded-sm"
-                  style={{ backgroundColor: st.color }}
-                />
-                <span className="text-slate-400">{st.code}</span>
-              </span>
-            ))}
-          <span className="text-slate-600 mx-1">|</span>
-          <span className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" />
-            <span className="text-slate-400">rule violation</span>
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
-            <span className="text-slate-400">advisory</span>
-          </span>
-        </div>
-      </div>
-
       {/* Shift picker popover */}
       {picker && (
         <ShiftPicker
