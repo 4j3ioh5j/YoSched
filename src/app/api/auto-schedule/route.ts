@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
     staffingRequirements,
     schedulingPrefsRow,
     providerEligibleShifts,
+    availabilityRules,
   ] = await Promise.all([
     prisma.provider.findMany({ where: { isActive: true } }),
     prisma.shiftType.findMany(),
@@ -54,6 +55,7 @@ export async function POST(req: NextRequest) {
     prisma.staffingRequirement.findMany(),
     prisma.schedulingPreferences.findFirst(),
     prisma.providerEligibleShift.findMany(),
+    prisma.availabilityRule.findMany(),
   ]);
 
   const start = new Date(startDate + "T12:00:00");
@@ -79,6 +81,14 @@ export async function POST(req: NextRequest) {
     eligibilityMap.get(pes.providerId)!.push(pes.shiftTypeId);
   }
 
+  const rulesMap = new Map<string, typeof availabilityRules>();
+  for (const ar of availabilityRules) {
+    if (!rulesMap.has(ar.providerId)) {
+      rulesMap.set(ar.providerId, []);
+    }
+    rulesMap.get(ar.providerId)!.push(ar);
+  }
+
   const result = autoSchedule({
     dates,
     providers: providers.map((p) => ({
@@ -86,7 +96,16 @@ export async function POST(req: NextRequest) {
       initials: p.initials,
       ftePercentage: p.ftePercentage ?? 1.0,
       eligibleShiftTypeIds: eligibilityMap.get(p.id) ?? [],
-      workingDays: p.workingDays,
+      availabilityRules: (rulesMap.get(p.id) ?? []).map((ar) => ({
+        dayOfWeek: ar.dayOfWeek,
+        type: ar.type as "available" | "unavailable",
+        strength: ar.strength as "rule" | "preference",
+        pattern: ar.pattern as "every" | "pp_week_1" | "pp_week_2" | "every_n",
+        cycleLength: ar.cycleLength,
+        cycleOffset: ar.cycleOffset,
+        conditionProviderId: ar.conditionProviderId,
+        conditionType: ar.conditionType as "working" | "not_working" | null,
+      })),
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
       specialQualifications: p.specialQualifications,

@@ -1,11 +1,12 @@
 import { computeFairness, type FairnessSummary } from "./fairness";
+import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule } from "./availability";
 
 export type ScheduleProvider = {
   id: string;
   initials: string;
   ftePercentage: number;
   eligibleShiftTypeIds: string[];
-  workingDays: number[];
+  availabilityRules: AvailabilityRule[];
   isActive: boolean;
   isAutoScheduled: boolean;
   specialQualifications: string[];
@@ -275,8 +276,11 @@ export function autoSchedule({
   function isAvailable(provider: ScheduleProvider, date: string, st: ScheduleShiftType): boolean {
     if (isAssigned(provider.id, date)) return false;
     if (!st.ignoresWorkingDays) {
-      const dow = getDow(date);
-      if (!provider.workingDays.includes(dow)) return false;
+      const avail = evaluateAvailability(
+        provider.availabilityRules, date, payPeriods,
+        (pid, d) => isAssigned(pid, d)
+      );
+      if (!avail.available) return false;
     }
     const prev = getCell(provider.id, prevDate(date));
     if (prev) {
@@ -396,7 +400,11 @@ export function autoSchedule({
     while (cur <= end) {
       const d = toDateStr(cur);
       const dow = cur.getDay();
-      if (provider.workingDays.includes(dow) && !holidaySet.has(d) && !isAssigned(providerId, d)) {
+      const dayAvail = evaluateAvailability(
+        provider.availabilityRules, d, payPeriods,
+        (pid, dd) => isAssigned(pid, dd)
+      );
+      if (dayAvail.available && !holidaySet.has(d) && !isAssigned(providerId, d)) {
         availDays++;
       }
       cur.setDate(cur.getDate() + 1);
@@ -428,7 +436,11 @@ export function autoSchedule({
 
       if (sc.dayOfWeek !== null && sc.dayOfWeek !== dow) continue;
       if (sc.frequency === "weekly" || sc.dayOfWeek === null) {
-        if (!provider.workingDays.includes(dow)) continue;
+        const avail = evaluateAvailability(
+          provider.availabilityRules, date, payPeriods,
+          (pid, d) => isAssigned(pid, d)
+        );
+        if (!avail.available) continue;
         if (holidaySet.has(date)) continue;
 
         assign(
@@ -668,8 +680,8 @@ export function autoSchedule({
 
               if (st.postShiftRule === "day_off_after" && offShift) {
                 const next = nextDate(date);
-                const nextDow = getDow(next);
-                if (dateSet.has(next) && !isAssigned(chosen.id, next) && chosen.workingDays.includes(nextDow)) {
+                const nextAvail = evaluateAvailability(chosen.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
+                if (dateSet.has(next) && !isAssigned(chosen.id, next) && nextAvail.available) {
                   assign(chosen.id, next, offShift, `Day off after ${st.code}`, `${stepName}-recovery`, 0.95);
                 }
               }
@@ -701,8 +713,8 @@ export function autoSchedule({
 
             if (st.postShiftRule === "day_off_after" && offShift) {
               const next = nextDate(date);
-              const nextDow = getDow(next);
-              if (dateSet.has(next) && !isAssigned(chosen.id, next) && chosen.workingDays.includes(nextDow)) {
+              const nextAvail = evaluateAvailability(chosen.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
+              if (dateSet.has(next) && !isAssigned(chosen.id, next) && nextAvail.available) {
                 assign(chosen.id, next, offShift, `Day off after ${st.code}`, `${stepName}-recovery`, 0.95);
               }
             }
@@ -754,9 +766,8 @@ export function autoSchedule({
 
             if (st.postShiftRule === "day_off_after" && offShift) {
               const next = nextDate(date);
-              const nextDow = getDow(next);
-              const providerWorksNext = chosen.workingDays.includes(nextDow);
-              if (dateSet.has(next) && !isAssigned(chosen.id, next) && providerWorksNext) {
+              const nextAvail = evaluateAvailability(chosen.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
+              if (dateSet.has(next) && !isAssigned(chosen.id, next) && nextAvail.available) {
                 assign(chosen.id, next, offShift, `Day off after ${st.code}`, `${stepName}-recovery`, 0.95);
               }
             }
@@ -926,7 +937,7 @@ export function autoSchedule({
             if (!feasible) continue;
 
             const offSet = new Set<string>(offIndices.map((i: number) => availableDates[i]));
-            const score = scoreOffDays(offSet, availableDates, provider.workingDays);
+            const score = scoreOffDays(offSet, availableDates, getBaseWorkDays(provider.availabilityRules));
             if (score > bestScore) {
               bestScore = score;
               bestOffIndices = offIndices;

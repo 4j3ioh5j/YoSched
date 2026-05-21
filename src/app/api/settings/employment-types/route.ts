@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(req: NextRequest) {
-  const { id, defaultEligibleShiftTypeIds, ...data } = await req.json();
+  const { id, defaultEligibleShiftTypeIds, defaultAvailabilityRules, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   await prisma.employmentType.update({
@@ -11,7 +11,6 @@ export async function PUT(req: NextRequest) {
       name: data.name,
       defaultIsAutoScheduled: data.defaultIsAutoScheduled,
       defaultFtePercentage: data.defaultFtePercentage,
-      defaultWorkingDays: data.defaultWorkingDays,
       sortOrder: data.sortOrder,
     },
   });
@@ -28,9 +27,24 @@ export async function PUT(req: NextRequest) {
     }
   }
 
+  if (Array.isArray(defaultAvailabilityRules)) {
+    await prisma.employmentTypeDefaultAvailability.deleteMany({ where: { employmentTypeId: id } });
+    if (defaultAvailabilityRules.length > 0) {
+      await prisma.employmentTypeDefaultAvailability.createMany({
+        data: defaultAvailabilityRules.map((r: Record<string, unknown>) => ({
+          employmentTypeId: id,
+          dayOfWeek: r.dayOfWeek as number,
+          type: (r.type as string) ?? "available",
+          strength: (r.strength as string) ?? "rule",
+          pattern: (r.pattern as string) ?? "every",
+        })),
+      });
+    }
+  }
+
   const result = await prisma.employmentType.findUnique({
     where: { id },
-    include: { defaultEligibleShifts: true },
+    include: { defaultEligibleShifts: true, defaultAvailability: true },
   });
 
   return NextResponse.json(result);
@@ -46,10 +60,24 @@ export async function POST(req: NextRequest) {
       name: data.name,
       defaultIsAutoScheduled: data.defaultIsAutoScheduled ?? true,
       defaultFtePercentage: data.defaultFtePercentage ?? 1.0,
-      defaultWorkingDays: data.defaultWorkingDays ?? [1, 2, 3, 4, 5],
       sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
     },
   });
+
+  const defaultDays = data.defaultAvailabilityRules ?? [1, 2, 3, 4, 5].map((d: number) => ({
+    dayOfWeek: d, type: "available", strength: "rule", pattern: "every",
+  }));
+  if (defaultDays.length > 0) {
+    await prisma.employmentTypeDefaultAvailability.createMany({
+      data: defaultDays.map((r: Record<string, unknown>) => ({
+        employmentTypeId: created.id,
+        dayOfWeek: r.dayOfWeek as number,
+        type: (r.type as string) ?? "available",
+        strength: (r.strength as string) ?? "rule",
+        pattern: (r.pattern as string) ?? "every",
+      })),
+    });
+  }
 
   const allShiftTypes = await prisma.shiftType.findMany({ select: { id: true } });
   if (allShiftTypes.length > 0) {
@@ -63,7 +91,7 @@ export async function POST(req: NextRequest) {
 
   const result = await prisma.employmentType.findUnique({
     where: { id: created.id },
-    include: { defaultEligibleShifts: true },
+    include: { defaultEligibleShifts: true, defaultAvailability: true },
   });
 
   return NextResponse.json(result);

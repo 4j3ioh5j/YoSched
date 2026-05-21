@@ -64,13 +64,20 @@ type SchedulingPrefs = {
   preferSequentialOff: boolean;
 };
 
+type DefaultAvailabilityRule = {
+  dayOfWeek: number;
+  type: string;
+  strength: string;
+  pattern: string;
+};
+
 type EmploymentTypeData = {
   id: string;
   name: string;
   defaultIsAutoScheduled: boolean;
   defaultFtePercentage: number;
   defaultEligibleShiftTypeIds: string[];
-  defaultWorkingDays: number[];
+  defaultAvailabilityRules: DefaultAvailabilityRule[];
   sortOrder: number;
   providerCount: number;
 };
@@ -1616,7 +1623,9 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
         defaultIsAutoScheduled: created.defaultIsAutoScheduled,
         defaultFtePercentage: created.defaultFtePercentage,
         defaultEligibleShiftTypeIds: (created.defaultEligibleShifts ?? []).map((ds: { shiftTypeId: string }) => ds.shiftTypeId),
-        defaultWorkingDays: created.defaultWorkingDays,
+        defaultAvailabilityRules: (created.defaultAvailability ?? []).map((da: DefaultAvailabilityRule) => ({
+          dayOfWeek: da.dayOfWeek, type: da.type, strength: da.strength, pattern: da.pattern,
+        })),
         sortOrder: created.sortOrder,
         providerCount: 0,
       };
@@ -1824,18 +1833,18 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
                 </div>
               </div>
               <div>
-                <div className="text-sm text-slate-200 mb-2">Working days</div>
+                <div className="text-sm text-slate-200 mb-2">Default working days</div>
                 <div className="flex gap-1">
                   {ET_DAY_INDICES.map((d) => {
-                    const active = et.defaultWorkingDays.includes(d);
+                    const active = et.defaultAvailabilityRules.some((r) => r.dayOfWeek === d && r.type === "available");
                     return (
                       <button
                         key={d}
                         onClick={() => {
                           const next = active
-                            ? et.defaultWorkingDays.filter((x) => x !== d)
-                            : [...et.defaultWorkingDays, d].sort();
-                          updateField(et.id, "defaultWorkingDays", next);
+                            ? et.defaultAvailabilityRules.filter((r) => r.dayOfWeek !== d)
+                            : [...et.defaultAvailabilityRules, { dayOfWeek: d, type: "available", strength: "rule", pattern: "every" }];
+                          updateField(et.id, "defaultAvailabilityRules", next);
                         }}
                         className={[
                           "w-10 h-8 text-xs rounded font-medium transition-colors",

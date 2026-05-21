@@ -15,7 +15,7 @@ export default async function Settings() {
     prisma.schedulingPreferences.findFirst(),
     prisma.employmentType.findMany({
       orderBy: { sortOrder: "asc" },
-      include: { _count: { select: { providers: true } }, defaultEligibleShifts: true },
+      include: { _count: { select: { providers: true } }, defaultEligibleShifts: true, defaultAvailability: true },
     }),
   ]);
 
@@ -100,7 +100,12 @@ export default async function Settings() {
           defaultIsAutoScheduled: et.defaultIsAutoScheduled,
           defaultFtePercentage: et.defaultFtePercentage,
           defaultEligibleShiftTypeIds: et.defaultEligibleShifts.map((ds) => ds.shiftTypeId),
-          defaultWorkingDays: et.defaultWorkingDays,
+          defaultAvailabilityRules: et.defaultAvailability.map((da) => ({
+            dayOfWeek: da.dayOfWeek,
+            type: da.type,
+            strength: da.strength,
+            pattern: da.pattern,
+          })),
           sortOrder: et.sortOrder,
           providerCount: et._count.providers,
         }))}

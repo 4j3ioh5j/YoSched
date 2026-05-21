@@ -57,13 +57,13 @@ model EmploymentType {
   name                   String   @unique
   defaultIsAutoScheduled Boolean  @default(true)
   defaultFtePercentage   Float    @default(1.0)
-  defaultWorkingDays     Int[]    @default([1, 2, 3, 4, 5])
   sortOrder              Int      @default(0)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
-  providers              Provider[]
-  defaultEligibleShifts  EmploymentTypeDefaultShift[]
+  providers                Provider[]
+  defaultEligibleShifts    EmploymentTypeDefaultShift[]
+  defaultAvailability      EmploymentTypeDefaultAvailability[]
 
   @@map("employment_types")
 }
@@ -78,7 +78,6 @@ model Provider {
   feeBasisHoursPerShift Float?
   role                  String?
   specialQualifications String[] @default([])
-  workingDays           Int[]    @default([1, 2, 3, 4, 5]) // 0=Sun..6=Sat
   isTemporary           Boolean  @default(false)
   tempStartDate         DateTime?
   tempEndDate           DateTime?
@@ -94,6 +93,8 @@ model Provider {
   standingCommitments StandingCommitment[]
   dayPreferences    ProviderDayPreference[]
   eligibleShifts    ProviderEligibleShift[]
+  availabilityRules AvailabilityRule[]     @relation("providerRules")
+  conditionedRules  AvailabilityRule[]     @relation("conditionProvider")
 
   @@map("providers")
 }
@@ -262,4 +263,35 @@ model EmploymentTypeDefaultShift {
 
   @@unique([employmentTypeId, shiftTypeId])
   @@map("employment_type_default_shifts")
+}
+
+model AvailabilityRule {
+  id                  String  @id @default(cuid())
+  providerId          String
+  dayOfWeek           Int     // 0=Sun..6=Sat
+  type                String  @default("available") // "available" or "unavailable"
+  strength            String  @default("rule") // "rule" or "preference"
+  pattern             String  @default("every") // "every", "pp_week_1", "pp_week_2", "every_n"
+  cycleLength         Int?    // for "every_n": 2=every other, 3=every third, etc.
+  cycleOffset         Int?    // for "every_n": 0-indexed position in the cycle
+  conditionProviderId String?
+  conditionType       String? // "working" or "not_working"
+
+  provider          Provider  @relation("providerRules", fields: [providerId], references: [id], onDelete: Cascade)
+  conditionProvider Provider? @relation("conditionProvider", fields: [conditionProviderId], references: [id], onDelete: SetNull)
+
+  @@map("availability_rules")
+}
+
+model EmploymentTypeDefaultAvailability {
+  id               String @id @default(cuid())
+  employmentTypeId String
+  dayOfWeek        Int
+  type             String @default("available")
+  strength         String @default("rule")
+  pattern          String @default("every")
+
+  employmentType EmploymentType @relation(fields: [employmentTypeId], references: [id], onDelete: Cascade)
+
+  @@map("employment_type_default_availability")
 }

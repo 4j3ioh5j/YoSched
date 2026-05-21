@@ -8,11 +8,11 @@ export default async function Staff() {
   const [providers, employmentTypes, allShiftTypes] = await Promise.all([
     prisma.provider.findMany({
       orderBy: { sortOrder: "asc" },
-      include: { employmentType: true, eligibleShifts: true },
+      include: { employmentType: true, eligibleShifts: true, availabilityRules: true },
     }),
     prisma.employmentType.findMany({
       orderBy: { sortOrder: "asc" },
-      include: { defaultEligibleShifts: true },
+      include: { defaultEligibleShifts: true, defaultAvailability: true },
     }),
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
@@ -44,7 +44,16 @@ export default async function Staff() {
           employmentTypeId: p.employmentTypeId,
           employmentTypeName: p.employmentType.name,
           ftePercentage: p.ftePercentage ?? 1.0,
-          workingDays: p.workingDays,
+          availabilityRules: p.availabilityRules.map((ar) => ({
+            dayOfWeek: ar.dayOfWeek,
+            type: ar.type,
+            strength: ar.strength,
+            pattern: ar.pattern,
+            cycleLength: ar.cycleLength,
+            cycleOffset: ar.cycleOffset,
+            conditionProviderId: ar.conditionProviderId,
+            conditionType: ar.conditionType,
+          })),
           eligibleShiftTypeIds: p.eligibleShifts.map((es) => es.shiftTypeId),
           specialQualifications: p.specialQualifications,
           isActive: p.isActive,
@@ -57,7 +66,12 @@ export default async function Staff() {
           defaultIsAutoScheduled: et.defaultIsAutoScheduled,
           defaultFtePercentage: et.defaultFtePercentage,
           defaultEligibleShiftTypeIds: et.defaultEligibleShifts.map((ds) => ds.shiftTypeId),
-          defaultWorkingDays: et.defaultWorkingDays,
+          defaultAvailabilityRules: et.defaultAvailability.map((da) => ({
+            dayOfWeek: da.dayOfWeek,
+            type: da.type,
+            strength: da.strength,
+            pattern: da.pattern,
+          })),
         }))}
         allShiftTypes={allShiftTypes.map((st) => ({
           id: st.id,

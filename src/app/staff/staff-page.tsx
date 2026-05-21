@@ -2,6 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+type AvailabilityRule = {
+  dayOfWeek: number;
+  type: string;
+  strength: string;
+  pattern: string;
+  cycleLength?: number | null;
+  cycleOffset?: number | null;
+  conditionProviderId?: string | null;
+  conditionType?: string | null;
+};
+
 type Provider = {
   id: string;
   name: string;
@@ -9,12 +20,19 @@ type Provider = {
   employmentTypeId: string;
   employmentTypeName: string;
   ftePercentage: number;
-  workingDays: number[];
+  availabilityRules: AvailabilityRule[];
   eligibleShiftTypeIds: string[];
   specialQualifications: string[];
   isActive: boolean;
   isAutoScheduled: boolean;
   sortOrder: number;
+};
+
+type DefaultAvailabilityRule = {
+  dayOfWeek: number;
+  type: string;
+  strength: string;
+  pattern: string;
 };
 
 type EmploymentType = {
@@ -23,7 +41,7 @@ type EmploymentType = {
   defaultIsAutoScheduled: boolean;
   defaultFtePercentage: number;
   defaultEligibleShiftTypeIds: string[];
-  defaultWorkingDays: number[];
+  defaultAvailabilityRules: DefaultAvailabilityRule[];
 };
 
 type ShiftTypeInfo = {
@@ -50,6 +68,47 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_INDICES = [0, 1, 2, 3, 4, 5, 6];
 const DAY_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
 
+const PATTERN_LABELS: Record<string, string> = {
+  every: "Every week",
+  pp_week_1: "PP week 1",
+  pp_week_2: "PP week 2",
+  every_n: "Every Nth",
+};
+
+function hasBaseRule(rules: AvailabilityRule[], dayOfWeek: number): boolean {
+  return rules.some((r) => r.dayOfWeek === dayOfWeek && r.type === "available");
+}
+
+function hasAdvancedRule(rules: AvailabilityRule[], dayOfWeek: number): boolean {
+  return rules.some(
+    (r) =>
+      r.dayOfWeek === dayOfWeek &&
+      (r.pattern !== "every" || r.strength !== "rule" || r.type !== "available" || r.conditionProviderId)
+  );
+}
+
+function dayRuleSummary(rules: AvailabilityRule[], dayOfWeek: number): string {
+  const dayRules = rules.filter((r) => r.dayOfWeek === dayOfWeek);
+  if (dayRules.length === 0) return "";
+  const parts: string[] = [];
+  for (const r of dayRules) {
+    if (r.type === "available" && r.strength === "rule" && r.pattern === "every" && !r.conditionProviderId) continue;
+    let s = "";
+    if (r.strength === "preference") s += r.type === "available" ? "Prefer" : "Avoid";
+    else if (r.type === "unavailable") s += "Off";
+    if (r.pattern !== "every") {
+      if (s) s += " ";
+      s += PATTERN_LABELS[r.pattern] ?? r.pattern;
+      if (r.pattern === "every_n" && r.cycleLength) {
+        s = `Every ${r.cycleLength === 2 ? "other" : r.cycleLength === 3 ? "3rd" : `${r.cycleLength}th`}`;
+      }
+    }
+    if (r.conditionProviderId) s += " (cond.)";
+    if (s) parts.push(s);
+  }
+  return parts.join(", ");
+}
+
 function UndoToast({ action, onUndo, onDismiss }: { action: UndoAction; onUndo: () => void; onDismiss: () => void }) {
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-slate-700 border border-slate-600 rounded-lg px-4 py-2.5 shadow-xl">
@@ -70,6 +129,200 @@ function FieldRow({ label, description, children }: { label: string; description
         {description && <div className="text-xs text-slate-500 mt-0.5">{description}</div>}
       </div>
       <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+function AvailabilityEditor({
+  rules,
+  onChange,
+  allProviders,
+  currentProviderId,
+}: {
+  rules: AvailabilityRule[];
+  onChange: (rules: AvailabilityRule[]) => void;
+  allProviders: { id: string; initials: string }[];
+  currentProviderId: string;
+}) {
+  const [expandedDay, setExpandedDay] = useState<number | null>(null);
+
+  function toggleDay(d: number) {
+    const existing = rules.filter((r) => r.dayOfWeek === d);
+    if (existing.length > 0) {
+      onChange(rules.filter((r) => r.dayOfWeek !== d));
+      if (expandedDay === d) setExpandedDay(null);
+    } else {
+      onChange([...rules, { dayOfWeek: d, type: "available", strength: "rule", pattern: "every" }]);
+    }
+  }
+
+  function updateRule(dayOfWeek: number, ruleIndex: number, updates: Partial<AvailabilityRule>) {
+    const dayRules = rules.filter((r) => r.dayOfWeek === dayOfWeek);
+    const otherRules = rules.filter((r) => r.dayOfWeek !== dayOfWeek);
+    const updated = dayRules.map((r, i) => (i === ruleIndex ? { ...r, ...updates } : r));
+    onChange([...otherRules, ...updated]);
+  }
+
+  function addRule(dayOfWeek: number) {
+    onChange([...rules, { dayOfWeek, type: "available", strength: "preference", pattern: "every" }]);
+  }
+
+  function removeRule(dayOfWeek: number, ruleIndex: number) {
+    const dayRules = rules.filter((r) => r.dayOfWeek === dayOfWeek);
+    const otherRules = rules.filter((r) => r.dayOfWeek !== dayOfWeek);
+    onChange([...otherRules, ...dayRules.filter((_, i) => i !== ruleIndex)]);
+    if (dayRules.length <= 1 && expandedDay === dayOfWeek) setExpandedDay(null);
+  }
+
+  const otherProviders = allProviders.filter((p) => p.id !== currentProviderId);
+
+  return (
+    <div className="space-y-0.5">
+      {DAY_INDICES.map((d) => {
+        const active = hasBaseRule(rules, d);
+        const advanced = hasAdvancedRule(rules, d);
+        const isExpanded = expandedDay === d;
+        const dayRules = rules.filter((r) => r.dayOfWeek === d);
+        const summary = dayRuleSummary(rules, d);
+
+        return (
+          <div key={d}>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => toggleDay(d)}
+                className={[
+                  "w-10 h-8 text-xs rounded font-medium transition-colors",
+                  active ? "bg-blue-600/50 text-blue-200 border border-blue-500/50" : "bg-slate-700 text-slate-500 border border-slate-600",
+                  "hover:brightness-125",
+                ].join(" ")}
+              >
+                {DAY_LABELS[d]}
+              </button>
+              {active && (
+                <>
+                  <span className="text-xs text-slate-500 flex-1 truncate">
+                    {summary || "Every week"}
+                  </span>
+                  <button
+                    onClick={() => setExpandedDay(isExpanded ? null : d)}
+                    className={[
+                      "w-6 h-6 flex items-center justify-center text-[10px] rounded transition-colors",
+                      isExpanded ? "bg-blue-600/30 text-blue-300" : advanced ? "bg-amber-600/20 text-amber-400" : "bg-slate-700/50 text-slate-500 hover:text-slate-300",
+                    ].join(" ")}
+                    title="Edit availability rules"
+                  >
+                    {isExpanded ? "▲" : "▼"}
+                  </button>
+                </>
+              )}
+            </div>
+
+            {isExpanded && (
+              <div className="ml-12 mt-1 mb-2 space-y-1.5">
+                {dayRules.map((rule, idx) => (
+                  <div key={idx} className="bg-slate-700/30 border border-slate-600/50 rounded p-2 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <select
+                        className="bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs"
+                        value={rule.type}
+                        onChange={(e) => updateRule(d, idx, { type: e.target.value })}
+                      >
+                        <option value="available">Available</option>
+                        <option value="unavailable">Unavailable</option>
+                      </select>
+                      <select
+                        className="bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs"
+                        value={rule.strength}
+                        onChange={(e) => updateRule(d, idx, { strength: e.target.value })}
+                      >
+                        <option value="rule">Rule (hard)</option>
+                        <option value="preference">Preference (soft)</option>
+                      </select>
+                      <select
+                        className="bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs"
+                        value={rule.pattern}
+                        onChange={(e) => updateRule(d, idx, { pattern: e.target.value })}
+                      >
+                        <option value="every">Every week</option>
+                        <option value="pp_week_1">PP week 1</option>
+                        <option value="pp_week_2">PP week 2</option>
+                        <option value="every_n">Every Nth</option>
+                      </select>
+                      {dayRules.length > 1 && (
+                        <button
+                          onClick={() => removeRule(d, idx)}
+                          className="text-slate-500 hover:text-red-400 text-xs ml-auto"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+
+                    {rule.pattern === "every_n" && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-500">Every</span>
+                        <input
+                          type="number"
+                          min={2}
+                          max={8}
+                          className="w-12 bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs text-center"
+                          value={rule.cycleLength ?? 2}
+                          onChange={(e) => updateRule(d, idx, { cycleLength: parseInt(e.target.value) || 2 })}
+                        />
+                        <span className="text-[10px] text-slate-500">occurrences, starting at #</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={(rule.cycleLength ?? 2) - 1}
+                          className="w-12 bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs text-center"
+                          value={rule.cycleOffset ?? 0}
+                          onChange={(e) => updateRule(d, idx, { cycleOffset: parseInt(e.target.value) || 0 })}
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-500">Condition:</span>
+                      <select
+                        className="bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs flex-1"
+                        value={rule.conditionProviderId ?? ""}
+                        onChange={(e) => {
+                          const pid = e.target.value || null;
+                          updateRule(d, idx, {
+                            conditionProviderId: pid,
+                            conditionType: pid ? (rule.conditionType ?? "not_working") : null,
+                          });
+                        }}
+                      >
+                        <option value="">None</option>
+                        {otherProviders.map((p) => (
+                          <option key={p.id} value={p.id}>{p.initials}</option>
+                        ))}
+                      </select>
+                      {rule.conditionProviderId && (
+                        <select
+                          className="bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs"
+                          value={rule.conditionType ?? "not_working"}
+                          onChange={(e) => updateRule(d, idx, { conditionType: e.target.value })}
+                        >
+                          <option value="not_working">is not working</option>
+                          <option value="working">is working</option>
+                        </select>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <button
+                  onClick={() => addRule(d)}
+                  className="text-[10px] text-slate-500 hover:text-blue-400 transition-colors"
+                >
+                  + Add rule for {DAY_LABELS[d]}
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -120,7 +373,12 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
       isAutoScheduled: et.defaultIsAutoScheduled,
       ftePercentage: et.defaultFtePercentage,
       eligibleShiftTypeIds: et.defaultEligibleShiftTypeIds,
-      workingDays: et.defaultWorkingDays,
+      availabilityRules: et.defaultAvailabilityRules.map((r) => ({
+        dayOfWeek: r.dayOfWeek,
+        type: r.type,
+        strength: r.strength,
+        pattern: r.pattern,
+      })),
     } : p));
   }
 
@@ -224,7 +482,16 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
         employmentTypeId: created.employmentTypeId,
         employmentTypeName: created.employmentType?.name ?? defaultType?.name ?? "",
         ftePercentage: created.ftePercentage ?? 1.0,
-        workingDays: created.workingDays,
+        availabilityRules: (created.availabilityRules ?? []).map((ar: AvailabilityRule) => ({
+          dayOfWeek: ar.dayOfWeek,
+          type: ar.type,
+          strength: ar.strength,
+          pattern: ar.pattern,
+          cycleLength: ar.cycleLength,
+          cycleOffset: ar.cycleOffset,
+          conditionProviderId: ar.conditionProviderId,
+          conditionType: ar.conditionType,
+        })),
         eligibleShiftTypeIds: (created.eligibleShifts ?? []).map((es: { shiftTypeId: string }) => es.shiftTypeId),
         specialQualifications: created.specialQualifications ?? [],
         isActive: created.isActive,
@@ -318,77 +585,90 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                   </th>
                   <th className="text-center py-2.5 px-3 w-20">Type</th>
                   <th className="text-center py-2.5 px-3 w-14">FTE</th>
-                  <th className="text-center py-2.5 px-3 w-40">Working Days</th>
+                  <th className="text-center py-2.5 px-3 w-40">Availability</th>
                   <th className="text-left py-2.5 px-3">Ineligible</th>
                   <th className="text-center py-2.5 px-3 w-12">Sched</th>
                   <th className="text-center py-2.5 px-3 w-20">Quals</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
-                {activeProviders.map((p) => (
-                  <tr
-                    key={p.id}
-                    className="hover:bg-slate-800/50 cursor-pointer transition-colors"
-                    onClick={() => setEditingId(p.id)}
-                  >
-                    <td className="py-2 px-3">
-                      <span className={`font-mono font-bold ${!p.isAutoScheduled ? "text-amber-400" : "text-slate-200"}`}>
-                        {p.initials}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3">
-                      <span className="text-sm text-slate-300">{p.name}</span>
-                    </td>
-                    <td className="py-2 px-3 text-center">
-                      <span className={`text-xs ${p.isAutoScheduled ? "text-slate-400" : "text-amber-400"}`}>
-                        {p.employmentTypeName}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3 text-center">
-                      <span className="text-xs text-slate-400 font-mono">
-                        {!p.isAutoScheduled ? "—" : `${(p.ftePercentage * 100).toFixed(0)}%`}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3">
-                      <div className="flex gap-0.5 justify-center">
-                        {DAY_INDICES.map((d) => (
-                          <span
-                            key={d}
-                            className={[
-                              "w-5 h-5 text-[10px] rounded font-medium flex items-center justify-center",
-                              p.workingDays.includes(d) ? "bg-blue-600/40 text-blue-300" : "bg-slate-700/50 text-slate-600",
-                            ].join(" ")}
-                          >
-                            {DAY_SHORT[d]}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="py-2 px-3">
-                      <div className="flex flex-wrap gap-1">
-                        {allShiftTypes
-                          .filter((st) => !p.eligibleShiftTypeIds.includes(st.id))
-                          .map((st) => (
-                            <span key={st.id} className="text-[10px] px-1.5 py-px rounded bg-slate-700/50 text-slate-500">
-                              {st.code}
-                            </span>
-                          ))}
-                      </div>
-                    </td>
-                    <td className="py-2 px-3 text-center">
-                      <span className={p.isAutoScheduled ? "text-emerald-400" : "text-slate-600"}>
-                        {p.isAutoScheduled ? "✓" : "—"}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3 text-center">
-                      {p.specialQualifications.length > 0 ? (
-                        <span className="text-xs text-slate-400">{p.specialQualifications.length}</span>
-                      ) : (
-                        <span className="text-slate-600">—</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {activeProviders.map((p) => {
+                  const hasAdv = p.availabilityRules.some(
+                    (r) => r.pattern !== "every" || r.strength !== "rule" || r.type !== "available" || r.conditionProviderId
+                  );
+                  return (
+                    <tr
+                      key={p.id}
+                      className="hover:bg-slate-800/50 cursor-pointer transition-colors"
+                      onClick={() => setEditingId(p.id)}
+                    >
+                      <td className="py-2 px-3">
+                        <span className={`font-mono font-bold ${!p.isAutoScheduled ? "text-amber-400" : "text-slate-200"}`}>
+                          {p.initials}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3">
+                        <span className="text-sm text-slate-300">{p.name}</span>
+                      </td>
+                      <td className="py-2 px-3 text-center">
+                        <span className={`text-xs ${p.isAutoScheduled ? "text-slate-400" : "text-amber-400"}`}>
+                          {p.employmentTypeName}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-center">
+                        <span className="text-xs text-slate-400 font-mono">
+                          {!p.isAutoScheduled ? "—" : `${(p.ftePercentage * 100).toFixed(0)}%`}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3">
+                        <div className="flex gap-0.5 justify-center items-center">
+                          {DAY_INDICES.map((d) => {
+                            const active = hasBaseRule(p.availabilityRules, d);
+                            const adv = hasAdvancedRule(p.availabilityRules, d);
+                            return (
+                              <span
+                                key={d}
+                                className={[
+                                  "w-5 h-5 text-[10px] rounded font-medium flex items-center justify-center relative",
+                                  active ? "bg-blue-600/40 text-blue-300" : "bg-slate-700/50 text-slate-600",
+                                ].join(" ")}
+                              >
+                                {DAY_SHORT[d]}
+                                {adv && (
+                                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                )}
+                              </span>
+                            );
+                          })}
+                          {hasAdv && <span className="text-[9px] text-amber-400 ml-1">*</span>}
+                        </div>
+                      </td>
+                      <td className="py-2 px-3">
+                        <div className="flex flex-wrap gap-1">
+                          {allShiftTypes
+                            .filter((st) => !p.eligibleShiftTypeIds.includes(st.id))
+                            .map((st) => (
+                              <span key={st.id} className="text-[10px] px-1.5 py-px rounded bg-slate-700/50 text-slate-500">
+                                {st.code}
+                              </span>
+                            ))}
+                        </div>
+                      </td>
+                      <td className="py-2 px-3 text-center">
+                        <span className={p.isAutoScheduled ? "text-emerald-400" : "text-slate-600"}>
+                          {p.isAutoScheduled ? "✓" : "—"}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-center">
+                        {p.specialQualifications.length > 0 ? (
+                          <span className="text-xs text-slate-400">{p.specialQualifications.length}</span>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {showInactive && inactiveProviders.map((p) => (
                   <tr
                     key={p.id}
@@ -417,6 +697,10 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
             </span>
             <span className="flex items-center gap-1">
               <span className="text-amber-400 font-mono font-bold">AB</span> Manual only
+            </span>
+            <span className="text-slate-600">|</span>
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" /> Advanced rules
             </span>
             <span className="text-slate-600">|</span>
             <span>Click row to edit</span>
@@ -457,7 +741,7 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                   ))}
                 </select>
               </FieldRow>
-              <FieldRow label="FTE percentage" description="Target hours = FTE% × pay period hours">
+              <FieldRow label="FTE percentage" description="Target hours = FTE% x pay period hours">
                 <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={ep.ftePercentage} onChange={(e) => updateField(ep.id, "ftePercentage", parseFloat(e.target.value))}>
                   {[1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1].map((v) => (
                     <option key={v} value={v}>{(v * 100).toFixed(0)}%</option>
@@ -549,30 +833,14 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                 })()}
               </div>
               <div className="py-2.5">
-                <div className="text-sm text-slate-200 mb-2">Working days</div>
-                <div className="flex gap-1">
-                  {DAY_INDICES.map((d) => {
-                    const active = ep.workingDays.includes(d);
-                    return (
-                      <button
-                        key={d}
-                        onClick={() => {
-                          const next = active
-                            ? ep.workingDays.filter((x) => x !== d)
-                            : [...ep.workingDays, d].sort();
-                          updateField(ep.id, "workingDays", next);
-                        }}
-                        className={[
-                          "w-10 h-8 text-xs rounded font-medium transition-colors",
-                          active ? "bg-blue-600/50 text-blue-200 border border-blue-500/50" : "bg-slate-700 text-slate-500 border border-slate-600",
-                          "hover:brightness-125",
-                        ].join(" ")}
-                      >
-                        {DAY_LABELS[d]}
-                      </button>
-                    );
-                  })}
-                </div>
+                <div className="text-sm text-slate-200 mb-1">Availability</div>
+                <div className="text-xs text-slate-500 mb-2">Toggle days, then expand with ▼ for patterns, preferences, and conditions.</div>
+                <AvailabilityEditor
+                  rules={ep.availabilityRules}
+                  onChange={(rules) => updateField(ep.id, "availabilityRules", rules)}
+                  allProviders={providers.filter((p) => p.isActive).map((p) => ({ id: p.id, initials: p.initials }))}
+                  currentProviderId={ep.id}
+                />
               </div>
             </div>
 
@@ -599,7 +867,7 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                 <input
                   type="text"
                   className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm"
-                  placeholder="Add qualification…"
+                  placeholder="Add qualification..."
                   value={qualInput}
                   onChange={(e) => setQualInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -648,7 +916,7 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                   disabled={saving}
                   className="px-4 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 rounded transition-colors font-medium"
                 >
-                  {saving ? "Saving…" : "Save"}
+                  {saving ? "Saving..." : "Save"}
                 </button>
               </div>
             </div>

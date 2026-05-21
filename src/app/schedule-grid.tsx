@@ -5,12 +5,20 @@ import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 
+type AvailabilityRuleData = {
+  dayOfWeek: number;
+  type: string;
+  strength: string;
+  pattern: string;
+  conditionProviderId?: string | null;
+};
+
 type Provider = {
   id: string;
   initials: string;
   name: string;
   ftePercentage: number;
-  workingDays: number[];
+  availabilityRules: AvailabilityRuleData[];
   isAutoScheduled: boolean;
 };
 

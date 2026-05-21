@@ -14,11 +14,18 @@ type ShiftType = {
   noConsecutiveGroup: string | null;
 };
 
+type AvailabilityRuleData = {
+  dayOfWeek: number;
+  type: string;
+  strength: string;
+  pattern: string;
+};
+
 type Provider = {
   id: string;
   initials: string;
   ftePercentage: number;
-  workingDays: number[];
+  availabilityRules: AvailabilityRuleData[];
 };
 
 type PayPeriod = {
@@ -99,7 +106,10 @@ export function checkCellWarnings({
   const dow = parseDate(date).getDay();
 
   // Non-working day
-  if (!provider.workingDays.includes(dow) && !st.isOffShift && !st.ignoresWorkingDays) {
+  const hasWorkRule = provider.availabilityRules.some(
+    (r) => r.dayOfWeek === dow && r.type === "available" && r.strength === "rule"
+  );
+  if (!hasWorkRule && !st.isOffShift && !st.ignoresWorkingDays) {
     warnings.push({
       type: "non-working-day",
       message: `${provider.initials} doesn't normally work on ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dow]}s`,

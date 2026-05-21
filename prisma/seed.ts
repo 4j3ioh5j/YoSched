@@ -47,12 +47,12 @@ async function main() {
   const fteType = await prisma.employmentType.upsert({
     where: { name: "FTE" },
     update: {},
-    create: { name: "FTE", defaultIsAutoScheduled: true, defaultFtePercentage: 1.0, defaultWorkingDays: [1, 2, 3, 4, 5], sortOrder: 0 },
+    create: { name: "FTE", defaultIsAutoScheduled: true, defaultFtePercentage: 1.0, sortOrder: 0 },
   });
   const feeBasisType = await prisma.employmentType.upsert({
     where: { name: "Fee Basis" },
     update: {},
-    create: { name: "Fee Basis", defaultIsAutoScheduled: false, defaultFtePercentage: 0, defaultWorkingDays: [], sortOrder: 1 },
+    create: { name: "Fee Basis", defaultIsAutoScheduled: false, defaultFtePercentage: 0, sortOrder: 1 },
   });
   console.log("Seeded 2 employment types");
 
@@ -78,7 +78,7 @@ async function main() {
     { initials: "SR",  name: "SR",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 15 },
     { initials: "SS",  name: "SS",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 16, specialQualifications: ["cardiac"] },
     { initials: "STa", name: "STa", employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 17 },
-    { initials: "KZ",  name: "KZ",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 18, workingDays: [1, 3] },
+    { initials: "KZ",  name: "KZ",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 18 },
     { initials: "CWr", name: "CWr", employmentTypeId: feeBasisType.id, isAutoScheduled: false, sortOrder: 19 },
     { initials: "NH",  name: "NH",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, sortOrder: 20 },
     { initials: "PN",  name: "PN",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, sortOrder: 21 },
@@ -121,6 +121,36 @@ async function main() {
   }
   await prisma.employmentTypeDefaultShift.createMany({ data: etDefaultRows });
   console.log(`Seeded ${etDefaultRows.length} employment type default shifts`);
+
+  // --- Default Availability Rules (employment types) ---
+  await prisma.employmentTypeDefaultAvailability.deleteMany({});
+  const fteDefaultDays = [1, 2, 3, 4, 5]; // Mon-Fri
+  await prisma.employmentTypeDefaultAvailability.createMany({
+    data: fteDefaultDays.map((d) => ({
+      employmentTypeId: fteType.id,
+      dayOfWeek: d,
+      type: "available",
+      strength: "rule",
+      pattern: "every",
+    })),
+  });
+  console.log("Seeded employment type default availability rules");
+
+  // --- Provider Availability Rules ---
+  await prisma.availabilityRule.deleteMany({});
+  const availRules: { providerId: string; dayOfWeek: number; type: string; strength: string; pattern: string }[] = [];
+  const defaultWorkDays = [1, 2, 3, 4, 5];
+  const kzWorkDays = [1, 3]; // KZ only works Mon/Wed
+  for (const prov of allProviderRecords) {
+    const days = prov.initials === "KZ" ? kzWorkDays : (feeBasisInitials.has(prov.initials) ? [] : defaultWorkDays);
+    for (const d of days) {
+      availRules.push({ providerId: prov.id, dayOfWeek: d, type: "available", strength: "rule", pattern: "every" });
+    }
+  }
+  if (availRules.length > 0) {
+    await prisma.availabilityRule.createMany({ data: availRules });
+  }
+  console.log(`Seeded ${availRules.length} provider availability rules`);
 
   // --- Provider Shift Overrides ---
   const rdId = (await prisma.provider.findUnique({ where: { initials: "RD" } }))!.id;

@@ -2,23 +2,21 @@ import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(req: NextRequest) {
-  const { id, eligibleShiftTypeIds, ...data } = await req.json();
+  const { id, eligibleShiftTypeIds, availabilityRules, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  const updated = await prisma.provider.update({
+  await prisma.provider.update({
     where: { id },
     data: {
       name: data.name,
       initials: data.initials,
       employmentTypeId: data.employmentTypeId,
       ftePercentage: data.ftePercentage,
-      workingDays: data.workingDays,
       specialQualifications: data.specialQualifications ?? [],
       isActive: data.isActive,
       isAutoScheduled: data.isAutoScheduled,
       sortOrder: data.sortOrder,
     },
-    include: { employmentType: true, eligibleShifts: true },
   });
 
   if (Array.isArray(eligibleShiftTypeIds)) {
@@ -33,9 +31,28 @@ export async function PUT(req: NextRequest) {
     }
   }
 
+  if (Array.isArray(availabilityRules)) {
+    await prisma.availabilityRule.deleteMany({ where: { providerId: id } });
+    if (availabilityRules.length > 0) {
+      await prisma.availabilityRule.createMany({
+        data: availabilityRules.map((r: Record<string, unknown>) => ({
+          providerId: id,
+          dayOfWeek: r.dayOfWeek as number,
+          type: (r.type as string) ?? "available",
+          strength: (r.strength as string) ?? "rule",
+          pattern: (r.pattern as string) ?? "every",
+          cycleLength: r.cycleLength as number | undefined,
+          cycleOffset: r.cycleOffset as number | undefined,
+          conditionProviderId: r.conditionProviderId as string | undefined,
+          conditionType: r.conditionType as string | undefined,
+        })),
+      });
+    }
+  }
+
   const result = await prisma.provider.findUnique({
     where: { id },
-    include: { employmentType: true, eligibleShifts: true },
+    include: { employmentType: true, eligibleShifts: true, availabilityRules: true },
   });
 
   return NextResponse.json(result);
@@ -60,7 +77,6 @@ export async function POST(req: NextRequest) {
       initials: data.initials,
       employmentTypeId,
       ftePercentage: data.ftePercentage ?? 1.0,
-      workingDays: data.workingDays ?? [1, 2, 3, 4, 5],
       specialQualifications: data.specialQualifications ?? [],
       isActive: true,
       isAutoScheduled: data.isAutoScheduled ?? true,
@@ -69,9 +85,10 @@ export async function POST(req: NextRequest) {
     include: { employmentType: true },
   });
 
-  const defaultShifts = await prisma.employmentTypeDefaultShift.findMany({
-    where: { employmentTypeId },
-  });
+  const [defaultShifts, defaultAvailability] = await Promise.all([
+    prisma.employmentTypeDefaultShift.findMany({ where: { employmentTypeId } }),
+    prisma.employmentTypeDefaultAvailability.findMany({ where: { employmentTypeId } }),
+  ]);
   if (defaultShifts.length > 0) {
     await prisma.providerEligibleShift.createMany({
       data: defaultShifts.map((ds) => ({
@@ -80,10 +97,21 @@ export async function POST(req: NextRequest) {
       })),
     });
   }
+  if (defaultAvailability.length > 0) {
+    await prisma.availabilityRule.createMany({
+      data: defaultAvailability.map((da) => ({
+        providerId: created.id,
+        dayOfWeek: da.dayOfWeek,
+        type: da.type,
+        strength: da.strength,
+        pattern: da.pattern,
+      })),
+    });
+  }
 
   const result = await prisma.provider.findUnique({
     where: { id: created.id },
-    include: { employmentType: true, eligibleShifts: true },
+    include: { employmentType: true, eligibleShifts: true, availabilityRules: true },
   });
 
   return NextResponse.json(result);
