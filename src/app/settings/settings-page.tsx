@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -245,6 +245,7 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const dndId = useId();
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -430,7 +431,7 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
       />
 
       <div className="overflow-x-auto">
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <DndContext id={dndId} sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={shifts.map((s) => s.id)} strategy={verticalListSortingStrategy}>
             <table className="w-full text-sm">
               <thead>
