@@ -514,7 +514,7 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
     }
   }
 
-  type SortKey = "sortOrder" | "initials" | "name";
+  type SortKey = "sortOrder" | "initials" | "name" | "employmentTypeName" | "ftePercentage" | "isAutoScheduled";
   const [sortBy, setSortBy] = useState<SortKey>("sortOrder");
   const [sortAsc, setSortAsc] = useState(true);
 
@@ -523,12 +523,27 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
     else { setSortBy(key); setSortAsc(true); }
   }
 
+  function sortIndicator(key: SortKey) {
+    return sortBy === key ? (sortAsc ? " ▲" : " ▼") : "";
+  }
+
   function sorted(list: Provider[]) {
     return [...list].sort((a, b) => {
       const va = a[sortBy] ?? "";
       const vb = b[sortBy] ?? "";
-      const cmp = typeof va === "string" ? va.localeCompare(vb as string) : (va as number) - (vb as number);
-      return sortAsc ? cmp : -cmp;
+      let cmp: number;
+      if (typeof va === "boolean") {
+        cmp = (va === vb ? 0 : va ? -1 : 1);
+      } else if (typeof va === "string") {
+        cmp = va.localeCompare(vb as string);
+      } else {
+        cmp = (va as number) - (vb as number);
+      }
+      if (cmp !== 0) return sortAsc ? cmp : -cmp;
+      if (sortBy !== "initials" && sortBy !== "sortOrder") {
+        return a.initials.localeCompare(b.initials);
+      }
+      return 0;
     });
   }
 
@@ -575,15 +590,21 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
               <thead>
                 <tr className="text-xs text-slate-400 uppercase tracking-wider bg-slate-800">
                   <th className="text-left py-2.5 px-3 w-16 cursor-pointer hover:text-slate-200 transition-colors select-none" onClick={() => toggleSort("initials")}>
-                    ID {sortBy === "initials" ? (sortAsc ? "▲" : "▼") : ""}
+                    ID{sortIndicator("initials")}
                   </th>
                   <th className="text-left py-2.5 px-3 cursor-pointer hover:text-slate-200 transition-colors select-none" onClick={() => toggleSort("name")}>
-                    Name {sortBy === "name" ? (sortAsc ? "▲" : "▼") : ""}
+                    Name{sortIndicator("name")}
                   </th>
-                  <th className="text-center py-2.5 px-3 w-20">Type</th>
-                  <th className="text-center py-2.5 px-3 w-14">FTE</th>
+                  <th className="text-center py-2.5 px-3 w-20 cursor-pointer hover:text-slate-200 transition-colors select-none" onClick={() => toggleSort("employmentTypeName")}>
+                    Type{sortIndicator("employmentTypeName")}
+                  </th>
+                  <th className="text-center py-2.5 px-3 w-14 cursor-pointer hover:text-slate-200 transition-colors select-none" onClick={() => toggleSort("ftePercentage")}>
+                    FTE{sortIndicator("ftePercentage")}
+                  </th>
                   <th className="text-center py-2.5 px-3 w-40">Availability</th>
-                  <th className="text-center py-2.5 px-3 w-14">Auto</th>
+                  <th className="text-center py-2.5 px-3 w-14 cursor-pointer hover:text-slate-200 transition-colors select-none" onClick={() => toggleSort("isAutoScheduled")}>
+                    Auto{sortIndicator("isAutoScheduled")}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
