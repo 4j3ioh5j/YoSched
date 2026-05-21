@@ -9,11 +9,11 @@ type Provider = {
   id: string;
   initials: string;
   name: string;
-  employmentType: string;
   ftePercentage: number;
   workingDays: number[];
   takesCall: boolean;
   takesLate: boolean;
+  isAutoScheduled: boolean;
 };
 
 type AssignmentData = {
@@ -1181,7 +1181,7 @@ export function ScheduleGrid({
                     onMouseLeave={() => setHoverCol(null)}
                   >
                     <span className={[
-                      p.employmentType === "fee_basis" ? "text-amber-400" : "text-slate-300",
+                      !p.isAutoScheduled ? "text-amber-400" : "text-slate-300",
                       isActiveCol ? "!text-blue-200 font-bold" : "",
                     ].join(" ")}>
                       {p.initials}

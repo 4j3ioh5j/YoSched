@@ -5,7 +5,7 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 
 export default async function Settings() {
-  const [shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights, schedulingPrefsRow] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
@@ -13,6 +13,10 @@ export default async function Settings() {
     prisma.holiday.findMany({ orderBy: { date: "asc" } }),
     prisma.desirabilityWeight.findMany(),
     prisma.schedulingPreferences.findFirst(),
+    prisma.employmentType.findMany({
+      orderBy: { sortOrder: "asc" },
+      include: { _count: { select: { providers: true } } },
+    }),
   ]);
 
   const schedulingPrefs = {
@@ -91,6 +95,17 @@ export default async function Settings() {
           reason: dw.reason,
         }))}
         schedulingPrefs={schedulingPrefs}
+        employmentTypes={employmentTypes.map((et) => ({
+          id: et.id,
+          name: et.name,
+          defaultIsAutoScheduled: et.defaultIsAutoScheduled,
+          defaultFtePercentage: et.defaultFtePercentage,
+          defaultTakesCall: et.defaultTakesCall,
+          defaultTakesLate: et.defaultTakesLate,
+          defaultWorkingDays: et.defaultWorkingDays,
+          sortOrder: et.sortOrder,
+          providerCount: et._count.providers,
+        }))}
       />
     </main>
   );

@@ -10,7 +10,7 @@ export async function PUT(req: NextRequest) {
     data: {
       name: data.name,
       initials: data.initials,
-      employmentType: data.employmentType,
+      employmentTypeId: data.employmentTypeId,
       ftePercentage: data.ftePercentage,
       workingDays: data.workingDays,
       takesCall: data.takesCall,
@@ -20,6 +20,7 @@ export async function PUT(req: NextRequest) {
       isAutoScheduled: data.isAutoScheduled,
       sortOrder: data.sortOrder,
     },
+    include: { employmentType: true },
   });
 
   return NextResponse.json(updated);
@@ -31,12 +32,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing name or initials" }, { status: 400 });
   }
 
+  let employmentTypeId = data.employmentTypeId;
+  if (!employmentTypeId) {
+    const defaultType = await prisma.employmentType.findFirst({ orderBy: { sortOrder: "asc" } });
+    employmentTypeId = defaultType!.id;
+  }
+
   const maxSort = await prisma.provider.aggregate({ _max: { sortOrder: true } });
   const created = await prisma.provider.create({
     data: {
       name: data.name,
       initials: data.initials,
-      employmentType: data.employmentType ?? "fte",
+      employmentTypeId,
       ftePercentage: data.ftePercentage ?? 1.0,
       workingDays: data.workingDays ?? [1, 2, 3, 4, 5],
       takesCall: data.takesCall ?? true,
@@ -46,6 +53,7 @@ export async function POST(req: NextRequest) {
       isAutoScheduled: data.isAutoScheduled ?? true,
       sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
     },
+    include: { employmentType: true },
   });
 
   return NextResponse.json(created);

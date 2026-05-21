@@ -18,7 +18,7 @@ async function main() {
     { code: "PAIN",   name: "Pain Service",           defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#ef4444", sortOrder: 7 },
     { code: "ICU",    name: "Intensive Care",          defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#dc2626", sortOrder: 8 },
     { code: "CARD",   name: "Cardiac",                defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#e11d48", sortOrder: 9 },
-    { code: "CALL",   name: "Weekend Call",            defaultHours: 0,  countsTowardFte: false, isLeave: false, isPaid: false, category: "work",  color: "#a855f7", sortOrder: 10, schedulePriority: 10, weekendPaired: true, ignoresWorkingDays: true, eligibilityRule: "takesCall", noConsecutiveGroup: "call-late", maxPerDay: 1 },
+    { code: "CALL",   name: "Weekend Call",            defaultHours: 0,  countsTowardFte: false, isLeave: false, isPaid: false, category: "work",  color: "#a855f7", sortOrder: 10, postShiftRule: "day_off_after", schedulePriority: 10, weekendPaired: true, ignoresWorkingDays: true, eligibilityRule: "takesCall", noConsecutiveGroup: "call-late", maxPerDay: 1 },
     { code: "QA",     name: "Quality Assurance",       defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#0ea5e9", sortOrder: 11 },
     { code: "TEL",    name: "Telehealth",              defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#06b6d4", sortOrder: 12 },
     { code: "UCLA",   name: "UCLA Rotation",           defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#2563eb", sortOrder: 13 },
@@ -43,30 +43,43 @@ async function main() {
   }
   console.log(`Seeded ${shiftTypes.length} shift types`);
 
+  // --- Employment Types ---
+  const fteType = await prisma.employmentType.upsert({
+    where: { name: "FTE" },
+    update: {},
+    create: { name: "FTE", defaultIsAutoScheduled: true, defaultFtePercentage: 1.0, defaultTakesCall: true, defaultTakesLate: true, defaultWorkingDays: [1, 2, 3, 4, 5], sortOrder: 0 },
+  });
+  const feeBasisType = await prisma.employmentType.upsert({
+    where: { name: "Fee Basis" },
+    update: {},
+    create: { name: "Fee Basis", defaultIsAutoScheduled: false, defaultFtePercentage: 0, defaultTakesCall: false, defaultTakesLate: false, defaultWorkingDays: [], sortOrder: 1 },
+  });
+  console.log("Seeded 2 employment types");
+
   // --- Providers ---
   const providers = [
-    { initials: "YA",  name: "YA",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 1 },
-    { initials: "CC",  name: "CC",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 2 },
-    { initials: "SC",  name: "SC",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 3 },
-    { initials: "BC",  name: "BC",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 4 },
-    { initials: "CD",  name: "CD",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 5 },
-    { initials: "RD",  name: "RD",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 6, specialQualifications: ["cardiac"] },
-    { initials: "DH",  name: "DH",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 7 },
-    { initials: "SH",  name: "SH",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 8 },
-    { initials: "AH",  name: "AH",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 9 },
-    { initials: "CL",  name: "CL",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 10 },
-    { initials: "RM",  name: "RM",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 11 },
-    { initials: "LM",  name: "LM",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 12 },
-    { initials: "KO",  name: "KO",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 13 },
-    { initials: "AR",  name: "AR",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 14 },
-    { initials: "SR",  name: "SR",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 15 },
-    { initials: "SS",  name: "SS",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 16, specialQualifications: ["cardiac"] },
-    { initials: "STa", name: "STa", employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 17 },
-    { initials: "KZ",  name: "KZ",  employmentType: "fte", ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 18, workingDays: [1, 3] },
-    { initials: "CWr", name: "CWr", employmentType: "fee_basis", takesCall: false, takesLate: false, sortOrder: 19 },
-    { initials: "NH",  name: "NH",  employmentType: "fee_basis", takesCall: false, takesLate: false, sortOrder: 20 },
-    { initials: "PN",  name: "PN",  employmentType: "fee_basis", takesCall: false, takesLate: false, sortOrder: 21 },
-    { initials: "HC",  name: "HC",  employmentType: "fee_basis", takesCall: false, takesLate: false, sortOrder: 22 },
+    { initials: "YA",  name: "YA",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 1 },
+    { initials: "CC",  name: "CC",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 2 },
+    { initials: "SC",  name: "SC",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 3 },
+    { initials: "BC",  name: "BC",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 4 },
+    { initials: "CD",  name: "CD",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 5 },
+    { initials: "RD",  name: "RD",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 6, specialQualifications: ["cardiac"] },
+    { initials: "DH",  name: "DH",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 7 },
+    { initials: "SH",  name: "SH",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 8 },
+    { initials: "AH",  name: "AH",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 9 },
+    { initials: "CL",  name: "CL",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 10 },
+    { initials: "RM",  name: "RM",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 11 },
+    { initials: "LM",  name: "LM",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 12 },
+    { initials: "KO",  name: "KO",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 13 },
+    { initials: "AR",  name: "AR",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 14 },
+    { initials: "SR",  name: "SR",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 15 },
+    { initials: "SS",  name: "SS",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 16, specialQualifications: ["cardiac"] },
+    { initials: "STa", name: "STa", employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 17 },
+    { initials: "KZ",  name: "KZ",  employmentTypeId: fteType.id, ftePercentage: 1.0, takesCall: true,  takesLate: true,  sortOrder: 18, workingDays: [1, 3] },
+    { initials: "CWr", name: "CWr", employmentTypeId: feeBasisType.id, isAutoScheduled: false, takesCall: false, takesLate: false, sortOrder: 19 },
+    { initials: "NH",  name: "NH",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, takesCall: false, takesLate: false, sortOrder: 20 },
+    { initials: "PN",  name: "PN",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, takesCall: false, takesLate: false, sortOrder: 21 },
+    { initials: "HC",  name: "HC",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, takesCall: false, takesLate: false, sortOrder: 22 },
   ];
 
   for (const p of providers) {

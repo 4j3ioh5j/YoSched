@@ -3,7 +3,6 @@ import { computeFairness, type FairnessSummary } from "./fairness";
 export type ScheduleProvider = {
   id: string;
   initials: string;
-  employmentType: string;
   ftePercentage: number;
   takesCall: boolean;
   takesLate: boolean;
@@ -259,7 +258,6 @@ export function autoSchedule({
     providers: providers.map((p) => ({
       id: p.id,
       initials: p.initials,
-      employmentType: p.employmentType,
       ftePercentage: p.ftePercentage,
       takesCall: p.takesCall,
       takesLate: p.takesLate,
@@ -962,8 +960,7 @@ export function autoSchedule({
   // ── STEP 4: Fill all remaining empty cells with X (day off) ──
   if (offShift) {
     for (const date of dates) {
-      for (const provider of providers) {
-        if (!provider.isActive) continue;
+      for (const provider of activeProviders) {
         if (!isAssigned(provider.id, date)) {
           assign(provider.id, date, offShift, "Day off", "off", 0.95);
         }

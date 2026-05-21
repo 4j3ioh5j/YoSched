@@ -41,7 +41,6 @@ export default async function Home() {
     providers: providers.map((p) => ({
       id: p.id,
       initials: p.initials,
-      employmentType: p.employmentType,
       ftePercentage: p.ftePercentage ?? 1.0,
       takesCall: p.takesCall,
       takesLate: p.takesLate,
@@ -101,11 +100,11 @@ export default async function Home() {
           id: p.id,
           initials: p.initials,
           name: p.name,
-          employmentType: p.employmentType,
           ftePercentage: p.ftePercentage ?? 1.0,
           workingDays: p.workingDays,
           takesCall: p.takesCall,
           takesLate: p.takesLate,
+          isAutoScheduled: p.isAutoScheduled,
         }))}
         assignments={assignments.map((a) => ({
           id: a.id,

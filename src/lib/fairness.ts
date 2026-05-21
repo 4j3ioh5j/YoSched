@@ -14,7 +14,6 @@ type Assignment = {
 type Provider = {
   id: string;
   initials: string;
-  employmentType: string;
   ftePercentage: number;
   takesCall: boolean;
   takesLate: boolean;

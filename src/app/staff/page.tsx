@@ -5,9 +5,13 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 
 export default async function Staff() {
-  const providers = await prisma.provider.findMany({
-    orderBy: { sortOrder: "asc" },
-  });
+  const [providers, employmentTypes] = await Promise.all([
+    prisma.provider.findMany({
+      orderBy: { sortOrder: "asc" },
+      include: { employmentType: true },
+    }),
+    prisma.employmentType.findMany({ orderBy: { sortOrder: "asc" } }),
+  ]);
 
   return (
     <main className="flex flex-col h-screen">
@@ -33,7 +37,8 @@ export default async function Staff() {
           id: p.id,
           name: p.name,
           initials: p.initials,
-          employmentType: p.employmentType,
+          employmentTypeId: p.employmentTypeId,
+          employmentTypeName: p.employmentType.name,
           ftePercentage: p.ftePercentage ?? 1.0,
           workingDays: p.workingDays,
           takesCall: p.takesCall,
@@ -42,6 +47,15 @@ export default async function Staff() {
           isActive: p.isActive,
           isAutoScheduled: p.isAutoScheduled,
           sortOrder: p.sortOrder,
+        }))}
+        employmentTypes={employmentTypes.map((et) => ({
+          id: et.id,
+          name: et.name,
+          defaultIsAutoScheduled: et.defaultIsAutoScheduled,
+          defaultFtePercentage: et.defaultFtePercentage,
+          defaultTakesCall: et.defaultTakesCall,
+          defaultTakesLate: et.defaultTakesLate,
+          defaultWorkingDays: et.defaultWorkingDays,
         }))}
       />
     </main>

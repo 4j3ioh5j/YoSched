@@ -33,7 +33,6 @@ export default async function Equity() {
     providers: providers.map((p) => ({
       id: p.id,
       initials: p.initials,
-      employmentType: p.employmentType,
       ftePercentage: p.ftePercentage ?? 1.0,
       takesCall: p.takesCall,
       takesLate: p.takesLate,
@@ -101,7 +100,7 @@ export default async function Equity() {
       ...m,
       deviation: dev,
       name: p.name,
-      employmentType: p.employmentType,
+      isAutoScheduled: p.isAutoScheduled,
       ftePercentage: p.ftePercentage ?? 1.0,
       takesCall: p.takesCall,
       takesLate: p.takesLate,

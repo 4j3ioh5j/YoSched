@@ -12,7 +12,7 @@ type EquityRow = {
   providerId: string;
   initials: string;
   name: string;
-  employmentType: string;
+  isAutoScheduled: boolean;
   ftePercentage: number;
   takesCall: boolean;
   takesLate: boolean;

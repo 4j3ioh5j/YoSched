@@ -74,7 +74,6 @@ export async function POST(req: NextRequest) {
     providers: providers.map((p) => ({
       id: p.id,
       initials: p.initials,
-      employmentType: p.employmentType,
       ftePercentage: p.ftePercentage ?? 1.0,
       takesCall: p.takesCall,
       takesLate: p.takesLate,

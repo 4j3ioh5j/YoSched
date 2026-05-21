@@ -254,6 +254,10 @@ const ALL_MONTHS: Array<{
 ];
 
 async function main() {
+  const fteType = await prisma.employmentType.findFirst({ where: { name: "FTE" } });
+  const feeBasisType = await prisma.employmentType.findFirst({ where: { name: "Fee Basis" } });
+  if (!fteType || !feeBasisType) throw new Error("Employment types not seeded — run main seed first");
+
   // Ensure CWa provider exists (active Jan-Feb, departed after)
   const existingCWa = await prisma.provider.findFirst({ where: { initials: "CWa" } });
   if (!existingCWa) {
@@ -261,7 +265,7 @@ async function main() {
       data: {
         initials: "CWa",
         name: "CWa",
-        employmentType: "fte",
+        employmentTypeId: fteType.id,
         ftePercentage: 1.0,
         takesCall: true,
         takesLate: true,
@@ -282,7 +286,7 @@ async function main() {
       data: {
         initials: "LS",
         name: "LS",
-        employmentType: "fee_basis",
+        employmentTypeId: feeBasisType.id,
         ftePercentage: 0,
         takesCall: false,
         takesLate: false,

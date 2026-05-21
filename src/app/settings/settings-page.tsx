@@ -65,6 +65,18 @@ type SchedulingPrefs = {
   preferSequentialOff: boolean;
 };
 
+type EmploymentTypeData = {
+  id: string;
+  name: string;
+  defaultIsAutoScheduled: boolean;
+  defaultFtePercentage: number;
+  defaultTakesCall: boolean;
+  defaultTakesLate: boolean;
+  defaultWorkingDays: number[];
+  sortOrder: number;
+  providerCount: number;
+};
+
 type Props = {
   shiftTypes: ShiftType[];
   staffingReqs: StaffingReq[];
@@ -73,6 +85,7 @@ type Props = {
   holidays: Holiday[];
   desirabilityWeights: DesirabilityWeight[];
   schedulingPrefs: SchedulingPrefs;
+  employmentTypes: EmploymentTypeData[];
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -1503,15 +1516,299 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
   );
 }
 
+// ─── Employment Types Section ───────────────────────────────────────────────
+
+const ET_DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const ET_DAY_INDICES = [0, 1, 2, 3, 4, 5, 6];
+const ET_DAY_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
+
+function EmploymentTypesSection({ initial, pushUndo }: { initial: EmploymentTypeData[]; pushUndo: (a: UndoAction) => void }) {
+  const [types, setTypes] = useState(initial);
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const editingType = editingId ? types.find((t) => t.id === editingId) ?? null : null;
+
+  function updateField(id: string, field: keyof EmploymentTypeData, value: unknown) {
+    setTypes((prev) => prev.map((t) => t.id === id ? { ...t, [field]: value } : t));
+  }
+
+  function cancelEdit() {
+    if (!editingId) return;
+    const orig = initial.find((t) => t.id === editingId);
+    if (orig) setTypes((prev) => prev.map((t) => t.id === editingId ? orig : t));
+    setEditingId(null);
+  }
+
+  async function saveType(et: EmploymentTypeData) {
+    const prev = initial.find((t) => t.id === et.id);
+    setStatus("saving");
+    try {
+      const res = await fetch("/api/settings/employment-types", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(et),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setEditingId(null);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+      if (prev) {
+        pushUndo({
+          label: `Updated ${et.name}`,
+          execute: async () => {
+            await fetch("/api/settings/employment-types", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(prev),
+            });
+            setTypes((cur) => cur.map((t) => t.id === prev.id ? prev : t));
+          },
+        });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
+      setStatus("error");
+    }
+  }
+
+  async function addType() {
+    setStatus("saving");
+    try {
+      const res = await fetch("/api/settings/employment-types", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "New Type" }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const created = await res.json();
+      const newType: EmploymentTypeData = {
+        id: created.id,
+        name: created.name,
+        defaultIsAutoScheduled: created.defaultIsAutoScheduled,
+        defaultFtePercentage: created.defaultFtePercentage,
+        defaultTakesCall: created.defaultTakesCall,
+        defaultTakesLate: created.defaultTakesLate,
+        defaultWorkingDays: created.defaultWorkingDays,
+        sortOrder: created.sortOrder,
+        providerCount: 0,
+      };
+      setTypes((prev) => [...prev, newType]);
+      setEditingId(created.id);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+      pushUndo({
+        label: "Added employment type",
+        execute: async () => {
+          await fetch("/api/settings/employment-types", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: created.id }),
+          });
+          setTypes((cur) => cur.filter((t) => t.id !== created.id));
+        },
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
+      setStatus("error");
+    }
+  }
+
+  async function deleteType(id: string) {
+    const et = types.find((t) => t.id === id);
+    if (!et) return;
+    setStatus("saving");
+    try {
+      const res = await fetch("/api/settings/employment-types", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.error || "Failed");
+      }
+      setTypes((prev) => prev.filter((t) => t.id !== id));
+      setEditingId(null);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+      pushUndo({
+        label: `Removed ${et.name}`,
+        execute: async () => {
+          const res = await fetch("/api/settings/employment-types", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(et),
+          });
+          const created = await res.json();
+          setTypes((cur) => [...cur, { ...et, id: created.id }]);
+        },
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
+      setStatus("error");
+    }
+  }
+
+  const et = editingType;
+
+  return (
+    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
+      <SectionHeader
+        title="Employment Types"
+        description="Define employment categories and their default scheduling values"
+        status={status}
+        error={error}
+      />
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-xs text-slate-400 uppercase tracking-wider">
+            <th className="text-left py-2 px-2">Name</th>
+            <th className="text-center py-2 px-2 w-16">Auto</th>
+            <th className="text-center py-2 px-2 w-16">FTE%</th>
+            <th className="text-center py-2 px-2 w-14">Call</th>
+            <th className="text-center py-2 px-2 w-14">Late</th>
+            <th className="text-center py-2 px-2 w-14">Staff</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-700/50">
+          {types.map((t) => (
+            <tr
+              key={t.id}
+              className="hover:bg-slate-700/30 cursor-pointer transition-colors"
+              onClick={() => setEditingId(t.id)}
+            >
+              <td className="py-2 px-2 font-medium text-slate-200">{t.name}</td>
+              <td className="py-2 px-2 text-center">
+                <span className={t.defaultIsAutoScheduled ? "text-emerald-400" : "text-slate-600"}>
+                  {t.defaultIsAutoScheduled ? "✓" : "—"}
+                </span>
+              </td>
+              <td className="py-2 px-2 text-center font-mono text-slate-400">
+                {(t.defaultFtePercentage * 100).toFixed(0)}%
+              </td>
+              <td className="py-2 px-2 text-center">
+                <span className={t.defaultTakesCall ? "text-emerald-400" : "text-slate-600"}>
+                  {t.defaultTakesCall ? "✓" : "—"}
+                </span>
+              </td>
+              <td className="py-2 px-2 text-center">
+                <span className={t.defaultTakesLate ? "text-emerald-400" : "text-slate-600"}>
+                  {t.defaultTakesLate ? "✓" : "—"}
+                </span>
+              </td>
+              <td className="py-2 px-2 text-center text-slate-500 text-xs">{t.providerCount}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {et && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={cancelEdit}>
+          <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+              <span className="font-semibold text-slate-100">{et.name}</span>
+              <button onClick={cancelEdit} className="text-slate-500 hover:text-slate-300 text-lg">×</button>
+            </div>
+
+            <div className="px-6 py-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-200">Name</span>
+                <input className="w-40 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={et.name} onChange={(e) => updateField(et.id, "name", e.target.value)} />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm text-slate-200">Auto-schedule</div>
+                  <div className="text-xs text-slate-500">Include in auto-scheduler by default</div>
+                </div>
+                <input type="checkbox" checked={et.defaultIsAutoScheduled} onChange={(e) => updateField(et.id, "defaultIsAutoScheduled", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm text-slate-200">FTE percentage</div>
+                  <div className="text-xs text-slate-500">Default target hours ratio</div>
+                </div>
+                <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={et.defaultFtePercentage} onChange={(e) => updateField(et.id, "defaultFtePercentage", parseFloat(e.target.value))}>
+                  {[1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0].map((v) => (
+                    <option key={v} value={v}>{(v * 100).toFixed(0)}%</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-200">Takes call</span>
+                <input type="checkbox" checked={et.defaultTakesCall} onChange={(e) => updateField(et.id, "defaultTakesCall", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-200">Takes late</span>
+                <input type="checkbox" checked={et.defaultTakesLate} onChange={(e) => updateField(et.id, "defaultTakesLate", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </div>
+              <div>
+                <div className="text-sm text-slate-200 mb-2">Working days</div>
+                <div className="flex gap-1">
+                  {ET_DAY_INDICES.map((d) => {
+                    const active = et.defaultWorkingDays.includes(d);
+                    return (
+                      <button
+                        key={d}
+                        onClick={() => {
+                          const next = active
+                            ? et.defaultWorkingDays.filter((x) => x !== d)
+                            : [...et.defaultWorkingDays, d].sort();
+                          updateField(et.id, "defaultWorkingDays", next);
+                        }}
+                        className={[
+                          "w-10 h-8 text-xs rounded font-medium transition-colors",
+                          active ? "bg-blue-600/50 text-blue-200 border border-blue-500/50" : "bg-slate-700 text-slate-500 border border-slate-600",
+                          "hover:brightness-125",
+                        ].join(" ")}
+                      >
+                        {ET_DAY_LABELS[d]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between px-6 py-4 border-t border-slate-700">
+              <button
+                onClick={() => deleteType(et.id)}
+                disabled={et.providerCount > 0}
+                title={et.providerCount > 0 ? `${et.providerCount} staff member(s) use this type` : ""}
+                className="px-3 py-1.5 text-xs bg-red-900/50 hover:bg-red-800/50 text-red-400 border border-red-800/50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                Delete
+              </button>
+              <div className="flex gap-2">
+                <button onClick={cancelEdit} className="px-4 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors">Cancel</button>
+                <button onClick={() => saveType(et)} className="px-4 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 rounded transition-colors font-medium">Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={addType}
+        className="mt-3 px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
+      >
+        + Add Employment Type
+      </button>
+    </section>
+  );
+}
+
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights, schedulingPrefs }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights, schedulingPrefs, employmentTypes }: Props) {
   const undo = useUndo();
 
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
         <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} />
+        <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} />
         <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <SchedulingPrefsSection initial={schedulingPrefs} />

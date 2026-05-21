@@ -6,7 +6,8 @@ type Provider = {
   id: string;
   name: string;
   initials: string;
-  employmentType: string;
+  employmentTypeId: string;
+  employmentTypeName: string;
   ftePercentage: number;
   workingDays: number[];
   takesCall: boolean;
@@ -17,8 +18,19 @@ type Provider = {
   sortOrder: number;
 };
 
+type EmploymentType = {
+  id: string;
+  name: string;
+  defaultIsAutoScheduled: boolean;
+  defaultFtePercentage: number;
+  defaultTakesCall: boolean;
+  defaultTakesLate: boolean;
+  defaultWorkingDays: number[];
+};
+
 type Props = {
   providers: Provider[];
+  employmentTypes: EmploymentType[];
 };
 
 type UndoAction = {
@@ -54,7 +66,7 @@ function FieldRow({ label, description, children }: { label: string; description
   );
 }
 
-export function StaffPage({ providers: initial }: Props) {
+export function StaffPage({ providers: initial, employmentTypes }: Props) {
   const [providers, setProviders] = useState(initial);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -88,6 +100,21 @@ export function StaffPage({ providers: initial }: Props) {
 
   function updateField(id: string, field: keyof Provider, value: unknown) {
     setProviders((prev) => prev.map((p) => p.id === id ? { ...p, [field]: value } : p));
+  }
+
+  function changeEmploymentType(id: string, newTypeId: string) {
+    const et = employmentTypes.find((t) => t.id === newTypeId);
+    if (!et) return;
+    setProviders((prev) => prev.map((p) => p.id === id ? {
+      ...p,
+      employmentTypeId: et.id,
+      employmentTypeName: et.name,
+      isAutoScheduled: et.defaultIsAutoScheduled,
+      ftePercentage: et.defaultFtePercentage,
+      takesCall: et.defaultTakesCall,
+      takesLate: et.defaultTakesLate,
+      workingDays: et.defaultWorkingDays,
+    } : p));
   }
 
   function cancelEdit() {
@@ -176,17 +203,19 @@ export function StaffPage({ providers: initial }: Props) {
   async function addProvider() {
     setSaving(true);
     try {
+      const defaultType = employmentTypes[0];
       const res = await fetch("/api/staff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "New Provider", initials: "NEW" }),
+        body: JSON.stringify({ name: "New Provider", initials: "NEW", employmentTypeId: defaultType?.id }),
       });
       const created = await res.json();
       const newProv: Provider = {
         id: created.id,
         name: created.name,
         initials: created.initials,
-        employmentType: created.employmentType,
+        employmentTypeId: created.employmentTypeId,
+        employmentTypeName: created.employmentType?.name ?? defaultType?.name ?? "",
         ftePercentage: created.ftePercentage ?? 1.0,
         workingDays: created.workingDays,
         takesCall: created.takesCall,
@@ -281,7 +310,7 @@ export function StaffPage({ providers: initial }: Props) {
                   <th className="text-left py-2.5 px-3 cursor-pointer hover:text-slate-200 transition-colors select-none" onClick={() => toggleSort("name")}>
                     Name {sortBy === "name" ? (sortAsc ? "▲" : "▼") : ""}
                   </th>
-                  <th className="text-center py-2.5 px-3 w-16">Type</th>
+                  <th className="text-center py-2.5 px-3 w-20">Type</th>
                   <th className="text-center py-2.5 px-3 w-14">FTE</th>
                   <th className="text-center py-2.5 px-3 w-40">Working Days</th>
                   <th className="text-center py-2.5 px-3 w-12">Call</th>
@@ -307,7 +336,7 @@ export function StaffPage({ providers: initial }: Props) {
                     </td>
                     <td className="py-2 px-3 text-center">
                       <span className={`text-xs ${p.isAutoScheduled ? "text-slate-400" : "text-amber-400"}`}>
-                        {p.employmentType}
+                        {p.employmentTypeName}
                       </span>
                     </td>
                     <td className="py-2 px-3 text-center">
@@ -362,7 +391,7 @@ export function StaffPage({ providers: initial }: Props) {
                   >
                     <td className="py-2 px-3"><span className="font-mono font-bold text-slate-500">{p.initials}</span></td>
                     <td className="py-2 px-3"><span className="text-sm text-slate-500">{p.name}</span></td>
-                    <td className="py-2 px-3 text-center"><span className="text-xs text-slate-600">{p.employmentType}</span></td>
+                    <td className="py-2 px-3 text-center"><span className="text-xs text-slate-600">{p.employmentTypeName}</span></td>
                     <td className="py-2 px-3 text-center"><span className="text-xs text-slate-600">—</span></td>
                     <td className="py-2 px-3"><div className="flex gap-0.5 justify-center">{DAY_INDICES.map((d) => (<span key={d} className="w-5 h-5 text-[10px] rounded font-medium flex items-center justify-center bg-slate-700/30 text-slate-700">{DAY_SHORT[d]}</span>))}</div></td>
                     <td className="py-2 px-3 text-center text-slate-600">—</td>
@@ -412,8 +441,16 @@ export function StaffPage({ providers: initial }: Props) {
               <FieldRow label="Full name">
                 <input className="w-56 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={ep.name} onChange={(e) => updateField(ep.id, "name", e.target.value)} />
               </FieldRow>
-              <FieldRow label="Employment type" description="Freeform label (e.g. fte, fee_basis, contract)">
-                <input type="text" className="w-28 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center" value={ep.employmentType} list="employment-types" onChange={(e) => updateField(ep.id, "employmentType", e.target.value)} />
+              <FieldRow label="Employment type" description="Changing type applies its default scheduling values">
+                <select
+                  className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm"
+                  value={ep.employmentTypeId}
+                  onChange={(e) => changeEmploymentType(ep.id, e.target.value)}
+                >
+                  {employmentTypes.map((et) => (
+                    <option key={et.id} value={et.id}>{et.name}</option>
+                  ))}
+                </select>
               </FieldRow>
               <FieldRow label="Active" description="Inactive staff are hidden from the schedule">
                 <input type="checkbox" checked={ep.isActive} onChange={(e) => updateField(ep.id, "isActive", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
@@ -547,11 +584,6 @@ export function StaffPage({ providers: initial }: Props) {
       )}
 
       {undo && <UndoToast action={undo} onUndo={executeUndo} onDismiss={dismissUndo} />}
-      <datalist id="employment-types">
-        {[...new Set(providers.map((p) => p.employmentType))].sort().map((t) => (
-          <option key={t} value={t} />
-        ))}
-      </datalist>
     </div>
   );
 }
