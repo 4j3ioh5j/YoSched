@@ -1,9 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
-import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type ShiftType = {
   id: string;
@@ -204,66 +201,44 @@ function SectionHeader({ title, description, status, error }: { title: string; d
 
 // ─── Shift Types Section ────────────────────────────────────────────────────
 
-function SortableShiftRow({ st, onClick }: { st: ShiftType; onClick: () => void }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: st.id });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : undefined,
-  };
-  return (
-    <tr
-      ref={setNodeRef}
-      style={style}
-      className="hover:bg-slate-700/30 transition-colors cursor-pointer"
-      onClick={onClick}
-    >
-      <td className="py-2 px-1 w-8 text-center cursor-grab active:cursor-grabbing" {...attributes} {...listeners} onClick={(e) => e.stopPropagation()}>
-        <span className="text-slate-600 text-xs select-none">⠿</span>
-      </td>
-      <td className="py-2 px-2">
-        <span className="font-mono font-bold" style={{ color: st.color }}>{st.code}</span>
-      </td>
-      <td className="py-2 px-2 text-slate-300">{st.name}</td>
-      <td className="py-2 px-2 text-center text-slate-300 font-mono">{st.defaultHours}</td>
-      <td className="py-2 px-2 text-center text-xs text-slate-400">{st.category}</td>
-      <td className="py-2 px-2 text-center">
-        <span className="inline-block w-4 h-4 rounded" style={{ backgroundColor: st.color }} />
-      </td>
-      <td className="py-2 px-2 text-center text-xs text-slate-500">
-        {st.postShiftRule ? "Day off after" : "—"}
-      </td>
-      <td className="py-2 px-2 text-center text-xs text-slate-500">
-        {st.schedulePriority != null ? `#${st.schedulePriority}` : "—"}
-      </td>
-    </tr>
-  );
-}
-
 function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUndo: (a: UndoAction) => void }) {
   const [shifts, setShifts] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const dndId = useId();
+  const dragIdx = useRef<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor),
-  );
+  function handleDragStart(idx: number) {
+    dragIdx.current = idx;
+  }
 
-  async function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const oldIndex = shifts.findIndex((s) => s.id === active.id);
-    const newIndex = shifts.findIndex((s) => s.id === over.id);
-    const reordered = arrayMove(shifts, oldIndex, newIndex);
+  function handleDragOver(e: React.DragEvent, idx: number) {
+    e.preventDefault();
+    if (dragIdx.current !== null && dragIdx.current !== idx) {
+      setDragOverIdx(idx);
+    }
+  }
+
+  async function handleDrop(idx: number) {
+    const from = dragIdx.current;
+    if (from === null || from === idx) { dragIdx.current = null; setDragOverIdx(null); return; }
+    const reordered = [...shifts];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(idx, 0, moved);
     setShifts(reordered);
+    dragIdx.current = null;
+    setDragOverIdx(null);
     await fetch("/api/settings/shift-types/reorder", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids: reordered.map((s) => s.id) }),
     });
+  }
+
+  function handleDragEnd() {
+    dragIdx.current = null;
+    setDragOverIdx(null);
   }
 
   async function saveShift(shift: ShiftType) {
@@ -431,29 +406,53 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
       />
 
       <div className="overflow-x-auto">
-        <DndContext id={dndId} sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={shifts.map((s) => s.id)} strategy={verticalListSortingStrategy}>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs text-slate-400 uppercase tracking-wider">
-                  <th className="py-2 px-1 w-8" />
-                  <th className="text-left py-2 px-2 w-16">Code</th>
-                  <th className="text-left py-2 px-2">Name</th>
-                  <th className="text-center py-2 px-2 w-16">Hours</th>
-                  <th className="text-center py-2 px-2 w-20">Category</th>
-                  <th className="text-center py-2 px-2 w-12">Color</th>
-                  <th className="text-center py-2 px-2 w-24">Post-shift</th>
-                  <th className="text-center py-2 px-2 w-28">Auto-schedule</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-700/50">
-                {shifts.map((st) => (
-                  <SortableShiftRow key={st.id} st={st} onClick={() => setEditingId(st.id)} />
-                ))}
-              </tbody>
-            </table>
-          </SortableContext>
-        </DndContext>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-slate-400 uppercase tracking-wider">
+              <th className="py-2 px-1 w-8" />
+              <th className="text-left py-2 px-2 w-16">Code</th>
+              <th className="text-left py-2 px-2">Name</th>
+              <th className="text-center py-2 px-2 w-16">Hours</th>
+              <th className="text-center py-2 px-2 w-20">Category</th>
+              <th className="text-center py-2 px-2 w-12">Color</th>
+              <th className="text-center py-2 px-2 w-24">Post-shift</th>
+              <th className="text-center py-2 px-2 w-28">Auto-schedule</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-700/50">
+            {shifts.map((st, i) => (
+              <tr
+                key={st.id}
+                draggable
+                onDragStart={() => handleDragStart(i)}
+                onDragOver={(e) => handleDragOver(e, i)}
+                onDrop={() => handleDrop(i)}
+                onDragEnd={handleDragEnd}
+                className={`transition-colors cursor-pointer ${dragOverIdx === i ? "bg-blue-900/30 border-t border-blue-500" : "hover:bg-slate-700/30"}`}
+                onClick={() => setEditingId(st.id)}
+              >
+                <td className="py-2 px-1 w-8 text-center cursor-grab" onClick={(e) => e.stopPropagation()}>
+                  <span className="text-slate-600 text-xs select-none">⠿</span>
+                </td>
+                <td className="py-2 px-2">
+                  <span className="font-mono font-bold" style={{ color: st.color }}>{st.code}</span>
+                </td>
+                <td className="py-2 px-2 text-slate-300">{st.name}</td>
+                <td className="py-2 px-2 text-center text-slate-300 font-mono">{st.defaultHours}</td>
+                <td className="py-2 px-2 text-center text-xs text-slate-400">{st.category}</td>
+                <td className="py-2 px-2 text-center">
+                  <span className="inline-block w-4 h-4 rounded" style={{ backgroundColor: st.color }} />
+                </td>
+                <td className="py-2 px-2 text-center text-xs text-slate-500">
+                  {st.postShiftRule ? "Day off after" : "—"}
+                </td>
+                <td className="py-2 px-2 text-center text-xs text-slate-500">
+                  {st.schedulePriority != null ? `#${st.schedulePriority}` : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {editingShift && (
