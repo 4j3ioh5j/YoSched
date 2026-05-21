@@ -333,7 +333,6 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
   const [saving, setSaving] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
   const [undo, setUndo] = useState<UndoAction | null>(null);
-  const [qualInput, setQualInput] = useState("");
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   function pushUndo(action: UndoAction) {
@@ -387,7 +386,6 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
     const orig = initial.find((p) => p.id === editingId);
     if (orig) setProviders((prev) => prev.map((p) => p.id === editingId ? orig : p));
     setEditingId(null);
-    setQualInput("");
   }
 
   async function saveProvider(provider: Provider) {
@@ -400,8 +398,7 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
         body: JSON.stringify(provider),
       });
       setEditingId(null);
-      setQualInput("");
-      if (prev) {
+        if (prev) {
         pushUndo({
           label: `Updated ${provider.initials}`,
           execute: async () => {
@@ -587,7 +584,6 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                   <th className="text-center py-2.5 px-3 w-14">FTE</th>
                   <th className="text-center py-2.5 px-3 w-40">Availability</th>
                   <th className="text-center py-2.5 px-3 w-12">Sched</th>
-                  <th className="text-center py-2.5 px-3 w-20">Quals</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
@@ -647,13 +643,6 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                           {p.isAutoScheduled ? "✓" : "—"}
                         </span>
                       </td>
-                      <td className="py-2 px-3 text-center">
-                        {p.specialQualifications.length > 0 ? (
-                          <span className="text-xs text-slate-400">{p.specialQualifications.length}</span>
-                        ) : (
-                          <span className="text-slate-600">—</span>
-                        )}
-                      </td>
                     </tr>
                   );
                 })}
@@ -668,7 +657,6 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                     <td className="py-2 px-3 text-center"><span className="text-xs text-slate-600">{p.employmentTypeName}</span></td>
                     <td className="py-2 px-3 text-center"><span className="text-xs text-slate-600">—</span></td>
                     <td className="py-2 px-3"><div className="flex gap-0.5 justify-center">{DAY_INDICES.map((d) => (<span key={d} className="w-5 h-5 text-[10px] rounded font-medium flex items-center justify-center bg-slate-700/30 text-slate-700">{DAY_SHORT[d]}</span>))}</div></td>
-                    <td className="py-2 px-3 text-center text-slate-600">—</td>
                     <td className="py-2 px-3 text-center text-slate-600">—</td>
                   </tr>
                 ))}
@@ -828,59 +816,6 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                   allProviders={providers.filter((p) => p.isActive).map((p) => ({ id: p.id, initials: p.initials }))}
                   currentProviderId={ep.id}
                 />
-              </div>
-            </div>
-
-            <div className="px-6 py-4 border-t border-slate-700">
-              <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Qualifications</div>
-              <p className="text-xs text-slate-500 mb-3">Tags that determine eligibility for shift types with custom eligibility rules.</p>
-              <div className="flex flex-wrap gap-1.5 mb-3">
-                {ep.specialQualifications.map((q) => (
-                  <span key={q} className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-700 border border-slate-600 rounded text-xs text-slate-300">
-                    {q}
-                    <button
-                      onClick={() => updateField(ep.id, "specialQualifications", ep.specialQualifications.filter((x) => x !== q))}
-                      className="text-slate-500 hover:text-red-400 ml-0.5"
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-                {ep.specialQualifications.length === 0 && (
-                  <span className="text-xs text-slate-600">No qualifications</span>
-                )}
-              </div>
-              <div className="flex gap-1">
-                <input
-                  type="text"
-                  className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm"
-                  placeholder="Add qualification..."
-                  value={qualInput}
-                  onChange={(e) => setQualInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && qualInput.trim()) {
-                      const q = qualInput.trim().toLowerCase();
-                      if (!ep.specialQualifications.includes(q)) {
-                        updateField(ep.id, "specialQualifications", [...ep.specialQualifications, q]);
-                      }
-                      setQualInput("");
-                    }
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    if (qualInput.trim()) {
-                      const q = qualInput.trim().toLowerCase();
-                      if (!ep.specialQualifications.includes(q)) {
-                        updateField(ep.id, "specialQualifications", [...ep.specialQualifications, q]);
-                      }
-                      setQualInput("");
-                    }
-                  }}
-                  className="px-3 py-1 text-xs bg-slate-600 hover:bg-slate-500 rounded transition-colors"
-                >
-                  Add
-                </button>
               </div>
             </div>
 
