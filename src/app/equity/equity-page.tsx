@@ -55,12 +55,12 @@ function equityColor(burden: number, t: EquityThresholds): string {
 }
 
 function equityLabel(burden: number, t: EquityThresholds): string {
-  if (burden > t.high) return "Low";
-  if (burden > t.med) return "Below Avg";
-  if (burden > t.low) return "Slight -";
-  if (burden < -t.high) return "High";
-  if (burden < -t.med) return "Above Avg";
-  if (burden < -t.low) return "Slight +";
+  if (burden > t.high) return "Overworked";
+  if (burden > t.med) return "Heavy";
+  if (burden > t.low) return "Slightly Heavy";
+  if (burden < -t.high) return "Light";
+  if (burden < -t.med) return "Easy";
+  if (burden < -t.low) return "Slightly Easy";
   return "Balanced";
 }
 
@@ -90,49 +90,34 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
     return sortAsc ? cmp : -cmp;
   });
 
-  function SortHeader({ label, sortId, className }: { label: string; sortId: SortKey; className?: string }) {
-    const active = sortKey === sortId;
-    return (
-      <th
-        className={`py-2 px-3 text-[11px] font-medium uppercase tracking-wider text-slate-500 cursor-pointer hover:text-slate-300 transition-colors select-none ${className || ""}`}
-        onClick={() => handleSort(sortId)}
-      >
-        {label}{active ? (sortAsc ? " ↑" : " ↓") : ""}
-      </th>
-    );
-  }
-
-  function Num({ value, color, dim }: { value: number; color?: string; dim?: boolean }) {
-    return (
-      <span className={`text-xs tabular-nums ${dim ? "text-slate-600" : ""}`} style={dim ? undefined : { color }}>
-        {value}
-      </span>
-    );
-  }
-
   const shiftAvgs: Record<string, number> = {};
   for (const code of trackedShiftCodes) {
     const vals = data.map((d) => d.shiftCounts[code] || 0);
     shiftAvgs[code] = vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
   }
 
+  function SortHeader({ label, sortId, className, title }: { label: string; sortId: SortKey; className?: string; title?: string }) {
+    const active = sortKey === sortId;
+    return (
+      <th
+        className={`py-2.5 px-3 text-[11px] font-semibold uppercase tracking-wider cursor-pointer hover:text-slate-300 transition-colors select-none whitespace-nowrap ${active ? "text-slate-200" : "text-slate-500"} ${className || ""}`}
+        onClick={() => handleSort(sortId)}
+        title={title}
+      >
+        {label}{active ? (sortAsc ? " ▲" : " ▼") : ""}
+      </th>
+    );
+  }
+
   return (
     <div className="flex-1 overflow-auto">
-      <div className="px-6 py-4 max-w-[1200px]">
-        <div className="flex items-center justify-between mb-3">
+      <div className="px-6 py-6">
+        <div className="flex items-start justify-between mb-5">
           <div>
-            <h2 className="text-lg font-semibold text-slate-200">Provider Statistics</h2>
-            <div className="flex items-center gap-4 mt-1 text-xs text-slate-500">
-              <span>{dateRange.min} to {dateRange.max}</span>
-              <span>{data.length} providers</span>
-              <span>
-                Avg desirability: {averages.desirabilityScore > 0 ? "+" : ""}{averages.desirabilityScore.toFixed(1)}
-                {" | "}Holiday: {averages.holidayWorkCount.toFixed(1)}
-                {trackedShiftCodes.length > 0 && (
-                  <> | {trackedShiftCodes.map((c) => `${c} ${shiftAvgs[c]?.toFixed(1)}`).join(" | ")}</>
-                )}
-              </span>
-            </div>
+            <h2 className="text-lg font-semibold text-slate-100">Workload Equity</h2>
+            <p className="text-sm text-slate-400 mt-1">
+              {dateRange.min} to {dateRange.max} — {data.length} providers
+            </p>
           </div>
           <button
             onClick={() => setShowTallies(!showTallies)}
@@ -142,81 +127,118 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
           </button>
         </div>
 
-        <div className="border border-slate-700 rounded-lg overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-slate-800/80 border-b border-slate-700">
-                <SortHeader label="Provider" sortId="initials" className="text-left" />
-                <SortHeader label="Equity" sortId="overall" className="text-center" />
-                <SortHeader label="Desir" sortId="desirability" className="text-right" />
-                <SortHeader label="Hol" sortId="holiday" className="text-right" />
-                {trackedShiftCodes.map((code) => (
-                  <SortHeader key={code} label={code} sortId={`shift:${code}`} className="text-right" />
-                ))}
-                <SortHeader label="Hours" sortId="hours" className="text-right" />
-                <SortHeader label="Work" sortId="workDays" className="text-right" />
-                <SortHeader label="Leave" sortId="leaveDays" className="text-right" />
-                {showTallies && shiftCodes.map((code) => (
-                  <th key={code} className="px-2 py-2 text-[11px] font-medium text-slate-600 text-right">{code}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((row) => {
-                const eqColor = equityColor(row.deviation.overall, equityThresholds);
-                return (
-                  <tr key={row.providerId} className="border-b border-slate-700/30 hover:bg-slate-800/40 transition-colors">
-                    <td className="px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-slate-200 w-8">{row.initials}</span>
-                        <span className="text-xs text-slate-500">{row.name}</span>
-                        {row.ftePercentage < 1 && (
-                          <span className="text-[10px] text-amber-400/70">{(row.ftePercentage * 100).toFixed(0)}%</span>
-                        )}
-                        {!row.takesCall && <span className="text-[10px] text-slate-600">no call</span>}
-                        {!row.takesLate && <span className="text-[10px] text-slate-600">no late</span>}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full" style={{ backgroundColor: eqColor + "18" }}>
-                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: eqColor }} />
-                        <span className="text-[11px] font-medium" style={{ color: eqColor }}>{equityLabel(row.deviation.overall, equityThresholds)}</span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <span className={`text-xs font-medium tabular-nums ${row.desirabilityScore > 0 ? "text-emerald-400" : row.desirabilityScore < 0 ? "text-red-400" : "text-slate-600"}`}>
-                        {row.desirabilityScore > 0 ? "+" : ""}{row.desirabilityScore}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <Num value={row.holidayWorkCount} color="#facc15" />
-                    </td>
-                    {trackedShiftCodes.map((code) => (
-                      <td key={code} className="px-3 py-2 text-right">
-                        <Num value={row.shiftCounts[code] || 0} color="#94a3b8" />
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+          <div className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3">
+            <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Avg Desirability</div>
+            <div className={`text-lg font-semibold tabular-nums ${averages.desirabilityScore < 0 ? "text-red-400" : "text-emerald-400"}`}>
+              {averages.desirabilityScore > 0 ? "+" : ""}{averages.desirabilityScore.toFixed(1)}
+            </div>
+          </div>
+          <div className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3">
+            <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Avg Holidays</div>
+            <div className="text-lg font-semibold tabular-nums text-amber-400">
+              {averages.holidayWorkCount.toFixed(1)}
+            </div>
+          </div>
+          {trackedShiftCodes.slice(0, 2).map((code) => (
+            <div key={code} className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3">
+              <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Avg {code}</div>
+              <div className="text-lg font-semibold tabular-nums text-slate-300">
+                {shiftAvgs[code]?.toFixed(1)}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-slate-800/30 border border-slate-700 rounded-lg overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-800/80 border-b border-slate-700">
+                  <SortHeader label="Provider" sortId="initials" className="text-left w-44" />
+                  <SortHeader label="Equity" sortId="overall" className="text-center w-28" title="Overall workload balance" />
+                  <SortHeader label="Desirability" sortId="desirability" className="text-right w-24" title="Cumulative shift desirability score" />
+                  <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title="Number of holidays worked" />
+                  {trackedShiftCodes.map((code) => (
+                    <SortHeader key={code} label={code} sortId={`shift:${code}`} className="text-right w-16" title={`Total ${code} shifts`} />
+                  ))}
+                  <SortHeader label="Hours" sortId="hours" className="text-right w-20" title="Total FTE-counted hours" />
+                  <SortHeader label="Work Days" sortId="workDays" className="text-right w-20" title="Total work days" />
+                  <SortHeader label="Leave Days" sortId="leaveDays" className="text-right w-20" title="Total leave days" />
+                  {showTallies && shiftCodes.map((code) => (
+                    <th key={code} className="px-2 py-2.5 text-[11px] font-medium text-slate-600 text-right whitespace-nowrap">{code}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((row) => {
+                  const eqColor = equityColor(row.deviation.overall, equityThresholds);
+                  const eqText = equityLabel(row.deviation.overall, equityThresholds);
+                  return (
+                    <tr key={row.providerId} className="border-b border-slate-700/20 hover:bg-slate-800/40 transition-colors">
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-mono font-bold text-sm w-9 ${!row.isAutoScheduled ? "text-amber-400" : "text-slate-200"}`}>{row.initials}</span>
+                          <span className="text-xs text-slate-500 truncate max-w-[60px]">{row.name}</span>
+                          {row.ftePercentage < 1 && (
+                            <span className="text-[10px] px-1 py-px rounded bg-amber-900/30 text-amber-400/80 font-mono">{(row.ftePercentage * 100).toFixed(0)}%</span>
+                          )}
+                          {!row.takesCall && <span className="text-[10px] px-1 py-px rounded bg-slate-700/50 text-slate-500">no call</span>}
+                          {!row.takesLate && <span className="text-[10px] px-1 py-px rounded bg-slate-700/50 text-slate-500">no late</span>}
+                        </div>
                       </td>
-                    ))}
-                    <td className="px-3 py-2 text-right">
-                      <Num value={row.totalHours} color="#93c5fd" />
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <Num value={row.totalWorkDays} color="#cbd5e1" />
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <Num value={row.totalLeaveDays} color="#94a3b8" />
-                    </td>
-                    {showTallies && shiftCodes.map((code) => (
-                      <td key={code} className="px-2 py-2 text-right">
-                        <span className="text-[11px] text-slate-500 tabular-nums">
-                          {row.shiftTally[code] || ""}
+                      <td className="px-3 py-2.5 text-center">
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ backgroundColor: eqColor + "15" }}>
+                          <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: eqColor }} />
+                          <span className="text-[11px] font-medium whitespace-nowrap" style={{ color: eqColor }}>{eqText}</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <span className={`text-sm font-medium tabular-nums ${row.desirabilityScore > 0 ? "text-emerald-400" : row.desirabilityScore < 0 ? "text-red-400" : "text-slate-600"}`}>
+                          {row.desirabilityScore > 0 ? "+" : ""}{row.desirabilityScore}
                         </span>
                       </td>
-                    ))}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      <td className="px-3 py-2.5 text-right">
+                        <span className={`text-sm tabular-nums ${row.holidayWorkCount > 0 ? "text-amber-400" : "text-slate-600"}`}>
+                          {row.holidayWorkCount}
+                        </span>
+                      </td>
+                      {trackedShiftCodes.map((code) => {
+                        const val = row.shiftCounts[code] || 0;
+                        const avg = shiftAvgs[code] || 0;
+                        const diff = val - avg;
+                        return (
+                          <td key={code} className="px-3 py-2.5 text-right">
+                            <span className={`text-sm tabular-nums ${Math.abs(diff) > avg * 0.3 ? (diff > 0 ? "text-red-400" : "text-blue-400") : "text-slate-400"}`}>
+                              {val}
+                            </span>
+                          </td>
+                        );
+                      })}
+                      <td className="px-3 py-2.5 text-right">
+                        <span className="text-sm tabular-nums text-blue-300 font-medium">
+                          {row.totalHours.toLocaleString()}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <span className="text-sm tabular-nums text-slate-300">{row.totalWorkDays}</span>
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <span className={`text-sm tabular-nums ${row.totalLeaveDays > 0 ? "text-slate-400" : "text-slate-600"}`}>{row.totalLeaveDays}</span>
+                      </td>
+                      {showTallies && shiftCodes.map((code) => (
+                        <td key={code} className="px-2 py-2.5 text-right">
+                          <span className={`text-[11px] tabular-nums ${row.shiftTally[code] ? "text-slate-500" : "text-slate-700"}`}>
+                            {row.shiftTally[code] || "—"}
+                          </span>
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
