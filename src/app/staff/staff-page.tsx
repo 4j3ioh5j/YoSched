@@ -586,7 +586,6 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                   <th className="text-center py-2.5 px-3 w-20">Type</th>
                   <th className="text-center py-2.5 px-3 w-14">FTE</th>
                   <th className="text-center py-2.5 px-3 w-40">Availability</th>
-                  <th className="text-left py-2.5 px-3">Ineligible</th>
                   <th className="text-center py-2.5 px-3 w-12">Sched</th>
                   <th className="text-center py-2.5 px-3 w-20">Quals</th>
                 </tr>
@@ -643,17 +642,6 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                           {hasAdv && <span className="text-[9px] text-amber-400 ml-1">*</span>}
                         </div>
                       </td>
-                      <td className="py-2 px-3">
-                        <div className="flex flex-wrap gap-1">
-                          {allShiftTypes
-                            .filter((st) => !p.eligibleShiftTypeIds.includes(st.id))
-                            .map((st) => (
-                              <span key={st.id} className="text-[10px] px-1.5 py-px rounded bg-slate-700/50 text-slate-500">
-                                {st.code}
-                              </span>
-                            ))}
-                        </div>
-                      </td>
                       <td className="py-2 px-3 text-center">
                         <span className={p.isAutoScheduled ? "text-emerald-400" : "text-slate-600"}>
                           {p.isAutoScheduled ? "✓" : "—"}
@@ -680,7 +668,6 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                     <td className="py-2 px-3 text-center"><span className="text-xs text-slate-600">{p.employmentTypeName}</span></td>
                     <td className="py-2 px-3 text-center"><span className="text-xs text-slate-600">—</span></td>
                     <td className="py-2 px-3"><div className="flex gap-0.5 justify-center">{DAY_INDICES.map((d) => (<span key={d} className="w-5 h-5 text-[10px] rounded font-medium flex items-center justify-center bg-slate-700/30 text-slate-700">{DAY_SHORT[d]}</span>))}</div></td>
-                    <td className="py-2 px-3 text-center text-slate-600">—</td>
                     <td className="py-2 px-3 text-center text-slate-600">—</td>
                     <td className="py-2 px-3 text-center text-slate-600">—</td>
                   </tr>
