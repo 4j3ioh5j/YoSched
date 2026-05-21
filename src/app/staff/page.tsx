@@ -42,6 +42,7 @@ export default async function Staff() {
           ftePercentage: p.ftePercentage ?? 1.0,
           workingDays: p.workingDays,
           takesCall: p.takesCall,
+          takesWeekendCall: p.takesWeekendCall,
           takesLate: p.takesLate,
           specialQualifications: p.specialQualifications,
           isActive: p.isActive,
@@ -54,6 +55,7 @@ export default async function Staff() {
           defaultIsAutoScheduled: et.defaultIsAutoScheduled,
           defaultFtePercentage: et.defaultFtePercentage,
           defaultTakesCall: et.defaultTakesCall,
+          defaultTakesWeekendCall: et.defaultTakesWeekendCall,
           defaultTakesLate: et.defaultTakesLate,
           defaultWorkingDays: et.defaultWorkingDays,
         }))}

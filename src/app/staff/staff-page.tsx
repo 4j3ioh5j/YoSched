@@ -11,6 +11,7 @@ type Provider = {
   ftePercentage: number;
   workingDays: number[];
   takesCall: boolean;
+  takesWeekendCall: boolean;
   takesLate: boolean;
   specialQualifications: string[];
   isActive: boolean;
@@ -24,6 +25,7 @@ type EmploymentType = {
   defaultIsAutoScheduled: boolean;
   defaultFtePercentage: number;
   defaultTakesCall: boolean;
+  defaultTakesWeekendCall: boolean;
   defaultTakesLate: boolean;
   defaultWorkingDays: number[];
 };
@@ -112,6 +114,7 @@ export function StaffPage({ providers: initial, employmentTypes }: Props) {
       isAutoScheduled: et.defaultIsAutoScheduled,
       ftePercentage: et.defaultFtePercentage,
       takesCall: et.defaultTakesCall,
+      takesWeekendCall: et.defaultTakesWeekendCall,
       takesLate: et.defaultTakesLate,
       workingDays: et.defaultWorkingDays,
     } : p));
@@ -219,6 +222,7 @@ export function StaffPage({ providers: initial, employmentTypes }: Props) {
         ftePercentage: created.ftePercentage ?? 1.0,
         workingDays: created.workingDays,
         takesCall: created.takesCall,
+        takesWeekendCall: created.takesWeekendCall,
         takesLate: created.takesLate,
         specialQualifications: created.specialQualifications ?? [],
         isActive: created.isActive,
@@ -313,7 +317,8 @@ export function StaffPage({ providers: initial, employmentTypes }: Props) {
                   <th className="text-center py-2.5 px-3 w-20">Type</th>
                   <th className="text-center py-2.5 px-3 w-14">FTE</th>
                   <th className="text-center py-2.5 px-3 w-40">Working Days</th>
-                  <th className="text-center py-2.5 px-3 w-12">Call</th>
+                  <th className="text-center py-2.5 px-3 w-12">ORC</th>
+                  <th className="text-center py-2.5 px-3 w-12">Wknd</th>
                   <th className="text-center py-2.5 px-3 w-12">Late</th>
                   <th className="text-center py-2.5 px-3 w-12">Sched</th>
                   <th className="text-center py-2.5 px-3 w-20">Quals</th>
@@ -362,6 +367,11 @@ export function StaffPage({ providers: initial, employmentTypes }: Props) {
                     <td className="py-2 px-3 text-center">
                       <span className={p.takesCall ? "text-emerald-400" : "text-slate-600"}>
                         {p.takesCall ? "✓" : "—"}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-center">
+                      <span className={p.takesWeekendCall ? "text-emerald-400" : "text-slate-600"}>
+                        {p.takesWeekendCall ? "✓" : "—"}
                       </span>
                     </td>
                     <td className="py-2 px-3 text-center">
@@ -452,16 +462,6 @@ export function StaffPage({ providers: initial, employmentTypes }: Props) {
                   ))}
                 </select>
               </FieldRow>
-              <FieldRow label="Active" description="Inactive staff are hidden from the schedule">
-                <input type="checkbox" checked={ep.isActive} onChange={(e) => updateField(ep.id, "isActive", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
-              </FieldRow>
-            </div>
-
-            <div className="px-6 py-4 border-t border-slate-700">
-              <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Scheduling</div>
-              <FieldRow label="Auto-schedule" description="Include this person in the auto-scheduler">
-                <input type="checkbox" checked={ep.isAutoScheduled} onChange={(e) => updateField(ep.id, "isAutoScheduled", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
-              </FieldRow>
               <FieldRow label="FTE percentage" description="Target hours = FTE% × pay period hours">
                 <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={ep.ftePercentage} onChange={(e) => updateField(ep.id, "ftePercentage", parseFloat(e.target.value))}>
                   {[1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1].map((v) => (
@@ -469,11 +469,24 @@ export function StaffPage({ providers: initial, employmentTypes }: Props) {
                   ))}
                 </select>
               </FieldRow>
-              <FieldRow label="Takes call" description="Eligible for call shifts">
+              <FieldRow label="Active" description="Inactive staff are hidden from the schedule">
+                <input type="checkbox" checked={ep.isActive} onChange={(e) => updateField(ep.id, "isActive", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </FieldRow>
+              <FieldRow label="Auto-schedule" description="Include this person in the auto-scheduler">
+                <input type="checkbox" checked={ep.isAutoScheduled} onChange={(e) => updateField(ep.id, "isAutoScheduled", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </FieldRow>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-700">
+              <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Scheduling</div>
+              <FieldRow label="Takes call (ORC)" description="Eligible for weekday OR Call shifts">
                 <input type="checkbox" checked={ep.takesCall} onChange={(e) => updateField(ep.id, "takesCall", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
               </FieldRow>
-              <FieldRow label="Takes late" description="Eligible for late shifts">
+              <FieldRow label="Takes late (ORL)" description="Eligible for late shifts">
                 <input type="checkbox" checked={ep.takesLate} onChange={(e) => updateField(ep.id, "takesLate", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </FieldRow>
+              <FieldRow label="Takes weekend call" description="Eligible for weekend CALL shifts">
+                <input type="checkbox" checked={ep.takesWeekendCall} onChange={(e) => updateField(ep.id, "takesWeekendCall", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
               </FieldRow>
               <div className="py-2.5">
                 <div className="text-sm text-slate-200 mb-2">Working days</div>

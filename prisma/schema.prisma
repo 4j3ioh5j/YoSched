@@ -57,6 +57,7 @@ model EmploymentType {
   defaultIsAutoScheduled Boolean  @default(true)
   defaultFtePercentage   Float    @default(1.0)
   defaultTakesCall       Boolean  @default(true)
+  defaultTakesWeekendCall Boolean @default(true)
   defaultTakesLate       Boolean  @default(true)
   defaultWorkingDays     Int[]    @default([1, 2, 3, 4, 5])
   sortOrder              Int      @default(0)
@@ -79,6 +80,7 @@ model Provider {
   role                  String?
   specialQualifications String[] @default([])
   takesCall             Boolean  @default(true)
+  takesWeekendCall      Boolean  @default(true)
   takesLate             Boolean  @default(true)
   workingDays           Int[]    @default([1, 2, 3, 4, 5]) // 0=Sun..6=Sat
   isTemporary           Boolean  @default(false)

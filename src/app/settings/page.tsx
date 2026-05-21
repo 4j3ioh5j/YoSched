@@ -101,6 +101,7 @@ export default async function Settings() {
           defaultIsAutoScheduled: et.defaultIsAutoScheduled,
           defaultFtePercentage: et.defaultFtePercentage,
           defaultTakesCall: et.defaultTakesCall,
+          defaultTakesWeekendCall: et.defaultTakesWeekendCall,
           defaultTakesLate: et.defaultTakesLate,
           defaultWorkingDays: et.defaultWorkingDays,
           sortOrder: et.sortOrder,

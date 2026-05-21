@@ -103,6 +103,7 @@ export default async function Equity() {
       isAutoScheduled: p.isAutoScheduled,
       ftePercentage: p.ftePercentage ?? 1.0,
       takesCall: p.takesCall,
+      takesWeekendCall: p.takesWeekendCall,
       takesLate: p.takesLate,
       totalHours: providerHours[m.providerId] || 0,
       shiftTally: shiftTallies[m.providerId] || {},

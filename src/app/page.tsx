@@ -103,6 +103,7 @@ export default async function Home() {
           ftePercentage: p.ftePercentage ?? 1.0,
           workingDays: p.workingDays,
           takesCall: p.takesCall,
+          takesWeekendCall: p.takesWeekendCall,
           takesLate: p.takesLate,
           isAutoScheduled: p.isAutoScheduled,
         }))}

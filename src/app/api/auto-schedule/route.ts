@@ -76,6 +76,7 @@ export async function POST(req: NextRequest) {
       initials: p.initials,
       ftePercentage: p.ftePercentage ?? 1.0,
       takesCall: p.takesCall,
+      takesWeekendCall: p.takesWeekendCall,
       takesLate: p.takesLate,
       workingDays: p.workingDays,
       isActive: p.isActive,

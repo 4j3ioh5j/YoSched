@@ -12,6 +12,7 @@ type Provider = {
   ftePercentage: number;
   workingDays: number[];
   takesCall: boolean;
+  takesWeekendCall: boolean;
   takesLate: boolean;
   isAutoScheduled: boolean;
 };

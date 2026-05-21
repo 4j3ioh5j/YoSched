@@ -5,6 +5,7 @@ export type ScheduleProvider = {
   initials: string;
   ftePercentage: number;
   takesCall: boolean;
+  takesWeekendCall: boolean;
   takesLate: boolean;
   workingDays: number[];
   isActive: boolean;
@@ -353,6 +354,7 @@ export function autoSchedule({
     if (!st.eligibilityRule) return activeProviders;
     return activeProviders.filter((p) => {
       if (st.eligibilityRule === "takesCall") return p.takesCall;
+      if (st.eligibilityRule === "takesWeekendCall") return p.takesWeekendCall;
       if (st.eligibilityRule === "takesLate") return p.takesLate;
       return p.specialQualifications.includes(st.eligibilityRule!);
     });
