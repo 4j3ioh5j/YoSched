@@ -583,7 +583,7 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                   <th className="text-center py-2.5 px-3 w-20">Type</th>
                   <th className="text-center py-2.5 px-3 w-14">FTE</th>
                   <th className="text-center py-2.5 px-3 w-40">Availability</th>
-                  <th className="text-center py-2.5 px-3 w-12">Sched</th>
+                  <th className="text-center py-2.5 px-3 w-14">Auto</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
