@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { computeFairness } from "@/lib/fairness";
 import { ScheduleGrid } from "./schedule-grid";
-import Link from "next/link";
+import { NavHeader } from "./nav-header";
 
 export const dynamic = "force-dynamic";
 
@@ -76,23 +76,7 @@ export default async function Home() {
 
   return (
     <main className="flex flex-col h-screen">
-      <header className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-900 shrink-0">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold tracking-tight">YoSched</h1>
-          <span className="text-sm text-slate-400">Schedule Grid</span>
-        </div>
-        <div className="flex items-center gap-4 text-sm text-slate-400">
-          <Link href="/equity" className="text-slate-400 hover:text-slate-200 transition-colors">
-            Statistics
-          </Link>
-          <Link href="/staff" className="text-slate-400 hover:text-slate-200 transition-colors">
-            Staff
-          </Link>
-          <Link href="/settings" className="text-slate-400 hover:text-slate-200 transition-colors">
-            Settings
-          </Link>
-        </div>
-      </header>
+      <NavHeader />
 
       <ScheduleGrid
         providers={providers.map((p) => ({

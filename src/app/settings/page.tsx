@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { SettingsPage } from "./settings-page";
-import Link from "next/link";
+import { NavHeader } from "../nav-header";
 
 export const dynamic = "force-dynamic";
 
@@ -27,20 +27,7 @@ export default async function Settings() {
 
   return (
     <main className="flex flex-col h-screen">
-      <header className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-900 shrink-0">
-        <div className="flex items-center gap-3">
-          <Link href="/" className="text-xl font-bold tracking-tight hover:text-blue-400 transition-colors">
-            YoSched
-          </Link>
-          <span className="text-sm text-slate-400">Settings</span>
-        </div>
-        <Link
-          href="/"
-          className="text-sm text-slate-400 hover:text-slate-200 transition-colors"
-        >
-          ← Back to Schedule
-        </Link>
-      </header>
+      <NavHeader />
 
       <SettingsPage
         shiftTypes={shiftTypes.map((st) => ({

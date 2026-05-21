@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { StaffPage } from "./staff-page";
-import Link from "next/link";
+import { NavHeader } from "../nav-header";
 
 export const dynamic = "force-dynamic";
 
@@ -19,22 +19,7 @@ export default async function Staff() {
 
   return (
     <main className="flex flex-col h-screen">
-      <header className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-900 shrink-0">
-        <div className="flex items-center gap-3">
-          <Link href="/" className="text-xl font-bold tracking-tight hover:text-blue-400 transition-colors">
-            YoSched
-          </Link>
-          <span className="text-sm text-slate-400">Staff</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <Link href="/settings" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">
-            Settings
-          </Link>
-          <Link href="/" className="text-sm text-slate-400 hover:text-slate-200 transition-colors">
-            ← Schedule
-          </Link>
-        </div>
-      </header>
+      <NavHeader />
 
       <StaffPage
         providers={providers.map((p) => ({
