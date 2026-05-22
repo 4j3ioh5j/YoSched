@@ -38,12 +38,6 @@ type PayPeriod = {
   targetHours: number;
 };
 
-type FteTarget = {
-  id: string;
-  ftePercentage: number;
-  targetHours: number;
-};
-
 type Holiday = {
   id: string;
   date: string;
@@ -95,7 +89,6 @@ type Props = {
   shiftTypes: ShiftType[];
   staffingReqs: StaffingReq[];
   payPeriods: PayPeriod[];
-  fteTargets: FteTarget[];
   holidays: Holiday[];
   desirabilityWeights: DesirabilityWeight[];
   schedulingPrefs: SchedulingPrefs;
@@ -980,169 +973,6 @@ function PayPeriodsSection({ initial, pushUndo }: { initial: PayPeriod[]; pushUn
   );
 }
 
-// ─── FTE Hours Section ──────────────────────────────────────────────────────
-
-function FteHoursSection({ initial, pushUndo }: { initial: FteTarget[]; pushUndo: (a: UndoAction) => void }) {
-  const [targets, setTargets] = useState(() =>
-    [...initial].sort((a, b) => b.ftePercentage - a.ftePercentage),
-  );
-  const [status, setStatus] = useState<SaveStatus>("idle");
-  const [error, setError] = useState("");
-  const [newFte, setNewFte] = useState("");
-
-  const baseHours = targets.find((t) => t.ftePercentage === 1.0)?.targetHours ?? 80;
-
-  function updateBaseHours(newBase: number) {
-    setTargets((prev) =>
-      prev.map((t) => ({
-        ...t,
-        targetHours: Math.round(t.ftePercentage * newBase * 10) / 10,
-      })),
-    );
-  }
-
-  function updateTargetHours(ftePercentage: number, hours: number) {
-    setTargets((prev) =>
-      prev.map((t) => t.ftePercentage === ftePercentage ? { ...t, targetHours: hours } : t),
-    );
-  }
-
-  function addFteLevel() {
-    const pct = parseFloat(newFte);
-    if (!pct || pct <= 0 || pct > 1.0) return;
-    if (targets.some((t) => t.ftePercentage === pct)) return;
-    setTargets((prev) =>
-      [...prev, { id: `new-${pct}`, ftePercentage: pct, targetHours: Math.round(pct * baseHours * 10) / 10 }]
-        .sort((a, b) => b.ftePercentage - a.ftePercentage),
-    );
-    setNewFte("");
-  }
-
-  function removeFteLevel(ftePercentage: number) {
-    if (ftePercentage === 1.0) return;
-    setTargets((prev) => prev.filter((t) => t.ftePercentage !== ftePercentage));
-  }
-
-  async function save() {
-    const prevTargets = [...targets];
-    setStatus("saving");
-    try {
-      const res = await fetch("/api/settings/fte-targets", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targets: targets.map((t) => ({ ftePercentage: t.ftePercentage, targetHours: t.targetHours })),
-        }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const saved: FteTarget[] = await res.json();
-      setTargets(saved.sort((a, b) => b.ftePercentage - a.ftePercentage));
-      setStatus("saved");
-      setTimeout(() => setStatus("idle"), 2000);
-
-      pushUndo({
-        label: "Updated FTE hours",
-        execute: async () => {
-          const res = await fetch("/api/settings/fte-targets", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              targets: prevTargets.map((t) => ({ ftePercentage: t.ftePercentage, targetHours: t.targetHours })),
-            }),
-          });
-          const restored: FteTarget[] = await res.json();
-          setTargets(restored.sort((a, b) => b.ftePercentage - a.ftePercentage));
-        },
-      });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed");
-      setStatus("error");
-    }
-  }
-
-  return (
-    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
-      <SectionHeader
-        title="Hours per Pay Period"
-        description="Target hours by FTE level — used for pay period summaries in the grid"
-        status={status}
-        error={error}
-      />
-
-      <div className="mb-4">
-        <label className="text-xs text-slate-400 block mb-1">Base Hours (1.0 FTE)</label>
-        <div className="flex gap-2 items-center">
-          <input
-            type="number"
-            className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm"
-            value={baseHours}
-            onChange={(e) => updateBaseHours(parseFloat(e.target.value) || 80)}
-          />
-          <span className="text-xs text-slate-500">Changing this recalculates all FTE levels</span>
-        </div>
-      </div>
-
-      <div className="space-y-1 mb-4">
-        <div className="grid grid-cols-3 gap-3 text-xs text-slate-500 font-medium px-1">
-          <span>FTE</span>
-          <span>Hours / Period</span>
-          <span></span>
-        </div>
-        {targets.map((t) => (
-          <div key={t.ftePercentage} className="grid grid-cols-3 gap-3 items-center px-1 py-1 rounded hover:bg-slate-700/30">
-            <span className="text-sm font-mono text-slate-300">
-              {t.ftePercentage === 1.0 ? "1.0" : t.ftePercentage.toFixed(2).replace(/0$/, "")}
-            </span>
-            <input
-              type="number"
-              step="0.5"
-              className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono"
-              value={t.targetHours}
-              onChange={(e) => updateTargetHours(t.ftePercentage, parseFloat(e.target.value) || 0)}
-            />
-            <div>
-              {t.ftePercentage !== 1.0 && (
-                <button
-                  onClick={() => removeFteLevel(t.ftePercentage)}
-                  className="text-xs text-red-400 hover:text-red-300 transition-colors"
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="flex gap-2 items-center mb-4">
-        <input
-          type="number"
-          step="0.1"
-          min="0.1"
-          max="1.0"
-          placeholder="0.5"
-          className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm"
-          value={newFte}
-          onChange={(e) => setNewFte(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && addFteLevel()}
-        />
-        <button
-          onClick={addFteLevel}
-          className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
-        >
-          + Add FTE Level
-        </button>
-      </div>
-
-      <button
-        onClick={save}
-        className="px-4 py-2 text-sm bg-blue-700 hover:bg-blue-600 rounded transition-colors font-medium"
-      >
-        Save FTE Hours
-      </button>
-    </section>
-  );
-}
 
 // ─── Holidays Section ───────────────────────────────────────────────────────
 
@@ -2079,7 +1909,7 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes }: Props) {
   const undo = useUndo();
 
   return (
@@ -2091,7 +1921,6 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets,
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <SchedulingPrefsSection initial={schedulingPrefs} />
-        <FteHoursSection initial={fteTargets} pushUndo={undo.push} />
         <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} />
         <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} />
       </div>

@@ -10,11 +10,10 @@ export default async function Settings() {
   const session = await auth();
   const role = (session?.user as { role?: string })?.role;
   if (role !== "admin") redirect("/");
-  const [shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
-    prisma.fteTarget.findMany({ orderBy: { ftePercentage: "desc" } }),
     prisma.holiday.findMany({ orderBy: { date: "asc" } }),
     prisma.desirabilityWeight.findMany(),
     prisma.schedulingPreferences.findFirst(),
@@ -68,11 +67,6 @@ export default async function Settings() {
           startDate: pp.startDate.toISOString().split("T")[0],
           endDate: pp.endDate.toISOString().split("T")[0],
           targetHours: pp.targetHours,
-        }))}
-        fteTargets={fteTargets.map((ft) => ({
-          id: ft.id,
-          ftePercentage: ft.ftePercentage,
-          targetHours: ft.targetHours,
         }))}
         holidays={holidays.map((h) => ({
           id: h.id,

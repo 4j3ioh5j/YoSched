@@ -670,7 +670,7 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                       </td>
                       <td className="py-2 px-3 text-center">
                         <span className="text-xs text-slate-400 font-mono">
-                          {!p.isAutoScheduled ? "—" : `${(p.ftePercentage * 100).toFixed(0)}%`}
+                          {!p.isAutoScheduled ? "—" : p.ftePercentage % 1 === 0 ? p.ftePercentage.toFixed(1) : String(p.ftePercentage)}
                         </span>
                       </td>
                       <td className="py-2 px-3">
@@ -775,12 +775,19 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                 </select>
               </FieldRow>
               {ep.isAutoScheduled && (
-                <FieldRow label="FTE percentage" description="Target hours = FTE% x pay period hours">
-                  <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={ep.ftePercentage} onChange={(e) => updateField(ep.id, "ftePercentage", parseFloat(e.target.value))}>
-                    {[1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1].map((v) => (
-                      <option key={v} value={v}>{(v * 100).toFixed(0)}%</option>
-                    ))}
-                  </select>
+                <FieldRow label="FTE" description="Target hours = FTE x pay period hours">
+                  <input
+                    type="number"
+                    step="0.001"
+                    min="0"
+                    max="9.999"
+                    className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono"
+                    value={ep.ftePercentage}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (!isNaN(v) && v >= 0 && v <= 9.999) updateField(ep.id, "ftePercentage", Math.round(v * 1000) / 1000);
+                    }}
+                  />
                 </FieldRow>
               )}
               <FieldRow label="Active" description="Inactive staff are hidden from the schedule">
