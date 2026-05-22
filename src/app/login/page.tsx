@@ -143,7 +143,7 @@ function LoginForm() {
             <span className="text-white">Yo</span>
             <span style={{ color: "#63b3ed" }}>Sched</span>
           </h1>
-          <p className="text-lg text-white/40 font-light mt-2">Hospital Staff Scheduling</p>
+          <p className="text-lg text-white/40 font-light mt-2">Staff Scheduling</p>
         </div>
 
         {step === "credentials" ? (

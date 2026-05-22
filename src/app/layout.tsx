@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "YoSched",
-  description: "Hospital Staff Scheduling",
+  description: "Staff Scheduling",
 };
 
 export default function RootLayout({
