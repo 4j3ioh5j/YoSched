@@ -183,7 +183,7 @@ function OverviewCharts({ data, trackedShiftCodes }: {
         <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4 xl:col-span-2">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Shift Distribution</h3>
           <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={shiftData} margin={{ left: -10, right: 10, top: 5, bottom: 5 }}>
+            <BarChart data={shiftData} margin={{ left: -10, right: 10, top: 5, bottom: 5 }} barGap={1} barCategoryGap="15%">
               <XAxis dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 10, fontFamily: "monospace" }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} />
               <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
               <Tooltip content={<ChartTooltipContent />} />
@@ -193,7 +193,7 @@ function OverviewCharts({ data, trackedShiftCodes }: {
                 iconSize={8}
               />
               {trackedShiftCodes.map((code, i) => (
-                <Bar key={code} dataKey={code} name={code} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.75} radius={[2, 2, 0, 0]} maxBarSize={20} />
+                <Bar key={code} dataKey={code} name={code} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.75} radius={[2, 2, 0, 0]} minPointSize={3} />
               ))}
             </BarChart>
           </ResponsiveContainer>
