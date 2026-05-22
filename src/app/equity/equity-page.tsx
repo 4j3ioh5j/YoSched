@@ -220,21 +220,22 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
   const fte = row.ftePercentage;
 
   const radarData = useMemo(() => {
-    const raw: { label: string; provider: number; average: number }[] = [
-      { label: "Holidays", provider: row.holidayWorkCount, average: averages.holidayWorkCount * fte },
-    ];
-    for (const code of trackedShiftCodes) {
-      raw.push({
+    const items: { label: string; value: number }[] = [
+      { label: "Undesirable", value: row.deviation.desirability },
+      { label: "Holidays", value: row.deviation.holidayWork },
+      ...Object.entries(row.deviation.perShift).map(([code, dev]) => ({
         label: code,
-        provider: row.shiftCounts[code] || 0,
-        average: (averages.perShift[code] || 0) * fte,
-      });
-    }
-    return raw.map((d) => {
-      const scale = d.average || Math.max(d.provider, 1);
-      return { label: d.label, provider: (d.provider / scale) * 100, average: 100 };
-    });
-  }, [row, averages, trackedShiftCodes, fte]);
+        value: dev,
+      })),
+    ];
+    const minVal = Math.min(...items.map((d) => d.value));
+    const offset = minVal < 0 ? -minVal : 0;
+    return items.map((d) => ({
+      label: d.label,
+      provider: parseFloat((d.value + offset).toFixed(2)),
+      average: parseFloat(offset.toFixed(2)),
+    }));
+  }, [row]);
 
   const comparisonData = useMemo(() => {
     const items: { label: string; provider: number; average: number; unit: string }[] = [
@@ -291,13 +292,13 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
                   <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
                 </RadarChart>
               </ResponsiveContainer>
-              <p className="text-[10px] text-slate-600 mt-2">Each axis shows provider value as % of FTE-adjusted department average (dashed = 100%). Extending beyond the dashed line means above average for that metric.</p>
+              <p className="text-[10px] text-slate-600 mt-2">Z-score per factor, FTE-normalized. Dashed circle = department median (zero). Further out = more burden. All axes point outward = worse.</p>
             </div>
           </div>
 
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Category Breakdown</h3>
-            <p className="text-[10px] text-slate-600 mb-3">Each bar = provider&apos;s value as % of FTE-adjusted dept average. Dashed line = 100% (average). Above = more than average, below = less.</p>
+            <p className="text-[10px] text-slate-600 mb-3">Each bar = provider&apos;s count as % of FTE-adjusted dept average. Dashed line = average. Orange = above avg (more burden), blue = below avg (less burden).</p>
             <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={comparisonData.map((d) => {
@@ -308,7 +309,13 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
                   <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} unit="%" />
                   <Tooltip formatter={(v) => `${v}%`} />
                   <ReferenceLine y={100} stroke="#475569" strokeDasharray="3 3" label={{ value: "Avg", fill: "#64748b", fontSize: 10, position: "right" }} />
-                  <Bar dataKey="provider" name={row.initials} fill="#3b82f6" fillOpacity={0.8} radius={[3, 3, 0, 0]} maxBarSize={28} />
+                  <Bar dataKey="provider" name={row.initials} fillOpacity={0.8} radius={[3, 3, 0, 0]} maxBarSize={28}>
+                    {comparisonData.map((d, i) => {
+                      const scale = d.average || Math.max(Math.abs(d.provider), 1);
+                      const pct = (d.provider / scale) * 100;
+                      return <Cell key={i} fill={pct > 100 ? "#f97316" : "#3b82f6"} fillOpacity={0.8} />;
+                    })}
+                  </Bar>
                   <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
                 </BarChart>
               </ResponsiveContainer>
