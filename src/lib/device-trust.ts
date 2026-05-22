@@ -6,7 +6,9 @@ const MAX_AGE_DAYS = 30;
 const MAX_AGE_SECONDS = MAX_AGE_DAYS * 24 * 60 * 60;
 
 function getSecret(): string {
-  return process.env.AUTH_SECRET || "";
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) throw new Error("AUTH_SECRET is required for device trust");
+  return secret;
 }
 
 function sign(userId: string, timestamp: number): string {

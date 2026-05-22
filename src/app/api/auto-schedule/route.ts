@@ -220,7 +220,20 @@ export async function PUT(req: NextRequest) {
   const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
 
   const applied = [];
+  const skipped = [];
   for (const s of suggestions) {
+    const existing = await prisma.assignment.findUnique({
+      where: {
+        providerId_date: {
+          providerId: s.providerId,
+          date: new Date(s.date + "T00:00:00Z"),
+        },
+      },
+    });
+    if (existing?.isLocked) {
+      skipped.push({ providerId: s.providerId, date: s.date, reason: "locked" });
+      continue;
+    }
     const result = await prisma.assignment.upsert({
       where: {
         providerId_date: {
@@ -248,7 +261,7 @@ export async function PUT(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ applied });
+  return NextResponse.json({ applied, skipped });
 }
 
 export async function DELETE(req: NextRequest) {
@@ -267,6 +280,7 @@ export async function DELETE(req: NextRequest) {
   const toDelete = await prisma.assignment.findMany({
     where: {
       source: "auto",
+      isLocked: false,
       date: {
         gte: new Date(startDate + "T00:00:00Z"),
         lte: new Date(endDate + "T00:00:00Z"),

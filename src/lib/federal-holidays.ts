@@ -1,6 +1,6 @@
 function nthDayOfMonth(year: number, month: number, dayOfWeek: number, n: number): Date {
   const first = new Date(year, month, 1);
-  let dow = first.getDay();
+  const dow = first.getDay();
   let day = 1 + ((dayOfWeek - dow + 7) % 7);
   day += (n - 1) * 7;
   return new Date(year, month, day);
@@ -8,8 +8,8 @@ function nthDayOfMonth(year: number, month: number, dayOfWeek: number, n: number
 
 function lastDayOfMonth(year: number, month: number, dayOfWeek: number): Date {
   const last = new Date(year, month + 1, 0);
-  let dow = last.getDay();
-  let day = last.getDate() - ((dow - dayOfWeek + 7) % 7);
+  const dow = last.getDay();
+  const day = last.getDate() - ((dow - dayOfWeek + 7) % 7);
   return new Date(year, month, day);
 }
 

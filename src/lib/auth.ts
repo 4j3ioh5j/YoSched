@@ -5,6 +5,19 @@ import { prisma } from "./prisma";
 import { authConfig } from "./auth.config";
 import { decrypt } from "./crypto";
 import { isDeviceTrusted } from "./device-trust";
+import { checkRateLimit } from "./rate-limit";
+
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_MINUTES = 15;
+
+async function recordFailedAttempt(userId: string, currentAttempts: number) {
+  const attempts = currentAttempts + 1;
+  const data: { failedAttempts: number; lockedUntil?: Date | null } = { failedAttempts: attempts };
+  if (attempts >= MAX_FAILED_ATTEMPTS) {
+    data.lockedUntil = new Date(Date.now() + LOCKOUT_MINUTES * 60_000);
+  }
+  await prisma.user.update({ where: { id: userId }, data });
+}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   ...authConfig,
@@ -22,14 +35,21 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const totpCode = credentials?.totpCode as string | undefined;
         if (!email || !password) return null;
 
+        const rl = checkRateLimit(email.toLowerCase());
+        if (!rl.allowed) return null;
+
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user) return null;
 
         if (user.lockedUntil && user.lockedUntil > new Date()) return null;
 
         const valid = await compare(password, user.passwordHash);
-        if (!valid) return null;
+        if (!valid) {
+          await recordFailedAttempt(user.id, user.failedAttempts);
+          return null;
+        }
 
+        let totpVerifiedAt: number | undefined;
         if (user.totpEnabled && user.totpSecret) {
           const trusted = await isDeviceTrusted(user.id);
           if (!trusted) {
@@ -37,7 +57,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             const secret = decrypt(user.totpSecret);
             const { verifySync } = await import("otplib");
             const result = verifySync({ token: totpCode, secret });
-            if (!result.valid) return null;
+            if (!result.valid) {
+              await recordFailedAttempt(user.id, user.failedAttempts);
+              return null;
+            }
+            totpVerifiedAt = Date.now();
           }
         }
 
@@ -48,7 +72,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           });
         }
 
-        return { id: user.id, email: user.email, name: user.name, role: user.role };
+        return { id: user.id, email: user.email, name: user.name, role: user.role, totpVerifiedAt };
       },
     }),
   ],

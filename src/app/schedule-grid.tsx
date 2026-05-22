@@ -188,7 +188,7 @@ function findPayPeriod(dateStr: string, payPeriods: PayPeriod[]): PayPeriod | nu
 }
 
 type RowItem =
-  | { type: "date"; date: string }
+  | { type: "date"; date: string; isNewPP: boolean }
   | { type: "pp-summary"; pp: PayPeriod; ppIndex: number };
 
 function buildRowItems(dates: string[], payPeriods: PayPeriod[]): RowItem[] {
@@ -196,19 +196,26 @@ function buildRowItems(dates: string[], payPeriods: PayPeriod[]): RowItem[] {
   const sortedPPs = [...payPeriods].sort((a, b) => a.startDate.localeCompare(b.startDate));
   const endedPPs = new Set<string>();
 
+  const findPP = (date: string) => sortedPPs.find((pp) => date >= pp.startDate && date <= pp.endDate);
+  let lastPPKey = "";
+
   for (let i = 0; i < dates.length; i++) {
     const date = dates[i];
-    items.push({ type: "date", date });
+    const currentPP = findPP(date);
+    const ppKey = currentPP?.startDate ?? "";
+    const isNewPP = ppKey !== "" && ppKey !== lastPPKey;
+    if (ppKey !== "") lastPPKey = ppKey;
+    items.push({ type: "date", date, isNewPP });
 
     const nextDate = dates[i + 1];
     for (let ppIdx = 0; ppIdx < sortedPPs.length; ppIdx++) {
       const pp = sortedPPs[ppIdx];
-      const ppKey = pp.startDate;
-      if (endedPPs.has(ppKey)) continue;
+      const ppStartKey = pp.startDate;
+      if (endedPPs.has(ppStartKey)) continue;
       if (pp.startDate > dates[dates.length - 1]) continue;
       if (date === pp.endDate || (date <= pp.endDate && (!nextDate || nextDate > pp.endDate))) {
         items.push({ type: "pp-summary", pp, ppIndex: ppIdx });
-        endedPPs.add(ppKey);
+        endedPPs.add(ppStartKey);
       }
     }
   }
@@ -609,8 +616,8 @@ export function ScheduleGrid({
 
   const undoRef = useRef(handleUndo);
   const redoRef = useRef(handleRedo);
-  undoRef.current = handleUndo;
-  redoRef.current = handleRedo;
+  useEffect(() => { undoRef.current = handleUndo; }, [handleUndo]);
+  useEffect(() => { redoRef.current = handleRedo; }, [handleRedo]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -703,7 +710,7 @@ export function ScheduleGrid({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cells, shiftTypeId }),
         });
-        const saved: AssignmentData[] = await res.json();
+        const { applied: saved }: { applied: AssignmentData[] } = await res.json();
         setLocalAssignments((prev) => {
           const keys = new Set(saved.map((s) => `${s.providerId}:${s.date}`));
           const filtered = prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`));
@@ -832,7 +839,7 @@ export function ScheduleGrid({
 
     // Optimistic update
     setLocalAssignments((prev) => {
-      let next = prev.filter(
+      const next = prev.filter(
         (a) => !(a.providerId === fromProviderId && a.date === fromDate) &&
                !(a.providerId === toProviderId && a.date === toDate)
       );
@@ -859,14 +866,11 @@ export function ScheduleGrid({
       const result = await res.json();
 
       setLocalAssignments((prev) => {
-        let next = prev.filter(
-          (a) => !a.id.startsWith("temp-")
-            || (a.providerId !== fromProviderId && a.providerId !== toProviderId)
-        );
-        // Replace temps with server responses
-        next = next.filter(
-          (a) => !(a.providerId === toProviderId && a.date === toDate) &&
-                 !(a.providerId === fromProviderId && a.date === fromDate)
+        const next = prev.filter(
+          (a) => (!a.id.startsWith("temp-")
+            || (a.providerId !== fromProviderId && a.providerId !== toProviderId))
+            && !(a.providerId === toProviderId && a.date === toDate)
+            && !(a.providerId === fromProviderId && a.date === fromDate)
         );
         if (result.moved) next.push(result.moved);
         if (result.swapped) next.push(result.swapped);
@@ -1047,8 +1051,6 @@ export function ScheduleGrid({
     }
     return items;
   }, [dates, dayWarnings]);
-
-  let lastPPKey = "";
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -1265,9 +1267,7 @@ export function ScheduleGrid({
               const isToday = date === toDateStr(today);
 
               const currentPP = findPayPeriod(date, sortedPPs);
-              const ppKey = currentPP?.startDate ?? "";
-              const isNewPP = ppKey !== "" && ppKey !== lastPPKey;
-              if (ppKey !== "") lastPPKey = ppKey;
+              const { isNewPP } = item;
               const ppIdx = currentPP ? sortedPPs.indexOf(currentPP) : -1;
               const ppEven = ppIdx !== -1 && ppIdx % 2 === 0;
 

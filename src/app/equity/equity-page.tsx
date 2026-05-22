@@ -105,9 +105,8 @@ function deviationColor(value: number): string {
   return "#6b7280";
 }
 
-function OverviewCharts({ data, averages, trackedShiftCodes }: {
+function OverviewCharts({ data, trackedShiftCodes }: {
   data: EquityRow[];
-  averages: Averages;
   trackedShiftCodes: string[];
 }) {
   const equityData = useMemo(() => {
@@ -396,6 +395,19 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
   );
 }
 
+function SortHeader({ label, sortId, className, title, sortKey, sortAsc, onSort }: { label: string; sortId: SortKey; className?: string; title?: string; sortKey: SortKey; sortAsc: boolean; onSort: (key: SortKey) => void }) {
+  const active = sortKey === sortId;
+  return (
+    <th
+      className={`py-2.5 px-3 text-[11px] font-semibold uppercase tracking-wider cursor-pointer hover:text-slate-300 transition-colors select-none whitespace-nowrap ${active ? "text-slate-200" : "text-slate-500"} ${className || ""}`}
+      onClick={() => onSort(sortId)}
+      title={title}
+    >
+      {label}{active ? (sortAsc ? " ▲" : " ▼") : ""}
+    </th>
+  );
+}
+
 export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("overall");
   const [sortAsc, setSortAsc] = useState(false);
@@ -430,19 +442,6 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
   for (const code of trackedShiftCodes) {
     const vals = data.map((d) => d.shiftCounts[code] || 0);
     shiftAvgs[code] = vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
-  }
-
-  function SortHeader({ label, sortId, className, title }: { label: string; sortId: SortKey; className?: string; title?: string }) {
-    const active = sortKey === sortId;
-    return (
-      <th
-        className={`py-2.5 px-3 text-[11px] font-semibold uppercase tracking-wider cursor-pointer hover:text-slate-300 transition-colors select-none whitespace-nowrap ${active ? "text-slate-200" : "text-slate-500"} ${className || ""}`}
-        onClick={() => handleSort(sortId)}
-        title={title}
-      >
-        {label}{active ? (sortAsc ? " ▲" : " ▼") : ""}
-      </th>
-    );
   }
 
   return (
@@ -500,7 +499,6 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
         {showCharts && (
           <OverviewCharts
             data={data}
-            averages={averages}
             trackedShiftCodes={trackedShiftCodes}
           />
         )}
@@ -510,16 +508,16 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-800/80 border-b border-slate-700">
-                  <SortHeader label="Provider" sortId="initials" className="text-left w-44" />
-                  <SortHeader label="Equity" sortId="overall" className="text-center w-28" title="Overall workload balance" />
-                  <SortHeader label="Shift Desirability" sortId="desirability" className="text-right w-28" title="Cumulative shift desirability score" />
-                  <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title="Number of holidays worked" />
+                  <SortHeader label="Provider" sortId="initials" className="text-left w-44" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                  <SortHeader label="Equity" sortId="overall" className="text-center w-28" title="Overall workload balance" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                  <SortHeader label="Shift Desirability" sortId="desirability" className="text-right w-28" title="Cumulative shift desirability score" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                  <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title="Number of holidays worked" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   {trackedShiftCodes.map((code) => (
-                    <SortHeader key={code} label={code} sortId={`shift:${code}`} className="text-right w-16" title={`Total ${code} shifts`} />
+                    <SortHeader key={code} label={code} sortId={`shift:${code}`} className="text-right w-16" title={`Total ${code} shifts`} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   ))}
-                  <SortHeader label="Hours" sortId="hours" className="text-right w-20" title="Total FTE-counted hours" />
-                  <SortHeader label="Work Days" sortId="workDays" className="text-right w-20" title="Total work days" />
-                  <SortHeader label="Leave Days" sortId="leaveDays" className="text-right w-20" title="Total leave days" />
+                  <SortHeader label="Hours" sortId="hours" className="text-right w-20" title="Total FTE-counted hours" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                  <SortHeader label="Work Days" sortId="workDays" className="text-right w-20" title="Total work days" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                  <SortHeader label="Leave Days" sortId="leaveDays" className="text-right w-20" title="Total leave days" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   {showTallies && shiftCodes.map((code) => (
                     <th key={code} className="px-2 py-2.5 text-[11px] font-medium text-slate-600 text-right whitespace-nowrap">{code}</th>
                   ))}

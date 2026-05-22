@@ -23,6 +23,13 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
 
+  const existing = await prisma.assignment.findUnique({
+    where: { providerId_date: { providerId, date: new Date(date + "T00:00:00Z") } },
+  });
+  if (existing?.isLocked) {
+    return NextResponse.json({ error: "Cannot modify locked assignment" }, { status: 400 });
+  }
+
   const assignment = await prisma.assignment.upsert({
     where: {
       providerId_date: { providerId, date: new Date(date + "T00:00:00Z") },
@@ -125,6 +132,13 @@ export async function DELETE(req: NextRequest) {
 
   if (!providerId || !date) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+  }
+
+  const existing = await prisma.assignment.findUnique({
+    where: { providerId_date: { providerId, date: new Date(date + "T00:00:00Z") } },
+  });
+  if (existing?.isLocked) {
+    return NextResponse.json({ error: "Cannot delete locked assignment" }, { status: 400 });
   }
 
   await prisma.assignment.deleteMany({

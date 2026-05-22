@@ -4,12 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 
+const ROLE_LEVEL: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
+
 const NAV_ITEMS = [
-  { label: "Schedule", href: "/", adminOnly: false },
-  { label: "Staff", href: "/staff", adminOnly: false },
-  { label: "Statistics", href: "/equity", adminOnly: false },
-  { label: "Settings", href: "/settings", adminOnly: false },
-  { label: "Users", href: "/users", adminOnly: true },
+  { label: "Schedule", href: "/", minRole: "viewer" },
+  { label: "Staff", href: "/staff", minRole: "manager" },
+  { label: "Statistics", href: "/equity", minRole: "viewer" },
+  { label: "Settings", href: "/settings", minRole: "admin" },
+  { label: "Users", href: "/users", minRole: "admin" },
 ];
 
 const ROLE_BADGE: Record<string, string> = {
@@ -29,7 +31,7 @@ export function NavHeader() {
         YoSched
       </Link>
       <nav className="flex items-center gap-1">
-        {NAV_ITEMS.filter((item) => !item.adminOnly || role === "admin").map((item) => {
+        {NAV_ITEMS.filter((item) => (ROLE_LEVEL[role ?? "viewer"] ?? 0) >= (ROLE_LEVEL[item.minRole] ?? 0)).map((item) => {
           const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
             <Link

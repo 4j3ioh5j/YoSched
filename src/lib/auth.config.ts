@@ -26,6 +26,9 @@ export const authConfig: NextAuthConfig = {
     jwt({ token, user }) {
       if (user) {
         token.role = (user as { role: string }).role;
+        if ((user as { totpVerifiedAt?: number }).totpVerifiedAt) {
+          token.totpVerifiedAt = (user as { totpVerifiedAt: number }).totpVerifiedAt;
+        }
       }
       return token;
     },
@@ -33,6 +36,7 @@ export const authConfig: NextAuthConfig = {
       if (session.user) {
         session.user.id = token.sub!;
         (session.user as { role: string }).role = token.role as string;
+        (session.user as { totpVerifiedAt?: number }).totpVerifiedAt = token.totpVerifiedAt as number | undefined;
       }
       return session;
     },

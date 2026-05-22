@@ -219,6 +219,18 @@ function SectionHeader({ title, description, status, error }: { title: string; d
 
 // ─── Shift Types Section ────────────────────────────────────────────────────
 
+function FieldRow({ label, description, children }: { label: string; description: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-4 py-3 border-b border-slate-700/50 last:border-0">
+      <div className="w-48 shrink-0 pt-0.5">
+        <div className="text-sm text-slate-200">{label}</div>
+        <div className="text-xs text-slate-500 mt-0.5">{description}</div>
+      </div>
+      <div className="flex-1">{children}</div>
+    </div>
+  );
+}
+
 function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUndo: (a: UndoAction) => void }) {
   const [shifts, setShifts] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
@@ -401,18 +413,6 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
   }
 
   const editingShift = editingId ? shifts.find((s) => s.id === editingId) : null;
-
-  function FieldRow({ label, description, children }: { label: string; description: string; children: React.ReactNode }) {
-    return (
-      <div className="flex items-start gap-4 py-3 border-b border-slate-700/50 last:border-0">
-        <div className="w-48 shrink-0 pt-0.5">
-          <div className="text-sm text-slate-200">{label}</div>
-          <div className="text-xs text-slate-500 mt-0.5">{description}</div>
-        </div>
-        <div className="flex-1">{children}</div>
-      </div>
-    );
-  }
 
   return (
     <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
