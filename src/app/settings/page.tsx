@@ -5,7 +5,7 @@ import { NavHeader } from "../nav-header";
 export const dynamic = "force-dynamic";
 
 export default async function Settings() {
-  const [shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
@@ -17,6 +17,7 @@ export default async function Settings() {
       orderBy: { sortOrder: "asc" },
       include: { _count: { select: { providers: true } }, defaultEligibleShifts: true, defaultAvailability: true },
     }),
+    prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
 
   const schedulingPrefs = {
@@ -96,6 +97,15 @@ export default async function Settings() {
           sortOrder: et.sortOrder,
           providerCount: et._count.providers,
         }))}
+        equityFactors={equityFactors.map((f) => ({
+          id: f.id,
+          factorType: f.factorType,
+          shiftCode: f.shiftCode,
+          weight: f.weight,
+          enabled: f.enabled,
+          sortOrder: f.sortOrder,
+        }))}
+        shiftCodes={shiftTypes.filter((st) => !st.isOffShift && !st.isLeave).map((st) => st.code)}
       />
     </main>
   );

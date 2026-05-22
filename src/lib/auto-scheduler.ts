@@ -1,4 +1,4 @@
-import { computeFairness, type FairnessSummary } from "./fairness";
+import { computeFairness, type FairnessSummary, type EquityFactor } from "./fairness";
 import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule } from "./availability";
 
 export type ScheduleProvider = {
@@ -85,8 +85,6 @@ type SchedulingPreferences = {
   sequentialOffWeight: number;
   threeDayWeekendWeight: number;
   fourDayWeekendWeight: number;
-  fairnessDesirabilityWeight: number;
-  fairnessHolidayWeight: number;
 };
 
 export type Suggestion = {
@@ -168,6 +166,7 @@ export function autoSchedule({
   historicalAssignments,
   staffingRequirements,
   schedulingPreferences,
+  equityFactors,
 }: {
   dates: string[];
   providers: ScheduleProvider[];
@@ -182,6 +181,7 @@ export function autoSchedule({
   historicalAssignments: ScheduleAssignment[];
   staffingRequirements: StaffingRequirement[];
   schedulingPreferences: SchedulingPreferences;
+  equityFactors: EquityFactor[];
 }): AutoScheduleResult {
   const suggestions: Suggestion[] = [];
   const warnings: string[] = [];
@@ -263,7 +263,7 @@ export function autoSchedule({
     })),
     desirabilityWeights,
     holidays,
-    equityShiftCodes: shiftTypes.filter((st) => st.schedulePriority != null).map((st) => st.code),
+    equityFactors,
   });
 
   function getCell(providerId: string, date: string) {

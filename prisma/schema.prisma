@@ -214,13 +214,23 @@ model SchedulingPreferences {
   sequentialOffWeight   Float   @default(2)
   threeDayWeekendWeight   Float   @default(5)
   fourDayWeekendWeight  Float   @default(8)
-  fairnessDesirabilityWeight Float @default(0.75)
-  fairnessHolidayWeight      Float @default(0.25)
   equityThresholdLow    Float   @default(0.25)
   equityThresholdMed    Float   @default(0.75)
   equityThresholdHigh   Float   @default(1.5)
 
   @@map("scheduling_preferences")
+}
+
+model EquityFactor {
+  id         String  @id @default(cuid())
+  factorType String  // "desirability", "holiday", "shift"
+  shiftCode  String? // only for factorType="shift"
+  weight     Float   @default(1.0)
+  enabled    Boolean @default(true)
+  sortOrder  Int     @default(0)
+
+  @@unique([factorType, shiftCode])
+  @@map("equity_factors")
 }
 
 model Assignment {

@@ -82,6 +82,15 @@ type EmploymentTypeData = {
   providerCount: number;
 };
 
+type EquityFactorData = {
+  id: string;
+  factorType: string;
+  shiftCode: string | null;
+  weight: number;
+  enabled: boolean;
+  sortOrder: number;
+};
+
 type Props = {
   shiftTypes: ShiftType[];
   staffingReqs: StaffingReq[];
@@ -91,6 +100,8 @@ type Props = {
   desirabilityWeights: DesirabilityWeight[];
   schedulingPrefs: SchedulingPrefs;
   employmentTypes: EmploymentTypeData[];
+  equityFactors: EquityFactorData[];
+  shiftCodes: string[];
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -1482,6 +1493,184 @@ function DesirabilitySection({
 
 // ─── Scheduling Preferences Section ─────────────────────────────────────────
 
+function EquityFactorsSection({
+  initial,
+  availableShiftCodes,
+}: {
+  initial: EquityFactorData[];
+  availableShiftCodes: string[];
+}) {
+  const [factors, setFactors] = useState(initial);
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+
+  function factorLabel(f: EquityFactorData): string {
+    if (f.factorType === "desirability") return "Shift Desirability";
+    if (f.factorType === "holiday") return "Holiday Work";
+    if (f.factorType === "shift") return `${f.shiftCode} Count`;
+    return f.factorType;
+  }
+
+  function updateFactor(idx: number, updates: Partial<EquityFactorData>) {
+    setFactors((prev) => prev.map((f, i) => (i === idx ? { ...f, ...updates } : f)));
+  }
+
+  function removeFactor(idx: number) {
+    setFactors((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function addShiftFactor() {
+    const usedCodes = new Set(factors.filter((f) => f.factorType === "shift").map((f) => f.shiftCode));
+    const available = availableShiftCodes.filter((c) => !usedCodes.has(c));
+    if (available.length === 0) return;
+    setFactors((prev) => [
+      ...prev,
+      { id: "", factorType: "shift", shiftCode: available[0], weight: 1.0, enabled: true, sortOrder: prev.length },
+    ]);
+  }
+
+  function addBuiltinFactor(type: "desirability" | "holiday") {
+    if (factors.some((f) => f.factorType === type)) return;
+    setFactors((prev) => [
+      ...prev,
+      { id: "", factorType: type, shiftCode: null, weight: 1.0, enabled: true, sortOrder: prev.length },
+    ]);
+  }
+
+  async function save() {
+    setStatus("saving");
+    try {
+      const res = await fetch("/api/settings/equity-factors", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ factors: factors.map((f, i) => ({ ...f, sortOrder: i })) }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const saved = await res.json();
+      setFactors(saved);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
+      setStatus("error");
+    }
+  }
+
+  const totalWeight = factors.filter((f) => f.enabled).reduce((s, f) => s + f.weight, 0) || 1;
+  const usedShiftCodes = new Set(factors.filter((f) => f.factorType === "shift").map((f) => f.shiftCode));
+  const canAddShift = availableShiftCodes.some((c) => !usedShiftCodes.has(c));
+  const hasDesirability = factors.some((f) => f.factorType === "desirability");
+  const hasHoliday = factors.some((f) => f.factorType === "holiday");
+
+  return (
+    <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
+      <SectionHeader
+        title="Equity Factors"
+        description="Configure which metrics factor into the equity score and their relative weights. All values are FTE-normalized."
+        status={status}
+        error={error}
+      />
+      <div className="mt-4 space-y-2">
+        {factors.map((f, idx) => (
+          <div key={idx} className="flex items-center gap-3 bg-slate-700/30 border border-slate-600/50 rounded-lg px-4 py-2.5">
+            <button
+              onClick={() => updateFactor(idx, { enabled: !f.enabled })}
+              className={[
+                "w-8 h-[20px] rounded-full transition-colors shrink-0 relative",
+                f.enabled ? "bg-blue-600" : "bg-slate-600",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "absolute top-[2px] left-[2px] w-4 h-4 rounded-full bg-white transition-transform shadow-sm",
+                  f.enabled ? "translate-x-[14px]" : "translate-x-0",
+                ].join(" ")}
+              />
+            </button>
+
+            <div className="flex-1 min-w-0">
+              {f.factorType === "shift" ? (
+                <select
+                  className="bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-slate-200"
+                  value={f.shiftCode ?? ""}
+                  onChange={(e) => updateFactor(idx, { shiftCode: e.target.value })}
+                >
+                  {availableShiftCodes.map((code) => (
+                    <option key={code} value={code} disabled={usedShiftCodes.has(code) && code !== f.shiftCode}>
+                      {code} Count
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-sm text-slate-200 font-medium">{factorLabel(f)}</span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[10px] text-slate-500">Weight:</span>
+              <input
+                type="number"
+                min={0.1}
+                max={10}
+                step={0.1}
+                className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-center text-slate-200"
+                value={f.weight}
+                onChange={(e) => updateFactor(idx, { weight: parseFloat(e.target.value) || 1 })}
+              />
+              <span className="text-[10px] text-slate-500 w-10 text-right">
+                {f.enabled ? `${((f.weight / totalWeight) * 100).toFixed(0)}%` : "off"}
+              </span>
+            </div>
+
+            <button
+              onClick={() => removeFactor(idx)}
+              className="text-slate-600 hover:text-red-400 transition-colors text-sm"
+              title="Remove factor"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 flex items-center gap-2">
+        {canAddShift && (
+          <button
+            onClick={addShiftFactor}
+            className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded transition-colors text-slate-300"
+          >
+            + Shift code
+          </button>
+        )}
+        {!hasDesirability && (
+          <button
+            onClick={() => addBuiltinFactor("desirability")}
+            className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded transition-colors text-slate-300"
+          >
+            + Shift Desirability
+          </button>
+        )}
+        {!hasHoliday && (
+          <button
+            onClick={() => addBuiltinFactor("holiday")}
+            className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded transition-colors text-slate-300"
+          >
+            + Holiday Work
+          </button>
+        )}
+        <div className="flex-1" />
+        <button
+          onClick={save}
+          disabled={status === "saving"}
+          className="px-4 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 rounded transition-colors font-medium"
+        >
+          {status === "saving" ? "Saving..." : "Save"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
   const [prefs, setPrefs] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
@@ -1890,7 +2079,7 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights, schedulingPrefs, employmentTypes }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes }: Props) {
   const undo = useUndo();
 
   return (
@@ -1900,6 +2089,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, fteTargets,
         <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} shiftTypes={shiftTypes} />
         <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
+        <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <SchedulingPrefsSection initial={schedulingPrefs} />
         <FteHoursSection initial={fteTargets} pushUndo={undo.push} />
         <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} />

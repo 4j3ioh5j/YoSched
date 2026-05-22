@@ -6,7 +6,7 @@ import { NavHeader } from "../nav-header";
 export const dynamic = "force-dynamic";
 
 export default async function Equity() {
-  const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs] =
+  const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs, equityFactors] =
     await Promise.all([
       prisma.provider.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
@@ -15,6 +15,7 @@ export default async function Equity() {
       prisma.desirabilityWeight.findMany(),
       prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
       prisma.schedulingPreferences.findFirst(),
+      prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
     ]);
 
   const equity = computeFairness({
@@ -43,9 +44,7 @@ export default async function Equity() {
       weight: dw.weight,
     })),
     holidays,
-    equityShiftCodes: shiftTypes.filter((st) => st.schedulePriority != null).map((st) => st.code),
-    fairnessDesirabilityWeight: schedPrefs?.fairnessDesirabilityWeight ?? 0.75,
-    fairnessHolidayWeight: schedPrefs?.fairnessHolidayWeight ?? 0.25,
+    equityFactors,
   });
 
   const equityThresholds = {

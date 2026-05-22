@@ -74,22 +74,25 @@ function getDow(d: Date | string): number {
   return d.getDay();
 }
 
+export type EquityFactor = {
+  factorType: string;
+  shiftCode: string | null;
+  weight: number;
+  enabled: boolean;
+};
+
 export function computeFairness({
   assignments,
   providers,
   desirabilityWeights,
   holidays,
-  equityShiftCodes = [],
-  fairnessDesirabilityWeight = 0.75,
-  fairnessHolidayWeight = 0.25,
+  equityFactors = [],
 }: {
   assignments: Assignment[];
   providers: Provider[];
   desirabilityWeights: DesirabilityWeight[];
   holidays: Holiday[];
-  equityShiftCodes?: string[];
-  fairnessDesirabilityWeight?: number;
-  fairnessHolidayWeight?: number;
+  equityFactors?: EquityFactor[];
 }): FairnessSummary {
   const holidaySet = new Set(holidays.map((h) => toDateStr(h.date)));
 
@@ -172,6 +175,22 @@ export function computeFairness({
 
   const n = metrics.length || 1;
 
+  // Parse equity factors from configuration
+  const activeFactors = equityFactors.filter((f) => f.enabled);
+  const equityShiftCodes = activeFactors
+    .filter((f) => f.factorType === "shift" && f.shiftCode)
+    .map((f) => f.shiftCode!);
+  const hasDesirability = activeFactors.some((f) => f.factorType === "desirability");
+  const hasHoliday = activeFactors.some((f) => f.factorType === "holiday");
+
+  // Normalize weights to sum to 1
+  const totalWeight = activeFactors.reduce((s, f) => s + f.weight, 0) || 1;
+  const factorWeights = new Map<string, number>();
+  for (const f of activeFactors) {
+    const key = f.factorType === "shift" ? `shift:${f.shiftCode}` : f.factorType;
+    factorWeights.set(key, f.weight / totalWeight);
+  }
+
   // FTE-normalized values for computing averages and deviations
   function fteNorm(providerId: string, value: number): number {
     const fte = providerFte.get(providerId) || 1;
@@ -199,22 +218,13 @@ export function computeFairness({
     return Math.sqrt(variance) || 1;
   }
 
-  const desValues = metrics.map((m) => fteNorm(m.providerId, m.desirabilityScore));
-  const holValues = metrics.map((m) => fteNorm(m.providerId, m.holidayWorkCount));
-  const desStd = stddev(desValues);
-  const holStd = stddev(holValues);
+  const desStd = stddev(metrics.map((m) => fteNorm(m.providerId, m.desirabilityScore)));
+  const holStd = stddev(metrics.map((m) => fteNorm(m.providerId, m.holidayWorkCount)));
 
   const shiftStds: Record<string, number> = {};
   for (const code of equityShiftCodes) {
     shiftStds[code] = stddev(metrics.map((m) => fteNorm(m.providerId, m.shiftCounts[code] || 0)));
   }
-
-  // Compute weights: distribute across all factors
-  // desirability + holidays + N shift codes = totalFactors
-  const totalFactors = 2 + equityShiftCodes.length;
-  const wDes = totalFactors > 0 ? 1 / totalFactors : fairnessDesirabilityWeight;
-  const wHol = totalFactors > 0 ? 1 / totalFactors : fairnessHolidayWeight;
-  const wShift = totalFactors > 2 ? 1 / totalFactors : 0;
 
   const deviations = new Map<string, FairnessDeviation>();
 
@@ -227,15 +237,20 @@ export function computeFairness({
     const holidayWork = (normHol - avgHoliday) / holStd;
 
     const perShift: Record<string, number> = {};
-    let shiftSum = 0;
+    let overall = 0;
+
+    if (hasDesirability) {
+      overall += (factorWeights.get("desirability") ?? 0) * desirability;
+    }
+    if (hasHoliday) {
+      overall += (factorWeights.get("holiday") ?? 0) * holidayWork;
+    }
     for (const code of equityShiftCodes) {
       const normCount = fteNorm(m.providerId, m.shiftCounts[code] || 0);
       const dev = (normCount - perShiftAvg[code]) / shiftStds[code];
       perShift[code] = dev;
-      shiftSum += wShift * dev;
+      overall += (factorWeights.get(`shift:${code}`) ?? 0) * dev;
     }
-
-    const overall = wDes * desirability + wHol * holidayWork + shiftSum;
 
     deviations.set(m.providerId, { desirability, holidayWork, perShift, overall });
   }

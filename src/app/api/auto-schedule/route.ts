@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
     schedulingPrefsRow,
     providerEligibleShifts,
     availabilityRules,
+    equityFactors,
   ] = await Promise.all([
     prisma.provider.findMany({ where: { isActive: true } }),
     prisma.shiftType.findMany(),
@@ -56,6 +57,7 @@ export async function POST(req: NextRequest) {
     prisma.schedulingPreferences.findFirst(),
     prisma.providerEligibleShift.findMany(),
     prisma.availabilityRule.findMany(),
+    prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
 
   const start = new Date(startDate + "T12:00:00");
@@ -183,9 +185,13 @@ export async function POST(req: NextRequest) {
       sequentialOffWeight: schedulingPrefsRow?.sequentialOffWeight ?? 2,
       threeDayWeekendWeight: schedulingPrefsRow?.threeDayWeekendWeight ?? 5,
       fourDayWeekendWeight: schedulingPrefsRow?.fourDayWeekendWeight ?? 8,
-      fairnessDesirabilityWeight: schedulingPrefsRow?.fairnessDesirabilityWeight ?? 0.75,
-      fairnessHolidayWeight: schedulingPrefsRow?.fairnessHolidayWeight ?? 0.25,
     },
+    equityFactors: equityFactors.map((f) => ({
+      factorType: f.factorType,
+      shiftCode: f.shiftCode,
+      weight: f.weight,
+      enabled: f.enabled,
+    })),
   });
 
   return NextResponse.json(result);
