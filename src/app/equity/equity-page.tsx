@@ -155,7 +155,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                 <tr className="bg-slate-800/80 border-b border-slate-700">
                   <SortHeader label="Provider" sortId="initials" className="text-left w-44" />
                   <SortHeader label="Equity" sortId="overall" className="text-center w-28" title="Overall workload balance" />
-                  <SortHeader label="Desirability" sortId="desirability" className="text-right w-24" title="Cumulative shift desirability score" />
+                  <SortHeader label="Shift Desirability" sortId="desirability" className="text-right w-28" title="Cumulative shift desirability score" />
                   <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title="Number of holidays worked" />
                   {trackedShiftCodes.map((code) => (
                     <SortHeader key={code} label={code} sortId={`shift:${code}`} className="text-right w-16" title={`Total ${code} shifts`} />
