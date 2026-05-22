@@ -873,8 +873,42 @@ function PayPeriodsSection({ initial, pushUndo }: { initial: PayPeriod[]; pushUn
   const [periods, setPeriods] = useState(initial);
   const [startDate, setStartDate] = useState(initial[0]?.startDate ?? "2025-12-14");
   const [periodCount, setPeriodCount] = useState(initial.length || 26);
+  const [baseHours, setBaseHours] = useState(initial[0]?.targetHours ?? 80);
+  const [hoursStatus, setHoursStatus] = useState<SaveStatus>("idle");
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
+
+  async function saveBaseHours() {
+    const prevHours = periods[0]?.targetHours ?? 80;
+    setHoursStatus("saving");
+    try {
+      const res = await fetch("/api/settings/pay-periods", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetHours: baseHours }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setPeriods(data);
+      setHoursStatus("saved");
+      setTimeout(() => setHoursStatus("idle"), 2000);
+      pushUndo({
+        label: `Changed hours per pay period to ${baseHours}`,
+        execute: async () => {
+          const res = await fetch("/api/settings/pay-periods", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ targetHours: prevHours }),
+          });
+          const data = await res.json();
+          setPeriods(data);
+          setBaseHours(prevHours);
+        },
+      });
+    } catch (e) {
+      setHoursStatus("error");
+    }
+  }
 
   async function regenerate() {
     if (!confirm(`This will replace all ${periods.length} existing pay periods. Continue?`)) return;
@@ -922,6 +956,25 @@ function PayPeriodsSection({ initial, pushUndo }: { initial: PayPeriod[]; pushUn
         status={status}
         error={error}
       />
+
+      <div className="mb-4">
+        <label className="text-xs text-slate-400 block mb-1">Hours per Pay Period (1.0 FTE)</label>
+        <div className="flex gap-2 items-center">
+          <input
+            type="number"
+            className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm font-mono"
+            value={baseHours}
+            onChange={(e) => setBaseHours(parseFloat(e.target.value) || 80)}
+          />
+          <button
+            onClick={saveBaseHours}
+            className="px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 rounded transition-colors"
+          >
+            {hoursStatus === "saving" ? "Saving…" : hoursStatus === "saved" ? "Saved" : "Save"}
+          </button>
+          <span className="text-xs text-slate-500">Fractional FTE hours are computed from this value</span>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
