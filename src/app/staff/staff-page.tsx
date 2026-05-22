@@ -561,6 +561,11 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
 
   function sorted(list: Provider[]) {
     return [...list].sort((a, b) => {
+      if (sortBy === "ftePercentage") {
+        if (a.isAutoScheduled !== b.isAutoScheduled) {
+          return a.isAutoScheduled ? -1 : 1;
+        }
+      }
       const va = a[sortBy] ?? "";
       const vb = b[sortBy] ?? "";
       let cmp: number;
