@@ -14,19 +14,12 @@ type Deviation = {
   perShift: Record<string, number>;
 };
 
-type EmploymentTypeOption = {
-  id: string;
-  name: string;
-};
-
 type EquityRow = {
   providerId: string;
   initials: string;
   name: string;
   isAutoScheduled: boolean;
   ftePercentage: number;
-  employmentTypeId: string;
-  employmentTypeName: string;
   desirabilityScore: number;
   undesirableShiftCount: number;
   desirableShiftCount: number;
@@ -57,7 +50,6 @@ type Props = {
   dateRange: { min: string; max: string };
   shiftCodes: string[];
   equityThresholds: EquityThresholds;
-  employmentTypes: EmploymentTypeOption[];
 };
 
 type SortKey = "initials" | "overall" | "desirability" | "holiday" | "hours" | "workDays" | "leaveDays" | string;
@@ -384,26 +376,17 @@ function SortHeader({ label, sortId, className, title, sortKey, sortAsc, onSort 
   );
 }
 
-export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds, employmentTypes }: Props) {
+export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("overall");
   const [sortAsc, setSortAsc] = useState(false);
   const [showTallies, setShowTallies] = useState(false);
   const [showCharts, setShowCharts] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
-  const [selectedTypes, setSelectedTypes] = useState<Set<string>>(() => new Set(employmentTypes.map((t) => t.id)));
   const [minFte, setMinFte] = useState(0);
 
-  function toggleType(id: string) {
-    setSelectedTypes((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
-
   const filteredData = useMemo(() =>
-    data.filter((d) => selectedTypes.has(d.employmentTypeId) && d.ftePercentage >= minFte),
-    [data, selectedTypes, minFte],
+    minFte > 0 ? data.filter((d) => d.ftePercentage >= minFte) : data,
+    [data, minFte],
   );
 
   const selectedRow = selectedProvider ? filteredData.find((d) => d.providerId === selectedProvider) : null;
@@ -442,7 +425,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
           <div>
             <h2 className="text-lg font-semibold text-slate-100">Statistics</h2>
             <p className="text-sm text-slate-400 mt-1">
-              {dateRange.min} to {dateRange.max} — {filteredData.length} of {data.length} providers
+              {dateRange.min} to {dateRange.max} — {minFte > 0 ? `${filteredData.length} of ${data.length}` : data.length} providers
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -461,31 +444,21 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 mb-5">
-          <span className="text-xs text-slate-500 uppercase tracking-wider">Filter</span>
-          {employmentTypes.map((et) => (
-            <button
-              key={et.id}
-              onClick={() => toggleType(et.id)}
-              className={`px-2.5 py-1 text-xs rounded transition-colors ${selectedTypes.has(et.id) ? "bg-blue-600/20 text-blue-400 border border-blue-500/30" : "bg-slate-800 text-slate-500 border border-slate-700 hover:border-slate-600"}`}
-            >
-              {et.name}
-            </button>
-          ))}
-          <div className="h-4 w-px bg-slate-700" />
-          <div className="flex items-center gap-1.5">
-            <label className="text-xs text-slate-500">Min FTE</label>
-            <input
-              type="number"
-              step="0.1"
-              min="0"
-              max="9.999"
-              className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-slate-300"
-              value={minFte || ""}
-              onChange={(e) => setMinFte(parseFloat(e.target.value) || 0)}
-              placeholder="0"
-            />
-          </div>
+        <div className="flex items-center gap-2 mb-5">
+          <label className="text-xs text-slate-500">Min FTE</label>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            max="9.999"
+            className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-slate-300"
+            value={minFte || ""}
+            onChange={(e) => setMinFte(parseFloat(e.target.value) || 0)}
+            placeholder="0"
+          />
+          {minFte > 0 && (
+            <span className="text-xs text-slate-500">{filteredData.length} of {data.length} providers</span>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-3 mb-5">

@@ -6,9 +6,9 @@ import { NavHeader } from "../nav-header";
 export const dynamic = "force-dynamic";
 
 export default async function Equity() {
-  const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs, equityFactors, eligibilities, employmentTypes] =
+  const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs, equityFactors, eligibilities] =
     await Promise.all([
-      prisma.provider.findMany({ orderBy: { sortOrder: "asc" }, include: { employmentType: true } }),
+      prisma.provider.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.assignment.findMany({ include: { shiftType: true } }),
       prisma.holiday.findMany({ orderBy: { date: "asc" } }),
@@ -17,7 +17,6 @@ export default async function Equity() {
       prisma.schedulingPreferences.findFirst(),
       prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.providerEligibleShift.findMany(),
-      prisma.employmentType.findMany({ orderBy: { sortOrder: "asc" } }),
     ]);
 
   const eligMap = new Map<string, string[]>();
@@ -115,8 +114,6 @@ export default async function Equity() {
       name: p.name,
       isAutoScheduled: p.isAutoScheduled,
       ftePercentage: p.ftePercentage ?? 1.0,
-      employmentTypeId: p.employmentTypeId,
-      employmentTypeName: p.employmentType.name,
       totalHours: providerHours[m.providerId] || 0,
       shiftTally: shiftTallies[m.providerId] || {},
     };
@@ -144,7 +141,6 @@ export default async function Equity() {
         dateRange={dateRange}
         shiftCodes={shiftCodes}
         equityThresholds={equityThresholds}
-        employmentTypes={employmentTypes.map((et) => ({ id: et.id, name: et.name }))}
       />
     </main>
   );
