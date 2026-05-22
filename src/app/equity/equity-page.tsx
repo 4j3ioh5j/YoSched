@@ -8,20 +8,12 @@ type Deviation = {
   overall: number;
 };
 
-type ShiftTypeRef = {
-  id: string;
-  code: string;
-  name: string;
-  color: string;
-};
-
 type EquityRow = {
   providerId: string;
   initials: string;
   name: string;
   isAutoScheduled: boolean;
   ftePercentage: number;
-  eligibleShiftTypeIds: string[];
   desirabilityScore: number;
   undesirableShiftCount: number;
   desirableShiftCount: number;
@@ -46,7 +38,6 @@ type Props = {
   dateRange: { min: string; max: string };
   shiftCodes: string[];
   equityThresholds: EquityThresholds;
-  allShiftTypes: ShiftTypeRef[];
 };
 
 type SortKey = "initials" | "overall" | "desirability" | "holiday" | "hours" | "workDays" | "leaveDays" | string;
@@ -71,7 +62,7 @@ function equityLabel(burden: number, t: EquityThresholds): string {
   return "Balanced";
 }
 
-export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds, allShiftTypes }: Props) {
+export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("overall");
   const [sortAsc, setSortAsc] = useState(false);
   const [showTallies, setShowTallies] = useState(false);
@@ -121,7 +112,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
       <div className="px-6 py-6">
         <div className="flex items-start justify-between mb-5">
           <div>
-            <h2 className="text-lg font-semibold text-slate-100">Workload Equity</h2>
+            <h2 className="text-lg font-semibold text-slate-100">Statistics</h2>
             <p className="text-sm text-slate-400 mt-1">
               {dateRange.min} to {dateRange.max} — {data.length} providers
             </p>
@@ -190,11 +181,6 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                           {row.ftePercentage < 1 && (
                             <span className="text-[10px] px-1 py-px rounded bg-amber-900/30 text-amber-400/80 font-mono">{(row.ftePercentage * 100).toFixed(0)}%</span>
                           )}
-                          {allShiftTypes
-                            .filter((st) => !row.eligibleShiftTypeIds.includes(st.id))
-                            .map((st) => (
-                              <span key={st.id} className="text-[10px] px-1 py-px rounded bg-slate-700/50 text-slate-500">no {st.code}</span>
-                            ))}
                         </div>
                       </td>
                       <td className="px-3 py-2.5 text-center">
