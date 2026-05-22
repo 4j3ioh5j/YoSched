@@ -144,51 +144,44 @@ function AvailabilityEditor({
   allProviders: { id: string; initials: string }[];
   currentProviderId: string;
 }) {
-  const [expandedDay, setExpandedDay] = useState<number | null>(null);
-
   function toggleDay(d: number) {
     const existing = rules.filter((r) => r.dayOfWeek === d);
     if (existing.length > 0) {
       onChange(rules.filter((r) => r.dayOfWeek !== d));
-      if (expandedDay === d) setExpandedDay(null);
     } else {
       onChange([...rules, { dayOfWeek: d, type: "available", strength: "rule", pattern: "every" }]);
     }
   }
 
-  function updateRule(dayOfWeek: number, ruleIndex: number, updates: Partial<AvailabilityRule>) {
-    const dayRules = rules.filter((r) => r.dayOfWeek === dayOfWeek);
-    const otherRules = rules.filter((r) => r.dayOfWeek !== dayOfWeek);
-    const updated = dayRules.map((r, i) => (i === ruleIndex ? { ...r, ...updates } : r));
-    onChange([...otherRules, ...updated]);
+  const advancedRules = rules.filter(
+    (r) => r.pattern !== "every" || r.strength !== "rule" || r.type !== "available" || r.conditionProviderId
+  );
+
+  function updateRuleAtIndex(globalIndex: number, updates: Partial<AvailabilityRule>) {
+    onChange(rules.map((r, i) => (i === globalIndex ? { ...r, ...updates } : r)));
   }
 
-  function addRule(dayOfWeek: number) {
-    onChange([...rules, { dayOfWeek, type: "available", strength: "preference", pattern: "every" }]);
+  function removeRuleAtIndex(globalIndex: number) {
+    onChange(rules.filter((_, i) => i !== globalIndex));
   }
 
-  function removeRule(dayOfWeek: number, ruleIndex: number) {
-    const dayRules = rules.filter((r) => r.dayOfWeek === dayOfWeek);
-    const otherRules = rules.filter((r) => r.dayOfWeek !== dayOfWeek);
-    onChange([...otherRules, ...dayRules.filter((_, i) => i !== ruleIndex)]);
-    if (dayRules.length <= 1 && expandedDay === dayOfWeek) setExpandedDay(null);
+  function addAdvancedRule() {
+    onChange([...rules, { dayOfWeek: 1, type: "available", strength: "preference", pattern: "every" }]);
   }
 
   const otherProviders = allProviders.filter((p) => p.id !== currentProviderId);
 
   return (
-    <div className="space-y-0.5">
-      {DAY_INDICES.map((d) => {
-        const active = hasBaseRule(rules, d);
-        const advanced = hasAdvancedRule(rules, d);
-        const isExpanded = expandedDay === d;
-        const dayRules = rules.filter((r) => r.dayOfWeek === d);
-        const summary = dayRuleSummary(rules, d);
-
-        return (
-          <div key={d}>
-            <div className="flex items-center gap-1.5">
+    <div className="space-y-3">
+      {/* Layer 1: Quick day toggles */}
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1.5">Working days</div>
+        <div className="flex gap-1">
+          {DAY_INDICES.map((d) => {
+            const active = rules.some((r) => r.dayOfWeek === d && r.type === "available");
+            return (
               <button
+                key={d}
                 onClick={() => toggleDay(d)}
                 className={[
                   "w-10 h-8 text-xs rounded font-medium transition-colors",
@@ -198,131 +191,170 @@ function AvailabilityEditor({
               >
                 {DAY_LABELS[d]}
               </button>
-              {active && (
-                <>
-                  <span className="text-xs text-slate-500 flex-1 truncate">
-                    {summary || "Every week"}
-                  </span>
-                  <button
-                    onClick={() => setExpandedDay(isExpanded ? null : d)}
-                    className={[
-                      "w-6 h-6 flex items-center justify-center text-[10px] rounded transition-colors",
-                      isExpanded ? "bg-blue-600/30 text-blue-300" : advanced ? "bg-amber-600/20 text-amber-400" : "bg-slate-700/50 text-slate-500 hover:text-slate-300",
-                    ].join(" ")}
-                    title="Edit availability rules"
+            );
+          })}
+        </div>
+        <div className="text-[10px] text-slate-600 mt-1">Click to toggle basic availability. Use rules below for advanced scheduling.</div>
+      </div>
+
+      {/* Layer 2: Advanced rules */}
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1.5">
+          Rules {advancedRules.length > 0 && `(${advancedRules.length})`}
+        </div>
+
+        {rules.length === 0 && (
+          <div className="text-xs text-slate-600 italic py-2">No availability set. Toggle days above or add a rule.</div>
+        )}
+
+        <div className="space-y-1.5">
+          {rules.map((rule, globalIdx) => {
+            const isSimple = rule.type === "available" && rule.strength === "rule" && rule.pattern === "every" && !rule.conditionProviderId;
+            if (isSimple) return null;
+
+            const condName = rule.conditionProviderId
+              ? otherProviders.find((p) => p.id === rule.conditionProviderId)?.initials ?? "?"
+              : null;
+
+            return (
+              <div key={globalIdx} className="bg-slate-700/30 border border-slate-600/50 rounded-lg p-3 space-y-2">
+                {/* Sentence line 1: On [day], [status] [schedule] — [enforcement] */}
+                <div className="flex items-center gap-1.5 flex-wrap text-xs">
+                  <span className="text-slate-400">On</span>
+                  <select
+                    className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs font-medium text-blue-300"
+                    value={rule.dayOfWeek}
+                    onChange={(e) => updateRuleAtIndex(globalIdx, { dayOfWeek: parseInt(e.target.value) })}
                   >
-                    {isExpanded ? "▲" : "▼"}
+                    {DAY_INDICES.map((d) => (
+                      <option key={d} value={d}>{DAY_LABELS[d]}</option>
+                    ))}
+                  </select>
+                  <span className="text-slate-500">—</span>
+                  <select
+                    className={[
+                      "bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs font-medium",
+                      rule.type === "available" ? "text-emerald-400" : "text-red-400",
+                    ].join(" ")}
+                    value={rule.type}
+                    onChange={(e) => updateRuleAtIndex(globalIdx, { type: e.target.value })}
+                  >
+                    <option value="available">Available</option>
+                    <option value="unavailable">Not available</option>
+                  </select>
+                  <select
+                    className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300"
+                    value={rule.pattern}
+                    onChange={(e) => updateRuleAtIndex(globalIdx, { pattern: e.target.value })}
+                  >
+                    <option value="every">every week</option>
+                    <option value="pp_week_1">PP week 1 only</option>
+                    <option value="pp_week_2">PP week 2 only</option>
+                    <option value="every_n">every Nth week</option>
+                  </select>
+                  <button
+                    onClick={() => removeRuleAtIndex(globalIdx)}
+                    className="text-slate-600 hover:text-red-400 ml-auto transition-colors"
+                    title="Remove rule"
+                  >
+                    ×
                   </button>
-                </>
-              )}
-            </div>
+                </div>
 
-            {isExpanded && (
-              <div className="ml-12 mt-1 mb-2 space-y-1.5">
-                {dayRules.map((rule, idx) => (
-                  <div key={idx} className="bg-slate-700/30 border border-slate-600/50 rounded p-2 space-y-1.5">
-                    <div className="flex items-center gap-2">
-                      <select
-                        className="bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs"
-                        value={rule.type}
-                        onChange={(e) => updateRule(d, idx, { type: e.target.value })}
-                      >
-                        <option value="available">Available</option>
-                        <option value="unavailable">Unavailable</option>
-                      </select>
-                      <select
-                        className="bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs"
-                        value={rule.strength}
-                        onChange={(e) => updateRule(d, idx, { strength: e.target.value })}
-                      >
-                        <option value="rule">Rule (hard)</option>
-                        <option value="preference">Preference (soft)</option>
-                      </select>
-                      <select
-                        className="bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs"
-                        value={rule.pattern}
-                        onChange={(e) => updateRule(d, idx, { pattern: e.target.value })}
-                      >
-                        <option value="every">Every week</option>
-                        <option value="pp_week_1">PP week 1</option>
-                        <option value="pp_week_2">PP week 2</option>
-                        <option value="every_n">Every Nth</option>
-                      </select>
-                      {dayRules.length > 1 && (
-                        <button
-                          onClick={() => removeRule(d, idx)}
-                          className="text-slate-500 hover:text-red-400 text-xs ml-auto"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
-
-                    {rule.pattern === "every_n" && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-500">Every</span>
-                        <input
-                          type="number"
-                          min={2}
-                          max={8}
-                          className="w-12 bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs text-center"
-                          value={rule.cycleLength ?? 2}
-                          onChange={(e) => updateRule(d, idx, { cycleLength: parseInt(e.target.value) || 2 })}
-                        />
-                        <span className="text-[10px] text-slate-500">occurrences, starting at #</span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={(rule.cycleLength ?? 2) - 1}
-                          className="w-12 bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs text-center"
-                          value={rule.cycleOffset ?? 0}
-                          onChange={(e) => updateRule(d, idx, { cycleOffset: parseInt(e.target.value) || 0 })}
-                        />
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500">Condition:</span>
-                      <select
-                        className="bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs flex-1"
-                        value={rule.conditionProviderId ?? ""}
-                        onChange={(e) => {
-                          const pid = e.target.value || null;
-                          updateRule(d, idx, {
-                            conditionProviderId: pid,
-                            conditionType: pid ? (rule.conditionType ?? "not_working") : null,
-                          });
-                        }}
-                      >
-                        <option value="">None</option>
-                        {otherProviders.map((p) => (
-                          <option key={p.id} value={p.id}>{p.initials}</option>
-                        ))}
-                      </select>
-                      {rule.conditionProviderId && (
-                        <select
-                          className="bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 text-xs"
-                          value={rule.conditionType ?? "not_working"}
-                          onChange={(e) => updateRule(d, idx, { conditionType: e.target.value })}
-                        >
-                          <option value="not_working">is not working</option>
-                          <option value="working">is working</option>
-                        </select>
-                      )}
-                    </div>
+                {/* Every Nth options */}
+                {rule.pattern === "every_n" && (
+                  <div className="flex items-center gap-1.5 text-xs pl-1">
+                    <span className="text-slate-500">Repeat every</span>
+                    <select
+                      className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300 w-20"
+                      value={rule.cycleLength ?? 2}
+                      onChange={(e) => updateRuleAtIndex(globalIdx, { cycleLength: parseInt(e.target.value) })}
+                    >
+                      <option value={2}>2nd</option>
+                      <option value={3}>3rd</option>
+                      <option value={4}>4th</option>
+                      <option value={5}>5th</option>
+                      <option value={6}>6th</option>
+                    </select>
+                    <span className="text-slate-500">occurrence, starting at position</span>
+                    <select
+                      className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300 w-14"
+                      value={rule.cycleOffset ?? 0}
+                      onChange={(e) => updateRuleAtIndex(globalIdx, { cycleOffset: parseInt(e.target.value) })}
+                    >
+                      {Array.from({ length: rule.cycleLength ?? 2 }, (_, i) => (
+                        <option key={i} value={i}>{i + 1}</option>
+                      ))}
+                    </select>
                   </div>
-                ))}
-                <button
-                  onClick={() => addRule(d)}
-                  className="text-[10px] text-slate-500 hover:text-blue-400 transition-colors"
-                >
-                  + Add rule for {DAY_LABELS[d]}
-                </button>
+                )}
+
+                {/* Enforcement */}
+                <div className="flex items-center gap-1.5 text-xs pl-1">
+                  <span className="text-slate-500">Enforcement:</span>
+                  <select
+                    className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300"
+                    value={rule.strength}
+                    onChange={(e) => updateRuleAtIndex(globalIdx, { strength: e.target.value })}
+                  >
+                    <option value="rule">Hard rule — auto-scheduler must follow</option>
+                    <option value="preference">Soft preference — auto-scheduler will try</option>
+                  </select>
+                </div>
+
+                {/* Condition */}
+                <div className="flex items-center gap-1.5 text-xs pl-1">
+                  <span className="text-slate-500">Condition:</span>
+                  <select
+                    className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300"
+                    value={rule.conditionProviderId ?? ""}
+                    onChange={(e) => {
+                      const pid = e.target.value || null;
+                      updateRuleAtIndex(globalIdx, {
+                        conditionProviderId: pid,
+                        conditionType: pid ? (rule.conditionType ?? "not_working") : null,
+                      });
+                    }}
+                  >
+                    <option value="">Always (no condition)</option>
+                    {otherProviders.map((p) => (
+                      <option key={p.id} value={p.id}>Only when {p.initials}...</option>
+                    ))}
+                  </select>
+                  {rule.conditionProviderId && (
+                    <select
+                      className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300"
+                      value={rule.conditionType ?? "not_working"}
+                      onChange={(e) => updateRuleAtIndex(globalIdx, { conditionType: e.target.value })}
+                    >
+                      <option value="not_working">is not working</option>
+                      <option value="working">is working</option>
+                    </select>
+                  )}
+                </div>
+
+                {/* Human-readable summary */}
+                <div className="text-[10px] text-slate-500 italic border-t border-slate-600/30 pt-1.5 mt-1">
+                  {rule.type === "available" ? (rule.strength === "preference" ? "Prefers to work" : "Works") : (rule.strength === "preference" ? "Prefers not to work" : "Cannot work")}
+                  {" "}{DAY_LABELS[rule.dayOfWeek]}s
+                  {rule.pattern === "pp_week_1" && " in pay period week 1"}
+                  {rule.pattern === "pp_week_2" && " in pay period week 2"}
+                  {rule.pattern === "every_n" && ` (every ${rule.cycleLength === 2 ? "other" : rule.cycleLength === 3 ? "3rd" : `${rule.cycleLength}th`} occurrence)`}
+                  {condName && `, only when ${condName} ${rule.conditionType === "working" ? "is" : "is not"} working`}
+                  .
+                </div>
               </div>
-            )}
-          </div>
-        );
-      })}
+            );
+          })}
+        </div>
+
+        <button
+          onClick={addAdvancedRule}
+          className="mt-2 px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded transition-colors text-slate-300"
+        >
+          + Add rule
+        </button>
+      </div>
     </div>
   );
 }
@@ -831,8 +863,7 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                 })()}
               </div>
               <div className="py-2.5">
-                <div className="text-sm text-slate-200 mb-1">Availability</div>
-                <div className="text-xs text-slate-500 mb-2">Toggle days, then expand with ▼ for patterns, preferences, and conditions.</div>
+                <div className="text-sm text-slate-200 mb-2">Availability</div>
                 <AvailabilityEditor
                   rules={ep.availabilityRules}
                   onChange={(rules) => updateField(ep.id, "availabilityRules", rules)}
