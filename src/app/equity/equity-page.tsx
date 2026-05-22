@@ -161,6 +161,7 @@ function OverviewCharts({ data, trackedShiftCodes }: {
             </Bar>
           </BarChart>
         </ResponsiveContainer>
+        <p className="text-[10px] text-slate-600 mt-2">Weighted composite of all enabled equity factors (desirability, holidays, per-shift counts). Each factor is z-scored and FTE-normalized, then combined using the weights from Settings. Zero = department median.</p>
       </div>
 
       <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
@@ -179,11 +180,13 @@ function OverviewCharts({ data, trackedShiftCodes }: {
             </Bar>
           </BarChart>
         </ResponsiveContainer>
+        <p className="text-[10px] text-slate-600 mt-2">Sum of desirability weights for each shift+day-of-week worked, divided by FTE. Weights are configured per shift type and day in Settings &gt; Desirability. Opportunity-adjusted: only compares against shifts the provider is eligible for.</p>
       </div>
 
       {trackedShiftCodes.length > 0 && (
         <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4 xl:col-span-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Shift Distribution</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Shift Distribution</h3>
+          <p className="text-[10px] text-slate-600 mb-3">Raw count of each shift type assigned per provider. Stubs at the baseline indicate zero assignments.</p>
           <ResponsiveContainer width="100%" height={320}>
             <BarChart data={shiftData} margin={{ left: -10, right: 10, top: 5, bottom: 5 }} barGap={1} barCategoryGap="15%">
               <XAxis dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 10, fontFamily: "monospace" }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} />
@@ -295,11 +298,13 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
                   <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
                 </RadarChart>
               </ResponsiveContainer>
+              <p className="text-[10px] text-slate-600 mt-2">Each axis shows provider value as % of FTE-adjusted department average (dashed = 100%). Extending beyond the dashed line means above average for that metric.</p>
             </div>
           </div>
 
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Category Breakdown</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Category Breakdown</h3>
+            <p className="text-[10px] text-slate-600 mb-3">Each bar = provider&apos;s value as % of FTE-adjusted dept average. 100% line = average. Orange = above avg, blue = below, grey = near avg.</p>
             <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={comparisonData.map((d) => {
@@ -325,7 +330,8 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
 
           {Object.keys(row.deviation.perShift).length > 0 && (
             <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Equity Deviations (Z-Score)</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Equity Deviations (Z-Score)</h3>
+              <p className="text-[10px] text-slate-600 mb-3">Each factor as a z-score (standard deviations from dept mean). FTE-normalized. Desirability is opportunity-adjusted to only count eligible shifts.</p>
               <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
                 <ResponsiveContainer width="100%" height={Math.max(150, Object.keys(row.deviation.perShift).length * 36 + 60)}>
                   <BarChart
