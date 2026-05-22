@@ -299,23 +299,30 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
 
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Category Breakdown</h3>
-            <p className="text-[10px] text-slate-600 mb-3">Raw counts. Dashed = FTE-adj avg. Orange = above, blue = below.</p>
+            <p className="text-[10px] text-slate-600 mb-3">% of FTE-adj median. Orange = above, blue = below.</p>
             <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
               <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={comparisonData} margin={{ left: -10, right: 10, top: 5, bottom: 5 }}>
+                <BarChart data={comparisonData.map((d) => {
+                  const scale = d.average || Math.max(d.provider, 1);
+                  return { label: d.label, pct: Math.round((d.provider / scale) * 100), raw: d.provider, avg: d.average };
+                })} margin={{ left: -5, right: 10, top: 5, bottom: 5 }}>
                   <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 9 }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} angle={-30} textAnchor="end" height={50} />
-                  <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <Tooltip />
-                  <Bar dataKey="average" name="Dept Avg" fill="none" maxBarSize={36} shape={((props: { x?: number; y?: number; width?: number }) => {
-                    const { x = 0, y = 0, width = 0 } = props;
-                    return <line x1={x} x2={x + width} y1={y} y2={y} stroke="#94a3b8" strokeWidth={2} strokeDasharray="4 3" />;
-                  }) as never} />
-                  <Bar dataKey="provider" name={row.initials} fillOpacity={0.8} radius={[3, 3, 0, 0]} maxBarSize={28}>
+                  <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} unit="%" />
+                  <Tooltip content={({ active, payload }) => {
+                    if (!active || !payload?.[0]) return null;
+                    const d = payload[0].payload as { label: string; raw: number; avg: number; pct: number };
+                    return <div className="bg-slate-800 border border-slate-600 rounded px-3 py-2 text-xs shadow-lg">
+                      <div className="font-medium text-slate-200 mb-1">{d.label}</div>
+                      <div className="text-slate-400">{row.initials}: <span className="text-slate-200">{d.raw}</span></div>
+                      <div className="text-slate-400">Median: <span className="text-slate-200">{d.avg}</span></div>
+                    </div>;
+                  }} />
+                  <ReferenceLine y={100} stroke="#475569" strokeDasharray="3 3" label={{ value: "median", fill: "#64748b", fontSize: 9, position: "right" }} />
+                  <Bar dataKey="pct" fillOpacity={0.8} radius={[3, 3, 0, 0]} maxBarSize={28}>
                     {comparisonData.map((d, i) => (
                       <Cell key={i} fill={d.provider > d.average ? "#f97316" : "#3b82f6"} fillOpacity={0.8} />
                     ))}
                   </Bar>
-                  <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
