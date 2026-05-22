@@ -43,6 +43,7 @@ export default async function Equity() {
       weight: dw.weight,
     })),
     holidays,
+    equityShiftCodes: shiftTypes.filter((st) => st.schedulePriority != null).map((st) => st.code),
     fairnessDesirabilityWeight: schedPrefs?.fairnessDesirabilityWeight ?? 0.75,
     fairnessHolidayWeight: schedPrefs?.fairnessHolidayWeight ?? 0.25,
   });

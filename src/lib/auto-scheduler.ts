@@ -263,6 +263,7 @@ export function autoSchedule({
     })),
     desirabilityWeights,
     holidays,
+    equityShiftCodes: shiftTypes.filter((st) => st.schedulePriority != null).map((st) => st.code),
   });
 
   function getCell(providerId: string, date: string) {

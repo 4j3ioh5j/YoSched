@@ -32,6 +32,7 @@ type Holiday = {
 export type FairnessMetrics = {
   providerId: string;
   initials: string;
+  ftePercentage: number;
   desirabilityScore: number;
   undesirableShiftCount: number;
   desirableShiftCount: number;
@@ -46,14 +47,17 @@ export type FairnessSummary = {
   averages: {
     desirabilityScore: number;
     holidayWorkCount: number;
+    perShift: Record<string, number>;
   };
   trackedShiftCodes: string[];
+  equityShiftCodes: string[];
   deviations: Map<string, FairnessDeviation>;
 };
 
 export type FairnessDeviation = {
   desirability: number;
   holidayWork: number;
+  perShift: Record<string, number>;
   overall: number;
 };
 
@@ -75,6 +79,7 @@ export function computeFairness({
   providers,
   desirabilityWeights,
   holidays,
+  equityShiftCodes = [],
   fairnessDesirabilityWeight = 0.75,
   fairnessHolidayWeight = 0.25,
 }: {
@@ -82,6 +87,7 @@ export function computeFairness({
   providers: Provider[];
   desirabilityWeights: DesirabilityWeight[];
   holidays: Holiday[];
+  equityShiftCodes?: string[];
   fairnessDesirabilityWeight?: number;
   fairnessHolidayWeight?: number;
 }): FairnessSummary {
@@ -108,10 +114,12 @@ export function computeFairness({
     byProvider.set(a.providerId, arr);
   }
 
+  const providerFte = new Map<string, number>();
   const metrics: FairnessMetrics[] = [];
 
   for (const p of providers) {
     if (!p.isActive || !p.isAutoScheduled) continue;
+    providerFte.set(p.id, p.ftePercentage || 1);
 
     const pa = byProvider.get(p.id) || [];
     let desirabilityScore = 0;
@@ -151,6 +159,7 @@ export function computeFairness({
     metrics.push({
       providerId: p.id,
       initials: p.initials,
+      ftePercentage: p.ftePercentage,
       desirabilityScore,
       undesirableShiftCount,
       desirableShiftCount,
@@ -162,12 +171,26 @@ export function computeFairness({
   }
 
   const n = metrics.length || 1;
-  const averages = {
-    desirabilityScore: metrics.reduce((s, m) => s + m.desirabilityScore, 0) / n,
-    holidayWorkCount: metrics.reduce((s, m) => s + m.holidayWorkCount, 0) / n,
-  };
 
-  const deviations = new Map<string, FairnessDeviation>();
+  // FTE-normalized values for computing averages and deviations
+  function fteNorm(providerId: string, value: number): number {
+    const fte = providerFte.get(providerId) || 1;
+    return value / fte;
+  }
+
+  const avgDesirability = metrics.reduce((s, m) => s + fteNorm(m.providerId, m.desirabilityScore), 0) / n;
+  const avgHoliday = metrics.reduce((s, m) => s + fteNorm(m.providerId, m.holidayWorkCount), 0) / n;
+
+  const perShiftAvg: Record<string, number> = {};
+  for (const code of equityShiftCodes) {
+    perShiftAvg[code] = metrics.reduce((s, m) => s + fteNorm(m.providerId, m.shiftCounts[code] || 0), 0) / n;
+  }
+
+  const averages = {
+    desirabilityScore: avgDesirability,
+    holidayWorkCount: avgHoliday,
+    perShift: perShiftAvg,
+  };
 
   function stddev(values: number[]): number {
     if (values.length === 0) return 1;
@@ -176,20 +199,48 @@ export function computeFairness({
     return Math.sqrt(variance) || 1;
   }
 
-  const desStd = stddev(metrics.map((m) => m.desirabilityScore));
-  const holStd = stddev(metrics.map((m) => m.holidayWorkCount));
+  const desValues = metrics.map((m) => fteNorm(m.providerId, m.desirabilityScore));
+  const holValues = metrics.map((m) => fteNorm(m.providerId, m.holidayWorkCount));
+  const desStd = stddev(desValues);
+  const holStd = stddev(holValues);
 
-  for (const m of metrics) {
-    // Negate desirability: a high desirability score is GOOD (low burden)
-    const desirability = -(m.desirabilityScore - averages.desirabilityScore) / desStd;
-    const holidayWork = (m.holidayWorkCount - averages.holidayWorkCount) / holStd;
-
-    const overall = fairnessDesirabilityWeight * desirability + fairnessHolidayWeight * holidayWork;
-
-    deviations.set(m.providerId, { desirability, holidayWork, overall });
+  const shiftStds: Record<string, number> = {};
+  for (const code of equityShiftCodes) {
+    shiftStds[code] = stddev(metrics.map((m) => fteNorm(m.providerId, m.shiftCounts[code] || 0)));
   }
 
-  return { metrics, averages, trackedShiftCodes, deviations };
+  // Compute weights: distribute across all factors
+  // desirability + holidays + N shift codes = totalFactors
+  const totalFactors = 2 + equityShiftCodes.length;
+  const wDes = totalFactors > 0 ? 1 / totalFactors : fairnessDesirabilityWeight;
+  const wHol = totalFactors > 0 ? 1 / totalFactors : fairnessHolidayWeight;
+  const wShift = totalFactors > 2 ? 1 / totalFactors : 0;
+
+  const deviations = new Map<string, FairnessDeviation>();
+
+  for (const m of metrics) {
+    const normDes = fteNorm(m.providerId, m.desirabilityScore);
+    const normHol = fteNorm(m.providerId, m.holidayWorkCount);
+
+    // Negate desirability: high score = good shifts = low burden
+    const desirability = -(normDes - avgDesirability) / desStd;
+    const holidayWork = (normHol - avgHoliday) / holStd;
+
+    const perShift: Record<string, number> = {};
+    let shiftSum = 0;
+    for (const code of equityShiftCodes) {
+      const normCount = fteNorm(m.providerId, m.shiftCounts[code] || 0);
+      const dev = (normCount - perShiftAvg[code]) / shiftStds[code];
+      perShift[code] = dev;
+      shiftSum += wShift * dev;
+    }
+
+    const overall = wDes * desirability + wHol * holidayWork + shiftSum;
+
+    deviations.set(m.providerId, { desirability, holidayWork, perShift, overall });
+  }
+
+  return { metrics, averages, trackedShiftCodes, equityShiftCodes, deviations };
 }
 
 export type EquityThresholds = {
@@ -211,11 +262,11 @@ export function fairnessColor(deviation: number, t: EquityThresholds = DEFAULT_T
 }
 
 export function fairnessLabel(burden: number, t: EquityThresholds = DEFAULT_THRESHOLDS): string {
-  if (burden > t.high) return "Low equity";
-  if (burden > t.med) return "Below avg equity";
-  if (burden > t.low) return "Slightly below";
-  if (burden < -t.high) return "High equity";
-  if (burden < -t.med) return "Above avg equity";
-  if (burden < -t.low) return "Slightly above";
+  if (burden > t.high) return "Overworked";
+  if (burden > t.med) return "Heavy";
+  if (burden > t.low) return "Slightly Heavy";
+  if (burden < -t.high) return "Light";
+  if (burden < -t.med) return "Below avg";
+  if (burden < -t.low) return "Slightly Light";
   return "Balanced";
 }
