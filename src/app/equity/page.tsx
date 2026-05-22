@@ -96,7 +96,12 @@ export default async function Equity() {
     const p = providers.find((p) => p.id === m.providerId)!;
     return {
       ...m,
-      deviation: dev,
+      deviation: {
+        desirability: dev.desirability,
+        holidayWork: dev.holidayWork,
+        overall: dev.overall,
+        perShift: dev.perShift,
+      },
       name: p.name,
       isAutoScheduled: p.isAutoScheduled,
       ftePercentage: p.ftePercentage ?? 1.0,
@@ -109,12 +114,20 @@ export default async function Equity() {
     Object.values(shiftTallies).flatMap((t) => Object.keys(t))
   )].sort();
 
+  const n = equityData.length || 1;
+  const deptAverages = {
+    ...equity.averages,
+    totalHours: equityData.reduce((s, d) => s + d.totalHours / (d.ftePercentage || 1), 0) / n,
+    totalWorkDays: equityData.reduce((s, d) => s + d.totalWorkDays / (d.ftePercentage || 1), 0) / n,
+    totalLeaveDays: equityData.reduce((s, d) => s + d.totalLeaveDays / (d.ftePercentage || 1), 0) / n,
+  };
+
   return (
     <main className="flex flex-col h-screen">
       <NavHeader />
       <EquityPage
         data={equityData}
-        averages={equity.averages}
+        averages={deptAverages}
         trackedShiftCodes={equity.trackedShiftCodes}
         dateRange={dateRange}
         shiftCodes={shiftCodes}
