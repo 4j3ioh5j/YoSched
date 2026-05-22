@@ -260,6 +260,7 @@ export function autoSchedule({
       ftePercentage: p.ftePercentage,
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
+      eligibleShiftTypeIds: p.eligibleShiftTypeIds,
     })),
     desirabilityWeights,
     holidays,

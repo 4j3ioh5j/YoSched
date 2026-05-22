@@ -11,7 +11,7 @@ export default async function Home() {
       prisma.provider.findMany({
         where: { isActive: true },
         orderBy: { sortOrder: "asc" },
-        include: { availabilityRules: true },
+        include: { availabilityRules: true, eligibleShifts: true },
       }),
       prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.assignment.findMany({
@@ -46,6 +46,7 @@ export default async function Home() {
       ftePercentage: p.ftePercentage ?? 1.0,
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
+      eligibleShiftTypeIds: p.eligibleShifts.map((es) => es.shiftTypeId),
     })),
     desirabilityWeights: desirabilityWeights.map((dw) => ({
       shiftTypeId: dw.shiftTypeId,
