@@ -208,11 +208,12 @@ function OverviewCharts({ data, trackedShiftCodes }: {
   );
 }
 
-function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, onClose }: {
+function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, globalMaxDev, onClose }: {
   row: EquityRow;
   averages: Averages;
   trackedShiftCodes: string[];
   equityThresholds: EquityThresholds;
+  globalMaxDev: number;
   onClose: () => void;
 }) {
   const eqColor = equityColor(row.deviation.overall, equityThresholds);
@@ -220,7 +221,8 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
   const fte = row.ftePercentage;
 
   const radarData = useMemo(() => {
-    const items: { label: string; value: number }[] = [
+    const baseline = globalMaxDev + 0.5;
+    const items = [
       { label: "Undesirable", value: row.deviation.desirability },
       { label: "Holidays", value: row.deviation.holidayWork },
       ...Object.entries(row.deviation.perShift).map(([code, dev]) => ({
@@ -228,14 +230,12 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
         value: dev,
       })),
     ];
-    const maxAbs = Math.max(...items.map((d) => Math.abs(d.value)), 0.5);
-    const baseline = maxAbs + 0.5;
     return items.map((d) => ({
       label: d.label,
       provider: parseFloat((baseline + d.value).toFixed(2)),
       average: parseFloat(baseline.toFixed(2)),
     }));
-  }, [row]);
+  }, [row, globalMaxDev]);
 
   const comparisonData = useMemo(() => {
     const items: { label: string; provider: number; average: number; unit: string }[] = [
@@ -286,7 +286,7 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
                 <RadarChart data={radarData} cx="50%" cy="50%">
                   <PolarGrid stroke="#334155" />
                   <PolarAngleAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-                  <PolarRadiusAxis tick={false} axisLine={false} domain={[0, "auto"]} />
+                  <PolarRadiusAxis tick={false} axisLine={false} domain={[0, (globalMaxDev + 0.5) * 2]} />
                   <Radar name="Dept Avg (baseline)" dataKey="average" stroke="#475569" fill="#475569" fillOpacity={0.1} strokeWidth={1.5} strokeDasharray="4 4" />
                   <Radar name={row.initials} dataKey="provider" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} />
                   <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
@@ -396,6 +396,15 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
   );
 
   const selectedRow = selectedProvider ? filteredData.find((d) => d.providerId === selectedProvider) : null;
+
+  const globalMaxDev = useMemo(() => {
+    let max = 0.5;
+    for (const d of data) {
+      max = Math.max(max, Math.abs(d.deviation.desirability), Math.abs(d.deviation.holidayWork));
+      for (const v of Object.values(d.deviation.perShift)) max = Math.max(max, Math.abs(v));
+    }
+    return max;
+  }, [data]);
 
   function handleSort(key: SortKey) {
     if (sortKey === key) setSortAsc(!sortAsc);
@@ -607,6 +616,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
           averages={averages}
           trackedShiftCodes={trackedShiftCodes}
           equityThresholds={equityThresholds}
+          globalMaxDev={globalMaxDev}
           onClose={() => setSelectedProvider(null)}
         />
       )}
