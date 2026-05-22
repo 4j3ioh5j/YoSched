@@ -298,61 +298,26 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
 
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Category Breakdown</h3>
-            <div className="space-y-3">
-              {comparisonData.map((item) => {
-                const minVal = Math.min(item.provider, item.average, 0);
-                const maxVal = Math.max(item.provider, item.average, 0);
-                const range = maxVal - minVal || 1;
-                const zeroPos = ((0 - minVal) / range) * 100;
-                const provPos = ((item.provider - minVal) / range) * 100;
-                const avgPos = ((item.average - minVal) / range) * 100;
-                const barLeft = Math.min(zeroPos, provPos);
-                const barWidth = Math.abs(provPos - zeroPos);
-
-                const diff = item.provider - item.average;
-                const hasAvg = item.average !== 0;
-                const diffColor = item.label === "Desirability"
-                  ? (diff >= 0 ? "text-emerald-400" : "text-red-400")
-                  : (diff <= 0 ? "text-emerald-400" : diff > 0 ? "text-amber-400" : "text-slate-400");
-
-                return (
-                  <div key={item.label} className="bg-slate-800/30 border border-slate-700/30 rounded-lg px-4 py-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-medium text-slate-300">{item.label}</span>
-                      <div className="flex items-center gap-3 text-xs tabular-nums">
-                        <span className="text-blue-400 font-medium">{item.provider}{item.unit ? ` ${item.unit}` : ""}</span>
-                        {hasAvg && (
-                          <>
-                            <span className="text-slate-600">avg {item.average}{item.unit ? ` ${item.unit}` : ""}</span>
-                            <span className={`font-medium ${diffColor}`}>
-                              {diff > 0 ? "+" : ""}{diff.toFixed(1)}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="relative h-5 bg-slate-700/30 rounded overflow-hidden">
-                      <div
-                        className="absolute inset-y-0 rounded bg-blue-500/60 transition-all"
-                        style={{ left: `${barLeft}%`, width: `${Math.max(barWidth, 1.5)}%` }}
-                      />
-                      {minVal < 0 && (
-                        <div
-                          className="absolute top-0 bottom-0 w-px bg-slate-500/40"
-                          style={{ left: `${zeroPos}%` }}
-                        />
-                      )}
-                      {hasAvg && (
-                        <div
-                          className="absolute top-0 bottom-0 w-0.5 bg-slate-400/60"
-                          style={{ left: `${avgPos}%` }}
-                          title={`Department avg: ${item.average}`}
-                        />
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={comparisonData.map((d) => {
+                  const scale = d.average || Math.max(Math.abs(d.provider), 1);
+                  return { label: d.label, provider: Math.round((d.provider / scale) * 100), average: 100 };
+                })} margin={{ left: -10, right: 10, top: 5, bottom: 5 }}>
+                  <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 9 }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} angle={-30} textAnchor="end" height={50} />
+                  <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} unit="%" />
+                  <Tooltip formatter={(v) => `${v}%`} />
+                  <ReferenceLine y={100} stroke="#475569" strokeDasharray="3 3" label={{ value: "Avg", fill: "#64748b", fontSize: 10, position: "right" }} />
+                  <Bar dataKey="provider" name={row.initials} fill="#3b82f6" fillOpacity={0.8} radius={[3, 3, 0, 0]} maxBarSize={28}>
+                    {comparisonData.map((d, i) => {
+                      const scale = d.average || Math.max(Math.abs(d.provider), 1);
+                      const pct = (d.provider / scale) * 100;
+                      return <Cell key={i} fill={pct > 110 ? "#f97316" : pct < 90 ? "#3b82f6" : "#6b7280"} fillOpacity={0.8} />;
+                    })}
+                  </Bar>
+                  <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </div>
 
