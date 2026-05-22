@@ -221,10 +221,7 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
 
   const radarData = useMemo(() => {
     const raw: { label: string; provider: number; average: number }[] = [
-      { label: "Desirability", provider: Math.abs(row.desirabilityScore), average: Math.abs(averages.desirabilityScore * fte) },
       { label: "Holidays", provider: row.holidayWorkCount, average: averages.holidayWorkCount * fte },
-      { label: "Work Days", provider: row.totalWorkDays, average: averages.totalWorkDays * fte },
-      { label: "Hours", provider: row.totalHours, average: averages.totalHours * fte },
     ];
     for (const code of trackedShiftCodes) {
       raw.push({
@@ -241,11 +238,7 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
 
   const comparisonData = useMemo(() => {
     const items: { label: string; provider: number; average: number; unit: string }[] = [
-      { label: "Desirability", provider: row.desirabilityScore, average: parseFloat((averages.desirabilityScore * fte).toFixed(1)), unit: "pts" },
       { label: "Holidays", provider: row.holidayWorkCount, average: parseFloat((averages.holidayWorkCount * fte).toFixed(1)), unit: "" },
-      { label: "Hours", provider: row.totalHours, average: parseFloat((averages.totalHours * fte).toFixed(1)), unit: "hrs" },
-      { label: "Work Days", provider: row.totalWorkDays, average: parseFloat((averages.totalWorkDays * fte).toFixed(1)), unit: "" },
-      { label: "Leave Days", provider: row.totalLeaveDays, average: parseFloat((averages.totalLeaveDays * fte).toFixed(1)), unit: "" },
     ];
     for (const code of trackedShiftCodes) {
       items.push({
