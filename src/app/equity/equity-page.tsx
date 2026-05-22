@@ -120,16 +120,18 @@ function OverviewCharts({ data, trackedShiftCodes }: {
       });
   }, [data]);
 
-  const desirabilityData = useMemo(() => {
+  const { desirabilityData, desExtent } = useMemo(() => {
     const fteNormed = data.map((d) => d.desirabilityScore / (d.ftePercentage || 1));
     const med = median(fteNormed);
-    return [...data]
+    const rows = [...data]
       .sort((a, b) => (b.desirabilityScore / (b.ftePercentage || 1) - med) - (a.desirabilityScore / (a.ftePercentage || 1) - med))
       .map((d) => {
         const normed = d.desirabilityScore / (d.ftePercentage || 1);
         const v = parseFloat((normed - med).toFixed(1));
         return { initials: d.initials, value: v, fill: deviationColor(v / 10) };
       });
+    const maxAbs = Math.max(...rows.map((r) => Math.abs(r.value)), 1);
+    return { desirabilityData: rows, desExtent: maxAbs };
   }, [data]);
 
   const shiftData = useMemo(() => {
@@ -166,7 +168,7 @@ function OverviewCharts({ data, trackedShiftCodes }: {
         <p className="text-[10px] text-slate-600 mb-3">FTE-normalized, deviation from median — right = better shifts</p>
         <ResponsiveContainer width="100%" height={Math.max(200, data.length * 28 + 40)}>
           <BarChart data={desirabilityData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
-            <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={{ stroke: "#334155" }} tickLine={false} />
+            <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={{ stroke: "#334155" }} tickLine={false} domain={[-desExtent, desExtent]} />
             <YAxis type="category" dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 11, fontFamily: "monospace" }} width={40} axisLine={false} tickLine={false} />
             <Tooltip content={<ChartTooltipContent />} />
             <ReferenceLine x={0} stroke="#475569" strokeWidth={1} label={{ value: "median", position: "top", fill: "#475569", fontSize: 9 }} />
@@ -327,33 +329,39 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
               <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
                 <ResponsiveContainer width="100%" height={Math.max(150, Object.keys(row.deviation.perShift).length * 36 + 60)}>
                   <BarChart
-                    data={[
-                      { label: "Desirability", value: parseFloat(row.deviation.desirability.toFixed(2)) },
-                      { label: "Holidays", value: parseFloat(row.deviation.holidayWork.toFixed(2)) },
-                      ...Object.entries(row.deviation.perShift).map(([code, dev]) => ({
-                        label: code,
-                        value: parseFloat(dev.toFixed(2)),
-                      })),
-                    ]}
+                    data={(() => {
+                      const items = [
+                        { label: "Desirability", value: parseFloat((-row.deviation.desirability).toFixed(2)) },
+                        { label: "Holidays", value: parseFloat((-row.deviation.holidayWork).toFixed(2)) },
+                        ...Object.entries(row.deviation.perShift).map(([code, dev]) => ({
+                          label: code,
+                          value: parseFloat((-dev).toFixed(2)),
+                        })),
+                      ];
+                      return items.sort((a, b) => b.value - a.value);
+                    })()}
                     layout="vertical"
                     margin={{ left: 10, right: 20, top: 5, bottom: 5 }}
                   >
-                    <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={{ stroke: "#334155" }} tickLine={false} domain={["auto", "auto"]} />
+                    <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={{ stroke: "#334155" }} tickLine={false} domain={(() => { const vals = [Math.abs(row.deviation.desirability), Math.abs(row.deviation.holidayWork), ...Object.values(row.deviation.perShift).map(Math.abs)]; const m = Math.ceil(Math.max(...vals, 0.5) * 10) / 10; return [-m, m]; })() as [number, number]} tickFormatter={(v: number) => v.toFixed(1)} />
                     <YAxis type="category" dataKey="label" tick={{ fill: "#94a3b8", fontSize: 11 }} width={80} axisLine={false} tickLine={false} />
                     <Tooltip content={<ChartTooltipContent />} />
-                    <ReferenceLine x={0} stroke="#475569" strokeDasharray="3 3" />
-                    <Bar dataKey="value" name="Z-Score" radius={[0, 3, 3, 0]} maxBarSize={18}>
-                      {[
-                        { value: row.deviation.desirability },
-                        { value: row.deviation.holidayWork },
-                        ...Object.values(row.deviation.perShift).map((v) => ({ value: v })),
-                      ].map((d, i) => (
-                        <Cell key={i} fill={d.value > 0.5 ? "#ef4444" : d.value < -0.5 ? "#22c55e" : "#6b7280"} fillOpacity={0.75} />
+                    <ReferenceLine x={0} stroke="#475569" strokeWidth={1} label={{ value: "median", position: "top", fill: "#475569", fontSize: 9 }} />
+                    <Bar dataKey="value" name="vs Median" radius={[0, 3, 3, 0]} maxBarSize={18}>
+                      {(() => {
+                        const items = [
+                          { value: -row.deviation.desirability },
+                          { value: -row.deviation.holidayWork },
+                          ...Object.values(row.deviation.perShift).map((v) => ({ value: -v })),
+                        ];
+                        return items.sort((a, b) => b.value - a.value);
+                      })().map((d, i) => (
+                        <Cell key={i} fill={deviationColor(d.value)} fillOpacity={0.8} />
                       ))}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-                <p className="text-[10px] text-slate-600 mt-2">Positive = more burden than average. Negative = less burden.</p>
+                <p className="text-[10px] text-slate-600 mt-2">Right = lighter load. Left = heavier burden.</p>
               </div>
             </div>
           )}
