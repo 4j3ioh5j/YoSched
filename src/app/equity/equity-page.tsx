@@ -182,10 +182,10 @@ function OverviewCharts({ data, trackedShiftCodes }: {
       {trackedShiftCodes.length > 0 && (
         <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4 xl:col-span-2">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Shift Distribution</h3>
-          <ResponsiveContainer width="100%" height={Math.max(220, data.length * 28 + 40)}>
-            <BarChart data={shiftData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
-              <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={{ stroke: "#334155" }} tickLine={false} />
-              <YAxis type="category" dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 11, fontFamily: "monospace" }} width={40} axisLine={false} tickLine={false} />
+          <ResponsiveContainer width="100%" height={320}>
+            <BarChart data={shiftData} margin={{ left: -10, right: 10, top: 5, bottom: 5 }}>
+              <XAxis dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 10, fontFamily: "monospace" }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} />
+              <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
               <Tooltip content={<ChartTooltipContent />} />
               <Legend
                 wrapperStyle={{ fontSize: 11, color: "#94a3b8" }}
@@ -193,7 +193,7 @@ function OverviewCharts({ data, trackedShiftCodes }: {
                 iconSize={8}
               />
               {trackedShiftCodes.map((code, i) => (
-                <Bar key={code} dataKey={code} name={code} stackId="shifts" fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.75} maxBarSize={18} />
+                <Bar key={code} dataKey={code} name={code} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.75} radius={[2, 2, 0, 0]} maxBarSize={20} />
               ))}
             </BarChart>
           </ResponsiveContainer>
