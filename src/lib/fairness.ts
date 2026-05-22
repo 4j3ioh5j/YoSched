@@ -53,6 +53,7 @@ export type FairnessSummary = {
   trackedShiftCodes: string[];
   equityShiftCodes: string[];
   deviations: Map<string, FairnessDeviation>;
+  displayDeviations: Map<string, FairnessDeviation>;
 };
 
 export type FairnessDeviation = {
@@ -288,7 +289,33 @@ export function computeFairness({
     deviations.set(m.providerId, { desirability, holidayWork, perShift, overall });
   }
 
-  return { metrics, averages, trackedShiftCodes, equityShiftCodes, deviations };
+  // Plain FTE-normalized z-scores (no opportunity adjustment) for display
+  const plainDesStd = stddev(metrics.map((m) => fteNorm(m.providerId, m.desirabilityScore)));
+  const displayDeviations = new Map<string, FairnessDeviation>();
+
+  for (const m of metrics) {
+    const normDes = fteNorm(m.providerId, m.desirabilityScore);
+    const normHol = fteNorm(m.providerId, m.holidayWorkCount);
+
+    const desirability = -(normDes - avgDesirability) / plainDesStd;
+    const holidayWork = (normHol - avgHoliday) / holStd;
+
+    const perShift: Record<string, number> = {};
+    let overall = 0;
+
+    if (hasDesirability) overall += (factorWeights.get("desirability") ?? 0) * desirability;
+    if (hasHoliday) overall += (factorWeights.get("holiday") ?? 0) * holidayWork;
+    for (const code of equityShiftCodes) {
+      const normCount = fteNorm(m.providerId, m.shiftCounts[code] || 0);
+      const dev = (normCount - perShiftAvg[code]) / shiftStds[code];
+      perShift[code] = dev;
+      overall += (factorWeights.get(`shift:${code}`) ?? 0) * dev;
+    }
+
+    displayDeviations.set(m.providerId, { desirability, holidayWork, perShift, overall });
+  }
+
+  return { metrics, averages, trackedShiftCodes, equityShiftCodes, deviations, displayDeviations };
 }
 
 export type EquityThresholds = {

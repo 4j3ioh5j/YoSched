@@ -102,6 +102,7 @@ export default async function Equity() {
 
   const equityData = equity.metrics.map((m) => {
     const dev = equity.deviations.get(m.providerId)!;
+    const disp = equity.displayDeviations.get(m.providerId)!;
     const p = providers.find((p) => p.id === m.providerId)!;
     return {
       ...m,
@@ -110,6 +111,12 @@ export default async function Equity() {
         holidayWork: dev.holidayWork,
         overall: dev.overall,
         perShift: dev.perShift,
+      },
+      displayDeviation: {
+        desirability: disp.desirability,
+        holidayWork: disp.holidayWork,
+        overall: disp.overall,
+        perShift: disp.perShift,
       },
       name: p.name,
       isAutoScheduled: p.isAutoScheduled,

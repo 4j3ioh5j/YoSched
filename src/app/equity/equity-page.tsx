@@ -28,6 +28,7 @@ type EquityRow = {
   totalLeaveDays: number;
   totalHours: number;
   deviation: Deviation;
+  displayDeviation: Deviation;
   shiftCounts: Record<string, number>;
   shiftTally: Record<string, number>;
 };
@@ -223,9 +224,9 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
   const radarData = useMemo(() => {
     const baseline = globalMaxDev + 0.5;
     const items = [
-      { label: "Undesirable", value: row.deviation.desirability },
-      { label: "Holidays", value: row.deviation.holidayWork },
-      ...Object.entries(row.deviation.perShift).map(([code, dev]) => ({
+      { label: "Undesirable", value: row.displayDeviation.desirability },
+      { label: "Holidays", value: row.displayDeviation.holidayWork },
+      ...Object.entries(row.displayDeviation.perShift).map(([code, dev]) => ({
         label: code,
         value: dev,
       })),
@@ -320,18 +321,18 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
             </div>
           </div>
 
-          {Object.keys(row.deviation.perShift).length > 0 && (
+          {Object.keys(row.displayDeviation.perShift).length > 0 && (
             <div>
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Equity Deviations (Z-Score)</h3>
-              <p className="text-[10px] text-slate-600 mb-3">Z-score, FTE-normalized, opp-adjusted. Right = lighter, left = heavier.</p>
+              <p className="text-[10px] text-slate-600 mb-3">FTE-normalized z-score vs dept mean. Right = lighter, left = heavier.</p>
               <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
-                <ResponsiveContainer width="100%" height={Math.max(150, Object.keys(row.deviation.perShift).length * 36 + 60)}>
+                <ResponsiveContainer width="100%" height={Math.max(150, Object.keys(row.displayDeviation.perShift).length * 36 + 60)}>
                   <BarChart
                     data={(() => {
                       const items = [
-                        { label: "Desirability", value: parseFloat((-row.deviation.desirability).toFixed(2)) },
-                        { label: "Holidays", value: parseFloat((-row.deviation.holidayWork).toFixed(2)) },
-                        ...Object.entries(row.deviation.perShift).map(([code, dev]) => ({
+                        { label: "Desirability", value: parseFloat((-row.displayDeviation.desirability).toFixed(2)) },
+                        { label: "Holidays", value: parseFloat((-row.displayDeviation.holidayWork).toFixed(2)) },
+                        ...Object.entries(row.displayDeviation.perShift).map(([code, dev]) => ({
                           label: code,
                           value: parseFloat((-dev).toFixed(2)),
                         })),
@@ -341,16 +342,16 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
                     layout="vertical"
                     margin={{ left: 10, right: 20, top: 5, bottom: 5 }}
                   >
-                    <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={{ stroke: "#334155" }} tickLine={false} domain={(() => { const vals = [Math.abs(row.deviation.desirability), Math.abs(row.deviation.holidayWork), ...Object.values(row.deviation.perShift).map(Math.abs)]; const m = Math.ceil(Math.max(...vals, 0.5) * 10) / 10; return [-m, m]; })() as [number, number]} tickFormatter={(v: number) => v.toFixed(1)} />
+                    <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={{ stroke: "#334155" }} tickLine={false} domain={(() => { const vals = [Math.abs(row.displayDeviation.desirability), Math.abs(row.displayDeviation.holidayWork), ...Object.values(row.displayDeviation.perShift).map(Math.abs)]; const m = Math.ceil(Math.max(...vals, 0.5) * 10) / 10; return [-m, m]; })() as [number, number]} tickFormatter={(v: number) => v.toFixed(1)} />
                     <YAxis type="category" dataKey="label" tick={{ fill: "#94a3b8", fontSize: 11 }} width={80} axisLine={false} tickLine={false} />
                     <Tooltip content={<ChartTooltipContent />} />
                     <ReferenceLine x={0} stroke="#475569" strokeWidth={1} label={{ value: "median", position: "top", fill: "#475569", fontSize: 9 }} />
                     <Bar dataKey="value" name="vs Median" radius={[0, 3, 3, 0]} maxBarSize={18}>
                       {(() => {
                         const items = [
-                          { value: -row.deviation.desirability },
-                          { value: -row.deviation.holidayWork },
-                          ...Object.values(row.deviation.perShift).map((v) => ({ value: -v })),
+                          { value: -row.displayDeviation.desirability },
+                          { value: -row.displayDeviation.holidayWork },
+                          ...Object.values(row.displayDeviation.perShift).map((v) => ({ value: -v })),
                         ];
                         return items.sort((a, b) => b.value - a.value);
                       })().map((d, i) => (
@@ -400,8 +401,8 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
   const globalMaxDev = useMemo(() => {
     let max = 0.5;
     for (const d of data) {
-      max = Math.max(max, Math.abs(d.deviation.desirability), Math.abs(d.deviation.holidayWork));
-      for (const v of Object.values(d.deviation.perShift)) max = Math.max(max, Math.abs(v));
+      max = Math.max(max, Math.abs(d.displayDeviation.desirability), Math.abs(d.displayDeviation.holidayWork));
+      for (const v of Object.values(d.displayDeviation.perShift)) max = Math.max(max, Math.abs(v));
     }
     return max;
   }, [data]);
