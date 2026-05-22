@@ -76,13 +76,36 @@ export async function POST(req: NextRequest) {
     const results: Record<string, unknown> = {};
 
     if (toAssignment) {
-      // Swap: move both
-      await Promise.all([
-        prisma.assignment.delete({ where: { id: fromAssignment.id } }),
-        prisma.assignment.delete({ where: { id: toAssignment.id } }),
-      ]);
-      const [newFrom, newTo] = await Promise.all([
-        prisma.assignment.create({
+      const [newFrom, newTo] = await prisma.$transaction(async (tx) => {
+        await tx.assignment.delete({ where: { id: fromAssignment.id } });
+        await tx.assignment.delete({ where: { id: toAssignment.id } });
+        return Promise.all([
+          tx.assignment.create({
+            data: {
+              providerId: to.providerId,
+              date: toDate,
+              shiftTypeId: fromAssignment.shiftTypeId,
+              source: "manual",
+            },
+            include: { shiftType: true },
+          }),
+          tx.assignment.create({
+            data: {
+              providerId: from.providerId,
+              date: fromDate,
+              shiftTypeId: toAssignment.shiftTypeId,
+              source: "manual",
+            },
+            include: { shiftType: true },
+          }),
+        ]);
+      });
+      results.moved = formatAssignment(newFrom, to.date);
+      results.swapped = formatAssignment(newTo, from.date);
+    } else {
+      const newAssignment = await prisma.$transaction(async (tx) => {
+        await tx.assignment.delete({ where: { id: fromAssignment.id } });
+        return tx.assignment.create({
           data: {
             providerId: to.providerId,
             date: toDate,
@@ -90,30 +113,7 @@ export async function POST(req: NextRequest) {
             source: "manual",
           },
           include: { shiftType: true },
-        }),
-        prisma.assignment.create({
-          data: {
-            providerId: from.providerId,
-            date: fromDate,
-            shiftTypeId: toAssignment.shiftTypeId,
-            source: "manual",
-          },
-          include: { shiftType: true },
-        }),
-      ]);
-      results.moved = formatAssignment(newFrom, to.date);
-      results.swapped = formatAssignment(newTo, from.date);
-    } else {
-      // Move: delete source, create at target
-      await prisma.assignment.delete({ where: { id: fromAssignment.id } });
-      const newAssignment = await prisma.assignment.create({
-        data: {
-          providerId: to.providerId,
-          date: toDate,
-          shiftTypeId: fromAssignment.shiftTypeId,
-          source: "manual",
-        },
-        include: { shiftType: true },
+        });
       });
       results.moved = formatAssignment(newAssignment, to.date);
       results.cleared = { providerId: from.providerId, date: from.date };

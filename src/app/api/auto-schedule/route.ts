@@ -16,11 +16,31 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const allPayPeriods = await prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } });
+
+  const overlappingPPs = allPayPeriods.filter((pp) => {
+    const ppStart = pp.startDate.toISOString().split("T")[0];
+    const ppEnd = pp.endDate.toISOString().split("T")[0];
+    return ppEnd >= startDate && ppStart <= endDate;
+  });
+
+  const effectiveStart = overlappingPPs.length > 0
+    ? overlappingPPs.reduce((min, pp) => {
+        const s = pp.startDate.toISOString().split("T")[0];
+        return s < min ? s : min;
+      }, startDate)
+    : startDate;
+  const effectiveEnd = overlappingPPs.length > 0
+    ? overlappingPPs.reduce((max, pp) => {
+        const e = pp.endDate.toISOString().split("T")[0];
+        return e > max ? e : max;
+      }, endDate)
+    : endDate;
+
   const [
     providers,
     shiftTypes,
     existingAssignments,
-    payPeriods,
     holidays,
     desirabilityWeights,
     standingCommitments,
@@ -38,13 +58,12 @@ export async function POST(req: NextRequest) {
     prisma.assignment.findMany({
       where: {
         date: {
-          gte: new Date(startDate + "T00:00:00Z"),
-          lte: new Date(endDate + "T00:00:00Z"),
+          gte: new Date(effectiveStart + "T00:00:00Z"),
+          lte: new Date(effectiveEnd + "T00:00:00Z"),
         },
       },
       include: { shiftType: true },
     }),
-    prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
     prisma.holiday.findMany(),
     prisma.desirabilityWeight.findMany(),
     prisma.standingCommitment.findMany(),
@@ -52,7 +71,7 @@ export async function POST(req: NextRequest) {
     prisma.providerDayPreference.findMany(),
     prisma.assignment.findMany({
       where: {
-        date: { lt: new Date(startDate + "T00:00:00Z") },
+        date: { lt: new Date(effectiveStart + "T00:00:00Z") },
       },
       include: { shiftType: true },
     }),
@@ -63,8 +82,10 @@ export async function POST(req: NextRequest) {
     prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
 
-  const start = new Date(startDate + "T12:00:00");
-  const end = new Date(endDate + "T12:00:00");
+  const payPeriods = allPayPeriods;
+
+  const start = new Date(effectiveStart + "T12:00:00");
+  const end = new Date(effectiveEnd + "T12:00:00");
   const dates: string[] = [];
   const cur = new Date(start);
   while (cur <= end) {

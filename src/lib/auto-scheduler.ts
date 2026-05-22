@@ -383,17 +383,21 @@ export function autoSchedule({
   }
 
   function wouldBreakPPHours(providerId: string, date: string, st: ScheduleShiftType): boolean {
-    if (!st.countsTowardFte) return false;
-    const pp = findPPForDate(date);
+    const hasRecoveryCost = st.postShiftRule === "day_off_after";
+    if (!st.countsTowardFte && !hasRecoveryCost) return false;
+
+    const recoveryDate = hasRecoveryCost ? nextDate(date) : null;
+    const recoveryPP = recoveryDate ? findPPForDate(recoveryDate) : null;
+    const pp = st.countsTowardFte ? findPPForDate(date) : recoveryPP;
     if (!pp || !fillShift) return false;
     const provider = activeProviders.find((p) => p.id === providerId);
     if (!provider) return false;
     const target = pp.targetHours * provider.ftePercentage;
     if (target <= 0) return false;
 
-    const addHours = getShiftHours(providerId, st, overrideMap);
+    const addHours = st.countsTowardFte ? getShiftHours(providerId, st, overrideMap) : 0;
     const current = ppHoursForProvider(providerId, pp);
-    if (current + addHours > target) return true;
+    if (st.countsTowardFte && current + addHours > target) return true;
 
     const fillHrs = getShiftHours(providerId, fillShift, overrideMap);
     let availDays = 0;
@@ -401,20 +405,16 @@ export function autoSchedule({
     const end = new Date(pp.endDate + "T12:00:00");
     while (cur <= end) {
       const d = toDateStr(cur);
-      const dow = cur.getDay();
-      const dayAvail = evaluateAvailability(
-        provider.availabilityRules, d, payPeriods,
-        (pid, dd) => isAssigned(pid, dd)
-      );
-      if (dayAvail.available && !holidaySet.has(d) && !isAssigned(providerId, d)) {
+      if (isAvailable(provider, d, fillShift)) {
         availDays++;
       }
       cur.setDate(cur.getDate() + 1);
     }
 
-    // This shift consumes 1 day (+ 1 recovery if applicable)
-    let daysConsumed = 1;
-    if (st.postShiftRule === "day_off_after") daysConsumed = 2;
+    let daysConsumed = 0;
+    if (st.countsTowardFte) daysConsumed += 1;
+    if (hasRecoveryCost && recoveryPP &&
+        recoveryPP.startDate === pp.startDate) daysConsumed += 1;
     const remainingAvail = availDays - daysConsumed;
     const hoursAfterAssign = current + addHours;
     const hoursStillNeeded = target - hoursAfterAssign;
@@ -538,6 +538,7 @@ export function autoSchedule({
 
         const available = eligible.filter(
           (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
+            isAvailable(p, sat, st) && isAvailable(p, sun, st) &&
             noGroupConflict(p.id, sat, sun) &&
             !wouldBreakPPHours(p.id, sat, st)
         );
@@ -545,6 +546,7 @@ export function autoSchedule({
         if (available.length === 0) {
           const fallback = eligible.filter(
             (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
+              isAvailable(p, sat, st) && isAvailable(p, sun, st) &&
               noGroupConflict(p.id, sat, sun)
           );
           if (fallback.length === 0) {
@@ -555,7 +557,8 @@ export function autoSchedule({
         }
 
         const pool = available.length > 0 ? available : eligible.filter(
-          (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun)
+          (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
+            isAvailable(p, sat, st) && isAvailable(p, sun, st)
         );
         if (pool.length === 0) continue;
         const chosen = pickProvider(pool);
@@ -572,10 +575,13 @@ export function autoSchedule({
         if (current >= required) continue;
 
         let available = eligible.filter(
-          (p) => !isAssigned(p.id, date) && !wouldBreakPPHours(p.id, date, st)
+          (p) => !isAssigned(p.id, date) && isAvailable(p, date, st) &&
+            !wouldBreakPPHours(p.id, date, st)
         );
         if (available.length === 0) {
-          available = eligible.filter((p) => !isAssigned(p.id, date));
+          available = eligible.filter(
+            (p) => !isAssigned(p.id, date) && isAvailable(p, date, st)
+          );
         }
         if (available.length === 0) {
           warnings.push(`No eligible ${st.code} provider for holiday ${date}`);
@@ -783,6 +789,8 @@ export function autoSchedule({
 
   // ── STEP 3: Fill shift to hit FTE hour targets (day-off clustering) ──
 
+  const holShift = shiftTypes.find((st) => st.code === "HOL" && st.countsTowardFte) ?? null;
+
   if (fillShift) {
     const sortedPPs = [...payPeriods]
       .filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate))
@@ -872,7 +880,7 @@ export function autoSchedule({
 
     for (const pp of sortedPPs) {
       const ppDates = dates.filter(
-        (d) => d >= pp.startDate && d <= pp.endDate && !holidaySet.has(d)
+        (d) => d >= pp.startDate && d <= pp.endDate
       );
 
       const sortedProviders = sortByFairness(activeProviders.map((p) => p.id))
@@ -907,16 +915,10 @@ export function autoSchedule({
         }
 
         const fillDaysNeeded = Math.min(
-          Math.floor(hoursNeeded / hoursPerDay),
+          Math.ceil(hoursNeeded / hoursPerDay),
           availableDates.length
         );
         const daysOff = availableDates.length - fillDaysNeeded;
-
-        if (hoursNeeded > 0 && hoursNeeded % hoursPerDay !== 0) {
-          warnings.push(
-            `${provider.initials}: ${hoursNeeded}hrs needed is not divisible by ${hoursPerDay}hrs — will be ${hoursNeeded - fillDaysNeeded * hoursPerDay}hrs short`
-          );
-        }
 
         let fillDates: string[];
         if (daysOff > 0 && daysOff < availableDates.length) {
@@ -956,11 +958,12 @@ export function autoSchedule({
         let hours = currentHours;
         for (const date of fillDates) {
           if (hours >= target) break;
-          if (hours + hoursPerDay > target) break;
-          assign(provider.id, date, fillShift,
-            `${fillShift.code} to fill hours (${hours}/${target}hrs)`,
+          const shift = holidaySet.has(date) && holShift ? holShift : fillShift;
+          const shiftHrs = getShiftHours(provider.id, shift, overrideMap);
+          assign(provider.id, date, shift,
+            `${shift.code} to fill hours (${hours}/${target}hrs)`,
             "fill", 0.6);
-          hours += hoursPerDay;
+          hours += shiftHrs;
         }
       }
     }

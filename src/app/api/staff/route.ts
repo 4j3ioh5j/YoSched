@@ -22,36 +22,38 @@ export async function PUT(req: NextRequest) {
     },
   });
 
-  if (Array.isArray(eligibleShiftTypeIds)) {
-    await prisma.providerEligibleShift.deleteMany({ where: { providerId: id } });
-    if (eligibleShiftTypeIds.length > 0) {
-      await prisma.providerEligibleShift.createMany({
-        data: eligibleShiftTypeIds.map((stId: string) => ({
-          providerId: id,
-          shiftTypeId: stId,
-        })),
-      });
+  await prisma.$transaction(async (tx) => {
+    if (Array.isArray(eligibleShiftTypeIds)) {
+      await tx.providerEligibleShift.deleteMany({ where: { providerId: id } });
+      if (eligibleShiftTypeIds.length > 0) {
+        await tx.providerEligibleShift.createMany({
+          data: eligibleShiftTypeIds.map((stId: string) => ({
+            providerId: id,
+            shiftTypeId: stId,
+          })),
+        });
+      }
     }
-  }
 
-  if (Array.isArray(availabilityRules)) {
-    await prisma.availabilityRule.deleteMany({ where: { providerId: id } });
-    if (availabilityRules.length > 0) {
-      await prisma.availabilityRule.createMany({
-        data: availabilityRules.map((r: Record<string, unknown>) => ({
-          providerId: id,
-          dayOfWeek: r.dayOfWeek as number,
-          type: (r.type as string) ?? "available",
-          strength: (r.strength as string) ?? "rule",
-          pattern: (r.pattern as string) ?? "every",
-          cycleLength: r.cycleLength as number | undefined,
-          cycleOffset: r.cycleOffset as number | undefined,
-          conditionProviderId: r.conditionProviderId as string | undefined,
-          conditionType: r.conditionType as string | undefined,
-        })),
-      });
+    if (Array.isArray(availabilityRules)) {
+      await tx.availabilityRule.deleteMany({ where: { providerId: id } });
+      if (availabilityRules.length > 0) {
+        await tx.availabilityRule.createMany({
+          data: availabilityRules.map((r: Record<string, unknown>) => ({
+            providerId: id,
+            dayOfWeek: r.dayOfWeek as number,
+            type: (r.type as string) ?? "available",
+            strength: (r.strength as string) ?? "rule",
+            pattern: (r.pattern as string) ?? "every",
+            cycleLength: r.cycleLength as number | undefined,
+            cycleOffset: r.cycleOffset as number | undefined,
+            conditionProviderId: r.conditionProviderId as string | undefined,
+            conditionType: r.conditionType as string | undefined,
+          })),
+        });
+      }
     }
-  }
+  });
 
   const result = await prisma.provider.findUnique({
     where: { id },

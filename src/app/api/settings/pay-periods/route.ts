@@ -33,26 +33,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing startDate or periodCount" }, { status: 400 });
   }
 
-  await prisma.payPeriod.deleteMany({});
-
   const start = new Date(startDate + "T00:00:00Z");
-  const periods = [];
+  const periodsData: { startDate: Date; endDate: Date; targetHours: number }[] = [];
   for (let i = 0; i < periodCount; i++) {
     const ppStart = new Date(start);
     ppStart.setDate(ppStart.getDate() + i * 14);
     const ppEnd = new Date(ppStart);
     ppEnd.setDate(ppEnd.getDate() + 13);
 
-    periods.push({
+    periodsData.push({
       startDate: ppStart,
       endDate: ppEnd,
       targetHours: targetHours ?? 80,
     });
   }
 
-  await prisma.payPeriod.createMany({ data: periods });
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.payPeriod.deleteMany({});
+    await tx.payPeriod.createMany({ data: periodsData });
+    return tx.payPeriod.findMany({ orderBy: { startDate: "asc" } });
+  });
 
-  const created = await prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } });
   return NextResponse.json(
     created.map((p) => ({
       id: p.id,
