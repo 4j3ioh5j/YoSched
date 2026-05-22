@@ -1,9 +1,12 @@
 import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 
 type BulkItem = { providerId: string; date: string };
 
 export async function PUT(req: NextRequest) {
+  const { error } = await requireAuth("manager");
+  if (error) return error;
   const { cells, shiftTypeId } = await req.json() as {
     cells: BulkItem[];
     shiftTypeId: string;
@@ -44,6 +47,8 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const { error } = await requireAuth("manager");
+  if (error) return error;
   const { cells } = await req.json() as { cells: BulkItem[] };
 
   if (!cells?.length) {

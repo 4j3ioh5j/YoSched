@@ -1,7 +1,10 @@
+import { requireAuth } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(req: NextRequest) {
+  const { error } = await requireAuth("admin");
+  if (error) return error;
   const { id, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
@@ -32,6 +35,8 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const { error } = await requireAuth("admin");
+  if (error) return error;
   const data = await req.json();
   if (!data.code || !data.name) {
     return NextResponse.json({ error: "Missing code or name" }, { status: 400 });
@@ -82,6 +87,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const { error } = await requireAuth("admin");
+  if (error) return error;
   const { id } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 

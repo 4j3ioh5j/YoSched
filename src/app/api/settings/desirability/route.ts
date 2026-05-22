@@ -1,7 +1,10 @@
+import { requireAuth } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 export async function PUT(req: NextRequest) {
+  const { error } = await requireAuth("admin");
+  if (error) return error;
   const { weights } = (await req.json()) as {
     weights: Array<{
       shiftTypeId: string;

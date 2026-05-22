@@ -1,12 +1,17 @@
+import { requireAuth } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET() {
+  const { error } = await requireAuth("admin");
+  if (error) return error;
   const factors = await prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } });
   return NextResponse.json(factors);
 }
 
 export async function PUT(req: NextRequest) {
+  const { error } = await requireAuth("admin");
+  if (error) return error;
   const { factors } = await req.json() as {
     factors: Array<{
       id?: string;

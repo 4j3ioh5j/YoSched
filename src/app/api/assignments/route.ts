@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 
 function formatAssignment(a: { id: string; providerId: string; shiftTypeId: string; isLocked: boolean; shiftType: { code: string; color: string | null } }, date: string) {
@@ -14,6 +15,8 @@ function formatAssignment(a: { id: string; providerId: string; shiftTypeId: stri
 }
 
 export async function PUT(req: NextRequest) {
+  const { error } = await requireAuth("manager");
+  if (error) return error;
   const { providerId, date, shiftTypeId } = await req.json();
 
   if (!providerId || !date || !shiftTypeId) {
@@ -38,6 +41,8 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const { error } = await requireAuth("manager");
+  if (error) return error;
   const { action, from, to } = await req.json();
 
   if (action === "swap" && from && to) {
@@ -114,6 +119,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const { error } = await requireAuth("manager");
+  if (error) return error;
   const { providerId, date } = await req.json();
 
   if (!providerId || !date) {

@@ -1,7 +1,10 @@
+import { requireAuth } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(req: NextRequest) {
+  const { error } = await requireAuth("admin");
+  if (error) return error;
   const { targetHours } = await req.json();
 
   if (targetHours !== undefined) {
@@ -22,6 +25,8 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const { error } = await requireAuth("admin");
+  if (error) return error;
   const { startDate, periodCount, targetHours } = await req.json();
 
   if (!startDate || !periodCount) {

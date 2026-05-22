@@ -1,8 +1,11 @@
+import { requireAuth } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { getFederalHolidays } from "@/lib/federal-holidays";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
+  const { error } = await requireAuth("admin");
+  if (error) return error;
   const body = await req.json();
 
   if (body.action === "auto-populate") {
@@ -47,6 +50,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const { error } = await requireAuth("admin");
+  if (error) return error;
   const { id } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 

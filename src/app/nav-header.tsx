@@ -2,16 +2,26 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { signOut, useSession } from "next-auth/react";
 
 const NAV_ITEMS = [
-  { label: "Schedule", href: "/" },
-  { label: "Staff", href: "/staff" },
-  { label: "Statistics", href: "/equity" },
-  { label: "Settings", href: "/settings" },
+  { label: "Schedule", href: "/", adminOnly: false },
+  { label: "Staff", href: "/staff", adminOnly: false },
+  { label: "Statistics", href: "/equity", adminOnly: false },
+  { label: "Settings", href: "/settings", adminOnly: false },
+  { label: "Users", href: "/users", adminOnly: true },
 ];
+
+const ROLE_BADGE: Record<string, string> = {
+  admin: "bg-amber-700 text-amber-100",
+  manager: "bg-blue-700 text-blue-100",
+  viewer: "bg-slate-600 text-slate-300",
+};
 
 export function NavHeader() {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const role = (session?.user as { role?: string })?.role;
 
   return (
     <header className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-900 shrink-0">
@@ -19,7 +29,7 @@ export function NavHeader() {
         YoSched
       </Link>
       <nav className="flex items-center gap-1">
-        {NAV_ITEMS.map((item) => {
+        {NAV_ITEMS.filter((item) => !item.adminOnly || role === "admin").map((item) => {
           const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
             <Link
@@ -37,6 +47,29 @@ export function NavHeader() {
           );
         })}
       </nav>
+      {session?.user && (
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Link href="/account" className="text-sm text-slate-300 hover:text-slate-100 transition-colors">
+              {session.user.name}
+            </Link>
+            {role && (
+              <span className={`text-xs px-1.5 py-0.5 rounded ${ROLE_BADGE[role] || ROLE_BADGE.viewer}`}>
+                {role}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={async () => {
+              await signOut({ redirect: false });
+              window.location.href = "/login";
+            }}
+            className="text-sm text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
+      )}
     </header>
   );
 }

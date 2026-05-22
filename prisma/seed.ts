@@ -2,6 +2,7 @@ import "dotenv/config";
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
+import { hashSync } from "bcryptjs";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
@@ -346,6 +347,19 @@ async function main() {
     create: { id: "default", prefer3DayWeekends: true, prefer4DayWeekends: true, preferSequentialOff: true },
   });
   console.log("Seeded scheduling preferences");
+
+  // --- Default Admin User ---
+  await prisma.user.upsert({
+    where: { email: "admin@yosched.local" },
+    update: {},
+    create: {
+      email: "admin@yosched.local",
+      name: "Admin",
+      passwordHash: hashSync("admin", 12),
+      role: "admin",
+    },
+  });
+  console.log("Seeded default admin user (admin@yosched.local / admin)");
 }
 
 main()

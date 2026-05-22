@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth-guard";
 import { autoSchedule } from "@/lib/auto-scheduler";
 
 export async function POST(req: NextRequest) {
+  const { error } = await requireAuth("manager");
+  if (error) return error;
   const body = await req.json();
   const { startDate, endDate } = body as { startDate: string; endDate: string };
 
@@ -198,6 +201,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const { error } = await requireAuth("manager");
+  if (error) return error;
   const body = await req.json();
   const { suggestions } = body as {
     suggestions: Array<{
@@ -247,6 +252,8 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const { error } = await requireAuth("manager");
+  if (error) return error;
   const body = await req.json();
   const { startDate, endDate } = body as { startDate: string; endDate: string };
 

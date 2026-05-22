@@ -1,7 +1,10 @@
+import { requireAuth } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(req: NextRequest) {
+  const { error } = await requireAuth("admin");
+  if (error) return error;
   const { requirements, columns } = await req.json() as {
     requirements: { shiftCode: string; dayKey: string; minCount: number }[];
     columns: string[];

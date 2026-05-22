@@ -52,3 +52,8 @@ input[type="checkbox"]:disabled {
   opacity: 0.6;
   cursor: default;
 }
+
+@keyframes drift {
+  0% { transform: translate(0, 0); }
+  100% { transform: translate(60px, 60px); }
+}
