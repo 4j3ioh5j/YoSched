@@ -15,6 +15,7 @@ function LoginForm() {
   const [savedPassword, setSavedPassword] = useState("");
   const totpRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [totpDigits, setTotpDigits] = useState(["", "", "", "", "", ""]);
+  const [rememberDevice, setRememberDevice] = useState(true);
 
   async function handleCredentials(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -81,6 +82,9 @@ function LoginForm() {
       totpRefs.current[0]?.focus();
       setLoading(false);
     } else {
+      if (rememberDevice) {
+        await fetch("/api/auth/trust-device", { method: "POST" });
+      }
       router.push(callbackUrl);
       router.refresh();
     }
@@ -209,6 +213,14 @@ function LoginForm() {
                 />
               ))}
             </div>
+            <label className="flex items-center justify-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={rememberDevice}
+                onChange={(e) => setRememberDevice(e.target.checked)}
+              />
+              <span className="text-sm text-slate-400">Remember this device for 30 days</span>
+            </label>
             {error && <p className="text-sm text-red-400 text-center">{error}</p>}
             <button
               onClick={() => {

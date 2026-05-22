@@ -4,6 +4,7 @@ import { compare } from "bcryptjs";
 import { prisma } from "./prisma";
 import { authConfig } from "./auth.config";
 import { decrypt } from "./crypto";
+import { isDeviceTrusted } from "./device-trust";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   ...authConfig,
@@ -30,11 +31,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         if (!valid) return null;
 
         if (user.totpEnabled && user.totpSecret) {
-          if (!totpCode) return null;
-          const secret = decrypt(user.totpSecret);
-          const { verifySync } = await import("otplib");
-          const result = verifySync({ token: totpCode, secret });
-          if (!result.valid) return null;
+          const trusted = await isDeviceTrusted(user.id);
+          if (!trusted) {
+            if (!totpCode) return null;
+            const secret = decrypt(user.totpSecret);
+            const { verifySync } = await import("otplib");
+            const result = verifySync({ token: totpCode, secret });
+            if (!result.valid) return null;
+          }
         }
 
         if (user.failedAttempts > 0) {

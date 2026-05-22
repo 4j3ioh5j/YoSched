@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { isDeviceTrusted } from "@/lib/device-trust";
 import { NextRequest, NextResponse } from "next/server";
 import { compare } from "bcryptjs";
 
@@ -40,6 +41,13 @@ export async function POST(req: NextRequest) {
       ? `Invalid email or password. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining.`
       : `Account locked for ${LOCKOUT_MINUTES} minutes.`;
     return NextResponse.json({ error: msg }, { status: 401 });
+  }
+
+  if (user.totpEnabled) {
+    const trusted = await isDeviceTrusted(user.id);
+    if (trusted) {
+      return NextResponse.json({ requiresTotp: false });
+    }
   }
 
   return NextResponse.json({ requiresTotp: user.totpEnabled });
