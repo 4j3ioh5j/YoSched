@@ -215,20 +215,23 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
   const fte = row.ftePercentage;
 
   const radarData = useMemo(() => {
-    const dims: { label: string; provider: number; average: number }[] = [
+    const raw: { label: string; provider: number; average: number }[] = [
       { label: "Desirability", provider: Math.abs(row.desirabilityScore), average: Math.abs(averages.desirabilityScore * fte) },
       { label: "Holidays", provider: row.holidayWorkCount, average: averages.holidayWorkCount * fte },
       { label: "Work Days", provider: row.totalWorkDays, average: averages.totalWorkDays * fte },
       { label: "Hours", provider: row.totalHours, average: averages.totalHours * fte },
     ];
     for (const code of trackedShiftCodes) {
-      dims.push({
+      raw.push({
         label: code,
         provider: row.shiftCounts[code] || 0,
         average: (averages.perShift[code] || 0) * fte,
       });
     }
-    return dims;
+    return raw.map((d) => {
+      const scale = d.average || Math.max(d.provider, 1);
+      return { label: d.label, provider: (d.provider / scale) * 100, average: 100 };
+    });
   }, [row, averages, trackedShiftCodes, fte]);
 
   const comparisonData = useMemo(() => {
@@ -284,8 +287,8 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
                 <RadarChart data={radarData} cx="50%" cy="50%">
                   <PolarGrid stroke="#334155" />
                   <PolarAngleAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-                  <PolarRadiusAxis tick={{ fill: "#475569", fontSize: 9 }} axisLine={false} />
-                  <Radar name="Department Avg" dataKey="average" stroke="#475569" fill="#475569" fillOpacity={0.15} strokeWidth={1.5} strokeDasharray="4 4" />
+                  <PolarRadiusAxis tick={false} axisLine={false} domain={[0, "auto"]} />
+                  <Radar name="Dept Avg (baseline)" dataKey="average" stroke="#475569" fill="#475569" fillOpacity={0.1} strokeWidth={1.5} strokeDasharray="4 4" />
                   <Radar name={row.initials} dataKey="provider" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} />
                   <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
                 </RadarChart>
