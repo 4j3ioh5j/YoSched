@@ -304,7 +304,7 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
 
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Category Breakdown</h3>
-            <p className="text-[10px] text-slate-600 mb-3">Each bar = provider&apos;s value as % of FTE-adjusted dept average. 100% line = average. Orange = above avg, blue = below, grey = near avg.</p>
+            <p className="text-[10px] text-slate-600 mb-3">Each bar = provider&apos;s value as % of FTE-adjusted dept average. Dashed line = 100% (average). Above = more than average, below = less.</p>
             <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={comparisonData.map((d) => {
@@ -315,13 +315,7 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
                   <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} unit="%" />
                   <Tooltip formatter={(v) => `${v}%`} />
                   <ReferenceLine y={100} stroke="#475569" strokeDasharray="3 3" label={{ value: "Avg", fill: "#64748b", fontSize: 10, position: "right" }} />
-                  <Bar dataKey="provider" name={row.initials} fill="#3b82f6" fillOpacity={0.8} radius={[3, 3, 0, 0]} maxBarSize={28}>
-                    {comparisonData.map((d, i) => {
-                      const scale = d.average || Math.max(Math.abs(d.provider), 1);
-                      const pct = (d.provider / scale) * 100;
-                      return <Cell key={i} fill={pct > 110 ? "#f97316" : pct < 90 ? "#3b82f6" : "#6b7280"} fillOpacity={0.8} />;
-                    })}
-                  </Bar>
+                  <Bar dataKey="provider" name={row.initials} fill="#3b82f6" fillOpacity={0.8} radius={[3, 3, 0, 0]} maxBarSize={28} />
                   <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
                 </BarChart>
               </ResponsiveContainer>
