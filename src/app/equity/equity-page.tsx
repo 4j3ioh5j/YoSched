@@ -149,7 +149,7 @@ function OverviewCharts({ data, trackedShiftCodes }: {
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
       <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Overall Workload Balance</h3>
-        <p className="text-[10px] text-slate-600 mb-3">Deviation from median — right = lighter load</p>
+        <p className="text-[10px] text-slate-600 mb-3">Weighted z-score, FTE-normalized — right = lighter</p>
         <ResponsiveContainer width="100%" height={Math.max(200, data.length * 28 + 40)}>
           <BarChart data={equityData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
             <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={{ stroke: "#334155" }} tickLine={false} />
@@ -161,12 +161,12 @@ function OverviewCharts({ data, trackedShiftCodes }: {
             </Bar>
           </BarChart>
         </ResponsiveContainer>
-        <p className="text-[10px] text-slate-600 mt-2">Weighted composite of all enabled equity factors (desirability, holidays, per-shift counts). Each factor is z-scored and FTE-normalized, then combined using the weights from Settings. Zero = department median.</p>
+        <p className="text-[10px] text-slate-600 mt-2">Z-score, FTE-normalized, opportunity-adjusted</p>
       </div>
 
       <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Shift Desirability</h3>
-        <p className="text-[10px] text-slate-600 mb-3">FTE-normalized, deviation from median — right = better shifts</p>
+        <p className="text-[10px] text-slate-600 mb-3">FTE-normalized, vs median — right = better shifts</p>
         <ResponsiveContainer width="100%" height={Math.max(200, data.length * 28 + 40)}>
           <BarChart data={desirabilityData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
             <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={{ stroke: "#334155" }} tickLine={false} domain={[-desExtent, desExtent]} />
@@ -180,13 +180,13 @@ function OverviewCharts({ data, trackedShiftCodes }: {
             </Bar>
           </BarChart>
         </ResponsiveContainer>
-        <p className="text-[10px] text-slate-600 mt-2">Sum of desirability weights for each shift+day-of-week worked, divided by FTE. Weights are configured per shift type and day in Settings &gt; Desirability. Opportunity-adjusted: only compares against shifts the provider is eligible for.</p>
+        <p className="text-[10px] text-slate-600 mt-2">FTE-normalized raw desirability score vs median</p>
       </div>
 
       {trackedShiftCodes.length > 0 && (
         <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4 xl:col-span-2">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Shift Distribution</h3>
-          <p className="text-[10px] text-slate-600 mb-3">Raw count of each shift type assigned per provider. Stubs at the baseline indicate zero assignments.</p>
+          <p className="text-[10px] text-slate-600 mb-3">Raw counts per provider. Stubs = zero.</p>
           <ResponsiveContainer width="100%" height={320}>
             <BarChart data={shiftData} margin={{ left: -10, right: 10, top: 5, bottom: 5 }} barGap={1} barCategoryGap="15%">
               <XAxis dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 10, fontFamily: "monospace" }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} />
@@ -292,13 +292,13 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
                   <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
                 </RadarChart>
               </ResponsiveContainer>
-              <p className="text-[10px] text-slate-600 mt-2">Z-score per factor, FTE-normalized. Dashed circle = department median (zero). Further out = more burden. All axes point outward = worse.</p>
+              <p className="text-[10px] text-slate-600 mt-2">Z-score, FTE-normalized, opp-adjusted. Dashed = median. Outward = more burden.</p>
             </div>
           </div>
 
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Category Breakdown</h3>
-            <p className="text-[10px] text-slate-600 mb-3">Raw counts. Dashed line = FTE-adjusted dept avg. Orange = above avg, blue = below.</p>
+            <p className="text-[10px] text-slate-600 mb-3">Raw counts. Dashed = FTE-adj avg. Orange = above, blue = below.</p>
             <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={comparisonData} margin={{ left: -10, right: 10, top: 5, bottom: 5 }}>
@@ -323,7 +323,7 @@ function StaffDetailPanel({ row, averages, trackedShiftCodes, equityThresholds, 
           {Object.keys(row.deviation.perShift).length > 0 && (
             <div>
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Equity Deviations (Z-Score)</h3>
-              <p className="text-[10px] text-slate-600 mb-3">Each factor as a z-score (standard deviations from dept mean). FTE-normalized. Desirability is opportunity-adjusted to only count eligible shifts.</p>
+              <p className="text-[10px] text-slate-600 mb-3">Z-score, FTE-normalized, opp-adjusted. Right = lighter, left = heavier.</p>
               <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
                 <ResponsiveContainer width="100%" height={Math.max(150, Object.keys(row.deviation.perShift).length * 36 + 60)}>
                   <BarChart
@@ -407,6 +407,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
     if (sortKey === "initials") cmp = a.initials.localeCompare(b.initials);
     else if (sortKey === "overall") cmp = a.deviation.overall - b.deviation.overall;
     else if (sortKey === "desirability") cmp = a.desirabilityScore - b.desirabilityScore;
+    else if (sortKey === "oppAdj") cmp = a.deviation.desirability - b.deviation.desirability;
     else if (sortKey === "holiday") cmp = a.holidayWorkCount - b.holidayWorkCount;
     else if (sortKey === "hours") cmp = a.totalHours - b.totalHours;
     else if (sortKey === "workDays") cmp = a.totalWorkDays - b.totalWorkDays;
@@ -507,7 +508,8 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                 <tr className="bg-slate-800/80 border-b border-slate-700">
                   <SortHeader label="Provider" sortId="initials" className="text-left w-44" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   <SortHeader label="Equity" sortId="overall" className="text-center w-28" title="Overall workload balance" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
-                  <SortHeader label="Shift Desirability" sortId="desirability" className="text-right w-28" title="Cumulative shift desirability score" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                  <SortHeader label="Desirability" sortId="desirability" className="text-right w-24" title="Raw desirability score" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                  <SortHeader label="Opp. Adj." sortId="oppAdj" className="text-right w-20" title="Opportunity-adjusted z-score (only eligible shifts)" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title="Number of holidays worked" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   {trackedShiftCodes.map((code) => (
                     <SortHeader key={code} label={code} sortId={`shift:${code}`} className="text-right w-16" title={`Total ${code} shifts`} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
@@ -548,6 +550,11 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                       <td className="px-3 py-2.5 text-right">
                         <span className={`text-sm font-medium tabular-nums ${row.desirabilityScore > 0 ? "text-emerald-400" : row.desirabilityScore < 0 ? "text-red-400" : "text-slate-600"}`}>
                           {row.desirabilityScore > 0 ? "+" : ""}{row.desirabilityScore}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <span className={`text-sm tabular-nums ${row.deviation.desirability > 0.3 ? "text-red-400" : row.deviation.desirability < -0.3 ? "text-emerald-400" : "text-slate-400"}`}>
+                          {row.deviation.desirability > 0 ? "+" : ""}{row.deviation.desirability.toFixed(2)}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 text-right">
