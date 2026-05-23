@@ -278,21 +278,6 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
     }));
   }, [row, globalMaxDev, globalMaxDevAdj, radarOppAdj]);
 
-  const comparisonData = useMemo(() => {
-    const items: { label: string; provider: number; average: number; unit: string }[] = [
-      { label: "Holidays", provider: row.holidayWorkCount, average: parseFloat((averages.holidayWorkCount * fte).toFixed(1)), unit: "" },
-    ];
-    for (const code of trackedShiftCodes) {
-      items.push({
-        label: `${code} Shifts`,
-        provider: row.shiftCounts[code] || 0,
-        average: parseFloat(((averages.perShift[code] || 0) * fte).toFixed(1)),
-        unit: "",
-      });
-    }
-    return items;
-  }, [row, averages, trackedShiftCodes, fte]);
-
   return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/40" />
@@ -331,7 +316,7 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
               </button>
             </div>
             <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
-              <ResponsiveContainer width="100%" height={280}>
+              <ResponsiveContainer width="100%" height={420}>
                 <RadarChart data={radarData} cx="50%" cy="50%">
                   <PolarGrid stroke="#334155" />
                   <PolarAngleAxis
@@ -351,7 +336,7 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
                           onClick={() => setHoveredAxis(isHovered ? null : label)}
                           style={{ cursor: "pointer" }}
                         >
-                          <text x={x} y={y} textAnchor={anchor} fill={isHovered ? "#e2e8f0" : "#94a3b8"} fontSize={10} dominantBaseline="central">
+                          <text x={x} y={y} textAnchor={anchor} fill={isHovered ? "#e2e8f0" : "#94a3b8"} fontSize={11} dominantBaseline="central">
                             {label}
                           </text>
                           {isHovered && info && (
@@ -373,90 +358,29 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
                   />
                   <PolarRadiusAxis tick={false} axisLine={false} domain={[0, ((radarOppAdj ? globalMaxDevAdj : globalMaxDev) + 0.5) * 2]} />
                   <Radar name="Dept Avg (baseline)" dataKey="average" stroke="#475569" fill="#475569" fillOpacity={0.1} strokeWidth={1.5} strokeDasharray="4 4" />
-                  <Radar name={row.initials} dataKey="provider" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} />
+                  <Radar name={row.initials} dataKey="provider" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} dot={{ r: 4, fill: "#3b82f6", strokeWidth: 0, cursor: "pointer" }} activeDot={{ r: 6, fill: "#60a5fa", stroke: "#3b82f6", strokeWidth: 2 }} />
+                  <Tooltip
+                    content={({ active, label }) => {
+                      if (!active || !label) return null;
+                      const info = radarRawLookup[label];
+                      if (!info) return null;
+                      return (
+                        <div className="bg-slate-800 border border-slate-600 rounded px-3 py-2 text-xs shadow-lg">
+                          <div className="font-medium text-slate-200 mb-1">{label}</div>
+                          <div className="text-slate-400">{row.initials}: <span className="text-slate-200 font-mono">{info.raw}{info.unit ? ` ${info.unit}` : ""}</span></div>
+                          <div className="text-slate-400">Median: <span className="text-slate-200 font-mono">{info.median}{info.unit ? ` ${info.unit}` : ""}</span></div>
+                        </div>
+                      );
+                    }}
+                  />
                   <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
                 </RadarChart>
               </ResponsiveContainer>
               <p className="text-[10px] text-slate-600 mt-2">
-                {radarOppAdj ? "Opportunity-adjusted z-score" : "FTE-normalized z-score"}, per 1.0 FTE. Dashed = median. Outward = more burden. Hover axis labels for raw values.
+                {radarOppAdj ? "Opportunity-adjusted z-score" : "FTE-normalized z-score"}, per 1.0 FTE. Dashed = median. Outward = more burden.
               </p>
             </div>
           </div>
-
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Category Breakdown</h3>
-            <p className="text-[10px] text-slate-600 mb-3">% of FTE-adj median. Orange = above, blue = below.</p>
-            <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={comparisonData.map((d) => {
-                  const scale = d.average || Math.max(d.provider, 1);
-                  return { label: d.label, pct: Math.round((d.provider / scale) * 100), raw: d.provider, avg: d.average };
-                })} margin={{ left: -5, right: 10, top: 5, bottom: 5 }}>
-                  <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 9 }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} angle={-30} textAnchor="end" height={50} />
-                  <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} unit="%" />
-                  <Tooltip content={({ active, payload }) => {
-                    if (!active || !payload?.[0]) return null;
-                    const d = payload[0].payload as { label: string; raw: number; avg: number; pct: number };
-                    return <div className="bg-slate-800 border border-slate-600 rounded px-3 py-2 text-xs shadow-lg">
-                      <div className="font-medium text-slate-200 mb-1">{d.label}</div>
-                      <div className="text-slate-400">{row.initials}: <span className="text-slate-200">{d.raw}</span></div>
-                      <div className="text-slate-400">Median: <span className="text-slate-200">{d.avg}</span></div>
-                    </div>;
-                  }} />
-                  <ReferenceLine y={100} stroke="#475569" strokeDasharray="3 3" label={{ value: "median", fill: "#64748b", fontSize: 9, position: "right" }} />
-                  <Bar dataKey="pct" fillOpacity={0.8} radius={[3, 3, 0, 0]} maxBarSize={28}>
-                    {comparisonData.map((d, i) => (
-                      <Cell key={i} fill={d.provider > d.average ? "#f97316" : "#3b82f6"} fillOpacity={0.8} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {Object.keys(row.displayDeviation.perShift).length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Equity Deviations (Z-Score)</h3>
-              <p className="text-[10px] text-slate-600 mb-3">FTE-normalized z-score vs dept mean. Right = lighter, left = heavier.</p>
-              <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
-                <ResponsiveContainer width="100%" height={Math.max(150, Object.keys(row.displayDeviation.perShift).length * 36 + 60)}>
-                  <BarChart
-                    data={(() => {
-                      const items = [
-                        { label: "Desirability", value: parseFloat((-row.displayDeviation.desirability).toFixed(2)) },
-                        { label: "Holidays", value: parseFloat((-row.displayDeviation.holidayWork).toFixed(2)) },
-                        ...Object.entries(row.displayDeviation.perShift).map(([code, dev]) => ({
-                          label: code,
-                          value: parseFloat((-dev).toFixed(2)),
-                        })),
-                      ];
-                      return items.sort((a, b) => b.value - a.value);
-                    })()}
-                    layout="vertical"
-                    margin={{ left: 10, right: 20, top: 5, bottom: 5 }}
-                  >
-                    <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={{ stroke: "#334155" }} tickLine={false} domain={(() => { const vals = [Math.abs(row.displayDeviation.desirability), Math.abs(row.displayDeviation.holidayWork), ...Object.values(row.displayDeviation.perShift).map(Math.abs)]; const m = Math.ceil(Math.max(...vals, 0.5) * 10) / 10; return [-m, m]; })() as [number, number]} tickFormatter={(v: number) => v.toFixed(1)} />
-                    <YAxis type="category" dataKey="label" tick={{ fill: "#94a3b8", fontSize: 11 }} width={80} axisLine={false} tickLine={false} />
-                    <Tooltip content={<ChartTooltipContent />} />
-                    <ReferenceLine x={0} stroke="#475569" strokeWidth={1} label={{ value: "median", position: "top", fill: "#475569", fontSize: 9 }} />
-                    <Bar dataKey="value" name="vs Median" radius={[0, 3, 3, 0]} maxBarSize={18}>
-                      {(() => {
-                        const items = [
-                          { value: -row.displayDeviation.desirability },
-                          { value: -row.displayDeviation.holidayWork },
-                          ...Object.values(row.displayDeviation.perShift).map((v) => ({ value: -v })),
-                        ];
-                        return items.sort((a, b) => b.value - a.value);
-                      })().map((d, i) => (
-                        <Cell key={i} fill={deviationColor(d.value)} fillOpacity={0.8} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-                <p className="text-[10px] text-slate-600 mt-2">Right = lighter load. Left = heavier burden.</p>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
