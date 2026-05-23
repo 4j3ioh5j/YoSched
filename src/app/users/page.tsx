@@ -12,7 +12,7 @@ export default async function Page() {
   if (role !== "admin") redirect("/");
 
   const users = await prisma.user.findMany({
-    select: { id: true, email: true, name: true, role: true, totpEnabled: true, createdAt: true },
+    select: { id: true, email: true, name: true, role: true, isActive: true, totpEnabled: true, createdAt: true },
     orderBy: { createdAt: "asc" },
   });
 

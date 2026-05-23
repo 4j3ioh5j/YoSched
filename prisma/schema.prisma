@@ -19,6 +19,7 @@ model User {
   name           String
   passwordHash   String
   role           Role      @default(viewer)
+  isActive       Boolean   @default(true)
   totpSecret     String?
   totpEnabled    Boolean   @default(false)
   failedAttempts Int       @default(0)

@@ -7,6 +7,7 @@ type User = {
   email: string;
   name: string;
   role: string;
+  isActive: boolean;
   totpEnabled?: boolean;
   createdAt: string | Date;
 };
@@ -75,6 +76,14 @@ export function UsersPage({
     if (!confirm("Reset 2FA for this user? They will need to set it up again.")) return;
     const res = await fetch("/api/users/reset-totp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: id }) });
     if (res.ok) setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, totpEnabled: false } : u)));
+  }
+
+  async function handleToggleActive(user: User) {
+    const res = await fetch("/api/users", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: user.id, isActive: !user.isActive }) });
+    if (res.ok) {
+      const updated = await res.json();
+      setUsers((prev) => prev.map((u) => (u.id === user.id ? updated : u)));
+    }
   }
 
   function startEdit(user: User) {
@@ -159,25 +168,42 @@ export function UsersPage({
           </div>
         )}
 
+        <div className="mb-4 px-3 py-2 bg-slate-800/40 border border-slate-700/50 rounded text-xs text-slate-500">
+          2FA trusted devices are remembered for <span className="text-slate-300 font-medium">30 days</span> before re-prompting.
+        </div>
+
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-slate-400 border-b border-slate-800">
               <th className="py-2 px-3">Name</th>
               <th className="py-2 px-3">Email</th>
               <th className="py-2 px-3">Role</th>
+              <th className="py-2 px-3">Status</th>
               <th className="py-2 px-3">2FA</th>
-              <th className="py-2 px-3 w-32"></th>
+              <th className="py-2 px-3 w-40"></th>
             </tr>
           </thead>
           <tbody>
             {users.map((user) => (
-              <tr key={user.id} className="border-b border-slate-800/50 hover:bg-slate-800/30">
+              <tr key={user.id} className={`border-b border-slate-800/50 hover:bg-slate-800/30 ${!user.isActive ? "opacity-50" : ""}`}>
                 <td className="py-2 px-3">{user.name}</td>
                 <td className="py-2 px-3 text-slate-400">{user.email}</td>
                 <td className="py-2 px-3">
                   <span className={`text-xs px-1.5 py-0.5 rounded ${ROLE_BADGE[user.role] || ROLE_BADGE.viewer}`}>
                     {user.role}
                   </span>
+                </td>
+                <td className="py-2 px-3">
+                  {user.id !== currentUserId ? (
+                    <button
+                      onClick={() => handleToggleActive(user)}
+                      className={`text-xs px-1.5 py-0.5 rounded transition-colors ${user.isActive ? "bg-green-800/50 text-green-300 hover:bg-green-800/80" : "bg-red-900/50 text-red-400 hover:bg-red-900/80"}`}
+                    >
+                      {user.isActive ? "Active" : "Disabled"}
+                    </button>
+                  ) : (
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-green-800/50 text-green-300">Active</span>
+                  )}
                 </td>
                 <td className="py-2 px-3">
                   {user.totpEnabled ? (

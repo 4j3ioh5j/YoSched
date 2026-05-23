@@ -9,7 +9,7 @@ export async function GET() {
   if (error) return error;
 
   const users = await prisma.user.findMany({
-    select: { id: true, email: true, name: true, role: true, totpEnabled: true, createdAt: true },
+    select: { id: true, email: true, name: true, role: true, isActive: true, totpEnabled: true, createdAt: true },
     orderBy: { createdAt: "asc" },
   });
   return NextResponse.json(users);
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   const passwordHash = await hash(password, 12);
   const user = await prisma.user.create({
     data: { email, name, passwordHash, role: role || "viewer" },
-    select: { id: true, email: true, name: true, role: true, createdAt: true },
+    select: { id: true, email: true, name: true, role: true, isActive: true, totpEnabled: true, createdAt: true },
   });
 
   return NextResponse.json(user);
@@ -47,13 +47,14 @@ export async function PUT(req: NextRequest) {
   const { error } = await requireAuth("admin");
   if (error) return error;
 
-  const { id, email, name, password, role } = await req.json();
+  const { id, email, name, password, role, isActive } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   const data: Record<string, unknown> = {};
   if (email) data.email = email;
   if (name) data.name = name;
   if (role) data.role = role;
+  if (typeof isActive === "boolean") data.isActive = isActive;
   if (password) {
     const { valid, errors } = validatePassword(password);
     if (!valid) {
@@ -65,7 +66,7 @@ export async function PUT(req: NextRequest) {
   const user = await prisma.user.update({
     where: { id },
     data,
-    select: { id: true, email: true, name: true, role: true, createdAt: true },
+    select: { id: true, email: true, name: true, role: true, isActive: true, totpEnabled: true, createdAt: true },
   });
 
   return NextResponse.json(user);
