@@ -21,15 +21,19 @@ const ROLE_BADGE: Record<string, string> = {
 export function UsersPage({
   initialUsers,
   currentUserId,
+  deviceTrustDays: initialTrustDays,
 }: {
   initialUsers: User[];
   currentUserId: string;
+  deviceTrustDays: number;
 }) {
   const [users, setUsers] = useState(initialUsers);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ email: "", name: "", password: "", confirmPassword: "", role: "viewer" });
   const [error, setError] = useState("");
+  const [trustDays, setTrustDays] = useState(initialTrustDays);
+  const [savingTrust, setSavingTrust] = useState(false);
 
   function resetForm() {
     setForm({ email: "", name: "", password: "", confirmPassword: "", role: "viewer" });
@@ -168,8 +172,34 @@ export function UsersPage({
           </div>
         )}
 
-        <div className="mb-4 px-3 py-2 bg-slate-800/40 border border-slate-700/50 rounded text-xs text-slate-500">
-          2FA trusted devices are remembered for <span className="text-slate-300 font-medium">30 days</span> before re-prompting.
+        <div className="mb-4 px-3 py-2.5 bg-slate-800/40 border border-slate-700/50 rounded flex items-center gap-2 text-xs text-slate-500">
+          <span>2FA trusted devices are remembered for</span>
+          <input
+            type="number"
+            min={1}
+            max={365}
+            value={trustDays}
+            onChange={(e) => setTrustDays(Math.max(1, Math.min(365, parseInt(e.target.value) || 1)))}
+            className="w-14 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono text-slate-200 text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <span>days before re-prompting.</span>
+          {trustDays !== initialTrustDays && (
+            <button
+              disabled={savingTrust}
+              onClick={async () => {
+                setSavingTrust(true);
+                await fetch("/api/settings/scheduling-preferences", {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ deviceTrustDays: trustDays }),
+                });
+                setSavingTrust(false);
+              }}
+              className="ml-auto px-2 py-0.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors disabled:opacity-50"
+            >
+              {savingTrust ? "Saving..." : "Save"}
+            </button>
+          )}
         </div>
 
         <table className="w-full text-sm">
@@ -213,12 +243,6 @@ export function UsersPage({
                   )}
                 </td>
                 <td className="py-2 px-3 text-right">
-                  <button
-                    onClick={() => startEdit(user)}
-                    className="text-xs text-slate-500 hover:text-slate-300 mr-2"
-                  >
-                    Edit
-                  </button>
                   {user.totpEnabled && (
                     <button
                       onClick={() => handleReset2FA(user.id)}
@@ -227,6 +251,12 @@ export function UsersPage({
                       Reset 2FA
                     </button>
                   )}
+                  <button
+                    onClick={() => startEdit(user)}
+                    className="text-xs text-slate-500 hover:text-slate-300 mr-2"
+                  >
+                    Edit
+                  </button>
                   {user.id !== currentUserId && (
                     <button
                       onClick={() => handleDelete(user.id)}

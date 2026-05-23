@@ -11,15 +11,18 @@ export default async function Page() {
   const role = (session?.user as { role?: string })?.role;
   if (role !== "admin") redirect("/");
 
-  const users = await prisma.user.findMany({
-    select: { id: true, email: true, name: true, role: true, isActive: true, totpEnabled: true, createdAt: true },
-    orderBy: { createdAt: "asc" },
-  });
+  const [users, prefs] = await Promise.all([
+    prisma.user.findMany({
+      select: { id: true, email: true, name: true, role: true, isActive: true, totpEnabled: true, createdAt: true },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.schedulingPreferences.findFirst(),
+  ]);
 
   return (
     <>
       <NavHeader />
-      <UsersPage initialUsers={users} currentUserId={session!.user!.id!} />
+      <UsersPage initialUsers={users} currentUserId={session!.user!.id!} deviceTrustDays={prefs?.deviceTrustDays ?? 30} />
     </>
   );
 }

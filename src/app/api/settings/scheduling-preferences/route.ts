@@ -18,7 +18,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await requireAuth("admin");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays } = body;
 
   const prefs = await prisma.schedulingPreferences.upsert({
     where: { id: "default" },
@@ -26,6 +26,7 @@ export async function PUT(req: NextRequest) {
       ...(typeof prefer3DayWeekends === "boolean" && { prefer3DayWeekends }),
       ...(typeof prefer4DayWeekends === "boolean" && { prefer4DayWeekends }),
       ...(typeof preferSequentialOff === "boolean" && { preferSequentialOff }),
+      ...(typeof deviceTrustDays === "number" && deviceTrustDays >= 1 && deviceTrustDays <= 365 && { deviceTrustDays: Math.floor(deviceTrustDays) }),
     },
     create: {
       id: "default",

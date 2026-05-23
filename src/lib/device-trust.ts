@@ -1,9 +1,14 @@
 import { createHmac } from "crypto";
 import { cookies } from "next/headers";
+import { prisma } from "./prisma";
 
 const COOKIE_NAME = "device-trust";
-const MAX_AGE_DAYS = 30;
-const MAX_AGE_SECONDS = MAX_AGE_DAYS * 24 * 60 * 60;
+const DEFAULT_DAYS = 30;
+
+async function getTrustDays(): Promise<number> {
+  const prefs = await prisma.schedulingPreferences.findFirst();
+  return prefs?.deviceTrustDays ?? DEFAULT_DAYS;
+}
 
 function getSecret(): string {
   const secret = process.env.AUTH_SECRET;
@@ -17,7 +22,7 @@ function sign(userId: string, timestamp: number): string {
   return `${payload}:${hmac}`;
 }
 
-function verify(token: string, expectedUserId: string): boolean {
+function verify(token: string, expectedUserId: string, maxAgeSeconds: number): boolean {
   const parts = token.split(":");
   if (parts.length !== 3) return false;
   const [userId, tsStr, providedHmac] = parts;
@@ -27,7 +32,7 @@ function verify(token: string, expectedUserId: string): boolean {
   if (isNaN(timestamp)) return false;
 
   const ageSeconds = (Date.now() - timestamp) / 1000;
-  if (ageSeconds > MAX_AGE_SECONDS || ageSeconds < 0) return false;
+  if (ageSeconds > maxAgeSeconds || ageSeconds < 0) return false;
 
   const expected = createHmac("sha256", getSecret()).update(`${userId}:${tsStr}`).digest("hex");
   if (expected.length !== providedHmac.length) return false;
@@ -43,10 +48,13 @@ export async function isDeviceTrusted(userId: string): Promise<boolean> {
   const jar = await cookies();
   const cookie = jar.get(COOKIE_NAME);
   if (!cookie?.value) return false;
-  return verify(cookie.value, userId);
+  const days = await getTrustDays();
+  return verify(cookie.value, userId, days * 24 * 60 * 60);
 }
 
 export async function setDeviceTrust(userId: string): Promise<void> {
+  const days = await getTrustDays();
+  const maxAge = days * 24 * 60 * 60;
   const token = sign(userId, Date.now());
   const jar = await cookies();
   jar.set(COOKIE_NAME, token, {
@@ -54,6 +62,6 @@ export async function setDeviceTrust(userId: string): Promise<void> {
     sameSite: "lax",
     path: "/",
     secure: process.env.NODE_ENV === "production",
-    maxAge: MAX_AGE_SECONDS,
+    maxAge,
   });
 }
