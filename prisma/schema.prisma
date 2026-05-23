@@ -245,6 +245,21 @@ model SchedulingPreferences {
   @@map("scheduling_preferences")
 }
 
+model LoginLog {
+  id        String   @id @default(cuid())
+  email     String
+  userId    String?
+  success   Boolean
+  reason    String?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([createdAt])
+  @@map("login_logs")
+}
+
 model EquityFactor {
   id         String  @id @default(cuid())
   factorType String  // "desirability", "holiday", "shift"

@@ -6,6 +6,7 @@ import { authConfig } from "./auth.config";
 import { decrypt } from "./crypto";
 import { isDeviceTrusted } from "./device-trust";
 import { checkRateLimit } from "./rate-limit";
+import { logLogin } from "./login-log";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
@@ -60,8 +61,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             const result = verifySync({ token: totpCode, secret });
             if (!result.valid) {
               await recordFailedAttempt(user.id, user.failedAttempts);
+              await logLogin({ email, userId: user.id, success: false, reason: "bad_totp" });
               return null;
             }
+            await logLogin({ email, userId: user.id, success: true, reason: "totp_verified" });
             totpVerifiedAt = Date.now();
           }
         }

@@ -1,6 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
+type LoginLogEntry = {
+  id: string;
+  email: string;
+  userId: string | null;
+  success: boolean;
+  reason: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: string;
+};
 
 type User = {
   id: string;
@@ -270,7 +281,93 @@ export function UsersPage({
             ))}
           </tbody>
         </table>
+
+        <LoginLogSection />
       </div>
     </main>
+  );
+}
+
+const REASON_LABELS: Record<string, { label: string; color: string }> = {
+  bad_password: { label: "Bad password", color: "text-red-400" },
+  bad_totp: { label: "Bad TOTP", color: "text-red-400" },
+  unknown_email: { label: "Unknown email", color: "text-red-400" },
+  rate_limited: { label: "Rate limited", color: "text-amber-400" },
+  account_locked: { label: "Locked", color: "text-amber-400" },
+  account_disabled: { label: "Disabled", color: "text-red-400" },
+  trusted_device: { label: "Trusted device", color: "text-green-400" },
+  totp_verified: { label: "TOTP verified", color: "text-green-400" },
+};
+
+function LoginLogSection() {
+  const [logs, setLogs] = useState<LoginLogEntry[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (expanded && !loaded) {
+      fetch("/api/login-logs").then((r) => r.json()).then((data) => {
+        setLogs(data);
+        setLoaded(true);
+      });
+    }
+  }, [expanded, loaded]);
+
+  return (
+    <div className="mt-8">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors"
+      >
+        <span className="text-xs">{expanded ? "▼" : "▶"}</span>
+        Login Activity
+        {logs.length > 0 && <span className="text-xs text-slate-600">({logs.length})</span>}
+      </button>
+      {expanded && (
+        <div className="mt-3 border border-slate-800 rounded-lg overflow-hidden">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-slate-500 bg-slate-800/60 border-b border-slate-800">
+                <th className="py-2 px-3">Time</th>
+                <th className="py-2 px-3">Email</th>
+                <th className="py-2 px-3">Result</th>
+                <th className="py-2 px-3">Detail</th>
+                <th className="py-2 px-3">IP</th>
+                <th className="py-2 px-3">Browser</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.length === 0 && loaded && (
+                <tr><td colSpan={6} className="py-4 px-3 text-center text-slate-600">No login activity recorded yet.</td></tr>
+              )}
+              {logs.map((log) => {
+                const r = log.reason ? REASON_LABELS[log.reason] : null;
+                const ua = log.userAgent?.replace(/^Mozilla\/5\.0 \(/, "")?.split(")")[0] || log.userAgent;
+                return (
+                  <tr key={log.id} className="border-b border-slate-800/30 hover:bg-slate-800/20">
+                    <td className="py-1.5 px-3 text-slate-500 font-mono whitespace-nowrap">
+                      {new Date(log.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}
+                    </td>
+                    <td className="py-1.5 px-3 text-slate-300">{log.email}</td>
+                    <td className="py-1.5 px-3">
+                      {log.success ? (
+                        <span className="text-green-400">Success</span>
+                      ) : (
+                        <span className="text-red-400">Failed</span>
+                      )}
+                    </td>
+                    <td className="py-1.5 px-3">
+                      <span className={r?.color || "text-slate-500"}>{r?.label || log.reason || "—"}</span>
+                    </td>
+                    <td className="py-1.5 px-3 text-slate-500 font-mono">{log.ipAddress || "—"}</td>
+                    <td className="py-1.5 px-3 text-slate-600 truncate max-w-[200px]" title={log.userAgent || ""}>{ua || "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }

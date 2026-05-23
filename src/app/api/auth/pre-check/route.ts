@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { isDeviceTrusted } from "@/lib/device-trust";
+import { logLogin } from "@/lib/login-log";
 import { NextRequest, NextResponse } from "next/server";
 import { compare } from "bcryptjs";
 
@@ -15,16 +16,24 @@ export async function POST(req: NextRequest) {
 
   const rl = checkRateLimit(email.toLowerCase());
   if (!rl.allowed) {
+    await logLogin({ email, success: false, reason: "rate_limited" });
     return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
   }
 
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
+    await logLogin({ email, success: false, reason: "unknown_email" });
+    return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
+  }
+
+  if (!user.isActive) {
+    await logLogin({ email, userId: user.id, success: false, reason: "account_disabled" });
     return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
   }
 
   if (user.lockedUntil && user.lockedUntil > new Date()) {
     const mins = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
+    await logLogin({ email, userId: user.id, success: false, reason: "account_locked" });
     return NextResponse.json({ error: `Account locked. Try again in ${mins} minutes.` }, { status: 423 });
   }
 
@@ -36,6 +45,7 @@ export async function POST(req: NextRequest) {
       data.lockedUntil = new Date(Date.now() + LOCKOUT_MINUTES * 60_000);
     }
     await prisma.user.update({ where: { id: user.id }, data });
+    await logLogin({ email, userId: user.id, success: false, reason: "bad_password" });
     const remaining = MAX_FAILED_ATTEMPTS - attempts;
     const msg = remaining > 0
       ? `Invalid email or password. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining.`
@@ -46,8 +56,13 @@ export async function POST(req: NextRequest) {
   if (user.totpEnabled) {
     const trusted = await isDeviceTrusted(user.id);
     if (trusted) {
+      await logLogin({ email, userId: user.id, success: true, reason: "trusted_device" });
       return NextResponse.json({ requiresTotp: false });
     }
+  }
+
+  if (!user.totpEnabled) {
+    await logLogin({ email, userId: user.id, success: true });
   }
 
   return NextResponse.json({ requiresTotp: user.totpEnabled });
