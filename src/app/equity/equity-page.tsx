@@ -222,33 +222,7 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
   const eqText = equityLabel(row.deviation.overall, equityThresholds);
   const fte = row.ftePercentage;
   const [radarOppAdj, setRadarOppAdj] = useState(false);
-  const [hoveredAxis, setHoveredAxis] = useState<string | null>(null);
-
-  const radarRawLookup = useMemo(() => {
-    const medDesirability = median(allRows.map((d) => d.desirabilityScore / (d.ftePercentage || 1)));
-    const medHoliday = median(allRows.map((d) => d.holidayWorkCount / (d.ftePercentage || 1)));
-    const lookup: Record<string, { raw: number; median: number; unit: string }> = {
-      Undesirable: {
-        raw: parseFloat((row.desirabilityScore / (fte || 1)).toFixed(1)),
-        median: parseFloat(medDesirability.toFixed(1)),
-        unit: "pts",
-      },
-      Holidays: {
-        raw: parseFloat((row.holidayWorkCount / (fte || 1)).toFixed(1)),
-        median: parseFloat(medHoliday.toFixed(1)),
-        unit: "",
-      },
-    };
-    for (const code of trackedShiftCodes) {
-      const medShift = median(allRows.map((d) => (d.shiftCounts[code] || 0) / (d.ftePercentage || 1)));
-      lookup[code] = {
-        raw: parseFloat(((row.shiftCounts[code] || 0) / (fte || 1)).toFixed(1)),
-        median: parseFloat(medShift.toFixed(1)),
-        unit: "",
-      };
-    }
-    return lookup;
-  }, [row, allRows, trackedShiftCodes, fte]);
+  const [radarFteNorm, setRadarFteNorm] = useState(true);
 
   const globalMaxDevAdj = useMemo(() => {
     let max = 0.5;
@@ -260,6 +234,18 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
   }, [allRows]);
 
   const radarData = useMemo(() => {
+    if (!radarFteNorm) {
+      const items = [
+        { label: "Undesirable", provider: row.desirabilityScore, average: median(allRows.map((d) => d.desirabilityScore)) },
+        { label: "Holidays", provider: row.holidayWorkCount, average: median(allRows.map((d) => d.holidayWorkCount)) },
+        ...trackedShiftCodes.map((code) => ({
+          label: code,
+          provider: row.shiftCounts[code] || 0,
+          average: median(allRows.map((d) => d.shiftCounts[code] || 0)),
+        })),
+      ];
+      return items;
+    }
     const src = radarOppAdj ? row.deviation : row.displayDeviation;
     const maxDev = radarOppAdj ? globalMaxDevAdj : globalMaxDev;
     const baseline = maxDev + 0.5;
@@ -276,7 +262,16 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
       provider: parseFloat((baseline + d.value).toFixed(2)),
       average: parseFloat(baseline.toFixed(2)),
     }));
-  }, [row, globalMaxDev, globalMaxDevAdj, radarOppAdj]);
+  }, [row, allRows, trackedShiftCodes, globalMaxDev, globalMaxDevAdj, radarOppAdj, radarFteNorm]);
+
+  const radarDomain = useMemo((): [number, number] => {
+    if (!radarFteNorm) {
+      const maxVal = Math.max(...radarData.map((d) => Math.max(d.provider, d.average)), 1);
+      return [0, Math.ceil(maxVal * 1.15)];
+    }
+    const maxDev = radarOppAdj ? globalMaxDevAdj : globalMaxDev;
+    return [0, (maxDev + 0.5) * 2];
+  }, [radarData, radarFteNorm, radarOppAdj, globalMaxDev, globalMaxDevAdj]);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
@@ -308,80 +303,46 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
           <div>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Profile vs Department Average</h3>
-              <button
-                onClick={() => setRadarOppAdj(!radarOppAdj)}
-                className={`px-2.5 py-1 text-[10px] rounded transition-colors ${radarOppAdj ? "bg-purple-600/20 text-purple-400 border border-purple-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
-              >
-                {radarOppAdj ? "Opp-Adjusted" : "Raw Z-Scores"}
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setRadarFteNorm(!radarFteNorm)}
+                  className={`px-2.5 py-1 text-[10px] rounded transition-colors ${!radarFteNorm ? "bg-amber-600/20 text-amber-400 border border-amber-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
+                >
+                  {radarFteNorm ? "FTE-Normalized" : "Actual Counts"}
+                </button>
+                {radarFteNorm && (
+                  <button
+                    onClick={() => setRadarOppAdj(!radarOppAdj)}
+                    className={`px-2.5 py-1 text-[10px] rounded transition-colors ${radarOppAdj ? "bg-purple-600/20 text-purple-400 border border-purple-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
+                  >
+                    {radarOppAdj ? "Opp-Adjusted" : "Raw Z-Scores"}
+                  </button>
+                )}
+              </div>
             </div>
             <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
-              <ResponsiveContainer width="100%" height={520}>
-                <RadarChart data={radarData} cx="50%" cy="48%">
+              <ResponsiveContainer width="100%" height={600}>
+                <RadarChart data={radarData} cx="50%" cy="46%">
                   <PolarGrid stroke="#334155" />
-                  <PolarAngleAxis
-                    dataKey="label"
-                    tick={(props: Record<string, unknown>) => {
-                      const x = Number(props.x) || 0;
-                      const y = Number(props.y) || 0;
-                      const payload = props.payload as { value: string };
-                      const anchor = String(props.textAnchor || "middle") as "start" | "middle" | "end";
-                      const label = payload.value;
-                      const info = radarRawLookup[label];
-                      const isHovered = hoveredAxis === label;
-                      return (
-                        <g
-                          onMouseEnter={() => setHoveredAxis(label)}
-                          onMouseLeave={() => setHoveredAxis(null)}
-                          onClick={() => setHoveredAxis(isHovered ? null : label)}
-                          style={{ cursor: "pointer" }}
-                        >
-                          <text x={x} y={y} textAnchor={anchor} fill={isHovered ? "#e2e8f0" : "#94a3b8"} fontSize={12} fontWeight={500} dominantBaseline="central">
-                            {label}
-                          </text>
-                          {isHovered && info && (
-                            <foreignObject
-                              x={x + (anchor === "end" ? -140 : anchor === "start" ? 8 : -66)}
-                              y={y + 8}
-                              width={132}
-                              height={52}
-                            >
-                              <div className="bg-slate-800 border border-slate-600 rounded px-2.5 py-1.5 text-[10px] shadow-lg whitespace-nowrap">
-                                <div className="text-slate-300"><span className="text-slate-500">{row.initials}:</span> {info.raw}{info.unit ? ` ${info.unit}` : ""}</div>
-                                <div className="text-slate-300"><span className="text-slate-500">Median:</span> {info.median}{info.unit ? ` ${info.unit}` : ""}</div>
-                              </div>
-                            </foreignObject>
-                          )}
-                        </g>
-                      );
-                    }}
-                  />
-                  <PolarRadiusAxis tick={false} axisLine={false} domain={[0, ((radarOppAdj ? globalMaxDevAdj : globalMaxDev) + 0.5) * 2]} />
-                  <Radar name="Dept Avg (baseline)" dataKey="average" stroke="#475569" fill="#475569" fillOpacity={0.1} strokeWidth={1.5} strokeDasharray="4 4" />
-                  <Radar name={row.initials} dataKey="provider" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} dot={{ r: 4, fill: "#3b82f6", strokeWidth: 0, cursor: "pointer" }} activeDot={{ r: 6, fill: "#60a5fa", stroke: "#3b82f6", strokeWidth: 2 }} />
-                  <Tooltip
-                    content={({ active, label }) => {
-                      if (!active || !label) return null;
-                      const info = radarRawLookup[label];
-                      if (!info) return null;
-                      return (
-                        <div className="bg-slate-800 border border-slate-600 rounded px-3 py-2 text-xs shadow-lg">
-                          <div className="font-medium text-slate-200 mb-1">{label}</div>
-                          <div className="text-slate-400">{row.initials}: <span className="text-slate-200 font-mono">{info.raw}{info.unit ? ` ${info.unit}` : ""}</span></div>
-                          <div className="text-slate-400">Median: <span className="text-slate-200 font-mono">{info.median}{info.unit ? ` ${info.unit}` : ""}</span></div>
-                        </div>
-                      );
-                    }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 13 }} iconType="circle" iconSize={10} />
+                  <PolarAngleAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 13, fontWeight: 500 }} />
+                  <PolarRadiusAxis tick={false} axisLine={false} domain={radarDomain} />
+                  <Radar name="Dept Median" dataKey="average" stroke="#475569" fill="#475569" fillOpacity={0.1} strokeWidth={1.5} strokeDasharray="4 4" />
+                  <Radar name={row.initials} dataKey="provider" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} />
+                  <Legend wrapperStyle={{ fontSize: 14 }} iconType="circle" iconSize={10} />
                 </RadarChart>
               </ResponsiveContainer>
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-xs font-medium text-slate-400">
-                  {radarOppAdj ? "Opportunity-Adjusted View" : "Raw Z-Score View"}
+              <div className="flex items-center justify-between mt-3">
+                <span className="text-sm font-medium text-slate-300">
+                  {radarFteNorm
+                    ? (radarOppAdj ? "Opportunity-Adjusted Z-Scores" : "Raw Z-Scores")
+                    : "Actual Counts"
+                  }
                 </span>
-                <span className="text-[11px] text-slate-500">
-                  Per 1.0 FTE. Dashed = median. Outward = more burden.
+                <span className="text-xs text-slate-500">
+                  {radarFteNorm
+                    ? "FTE-normalized. Dashed = median. Outward = more burden."
+                    : "Raw shift counts. Dashed = dept median."
+                  }
                 </span>
               </div>
             </div>
