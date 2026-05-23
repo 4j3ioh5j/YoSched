@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEscape } from "@/lib/use-escape";
 
 type ShiftType = {
   id: string;
@@ -133,6 +134,7 @@ function useUndo() {
 }
 
 function UndoToast({ action, onUndo, onDismiss }: { action: UndoAction; onUndo: () => void; onDismiss: () => void }) {
+  useEscape(onDismiss);
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-slate-700 border border-slate-600 rounded-lg px-4 py-2.5 shadow-xl animate-in">
       <span className="text-sm text-slate-200">{action.label}</span>
@@ -398,12 +400,13 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
     setShifts((prev) => prev.map((s) => s.id === id ? { ...s, [field]: value } : s));
   }
 
-  function cancelEdit() {
+  const cancelEdit = useCallback(() => {
     if (!editingId) return;
     const orig = initial.find((s) => s.id === editingId);
     if (orig) setShifts((prev) => prev.map((s) => s.id === editingId ? orig : s));
     setEditingId(null);
-  }
+  }, [editingId, initial]);
+  useEscape(cancelEdit);
 
   const editingShift = editingId ? shifts.find((s) => s.id === editingId) : null;
 
@@ -1640,12 +1643,13 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
     setTypes((prev) => prev.map((t) => t.id === id ? { ...t, [field]: value } : t));
   }
 
-  function cancelEdit() {
+  const cancelEdit = useCallback(() => {
     if (!editingId) return;
     const orig = initial.find((t) => t.id === editingId);
     if (orig) setTypes((prev) => prev.map((t) => t.id === editingId ? orig : t));
     setEditingId(null);
-  }
+  }, [editingId, initial]);
+  useEscape(cancelEdit);
 
   async function saveType(et: EmploymentTypeData) {
     const prev = initial.find((t) => t.id === et.id);

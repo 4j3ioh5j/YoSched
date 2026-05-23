@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useEscape } from "@/lib/use-escape";
 
 type LoginLogEntry = {
   id: string;
@@ -46,12 +47,13 @@ export function UsersPage({
   const [trustDays, setTrustDays] = useState(initialTrustDays);
   const [savingTrust, setSavingTrust] = useState(false);
 
-  function resetForm() {
+  const resetForm = useCallback(() => {
     setForm({ email: "", name: "", password: "", confirmPassword: "", role: "viewer" });
     setShowForm(false);
     setEditingId(null);
     setError("");
-  }
+  }, []);
+  useEscape(resetForm);
 
   async function handleSave() {
     setError("");

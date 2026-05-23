@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useEscape } from "@/lib/use-escape";
 
 type AvailabilityRule = {
   dayOfWeek: number;
@@ -110,6 +111,7 @@ function dayRuleSummary(rules: AvailabilityRule[], dayOfWeek: number): string {
 }
 
 function UndoToast({ action, onUndo, onDismiss }: { action: UndoAction; onUndo: () => void; onDismiss: () => void }) {
+  useEscape(onDismiss);
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-slate-700 border border-slate-600 rounded-lg px-4 py-2.5 shadow-xl">
       <span className="text-sm text-slate-200">{action.label}</span>
@@ -413,12 +415,13 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
     } : p));
   }
 
-  function cancelEdit() {
+  const cancelEdit = useCallback(() => {
     if (!editingId) return;
     const orig = initial.find((p) => p.id === editingId);
     if (orig) setProviders((prev) => prev.map((p) => p.id === editingId ? orig : p));
     setEditingId(null);
-  }
+  }, [editingId, initial]);
+  useEscape(cancelEdit);
 
   async function saveProvider(provider: Provider) {
     const prev = initial.find((p) => p.id === provider.id) ?? providers.find((p) => p.id === provider.id);

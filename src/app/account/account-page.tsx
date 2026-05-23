@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
+import { useEscape } from "@/lib/use-escape";
 
 type User = {
   id: string;
@@ -26,6 +27,16 @@ export function AccountPage({ user }: { user: User }) {
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [pwForm, setPwForm] = useState({ current: "", new_: "", confirm: "" });
   const [pwError, setPwError] = useState("");
+  const cancel2FA = useCallback(() => {
+    if (setupState !== "idle") {
+      setSetupState("idle");
+      setQrCode("");
+      setSecret("");
+      setDigits(["", "", "", "", "", ""]);
+      setError("");
+    }
+  }, [setupState]);
+  useEscape(cancel2FA);
   const [pwSuccess, setPwSuccess] = useState(false);
   const [pwLoading, setPwLoading] = useState(false);
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
+import { useEscape } from "@/lib/use-escape";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer,
   Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
@@ -218,6 +219,8 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
   globalMaxDev: number;
   onClose: () => void;
 }) {
+  const stableOnClose = useCallback(onClose, [onClose]);
+  useEscape(stableOnClose);
   const eqColor = equityColor(row.deviation.overall, equityThresholds);
   const eqText = equityLabel(row.deviation.overall, equityThresholds);
   const fte = row.ftePercentage;
