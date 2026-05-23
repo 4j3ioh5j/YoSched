@@ -316,8 +316,8 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
               </button>
             </div>
             <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
-              <ResponsiveContainer width="100%" height={420}>
-                <RadarChart data={radarData} cx="50%" cy="50%">
+              <ResponsiveContainer width="100%" height={520}>
+                <RadarChart data={radarData} cx="50%" cy="48%">
                   <PolarGrid stroke="#334155" />
                   <PolarAngleAxis
                     dataKey="label"
@@ -336,7 +336,7 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
                           onClick={() => setHoveredAxis(isHovered ? null : label)}
                           style={{ cursor: "pointer" }}
                         >
-                          <text x={x} y={y} textAnchor={anchor} fill={isHovered ? "#e2e8f0" : "#94a3b8"} fontSize={11} dominantBaseline="central">
+                          <text x={x} y={y} textAnchor={anchor} fill={isHovered ? "#e2e8f0" : "#94a3b8"} fontSize={12} fontWeight={500} dominantBaseline="central">
                             {label}
                           </text>
                           {isHovered && info && (
@@ -373,12 +373,17 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
                       );
                     }}
                   />
-                  <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                  <Legend wrapperStyle={{ fontSize: 13 }} iconType="circle" iconSize={10} />
                 </RadarChart>
               </ResponsiveContainer>
-              <p className="text-[10px] text-slate-600 mt-2">
-                {radarOppAdj ? "Opportunity-adjusted z-score" : "FTE-normalized z-score"}, per 1.0 FTE. Dashed = median. Outward = more burden.
-              </p>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-xs font-medium text-slate-400">
+                  {radarOppAdj ? "Opportunity-Adjusted View" : "Raw Z-Score View"}
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  Per 1.0 FTE. Dashed = median. Outward = more burden.
+                </span>
+              </div>
             </div>
           </div>
         </div>
