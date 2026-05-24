@@ -268,7 +268,7 @@ function FollowRulesEditor({ sourceShiftId, allShifts, followRules, onSave }: {
 
   function toggleRestricted(on: boolean) {
     if (on) {
-      save(new Set(), false, "allow");
+      save(new Set(), true, "allow");
     } else {
       save(new Set(), false, "allow");
     }
