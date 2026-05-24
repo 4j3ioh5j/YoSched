@@ -112,12 +112,16 @@ function shiftColor(code: string, allCodes: string[]): string {
   return CHART_COLORS[allCodes.indexOf(code) % CHART_COLORS.length];
 }
 
-function OverviewCharts({ data, trackedShiftCodes, allShiftCodes }: {
+const HOLIDAY_COLOR = "#f59e0b";
+
+function OverviewCharts({ data, trackedShiftCodes, allShiftCodes, showHoliday }: {
   data: EquityRow[];
   trackedShiftCodes: string[];
   allShiftCodes: string[];
+  showHoliday: boolean;
 }) {
-  const [visibleShifts, setVisibleShifts] = useState<Set<string>>(() => new Set(trackedShiftCodes));
+  const allToggleCodes = [...(showHoliday ? ["Holidays"] : []), ...trackedShiftCodes];
+  const [visibleShifts, setVisibleShifts] = useState<Set<string>>(() => new Set(allToggleCodes));
 
   const toggleShift = (code: string) => {
     setVisibleShifts((prev) => {
@@ -129,53 +133,57 @@ function OverviewCharts({ data, trackedShiftCodes, allShiftCodes }: {
   };
 
   const visibleCodes = trackedShiftCodes.filter((c) => visibleShifts.has(c));
+  const holidayVisible = showHoliday && visibleShifts.has("Holidays");
+  const anyVisible = visibleCodes.length > 0 || holidayVisible;
 
   const shiftData = useMemo(() => {
-    if (visibleCodes.length === 0) return [];
+    if (!anyVisible) return [];
     return [...data].sort((a, b) => a.initials.localeCompare(b.initials)).map((d) => {
       const row: Record<string, string | number> = { initials: d.initials };
+      if (holidayVisible) row["Holidays"] = d.holidayWorkCount;
       for (const code of visibleCodes) {
         row[code] = d.shiftCounts[code] || 0;
       }
       return row;
     });
-  }, [data, visibleCodes]);
+  }, [data, visibleCodes, holidayVisible, anyVisible]);
 
   return (
     <div className="mb-6">
-      {trackedShiftCodes.length > 0 && (
-        <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Shift Distribution</h3>
-          <div className="flex items-center gap-1.5 mb-3">
-            {trackedShiftCodes.map((code) => {
-              const color = shiftColor(code, allShiftCodes);
-              const active = visibleShifts.has(code);
-              return (
-                <button
-                  key={code}
-                  onClick={() => toggleShift(code)}
-                  className={`px-2.5 py-1 text-[10px] font-medium rounded transition-colors border ${active ? "border-opacity-50" : "border-transparent bg-slate-700/50 text-slate-600"}`}
-                  style={active ? { backgroundColor: color + "20", color, borderColor: color + "50" } : undefined}
-                >
-                  {code}
-                </button>
-              );
-            })}
-          </div>
-          {visibleCodes.length > 0 && (
-            <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={shiftData} margin={{ left: -10, right: 10, top: 5, bottom: 5 }} barGap={1} barCategoryGap="15%">
-                <XAxis dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 10, fontFamily: "monospace" }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} />
-                <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
-                <Tooltip content={<ChartTooltipContent />} />
-                {visibleCodes.map((code) => (
-                  <Bar key={code} dataKey={code} name={code} fill={shiftColor(code, allShiftCodes)} fillOpacity={0.75} radius={[2, 2, 0, 0]} minPointSize={3} />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
+      <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Shift Distribution</h3>
+        <div className="flex items-center gap-1.5 mb-3">
+          {allToggleCodes.map((code) => {
+            const color = code === "Holidays" ? HOLIDAY_COLOR : shiftColor(code, allShiftCodes);
+            const active = visibleShifts.has(code);
+            return (
+              <button
+                key={code}
+                onClick={() => toggleShift(code)}
+                className={`px-2.5 py-1 text-[10px] font-medium rounded transition-colors border ${active ? "border-opacity-50" : "border-transparent bg-slate-700/50 text-slate-600"}`}
+                style={active ? { backgroundColor: color + "20", color, borderColor: color + "50" } : undefined}
+              >
+                {code}
+              </button>
+            );
+          })}
+        </div>
+        {anyVisible && (
+          <ResponsiveContainer width="100%" height={320}>
+            <BarChart data={shiftData} margin={{ left: -10, right: 10, top: 5, bottom: 5 }} barGap={1} barCategoryGap="15%">
+              <XAxis dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 10, fontFamily: "monospace" }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} />
+              <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
+              <Tooltip content={<ChartTooltipContent />} />
+              {holidayVisible && (
+                <Bar dataKey="Holidays" name="Holidays" fill={HOLIDAY_COLOR} fillOpacity={0.75} radius={[2, 2, 0, 0]} minPointSize={3} />
+              )}
+              {visibleCodes.map((code) => (
+                <Bar key={code} dataKey={code} name={code} fill={shiftColor(code, allShiftCodes)} fillOpacity={0.75} radius={[2, 2, 0, 0]} minPointSize={3} />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
           )}
         </div>
-      )}
     </div>
   );
 }
@@ -455,11 +463,12 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
           </div>
         )}
 
-        {showCharts && activeShiftCodes.length > 0 && (
+        {showCharts && (activeShiftCodes.length > 0 || showHoliday) && (
           <OverviewCharts
             data={filteredData}
             trackedShiftCodes={activeShiftCodes.filter((c) => trackedShiftCodes.includes(c))}
             allShiftCodes={trackedShiftCodes}
+            showHoliday={showHoliday}
           />
         )}
 
