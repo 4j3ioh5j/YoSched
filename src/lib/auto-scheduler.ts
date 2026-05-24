@@ -26,7 +26,6 @@ export type ScheduleShiftType = {
   schedulePriority: number | null;
   weekendPaired: boolean;
   ignoresWorkingDays: boolean;
-  noConsecutiveGroup: string | null;
   maxPerDay: number | null;
   category: string;
   postShiftRule: string | null;
@@ -292,13 +291,11 @@ export function autoSchedule({
     if (prev) {
       const prevSt = stById.get(prev.shiftTypeId);
       if (prevSt && !isShiftAllowedAfter(followMap, prev.shiftTypeId, st.id, st.isOffShift)) return false;
-      if (st.noConsecutiveGroup && prevSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
     }
     const next = getCell(provider.id, nextDate(date));
     if (next) {
       const nextSt = stById.get(next.shiftTypeId);
       if (nextSt && !isShiftAllowedAfter(followMap, st.id, next.shiftTypeId, nextSt.isOffShift)) return false;
-      if (st.noConsecutiveGroup && nextSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
     }
     if (st.maxPerDay != null && countAssigned(st.code, date) >= st.maxPerDay) return false;
     return true;
@@ -524,35 +521,16 @@ export function autoSchedule({
         const sunCount = countAssigned(st.code, sun);
         if (satCount >= satRequired && sunCount >= sunRequired) continue;
 
-        function noGroupConflict(providerId: string, sat: string, sun: string): boolean {
-          if (!st.noConsecutiveGroup) return true;
-          const fri = prevDate(sat);
-          const mon = nextDate(sun);
-          const friCell = getCell(providerId, fri);
-          if (friCell) {
-            const friSt = stById.get(friCell.shiftTypeId);
-            if (friSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
-          }
-          const monCell = getCell(providerId, mon);
-          if (monCell) {
-            const monSt = stById.get(monCell.shiftTypeId);
-            if (monSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
-          }
-          return true;
-        }
-
         const available = eligible.filter(
           (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
             isAvailable(p, sat, st) && isAvailable(p, sun, st) &&
-            noGroupConflict(p.id, sat, sun) &&
             !wouldBreakPPHours(p.id, sat, st)
         );
 
         if (available.length === 0) {
           const fallback = eligible.filter(
             (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
-              isAvailable(p, sat, st) && isAvailable(p, sun, st) &&
-              noGroupConflict(p.id, sat, sun)
+              isAvailable(p, sat, st) && isAvailable(p, sun, st)
           );
           if (fallback.length === 0) {
             warnings.push(`No eligible ${st.code} provider for ${sat}/${sun}`);
@@ -661,20 +639,14 @@ export function autoSchedule({
             const stride = Math.max(1, Math.floor(provAvailDates.length / pairingFactor));
             for (let i = 0; i < provAvailDates.length && pickedDates.length < pairingFactor; i += stride) {
               const date = provAvailDates[i];
-              const conflict = st.noConsecutiveGroup && pickedDates.some(pd =>
-                nextDate(pd) === date || prevDate(date) === pd
-              );
-              if (!conflict) pickedDates.push(date);
+              pickedDates.push(date);
             }
             // Fallback: fill sequentially if stride missed some
             if (pickedDates.length < pairingFactor) {
               for (const date of provAvailDates) {
                 if (pickedDates.length >= pairingFactor) break;
                 if (pickedDates.includes(date)) continue;
-                const conflict = st.noConsecutiveGroup && pickedDates.some(pd =>
-                  nextDate(pd) === date || prevDate(date) === pd
-                );
-                if (!conflict) pickedDates.push(date);
+                pickedDates.push(date);
               }
             }
 

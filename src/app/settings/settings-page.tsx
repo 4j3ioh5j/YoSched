@@ -21,7 +21,6 @@ type ShiftType = {
   isFillShift: boolean;
   weekendPaired: boolean;
   ignoresWorkingDays: boolean;
-  noConsecutiveGroup: string | null;
   maxPerDay: number | null;
 };
 
@@ -473,7 +472,6 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
         isFillShift: created.isFillShift ?? false,
         weekendPaired: created.weekendPaired ?? false,
         ignoresWorkingDays: created.ignoresWorkingDays ?? false,
-        noConsecutiveGroup: created.noConsecutiveGroup ?? null,
         maxPerDay: created.maxPerDay ?? null,
       };
       setShifts((prev) => [...prev, newShift]);
@@ -641,10 +639,7 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
               <FieldRow label="Represents a day off" description="This shift means the provider is not working (used for post-shift recovery days)">
                 <input type="checkbox" checked={editingShift.isOffShift} onChange={(e) => updateField(editingShift.id, "isOffShift", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
               </FieldRow>
-              <FieldRow label="No back-to-back group" description="Shifts sharing the same group name cannot be assigned on consecutive days for the same provider. For example, if ORC, ORL, and CALL all share the group 'call-late', a provider can't work ORL on Friday and CALL on Saturday.">
-                <input className="w-32 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={editingShift.noConsecutiveGroup ?? ""} placeholder="None" onChange={(e) => updateField(editingShift.id, "noConsecutiveGroup", e.target.value || null)} />
-              </FieldRow>
-              <FieldRow label="Maximum per day" description="Limit how many providers can be assigned this shift on the same day. Set to 1 if only one person should do this shift per day. Leave blank for no limit.">
+<FieldRow label="Maximum per day" description="Limit how many providers can be assigned this shift on the same day. Set to 1 if only one person should do this shift per day. Leave blank for no limit.">
                 <input type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center" value={editingShift.maxPerDay ?? ""} placeholder="No limit" onChange={(e) => updateField(editingShift.id, "maxPerDay", e.target.value ? parseInt(e.target.value) : null)} />
               </FieldRow>
             </div>

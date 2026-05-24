@@ -53,7 +53,6 @@ export default async function Settings() {
           isFillShift: st.isFillShift,
           weekendPaired: st.weekendPaired,
           ignoresWorkingDays: st.ignoresWorkingDays,
-          noConsecutiveGroup: st.noConsecutiveGroup,
           maxPerDay: st.maxPerDay,
         }))}
         staffingReqs={staffingReqs.map((r) => ({

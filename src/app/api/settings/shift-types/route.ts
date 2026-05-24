@@ -27,7 +27,6 @@ export async function PUT(req: NextRequest) {
       isFillShift: data.isFillShift ?? false,
       weekendPaired: data.weekendPaired ?? false,
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
-      noConsecutiveGroup: data.noConsecutiveGroup || null,
       maxPerDay: data.maxPerDay ?? null,
     },
   });
@@ -61,7 +60,6 @@ export async function POST(req: NextRequest) {
       isFillShift: data.isFillShift ?? false,
       weekendPaired: data.weekendPaired ?? false,
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
-      noConsecutiveGroup: data.noConsecutiveGroup || null,
       maxPerDay: data.maxPerDay ?? null,
     },
   });

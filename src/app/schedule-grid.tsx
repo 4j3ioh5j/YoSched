@@ -42,7 +42,6 @@ type ShiftType = {
   isLeave: boolean;
   isOffShift: boolean;
   ignoresWorkingDays: boolean;
-  noConsecutiveGroup: string | null;
   defaultHours: number;
   countsTowardFte: boolean;
   countsOnWeekend: boolean;
@@ -925,7 +924,7 @@ export function ScheduleGrid({
   function renderSuggestion(sug: SuggestionEntry, stMap: Map<string, ShiftType>) {
     const st = stMap.get(sug.shiftTypeId);
     const color = st?.color ?? "#6b7280";
-    const isHeavy = !!st?.noConsecutiveGroup;
+    const isHeavy = st ? followRuleMap.has(st.id) : false;
     const isOff = st?.isOffShift;
     return (
       <div

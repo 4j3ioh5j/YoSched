@@ -13,7 +13,6 @@ type ShiftType = {
   postShiftRule: string | null;
   isOffShift: boolean;
   ignoresWorkingDays: boolean;
-  noConsecutiveGroup: string | null;
 };
 
 type AvailabilityRuleData = {
@@ -143,32 +142,6 @@ export function checkCellWarnings({
         warnings.push({
           type: "post-shift",
           message: `${nextSt.code} cannot follow ${st.code} — ${provider.initials} has ${nextSt.code} tomorrow`,
-        });
-      }
-    }
-  }
-
-  // No back-to-back: check if previous or next day has a shift in the same restriction group
-  if (st.noConsecutiveGroup) {
-    const pd = prevDateStr(date);
-    const pa = assignmentMap.get(`${providerId}:${pd}`);
-    if (pa) {
-      const pst = shiftTypeMap.get(pa.shiftTypeId);
-      if (pst?.noConsecutiveGroup === st.noConsecutiveGroup) {
-        warnings.push({
-          type: "post-shift",
-          message: `Back-to-back ${pst.code} and ${st.code} — ${provider.initials} had ${pst.code} yesterday`,
-        });
-      }
-    }
-    const nd = nextDateStr(date);
-    const na = assignmentMap.get(`${providerId}:${nd}`);
-    if (na) {
-      const nst = shiftTypeMap.get(na.shiftTypeId);
-      if (nst?.noConsecutiveGroup === st.noConsecutiveGroup) {
-        warnings.push({
-          type: "post-shift",
-          message: `Back-to-back ${st.code} and ${nst.code} — ${provider.initials} has ${nst.code} tomorrow`,
         });
       }
     }
