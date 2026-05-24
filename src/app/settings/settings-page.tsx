@@ -90,6 +90,7 @@ type FollowRuleData = {
   sourceShiftId: string;
   allowedShiftId: string | null;
   allowOffShifts: boolean;
+  mode: string;
 };
 
 type Props = {
@@ -241,46 +242,51 @@ function FollowRulesEditor({ sourceShiftId, allShifts, followRules, onSave }: {
 }) {
   const currentRules = followRules.filter((r) => r.sourceShiftId === sourceShiftId);
   const hasRules = currentRules.length > 0;
+  const mode = (currentRules[0]?.mode as "allow" | "block") || "allow";
   const allowOffShifts = currentRules.some((r) => r.allowOffShifts);
-  const allowedIds = new Set(currentRules.map((r) => r.allowedShiftId).filter(Boolean) as string[]);
+  const checkedIds = new Set(currentRules.map((r) => r.allowedShiftId).filter(Boolean) as string[]);
   const [saving, setSaving] = useState(false);
 
   const candidates = allShifts.filter((s) => !s.isOffShift);
 
-  async function save(newAllowedIds: Set<string>, newAllowOff: boolean) {
+  async function save(newCheckedIds: Set<string>, newAllowOff: boolean, newMode: "allow" | "block") {
     setSaving(true);
     const rules: Array<{ allowedShiftId: string | null; allowOffShifts: boolean }> = [];
     if (newAllowOff) rules.push({ allowedShiftId: null, allowOffShifts: true });
-    for (const id of newAllowedIds) rules.push({ allowedShiftId: id, allowOffShifts: false });
+    for (const id of newCheckedIds) rules.push({ allowedShiftId: id, allowOffShifts: false });
     const res = await fetch("/api/settings/shift-follow-rules", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sourceShiftId, rules }),
+      body: JSON.stringify({ sourceShiftId, mode: newMode, rules }),
     });
     if (res.ok) {
-      const saved = await res.json() as Array<{ id: string; sourceShiftId: string; allowedShiftId: string | null; allowOffShifts: boolean }>;
-      onSave(saved.map((r) => ({ id: r.id, sourceShiftId: r.sourceShiftId, allowedShiftId: r.allowedShiftId, allowOffShifts: r.allowOffShifts })));
+      const saved = await res.json() as Array<{ id: string; sourceShiftId: string; allowedShiftId: string | null; allowOffShifts: boolean; mode: string }>;
+      onSave(saved.map((r) => ({ id: r.id, sourceShiftId: r.sourceShiftId, allowedShiftId: r.allowedShiftId, allowOffShifts: r.allowOffShifts, mode: r.mode })));
     }
     setSaving(false);
   }
 
   function toggleRestricted(on: boolean) {
     if (on) {
-      save(new Set(), true);
+      save(new Set(), false, "allow");
     } else {
-      save(new Set(), false);
+      save(new Set(), false, "allow");
     }
   }
 
+  function switchMode(newMode: "allow" | "block") {
+    save(new Set(), false, newMode);
+  }
+
   function toggleOff(checked: boolean) {
-    save(allowedIds, checked);
+    save(checkedIds, checked, mode);
   }
 
   function toggleShift(shiftId: string, checked: boolean) {
-    const next = new Set(allowedIds);
+    const next = new Set(checkedIds);
     if (checked) next.add(shiftId);
     else next.delete(shiftId);
-    save(next, allowOffShifts);
+    save(next, allowOffShifts, mode);
   }
 
   return (
@@ -295,7 +301,23 @@ function FollowRulesEditor({ sourceShiftId, allShifts, followRules, onSave }: {
         />
       </FieldRow>
       {hasRules && (
-        <div className="ml-4 pl-4 border-l-2 border-slate-700 space-y-1.5">
+        <div className="ml-4 pl-4 border-l-2 border-slate-700 space-y-2">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => switchMode("allow")}
+              disabled={saving}
+              className={`px-2.5 py-1 text-[11px] rounded transition-colors ${mode === "allow" ? "bg-emerald-600/20 text-emerald-400 border border-emerald-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
+            >
+              Only allow
+            </button>
+            <button
+              onClick={() => switchMode("block")}
+              disabled={saving}
+              className={`px-2.5 py-1 text-[11px] rounded transition-colors ${mode === "block" ? "bg-red-600/20 text-red-400 border border-red-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
+            >
+              Block these
+            </button>
+          </div>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -304,13 +326,13 @@ function FollowRulesEditor({ sourceShiftId, allShifts, followRules, onSave }: {
               disabled={saving}
               className="rounded border-slate-600 w-3.5 h-3.5"
             />
-            <span className="text-slate-300">Any off-shift</span>
+            <span className="text-slate-300">{mode === "allow" ? "Any off-shift" : "Block off-shifts"}</span>
           </label>
           {candidates.map((s) => (
             <label key={s.id} className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
-                checked={allowedIds.has(s.id)}
+                checked={checkedIds.has(s.id)}
                 onChange={(e) => toggleShift(s.id, e.target.checked)}
                 disabled={saving}
                 className="rounded border-slate-600 w-3.5 h-3.5"

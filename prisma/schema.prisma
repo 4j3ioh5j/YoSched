@@ -352,6 +352,7 @@ model ShiftFollowRule {
   sourceShiftId  String
   allowedShiftId String?
   allowOffShifts Boolean  @default(false)
+  mode           String   @default("allow")
   createdAt      DateTime @default(now())
 
   sourceShift  ShiftType  @relation("followRuleSource", fields: [sourceShiftId], references: [id], onDelete: Cascade)

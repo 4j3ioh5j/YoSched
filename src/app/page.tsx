@@ -154,6 +154,7 @@ export default async function Home() {
           sourceShiftId: r.sourceShiftId,
           allowedShiftId: r.allowedShiftId,
           allowOffShifts: r.allowOffShifts,
+          mode: r.mode,
         }))}
       />
     </main>

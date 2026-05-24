@@ -15,8 +15,9 @@ export async function GET() {
 export async function PUT(req: NextRequest) {
   const { error } = await requireAuth("admin");
   if (error) return error;
-  const { sourceShiftId, rules } = await req.json() as {
+  const { sourceShiftId, mode, rules } = await req.json() as {
     sourceShiftId: string;
+    mode: string;
     rules: Array<{ allowedShiftId: string | null; allowOffShifts: boolean }>;
   };
 
@@ -28,6 +29,7 @@ export async function PUT(req: NextRequest) {
           sourceShiftId,
           allowedShiftId: r.allowedShiftId,
           allowOffShifts: r.allowOffShifts,
+          mode,
         })),
       });
     }

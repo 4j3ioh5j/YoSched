@@ -109,6 +109,7 @@ export default async function Settings() {
           sourceShiftId: r.sourceShiftId,
           allowedShiftId: r.allowedShiftId,
           allowOffShifts: r.allowOffShifts,
+          mode: r.mode,
         }))}
       />
     </main>
