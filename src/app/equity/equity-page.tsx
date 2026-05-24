@@ -45,6 +45,12 @@ type Averages = {
   totalLeaveDays: number;
 };
 
+type ActiveFactor = {
+  factorType: string;
+  shiftCode: string | null;
+  enabled: boolean;
+};
+
 type Props = {
   data: EquityRow[];
   averages: Averages;
@@ -52,6 +58,7 @@ type Props = {
   dateRange: { min: string; max: string };
   shiftCodes: string[];
   equityThresholds: EquityThresholds;
+  activeFactors: ActiveFactor[];
 };
 
 type SortKey = "initials" | "desirability" | "oppAdj" | "holiday" | "hours" | "workDays" | "leaveDays" | string;
@@ -301,9 +308,15 @@ function SortHeader({ label, sortId, className, title, sortKey, sortAsc, onSort 
   );
 }
 
-export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds }: Props) {
-  const [sortKey, setSortKey] = useState<SortKey>("desirability");
-  const [sortAsc, setSortAsc] = useState(false);
+export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds, activeFactors }: Props) {
+  const showDesirability = activeFactors.some((f) => f.factorType === "desirability" && f.enabled);
+  const showHoliday = activeFactors.some((f) => f.factorType === "holiday" && f.enabled);
+  const activeShiftCodes = activeFactors
+    .filter((f) => f.factorType === "shift" && f.enabled && f.shiftCode)
+    .map((f) => f.shiftCode!);
+
+  const [sortKey, setSortKey] = useState<SortKey>(showDesirability ? "desirability" : "initials");
+  const [sortAsc, setSortAsc] = useState(!showDesirability);
   const [showTallies, setShowTallies] = useState(false);
   const [showCharts, setShowCharts] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
@@ -345,12 +358,6 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
     }
     return sortAsc ? cmp : -cmp;
   });
-
-  const shiftAvgs: Record<string, number> = {};
-  for (const code of trackedShiftCodes) {
-    const vals = filteredData.map((d) => d.shiftCounts[code] || 0);
-    shiftAvgs[code] = vals.reduce((a, b) => a + b, 0) / (vals.length || 1);
-  }
 
   return (
     <div className="flex-1 overflow-auto">
@@ -395,29 +402,33 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
           )}
         </div>
 
-        <div className="flex flex-wrap gap-3 mb-5">
-          <div className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3 min-w-[140px]">
-            <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Avg Holidays</div>
-            <div className="text-lg font-semibold tabular-nums text-amber-400">
-              {averages.holidayWorkCount.toFixed(1)}
-            </div>
-            <div className="text-[10px] text-slate-600">per 1.0 FTE</div>
-          </div>
-          {Object.entries(averages.perShift).map(([code, avg], i) => (
-            <div key={code} className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3 min-w-[140px]">
-              <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Avg {code}</div>
-              <div className="text-lg font-semibold tabular-nums" style={{ color: CHART_COLORS[trackedShiftCodes.indexOf(code) % CHART_COLORS.length] }}>
-                {avg.toFixed(1)}
+        {(showHoliday || activeShiftCodes.length > 0) && (
+          <div className="flex flex-wrap gap-3 mb-5">
+            {showHoliday && (
+              <div className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3 min-w-[140px]">
+                <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Avg Holidays</div>
+                <div className="text-lg font-semibold tabular-nums text-amber-400">
+                  {averages.holidayWorkCount.toFixed(1)}
+                </div>
+                <div className="text-[10px] text-slate-600">per 1.0 FTE</div>
               </div>
-              <div className="text-[10px] text-slate-600">per 1.0 FTE</div>
-            </div>
-          ))}
-        </div>
+            )}
+            {activeShiftCodes.filter((code) => code in averages.perShift).map((code) => (
+              <div key={code} className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3 min-w-[140px]">
+                <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Avg {code}</div>
+                <div className="text-lg font-semibold tabular-nums" style={{ color: CHART_COLORS[trackedShiftCodes.indexOf(code) % CHART_COLORS.length] }}>
+                  {averages.perShift[code].toFixed(1)}
+                </div>
+                <div className="text-[10px] text-slate-600">per 1.0 FTE</div>
+              </div>
+            ))}
+          </div>
+        )}
 
-        {showCharts && (
+        {showCharts && activeShiftCodes.length > 0 && (
           <OverviewCharts
             data={filteredData}
-            trackedShiftCodes={trackedShiftCodes}
+            trackedShiftCodes={activeShiftCodes.filter((c) => trackedShiftCodes.includes(c))}
           />
         )}
 
@@ -427,10 +438,10 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
               <thead>
                 <tr className="bg-slate-800/80 border-b border-slate-700">
                   <SortHeader label="Staff Member" sortId="initials" className="text-left w-44" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
-                  <SortHeader label="Desirability" sortId="desirability" className="text-right w-24" title="FTE-normalized desirability z-score" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
-                  <SortHeader label="Opp. Adj." sortId="oppAdj" className="text-right w-20" title="Opportunity-adjusted z-score (only eligible shifts)" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
-                  <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title="Number of holidays worked" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
-                  {trackedShiftCodes.map((code) => (
+                  {showDesirability && <SortHeader label="Desirability" sortId="desirability" className="text-right w-24" title="FTE-normalized desirability z-score" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />}
+                  {showDesirability && <SortHeader label="Opp. Adj." sortId="oppAdj" className="text-right w-20" title="Opportunity-adjusted z-score (only eligible shifts)" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />}
+                  {showHoliday && <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title="Number of holidays worked" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />}
+                  {activeShiftCodes.map((code) => (
                     <SortHeader key={code} label={code} sortId={`shift:${code}`} className="text-right w-16" title={`Total ${code} shifts`} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   ))}
                   <SortHeader label="Hours" sortId="hours" className="text-right w-20" title="Total FTE-counted hours" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
@@ -458,26 +469,32 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 text-right">
-                        <span className={`text-sm tabular-nums ${-row.displayDeviation.desirability > 0.3 ? "text-emerald-400" : -row.displayDeviation.desirability < -0.3 ? "text-red-400" : "text-slate-400"}`}>
-                          {-row.displayDeviation.desirability > 0 ? "+" : ""}{(-row.displayDeviation.desirability).toFixed(2)}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5 text-right">
-                        <span className={`text-sm tabular-nums ${-row.deviation.desirability > 0.3 ? "text-emerald-400" : -row.deviation.desirability < -0.3 ? "text-red-400" : "text-slate-400"}`}>
-                          {-row.deviation.desirability > 0 ? "+" : ""}{(-row.deviation.desirability).toFixed(2)}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5 text-right">
-                        <span className={`text-sm tabular-nums ${row.holidayWorkCount > 0 ? "text-amber-400" : "text-slate-600"}`}>
-                          {row.holidayWorkCount}
-                        </span>
-                      </td>
-                      {trackedShiftCodes.map((code, i) => {
+                      {showDesirability && (
+                        <td className="px-3 py-2.5 text-right">
+                          <span className={`text-sm tabular-nums ${-row.displayDeviation.desirability > 0.3 ? "text-emerald-400" : -row.displayDeviation.desirability < -0.3 ? "text-red-400" : "text-slate-400"}`}>
+                            {-row.displayDeviation.desirability > 0 ? "+" : ""}{(-row.displayDeviation.desirability).toFixed(2)}
+                          </span>
+                        </td>
+                      )}
+                      {showDesirability && (
+                        <td className="px-3 py-2.5 text-right">
+                          <span className={`text-sm tabular-nums ${-row.deviation.desirability > 0.3 ? "text-emerald-400" : -row.deviation.desirability < -0.3 ? "text-red-400" : "text-slate-400"}`}>
+                            {-row.deviation.desirability > 0 ? "+" : ""}{(-row.deviation.desirability).toFixed(2)}
+                          </span>
+                        </td>
+                      )}
+                      {showHoliday && (
+                        <td className="px-3 py-2.5 text-right">
+                          <span className={`text-sm tabular-nums ${row.holidayWorkCount > 0 ? "text-amber-400" : "text-slate-600"}`}>
+                            {row.holidayWorkCount}
+                          </span>
+                        </td>
+                      )}
+                      {activeShiftCodes.map((code) => {
                         const val = row.shiftCounts[code] || 0;
                         return (
                           <td key={code} className="px-3 py-2.5 text-right">
-                            <span className="text-sm tabular-nums" style={{ color: CHART_COLORS[i % CHART_COLORS.length] }}>
+                            <span className="text-sm tabular-nums" style={{ color: CHART_COLORS[trackedShiftCodes.indexOf(code) % CHART_COLORS.length] }}>
                               {val}
                             </span>
                           </td>

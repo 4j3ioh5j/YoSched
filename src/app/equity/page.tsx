@@ -148,6 +148,11 @@ export default async function Equity() {
         dateRange={dateRange}
         shiftCodes={shiftCodes}
         equityThresholds={equityThresholds}
+        activeFactors={equityFactors.map((f) => ({
+          factorType: f.factorType,
+          shiftCode: f.shiftCode,
+          enabled: f.enabled,
+        }))}
       />
     </main>
   );
