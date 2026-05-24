@@ -252,6 +252,7 @@ export function computeFairness({
     return normDes - expected;
   });
   const desStd = stddev(desResiduals);
+  const desMeanResidual = desResiduals.reduce((a, b) => a + b, 0) / (desResiduals.length || 1);
   const holStd = stddev(metrics.map((m) => fteNorm(m.providerId, m.holidayWorkCount)));
 
   const shiftStds: Record<string, number> = {};
@@ -267,7 +268,7 @@ export function computeFairness({
     const expectedDes = providerExpectedDes.get(m.providerId) ?? 0;
 
     // Negate: scoring above your opportunity-adjusted expectation = low burden
-    const desirability = -(normDes - expectedDes) / desStd;
+    const desirability = -((normDes - expectedDes) - desMeanResidual) / desStd;
     const holidayWork = (normHol - avgHoliday) / holStd;
 
     const perShift: Record<string, number> = {};
