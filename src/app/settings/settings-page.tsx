@@ -308,14 +308,14 @@ function FollowRulesEditor({ sourceShiftId, allShifts, followRules, onSave }: {
               disabled={saving}
               className={`px-2.5 py-1 text-[11px] rounded transition-colors ${mode === "allow" ? "bg-emerald-600/20 text-emerald-400 border border-emerald-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
             >
-              Only allow
+              Allow
             </button>
             <button
               onClick={() => switchMode("block")}
               disabled={saving}
               className={`px-2.5 py-1 text-[11px] rounded transition-colors ${mode === "block" ? "bg-red-600/20 text-red-400 border border-red-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
             >
-              Block these
+              Block
             </button>
           </div>
           <label className="flex items-center gap-2 text-sm">
