@@ -18,10 +18,10 @@ export async function requireAuth(minRole: Role = "viewer") {
 
   const dbUser = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { role: true },
+    select: { role: true, isActive: true },
   });
 
-  if (!dbUser) {
+  if (!dbUser || !dbUser.isActive) {
     return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }), session: null };
   }
 
@@ -32,4 +32,17 @@ export async function requireAuth(minRole: Role = "viewer") {
 
   (session.user as { role: string }).role = userRole;
   return { error: null, session };
+}
+
+export async function getSessionRole(): Promise<{ role: Role; userId: string } | null> {
+  const session = await auth();
+  if (!session?.user?.id) return null;
+
+  const dbUser = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { role: true, isActive: true },
+  });
+
+  if (!dbUser || !dbUser.isActive) return null;
+  return { role: dbUser.role as Role, userId: session.user.id };
 }

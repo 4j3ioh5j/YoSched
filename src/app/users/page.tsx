@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
+import { getSessionRole } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { NavHeader } from "../nav-header";
 import { UsersPage } from "./users-page";
@@ -7,9 +7,8 @@ import { UsersPage } from "./users-page";
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
-  const session = await auth();
-  const role = (session?.user as { role?: string })?.role;
-  if (role !== "admin") redirect("/");
+  const sessionRole = await getSessionRole();
+  if (!sessionRole || sessionRole.role !== "admin") redirect("/");
 
   const [users, prefs] = await Promise.all([
     prisma.user.findMany({
@@ -22,7 +21,7 @@ export default async function Page() {
   return (
     <>
       <NavHeader />
-      <UsersPage initialUsers={users} currentUserId={session!.user!.id!} deviceTrustDays={prefs?.deviceTrustDays ?? 30} />
+      <UsersPage initialUsers={users} currentUserId={sessionRole!.userId} deviceTrustDays={prefs?.deviceTrustDays ?? 30} />
     </>
   );
 }

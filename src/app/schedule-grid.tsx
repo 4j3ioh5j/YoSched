@@ -639,7 +639,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker]);
+  }, [picker, canEdit]);
 
   const handleSelect = useCallback(async (shiftTypeId: string) => {
     if (!picker) return;

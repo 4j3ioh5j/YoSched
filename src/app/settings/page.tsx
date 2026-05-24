@@ -1,15 +1,14 @@
 import { prisma } from "@/lib/prisma";
 import { SettingsPage } from "./settings-page";
 import { NavHeader } from "../nav-header";
-import { auth } from "@/lib/auth";
+import { getSessionRole } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function Settings() {
-  const session = await auth();
-  const role = (session?.user as { role?: string })?.role;
-  if (role !== "admin") redirect("/");
+  const sessionRole = await getSessionRole();
+  if (!sessionRole || sessionRole.role !== "admin") redirect("/");
   const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
