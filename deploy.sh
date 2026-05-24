@@ -2,37 +2,40 @@
 set -euo pipefail
 
 STAGING_HOST="david@dph-devbox-yosched-staging"
-DEPLOY_DIR="yosched"
+DEPLOY_DIR="YoSched"
 SERVICE_NAME="yosched-app"
 
-echo "==> Building..."
+echo "==> Pushing to GitHub..."
+git push
+
+echo "==> Deploying on staging..."
+ssh "$STAGING_HOST" "bash -s" << 'REMOTE'
+set -euo pipefail
+cd ~/YoSched
+
+echo "--- git pull"
+git pull --ff-only
+
+echo "--- pnpm install"
+pnpm install --frozen-lockfile
+
+echo "--- prisma generate"
+npx prisma generate
+
+echo "--- build"
 pnpm build
 
-echo "==> Backing up staging .env..."
-ssh "$STAGING_HOST" "cp ~/$DEPLOY_DIR/.env /tmp/yosched-env-backup 2>/dev/null || true"
-
-echo "==> Syncing standalone output..."
-rsync -az --delete .next/standalone/ "$STAGING_HOST:~/$DEPLOY_DIR/"
-
-echo "==> Syncing static assets..."
-rsync -az .next/static/ "$STAGING_HOST:~/$DEPLOY_DIR/.next/static/"
-
-echo "==> Syncing public assets..."
-rsync -az public/ "$STAGING_HOST:~/$DEPLOY_DIR/public/"
-
-echo "==> Restoring staging .env..."
-ssh "$STAGING_HOST" "cp /tmp/yosched-env-backup ~/$DEPLOY_DIR/.env"
-
-echo "==> Restarting service..."
-ssh "$STAGING_HOST" "systemctl --user restart $SERVICE_NAME"
+echo "--- restart service"
+systemctl --user restart yosched-app
 sleep 3
 
-echo "==> Verifying..."
-STATUS=$(ssh "$STAGING_HOST" "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/login")
+echo "--- verify"
+STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/login)
 if [ "$STATUS" = "200" ]; then
   echo "==> Deploy successful (login page returns 200)"
 else
   echo "==> WARNING: login page returned $STATUS"
-  ssh "$STAGING_HOST" "systemctl --user status $SERVICE_NAME | head -10; echo '---'; tail -10 /tmp/yosched.log 2>/dev/null"
+  systemctl --user status yosched-app | head -10
   exit 1
 fi
+REMOTE
