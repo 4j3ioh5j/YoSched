@@ -25,6 +25,10 @@ npx prisma generate
 echo "--- build"
 pnpm build
 
+echo "--- link static assets into standalone"
+ln -sf ../../.next/static .next/standalone/.next/static
+ln -sf ../../public .next/standalone/public
+
 echo "--- restart service"
 systemctl --user restart yosched-app
 sleep 3
