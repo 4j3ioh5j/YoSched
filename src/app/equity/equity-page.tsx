@@ -466,12 +466,12 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                         </div>
                       </td>
                       <td className="px-3 py-2.5 text-right">
-                        <span className={`text-sm tabular-nums ${row.displayDeviation.desirability < -0.3 ? "text-red-400" : row.displayDeviation.desirability > 0.3 ? "text-emerald-400" : "text-slate-400"}`}>
+                        <span className={`text-sm tabular-nums ${-row.displayDeviation.desirability > 0.3 ? "text-emerald-400" : -row.displayDeviation.desirability < -0.3 ? "text-red-400" : "text-slate-400"}`}>
                           {-row.displayDeviation.desirability > 0 ? "+" : ""}{(-row.displayDeviation.desirability).toFixed(2)}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 text-right">
-                        <span className={`text-sm tabular-nums ${row.deviation.desirability < -0.3 ? "text-red-400" : row.deviation.desirability > 0.3 ? "text-emerald-400" : "text-slate-400"}`}>
+                        <span className={`text-sm tabular-nums ${-row.deviation.desirability > 0.3 ? "text-emerald-400" : -row.deviation.desirability < -0.3 ? "text-red-400" : "text-slate-400"}`}>
                           {-row.deviation.desirability > 0 ? "+" : ""}{(-row.deviation.desirability).toFixed(2)}
                         </span>
                       </td>
