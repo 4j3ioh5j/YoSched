@@ -634,19 +634,26 @@ export function autoSchedule({
             const provAvailDates = remainDates.filter(d => isAvailable(chosen, d, st));
             provAvailDates.sort((a, b) => a.localeCompare(b));
 
-            // Pick well-separated dates (stride through the list)
+            function wouldViolateFollowRules(picked: string[], candidate: string): boolean {
+              if (!followMap.has(st.id)) return false;
+              for (const pd of picked) {
+                if (nextDate(pd) === candidate && !isShiftAllowedAfter(followMap, st.id, st.id, st.isOffShift)) return true;
+                if (prevDate(pd) === candidate && !isShiftAllowedAfter(followMap, st.id, st.id, st.isOffShift)) return true;
+              }
+              return false;
+            }
+
             const pickedDates: string[] = [];
             const stride = Math.max(1, Math.floor(provAvailDates.length / pairingFactor));
             for (let i = 0; i < provAvailDates.length && pickedDates.length < pairingFactor; i += stride) {
               const date = provAvailDates[i];
-              pickedDates.push(date);
+              if (!wouldViolateFollowRules(pickedDates, date)) pickedDates.push(date);
             }
-            // Fallback: fill sequentially if stride missed some
             if (pickedDates.length < pairingFactor) {
               for (const date of provAvailDates) {
                 if (pickedDates.length >= pairingFactor) break;
                 if (pickedDates.includes(date)) continue;
-                pickedDates.push(date);
+                if (!wouldViolateFollowRules(pickedDates, date)) pickedDates.push(date);
               }
             }
 
