@@ -3,8 +3,8 @@
 import { useState, useMemo } from "react";
 import { useEscape } from "@/lib/use-escape";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer,
-  Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   Legend,
 } from "recharts";
 
@@ -54,7 +54,7 @@ type Props = {
   equityThresholds: EquityThresholds;
 };
 
-type SortKey = "initials" | "overall" | "desirability" | "holiday" | "hours" | "workDays" | "leaveDays" | string;
+type SortKey = "initials" | "desirability" | "oppAdj" | "holiday" | "hours" | "workDays" | "leaveDays" | string;
 
 function equityColor(burden: number, t: EquityThresholds): string {
   if (burden > t.high) return "#ef4444";
@@ -101,41 +101,10 @@ function median(values: number[]): number {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
-function deviationColor(value: number): string {
-  if (value > 0.3) return "#3b82f6";
-  if (value < -0.3) return "#f97316";
-  return "#6b7280";
-}
-
 function OverviewCharts({ data, trackedShiftCodes }: {
   data: EquityRow[];
   trackedShiftCodes: string[];
 }) {
-  const equityData = useMemo(() => {
-    const values = data.map((d) => -d.deviation.overall);
-    const med = median(values);
-    return [...data]
-      .sort((a, b) => (-b.deviation.overall - med) - (-a.deviation.overall - med))
-      .map((d) => {
-        const v = parseFloat((-d.deviation.overall - med).toFixed(2));
-        return { initials: d.initials, value: v, fill: deviationColor(v) };
-      });
-  }, [data]);
-
-  const { desirabilityData, desExtent } = useMemo(() => {
-    const fteNormed = data.map((d) => d.desirabilityScore / (d.ftePercentage || 1));
-    const med = median(fteNormed);
-    const rows = [...data]
-      .sort((a, b) => (b.desirabilityScore / (b.ftePercentage || 1) - med) - (a.desirabilityScore / (a.ftePercentage || 1) - med))
-      .map((d) => {
-        const normed = d.desirabilityScore / (d.ftePercentage || 1);
-        const v = parseFloat((normed - med).toFixed(1));
-        return { initials: d.initials, value: v, fill: deviationColor(v / 10) };
-      });
-    const maxAbs = Math.max(...rows.map((r) => Math.abs(r.value)), 1);
-    return { desirabilityData: rows, desExtent: maxAbs };
-  }, [data]);
-
   const shiftData = useMemo(() => {
     if (trackedShiftCodes.length === 0) return [];
     return [...data].sort((a, b) => a.initials.localeCompare(b.initials)).map((d) => {
@@ -148,45 +117,9 @@ function OverviewCharts({ data, trackedShiftCodes }: {
   }, [data, trackedShiftCodes]);
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
-      <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Overall Workload Balance</h3>
-        <p className="text-[10px] text-slate-600 mb-3">Weighted z-score, FTE-normalized — right = lighter</p>
-        <ResponsiveContainer width="100%" height={Math.max(200, data.length * 28 + 40)}>
-          <BarChart data={equityData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
-            <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={{ stroke: "#334155" }} tickLine={false} />
-            <YAxis type="category" dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 11, fontFamily: "monospace" }} width={40} axisLine={false} tickLine={false} />
-            <Tooltip content={<ChartTooltipContent />} />
-            <ReferenceLine x={0} stroke="#475569" strokeWidth={1} label={{ value: "median", position: "top", fill: "#475569", fontSize: 9 }} />
-            <Bar dataKey="value" name="vs Median" radius={[0, 3, 3, 0]} maxBarSize={18}>
-              {equityData.map((d, i) => <Cell key={i} fill={d.fill} fillOpacity={0.8} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-        <p className="text-[10px] text-slate-600 mt-2">Z-score, FTE-normalized, opportunity-adjusted</p>
-      </div>
-
-      <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Shift Desirability</h3>
-        <p className="text-[10px] text-slate-600 mb-3">FTE-normalized, vs median — right = better shifts</p>
-        <ResponsiveContainer width="100%" height={Math.max(200, data.length * 28 + 40)}>
-          <BarChart data={desirabilityData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
-            <XAxis type="number" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={{ stroke: "#334155" }} tickLine={false} domain={[-desExtent, desExtent]} />
-            <YAxis type="category" dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 11, fontFamily: "monospace" }} width={40} axisLine={false} tickLine={false} />
-            <Tooltip content={<ChartTooltipContent />} />
-            <ReferenceLine x={0} stroke="#475569" strokeWidth={1} label={{ value: "median", position: "top", fill: "#475569", fontSize: 9 }} />
-            <Bar dataKey="value" name="vs Median" radius={[0, 3, 3, 0]} maxBarSize={18}>
-              {desirabilityData.map((d, i) => (
-                <Cell key={i} fill={d.fill} fillOpacity={0.75} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-        <p className="text-[10px] text-slate-600 mt-2">FTE-normalized raw desirability score vs median</p>
-      </div>
-
+    <div className="mb-6">
       {trackedShiftCodes.length > 0 && (
-        <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4 xl:col-span-2">
+        <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Shift Distribution</h3>
           <p className="text-[10px] text-slate-600 mb-3">Raw counts per provider. Stubs = zero.</p>
           <ResponsiveContainer width="100%" height={320}>
@@ -369,7 +302,7 @@ function SortHeader({ label, sortId, className, title, sortKey, sortAsc, onSort 
 }
 
 export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds }: Props) {
-  const [sortKey, setSortKey] = useState<SortKey>("overall");
+  const [sortKey, setSortKey] = useState<SortKey>("desirability");
   const [sortAsc, setSortAsc] = useState(false);
   const [showTallies, setShowTallies] = useState(false);
   const [showCharts, setShowCharts] = useState(true);
@@ -400,9 +333,8 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
   const sorted = [...filteredData].sort((a, b) => {
     let cmp = 0;
     if (sortKey === "initials") cmp = a.initials.localeCompare(b.initials);
-    else if (sortKey === "overall") cmp = a.deviation.overall - b.deviation.overall;
-    else if (sortKey === "desirability") cmp = a.displayDeviation.desirability - b.displayDeviation.desirability;
-    else if (sortKey === "oppAdj") cmp = a.deviation.desirability - b.deviation.desirability;
+    else if (sortKey === "desirability") cmp = b.displayDeviation.desirability - a.displayDeviation.desirability;
+    else if (sortKey === "oppAdj") cmp = b.deviation.desirability - a.deviation.desirability;
     else if (sortKey === "holiday") cmp = a.holidayWorkCount - b.holidayWorkCount;
     else if (sortKey === "hours") cmp = a.totalHours - b.totalHours;
     else if (sortKey === "workDays") cmp = a.totalWorkDays - b.totalWorkDays;
@@ -501,8 +433,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-800/80 border-b border-slate-700">
-                  <SortHeader label="Provider" sortId="initials" className="text-left w-44" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
-                  <SortHeader label="Equity" sortId="overall" className="text-center w-28" title="Overall workload balance" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                  <SortHeader label="Staff Member" sortId="initials" className="text-left w-44" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   <SortHeader label="Desirability" sortId="desirability" className="text-right w-24" title="FTE-normalized desirability z-score" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   <SortHeader label="Opp. Adj." sortId="oppAdj" className="text-right w-20" title="Opportunity-adjusted z-score (only eligible shifts)" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title="Number of holidays worked" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
@@ -519,8 +450,6 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
               </thead>
               <tbody>
                 {sorted.map((row) => {
-                  const eqColor = equityColor(row.deviation.overall, equityThresholds);
-                  const eqText = equityLabel(row.deviation.overall, equityThresholds);
                   return (
                     <tr
                       key={row.providerId}
@@ -536,20 +465,14 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 text-center">
-                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ backgroundColor: eqColor + "15" }}>
-                          <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: eqColor }} />
-                          <span className="text-[11px] font-medium whitespace-nowrap" style={{ color: eqColor }}>{eqText}</span>
-                        </div>
-                      </td>
                       <td className="px-3 py-2.5 text-right">
-                        <span className={`text-sm tabular-nums ${row.displayDeviation.desirability > 0.3 ? "text-red-400" : row.displayDeviation.desirability < -0.3 ? "text-emerald-400" : "text-slate-400"}`}>
-                          {row.displayDeviation.desirability > 0 ? "+" : ""}{row.displayDeviation.desirability.toFixed(2)}
+                        <span className={`text-sm tabular-nums ${row.displayDeviation.desirability < -0.3 ? "text-red-400" : row.displayDeviation.desirability > 0.3 ? "text-emerald-400" : "text-slate-400"}`}>
+                          {-row.displayDeviation.desirability > 0 ? "+" : ""}{(-row.displayDeviation.desirability).toFixed(2)}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 text-right">
-                        <span className={`text-sm tabular-nums ${row.deviation.desirability > 0.3 ? "text-red-400" : row.deviation.desirability < -0.3 ? "text-emerald-400" : "text-slate-400"}`}>
-                          {row.deviation.desirability > 0 ? "+" : ""}{row.deviation.desirability.toFixed(2)}
+                        <span className={`text-sm tabular-nums ${row.deviation.desirability < -0.3 ? "text-red-400" : row.deviation.desirability > 0.3 ? "text-emerald-400" : "text-slate-400"}`}>
+                          {-row.deviation.desirability > 0 ? "+" : ""}{(-row.deviation.desirability).toFixed(2)}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 text-right">
