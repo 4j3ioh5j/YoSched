@@ -179,11 +179,15 @@ export function bestSpread(
   let bestCombo: string[] = [];
   let bestMinGap = -1;
 
+  const comboSet = new Set<string>();
   function score(combo: string[]): number {
+    comboSet.clear();
+    for (const d of combo) comboSet.add(d);
     const all = [...combo, ...anchors].sort();
     if (all.length < 2) return Infinity;
     let minGap = Infinity;
     for (let i = 1; i < all.length; i++) {
+      if (!comboSet.has(all[i]) && !comboSet.has(all[i - 1])) continue;
       minGap = Math.min(minGap, daysBetween(all[i], all[i - 1]));
     }
     return minGap;
