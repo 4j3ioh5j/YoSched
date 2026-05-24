@@ -112,7 +112,7 @@ function shiftColor(code: string, allCodes: string[]): string {
   return CHART_COLORS[allCodes.indexOf(code) % CHART_COLORS.length];
 }
 
-const HOLIDAY_COLOR = "#f59e0b";
+const HOLIDAY_COLOR = "#ef4444";
 
 function OverviewCharts({ data, trackedShiftCodes, allShiftCodes, showHoliday }: {
   data: EquityRow[];
@@ -445,7 +445,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
             {showHoliday && (
               <div className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3 min-w-[140px]">
                 <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Avg Holidays</div>
-                <div className="text-lg font-semibold tabular-nums text-amber-400">
+                <div className="text-lg font-semibold tabular-nums text-red-400">
                   {averages.holidayWorkCount.toFixed(1)}
                 </div>
                 <div className="text-[10px] text-slate-600">per 1.0 FTE</div>
@@ -525,7 +525,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                       )}
                       {showHoliday && (
                         <td className="px-3 py-2.5 text-right">
-                          <span className={`text-sm tabular-nums ${row.holidayWorkCount > 0 ? "text-amber-400" : "text-slate-600"}`}>
+                          <span className={`text-sm tabular-nums ${row.holidayWorkCount > 0 ? "text-red-400" : "text-slate-600"}`}>
                             {row.holidayWorkCount}
                           </span>
                         </td>
