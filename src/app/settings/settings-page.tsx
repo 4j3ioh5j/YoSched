@@ -246,7 +246,7 @@ function FollowRulesEditor({ sourceShiftId, allShifts, followRules, onSave }: {
   const allowedIds = new Set(currentRules.map((r) => r.allowedShiftId).filter(Boolean) as string[]);
   const [saving, setSaving] = useState(false);
 
-  const candidates = allShifts.filter((s) => s.id !== sourceShiftId && !s.isOffShift);
+  const candidates = allShifts.filter((s) => !s.isOffShift);
 
   async function save(newAllowedIds: Set<string>, newAllowOff: boolean) {
     setSaving(true);
