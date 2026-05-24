@@ -152,6 +152,67 @@ function gcd(a: number, b: number): number {
   return a;
 }
 
+export function daysBetween(a: string, b: string): number {
+  return Math.abs(
+    (new Date(a + "T12:00:00").getTime() - new Date(b + "T12:00:00").getTime()) / 86400000
+  );
+}
+
+// Find the combination of `count` dates from `candidates` that maximizes
+// the minimum gap between any two selected dates (and optionally existing
+// anchor dates like previously-assigned ORC shifts for the same provider).
+export function bestSpread(
+  candidates: string[],
+  count: number,
+  anchors: string[],
+  isValid: (picked: string[], next: string) => boolean,
+): string[] {
+  if (candidates.length <= count) {
+    // Must use all — just filter for validity
+    const valid: string[] = [];
+    for (const d of candidates) {
+      if (isValid(valid, d)) valid.push(d);
+    }
+    return valid;
+  }
+
+  let bestCombo: string[] = [];
+  let bestMinGap = -1;
+
+  function score(combo: string[]): number {
+    const all = [...combo, ...anchors].sort();
+    if (all.length < 2) return Infinity;
+    let minGap = Infinity;
+    for (let i = 1; i < all.length; i++) {
+      minGap = Math.min(minGap, daysBetween(all[i], all[i - 1]));
+    }
+    return minGap;
+  }
+
+  // Recursive combination generator — bounded by C(~10, 2-3) ≈ 45-120
+  function search(start: number, picked: string[]) {
+    if (picked.length === count) {
+      const s = score(picked);
+      if (s > bestMinGap || (s === bestMinGap && picked.length > bestCombo.length)) {
+        bestMinGap = s;
+        bestCombo = [...picked];
+      }
+      return;
+    }
+    const remaining = count - picked.length;
+    for (let i = start; i <= candidates.length - remaining; i++) {
+      if (isValid(picked, candidates[i])) {
+        picked.push(candidates[i]);
+        search(i + 1, picked);
+        picked.pop();
+      }
+    }
+  }
+
+  search(0, []);
+  return bestCombo;
+}
+
 export function autoSchedule({
   dates,
   providers,
@@ -634,6 +695,21 @@ export function autoSchedule({
             const provAvailDates = remainDates.filter(d => isAvailable(chosen, d, st));
             provAvailDates.sort((a, b) => a.localeCompare(b));
 
+            // Anchor dates: PP boundaries (so shifts push toward the middle)
+            // plus dates where this provider already has other scheduled
+            // shifts in this PP (e.g., ORC + recovery day).
+            const anchorDates: string[] = [
+              prevDate(pp.startDate),
+              nextDate(pp.endDate),
+            ];
+            for (const date of dates) {
+              if (date < pp.startDate || date > pp.endDate) continue;
+              const cell = getCell(chosen.id, date);
+              if (cell && cell.code !== st.code && !stById.get(cell.shiftTypeId)?.isOffShift) {
+                anchorDates.push(date);
+              }
+            }
+
             function wouldViolateFollowRules(picked: string[], candidate: string): boolean {
               if (!followMap.has(st.id)) return false;
               for (const pd of picked) {
@@ -643,19 +719,12 @@ export function autoSchedule({
               return false;
             }
 
-            const pickedDates: string[] = [];
-            const stride = Math.max(1, Math.floor(provAvailDates.length / pairingFactor));
-            for (let i = 0; i < provAvailDates.length && pickedDates.length < pairingFactor; i += stride) {
-              const date = provAvailDates[i];
-              if (!wouldViolateFollowRules(pickedDates, date)) pickedDates.push(date);
-            }
-            if (pickedDates.length < pairingFactor) {
-              for (const date of provAvailDates) {
-                if (pickedDates.length >= pairingFactor) break;
-                if (pickedDates.includes(date)) continue;
-                if (!wouldViolateFollowRules(pickedDates, date)) pickedDates.push(date);
-              }
-            }
+            const pickedDates = bestSpread(
+              provAvailDates,
+              pairingFactor,
+              anchorDates,
+              (picked, candidate) => !wouldViolateFollowRules(picked, candidate),
+            );
 
             if (pickedDates.length < pairingFactor) {
               warnings.push(`Could only place ${pickedDates.length}/${pairingFactor} ${st.code} for ${chosen.initials} in PP ${pp.startDate}`);
