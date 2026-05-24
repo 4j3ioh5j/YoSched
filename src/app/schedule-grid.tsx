@@ -98,6 +98,7 @@ type FairnessMetrics = {
 type FairnessEntry = {
   metrics: FairnessMetrics;
   deviation: FairnessDeviation;
+  displayDeviation: FairnessDeviation;
 };
 
 type Props = {
@@ -1180,7 +1181,7 @@ export function ScheduleGrid({
                 const fTooltip = fe
                   ? `${p.name} (${p.ftePercentage * 100}% FTE)\n` +
                     `Equity: ${fLabel}\n` +
-                    `Desirability: ${fe.metrics.desirabilityScore > 0 ? "+" : ""}${fe.metrics.desirabilityScore} (avg ${fairnessAverages?.desirabilityScore.toFixed(1)})\n` +
+                    `Desirability: ${-fe.displayDeviation.desirability > 0 ? "+" : ""}${(-fe.displayDeviation.desirability).toFixed(2)}σ\n` +
                     `Holiday work: ${fe.metrics.holidayWorkCount} (avg ${fairnessAverages?.holidayWorkCount.toFixed(1)})\n` +
                     `Work days: ${fe.metrics.totalWorkDays} | Leave: ${fe.metrics.totalLeaveDays}`
                   : `${p.name} (${p.ftePercentage * 100}% FTE)`;

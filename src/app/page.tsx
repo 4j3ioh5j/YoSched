@@ -61,11 +61,12 @@ export default async function Home() {
     equityFactors,
   });
 
-  const fairnessData: Record<string, { metrics: (typeof fairness.metrics)[0]; deviation: { desirability: number; holidayWork: number; overall: number } }> = {};
+  const fairnessData: Record<string, { metrics: (typeof fairness.metrics)[0]; deviation: { desirability: number; holidayWork: number; overall: number }; displayDeviation: { desirability: number; holidayWork: number; overall: number } }> = {};
   for (const m of fairness.metrics) {
     const dev = fairness.deviations.get(m.providerId);
-    if (dev) {
-      fairnessData[m.providerId] = { metrics: m, deviation: dev };
+    const disp = fairness.displayDeviations.get(m.providerId);
+    if (dev && disp) {
+      fairnessData[m.providerId] = { metrics: m, deviation: dev, displayDeviation: disp };
     }
   }
 
