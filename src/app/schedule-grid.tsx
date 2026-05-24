@@ -101,6 +101,7 @@ type FairnessEntry = {
 };
 
 type Props = {
+  canEdit?: boolean;
   providers: Provider[];
   assignments: AssignmentData[];
   shiftTypes: ShiftType[];
@@ -234,6 +235,7 @@ function WarningDot({ warnings }: { warnings: Warning[] }) {
 }
 
 export function ScheduleGrid({
+  canEdit = true,
   providers,
   assignments: initialAssignments,
   shiftTypes,
@@ -499,6 +501,7 @@ export function ScheduleGrid({
   function handleCellClick(providerId: string, date: string, e: React.MouseEvent) {
     setActiveRow(date);
     setActiveCol(providerId);
+    if (!canEdit) return;
     const existing = assignmentMap.get(`${providerId}:${date}`);
     if (existing?.isLocked) return;
 
@@ -621,11 +624,11 @@ export function ScheduleGrid({
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
+      if (canEdit && (e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
         undoRef.current();
       }
-      if ((e.metaKey || e.ctrlKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+      if (canEdit && (e.metaKey || e.ctrlKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
         e.preventDefault();
         redoRef.current();
       }
@@ -790,6 +793,7 @@ export function ScheduleGrid({
   }, []);
 
   function handleDragStart(providerId: string, date: string, e: React.DragEvent) {
+    if (!canEdit) { e.preventDefault(); return; }
     const a = assignmentMap.get(`${providerId}:${date}`);
     if (!a || a.isLocked) { e.preventDefault(); return; }
     setDragSource({ providerId, date });
@@ -1080,6 +1084,7 @@ export function ScheduleGrid({
         <span className="ml-2 text-xs text-slate-500">
           {dates[0]} – {dates[dates.length - 1]}
         </span>
+        {canEdit && (
         <div className="ml-auto flex items-center gap-2">
           {selection.size > 0 && (
             <span className="text-xs text-emerald-400 font-medium">
@@ -1117,6 +1122,7 @@ export function ScheduleGrid({
             ↪
           </button>
         </div>
+        )}
       </div>
 
       {/* Auto-schedule review panel */}
@@ -1324,7 +1330,7 @@ export function ScheduleGrid({
                       <td
                         key={p.id}
                         className={[
-                          "px-0.5 py-0.5 text-center border-slate-700/30 border cursor-pointer relative",
+                          `px-0.5 py-0.5 text-center border-slate-700/30 border relative ${canEdit ? "cursor-pointer" : "cursor-default"}`,
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
                           !isHighlighted && !ppEven ? "bg-slate-800/20" : "",
                           isPickerTarget ? "ring-1 ring-inset ring-blue-400" : "",
@@ -1342,12 +1348,12 @@ export function ScheduleGrid({
                       >
                         {a ? (
                           <div
-                            draggable={!a.isLocked}
+                            draggable={canEdit && !a.isLocked}
                             onDragStart={(e) => handleDragStart(p.id, date, e)}
                             onDragEnd={handleDragEnd}
                             className={[
                               "text-[11px] font-bold rounded px-1 py-0.5 leading-tight",
-                              a.isLocked ? "ring-1 ring-yellow-500/50 cursor-not-allowed" : "hover:brightness-125 cursor-grab active:cursor-grabbing",
+                              !canEdit ? "cursor-default" : a.isLocked ? "ring-1 ring-yellow-500/50 cursor-not-allowed" : "hover:brightness-125 cursor-grab active:cursor-grabbing",
                               isSaving ? "opacity-50" : "",
                             ].join(" ")}
                             style={{
@@ -1422,7 +1428,7 @@ export function ScheduleGrid({
       </div>
 
       {/* Shift picker popover */}
-      {picker && (
+      {canEdit && picker && (
         <ShiftPicker
           shiftTypes={shiftTypes}
           currentShiftTypeId={selectionCount > 1 ? null : (assignmentMap.get(`${picker.providerId}:${picker.date}`)?.shiftTypeId ?? null)}

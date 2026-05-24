@@ -2,10 +2,14 @@ import { prisma } from "@/lib/prisma";
 import { computeFairness } from "@/lib/fairness";
 import { ScheduleGrid } from "./schedule-grid";
 import { NavHeader } from "./nav-header";
+import { auth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
+  const session = await auth();
+  const role = (session?.user as { role?: string })?.role ?? "viewer";
+  const canEdit = role === "admin" || role === "manager";
   const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors] =
     await Promise.all([
       prisma.provider.findMany({
@@ -80,6 +84,7 @@ export default async function Home() {
       <NavHeader />
 
       <ScheduleGrid
+        canEdit={canEdit}
         providers={providers.map((p) => ({
           id: p.id,
           initials: p.initials,
