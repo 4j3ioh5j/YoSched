@@ -108,42 +108,72 @@ function median(values: number[]): number {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
-function OverviewCharts({ data, trackedShiftCodes }: {
+function shiftColor(code: string, allCodes: string[]): string {
+  return CHART_COLORS[allCodes.indexOf(code) % CHART_COLORS.length];
+}
+
+function OverviewCharts({ data, trackedShiftCodes, allShiftCodes }: {
   data: EquityRow[];
   trackedShiftCodes: string[];
+  allShiftCodes: string[];
 }) {
+  const [visibleShifts, setVisibleShifts] = useState<Set<string>>(() => new Set(trackedShiftCodes));
+
+  const toggleShift = (code: string) => {
+    setVisibleShifts((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  };
+
+  const visibleCodes = trackedShiftCodes.filter((c) => visibleShifts.has(c));
+
   const shiftData = useMemo(() => {
-    if (trackedShiftCodes.length === 0) return [];
+    if (visibleCodes.length === 0) return [];
     return [...data].sort((a, b) => a.initials.localeCompare(b.initials)).map((d) => {
       const row: Record<string, string | number> = { initials: d.initials };
-      for (const code of trackedShiftCodes) {
+      for (const code of visibleCodes) {
         row[code] = d.shiftCounts[code] || 0;
       }
       return row;
     });
-  }, [data, trackedShiftCodes]);
+  }, [data, visibleCodes]);
 
   return (
     <div className="mb-6">
       {trackedShiftCodes.length > 0 && (
         <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Shift Distribution</h3>
-          <p className="text-[10px] text-slate-600 mb-3">Raw counts per provider. Stubs = zero.</p>
-          <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={shiftData} margin={{ left: -10, right: 10, top: 5, bottom: 5 }} barGap={1} barCategoryGap="15%">
-              <XAxis dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 10, fontFamily: "monospace" }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} />
-              <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
-              <Tooltip content={<ChartTooltipContent />} />
-              <Legend
-                wrapperStyle={{ fontSize: 11, color: "#94a3b8" }}
-                iconType="circle"
-                iconSize={8}
-              />
-              {trackedShiftCodes.map((code, i) => (
-                <Bar key={code} dataKey={code} name={code} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.75} radius={[2, 2, 0, 0]} minPointSize={3} />
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
+          <div className="flex items-center gap-1.5 mb-3">
+            {trackedShiftCodes.map((code) => {
+              const color = shiftColor(code, allShiftCodes);
+              const active = visibleShifts.has(code);
+              return (
+                <button
+                  key={code}
+                  onClick={() => toggleShift(code)}
+                  className={`px-2.5 py-1 text-[10px] font-medium rounded transition-colors border ${active ? "border-opacity-50" : "border-transparent bg-slate-700/50 text-slate-600"}`}
+                  style={active ? { backgroundColor: color + "20", color, borderColor: color + "50" } : undefined}
+                >
+                  {code}
+                </button>
+              );
+            })}
+          </div>
+          {visibleCodes.length > 0 && (
+            <ResponsiveContainer width="100%" height={320}>
+              <BarChart data={shiftData} margin={{ left: -10, right: 10, top: 5, bottom: 5 }} barGap={1} barCategoryGap="15%">
+                <XAxis dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 10, fontFamily: "monospace" }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} />
+                <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
+                <Tooltip content={<ChartTooltipContent />} />
+                {visibleCodes.map((code) => (
+                  <Bar key={code} dataKey={code} name={code} fill={shiftColor(code, allShiftCodes)} fillOpacity={0.75} radius={[2, 2, 0, 0]} minPointSize={3} />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       )}
     </div>
@@ -262,8 +292,8 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
                 )}
               </div>
             </div>
-            <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
-              <ResponsiveContainer width="100%" height={600}>
+            <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4" style={{ height: "calc(100vh - 240px)", minHeight: 500 }}>
+              <ResponsiveContainer width="100%" height="100%">
                 <RadarChart data={radarData} cx="50%" cy="46%">
                   <PolarGrid stroke="#334155" />
                   <PolarAngleAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 13, fontWeight: 500 }} />
@@ -416,7 +446,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
             {activeShiftCodes.filter((code) => code in averages.perShift).map((code) => (
               <div key={code} className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3 min-w-[140px]">
                 <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Avg {code}</div>
-                <div className="text-lg font-semibold tabular-nums" style={{ color: CHART_COLORS[trackedShiftCodes.indexOf(code) % CHART_COLORS.length] }}>
+                <div className="text-lg font-semibold tabular-nums" style={{ color: shiftColor(code, trackedShiftCodes) }}>
                   {averages.perShift[code].toFixed(1)}
                 </div>
                 <div className="text-[10px] text-slate-600">per 1.0 FTE</div>
@@ -429,6 +459,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
           <OverviewCharts
             data={filteredData}
             trackedShiftCodes={activeShiftCodes.filter((c) => trackedShiftCodes.includes(c))}
+            allShiftCodes={trackedShiftCodes}
           />
         )}
 
@@ -494,7 +525,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                         const val = row.shiftCounts[code] || 0;
                         return (
                           <td key={code} className="px-3 py-2.5 text-right">
-                            <span className="text-sm tabular-nums" style={{ color: CHART_COLORS[trackedShiftCodes.indexOf(code) % CHART_COLORS.length] }}>
+                            <span className="text-sm tabular-nums" style={{ color: shiftColor(code, trackedShiftCodes) }}>
                               {val}
                             </span>
                           </td>
