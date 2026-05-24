@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
     providerEligibleShifts,
     availabilityRules,
     equityFactors,
+    followRules,
   ] = await Promise.all([
     prisma.provider.findMany({ where: { isActive: true } }),
     prisma.shiftType.findMany(),
@@ -80,6 +81,7 @@ export async function POST(req: NextRequest) {
     prisma.providerEligibleShift.findMany(),
     prisma.availabilityRule.findMany(),
     prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.shiftFollowRule.findMany(),
   ]);
 
   const payPeriods = allPayPeriods;
@@ -215,6 +217,11 @@ export async function POST(req: NextRequest) {
       shiftCode: f.shiftCode,
       weight: f.weight,
       enabled: f.enabled,
+    })),
+    followRules: followRules.map((r) => ({
+      sourceShiftId: r.sourceShiftId,
+      allowedShiftId: r.allowedShiftId,
+      allowOffShifts: r.allowOffShifts,
     })),
   });
 

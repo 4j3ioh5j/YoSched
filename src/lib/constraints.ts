@@ -1,3 +1,5 @@
+import { FollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
+
 export type Warning = {
   type: "understaffed" | "post-shift" | "non-working-day" | "over-hours" | "shift-count";
   message: string;
@@ -86,6 +88,7 @@ export function checkCellWarnings({
   providers,
   holidaySet,
   staffingMins,
+  followRuleMap,
 }: {
   providerId: string;
   date: string;
@@ -96,6 +99,7 @@ export function checkCellWarnings({
   providers: Provider[];
   holidaySet: Set<string>;
   staffingMins: StaffingMinimum[];
+  followRuleMap?: FollowRuleMap;
 }): Warning[] {
   const warnings: Warning[] = [];
   if (!shiftTypeId) return warnings;
@@ -116,29 +120,29 @@ export function checkCellWarnings({
     });
   }
 
-  // Post-shift rule: check if PREVIOUS day had a shift with day_off_after
+  // Follow rules: check if PREVIOUS day's shift restricts what can follow
   const prevDate = prevDateStr(date);
   const prevAssignment = assignmentMap.get(`${providerId}:${prevDate}`);
-  if (prevAssignment) {
+  if (prevAssignment && followRuleMap) {
     const prevSt = shiftTypeMap.get(prevAssignment.shiftTypeId);
-    if (prevSt?.postShiftRule === "day_off_after" && !st.isOffShift) {
+    if (prevSt && !isShiftAllowedAfter(followRuleMap, prevAssignment.shiftTypeId, shiftTypeId!, st.isOffShift)) {
       warnings.push({
         type: "post-shift",
-        message: `Should be off — ${provider.initials} had ${prevSt.code} yesterday`,
+        message: `${st.code} cannot follow ${prevSt.code} — ${provider.initials} had ${prevSt.code} yesterday`,
       });
     }
   }
 
-  // Post-shift rule: check if THIS assignment has day_off_after and NEXT day is not off
-  if (st.postShiftRule === "day_off_after") {
+  // Follow rules: check if THIS shift restricts what can follow and NEXT day violates it
+  if (followRuleMap?.has(shiftTypeId!)) {
     const nextDate = nextDateStr(date);
     const nextAssignment = assignmentMap.get(`${providerId}:${nextDate}`);
     if (nextAssignment) {
       const nextSt = shiftTypeMap.get(nextAssignment.shiftTypeId);
-      if (nextSt && !nextSt.isOffShift) {
+      if (nextSt && !isShiftAllowedAfter(followRuleMap, shiftTypeId!, nextAssignment.shiftTypeId, nextSt.isOffShift)) {
         warnings.push({
           type: "post-shift",
-          message: `${st.code} requires day off after — ${provider.initials} is scheduled ${nextSt.code} tomorrow`,
+          message: `${nextSt.code} cannot follow ${st.code} — ${provider.initials} has ${nextSt.code} tomorrow`,
         });
       }
     }

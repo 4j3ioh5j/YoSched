@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
+import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 
 type AvailabilityRuleData = {
   dayOfWeek: number;
@@ -116,6 +117,7 @@ type Props = {
     desirabilityScore: number;
     holidayWorkCount: number;
   };
+  followRules?: FollowRuleRow[];
 };
 
 type PickerState = {
@@ -247,6 +249,7 @@ export function ScheduleGrid({
   staffingReqs,
   fairnessData,
   fairnessAverages,
+  followRules,
 }: Props) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
@@ -399,7 +402,8 @@ export function ScheduleGrid({
     return result;
   }, [sortedPPs, providers, assignmentMap, suggestionMap, overrideMap, shiftTypeMap]);
 
-  // Compute all cell warnings
+  const followRuleMap = useMemo(() => buildFollowRuleMap(followRules ?? []), [followRules]);
+
   const cellWarnings = useMemo(() => {
     const map = new Map<string, Warning[]>();
     for (const date of dates) {
@@ -416,6 +420,7 @@ export function ScheduleGrid({
           providers,
           holidaySet,
           staffingMins,
+          followRuleMap,
         });
         if (warnings.length > 0) {
           map.set(`${p.id}:${date}`, warnings);
@@ -423,7 +428,7 @@ export function ScheduleGrid({
       }
     }
     return map;
-  }, [dates, providers, assignmentMap, shiftTypeMap, holidaySet, staffingMins]);
+  }, [dates, providers, assignmentMap, shiftTypeMap, holidaySet, staffingMins, followRuleMap]);
 
   // Compute per-day staffing warnings
   const dayWarnings = useMemo(() => {
@@ -908,13 +913,14 @@ export function ScheduleGrid({
         providers,
         holidaySet,
         staffingMins,
+        followRuleMap,
       });
       if (warnings.length > 0) {
         result.set(st.id, warnings);
       }
     }
     return result;
-  }, [picker, providerMap, shiftTypes, shiftTypeMap, assignmentMap, providers, holidaySet, staffingMins]);
+  }, [picker, providerMap, shiftTypes, shiftTypeMap, assignmentMap, providers, holidaySet, staffingMins, followRuleMap]);
 
   function renderSuggestion(sug: SuggestionEntry, stMap: Map<string, ShiftType>) {
     const st = stMap.get(sug.shiftTypeId);

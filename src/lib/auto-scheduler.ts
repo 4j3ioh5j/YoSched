@@ -1,5 +1,6 @@
 import { computeFairness, type FairnessSummary, type EquityFactor } from "./fairness";
 import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule } from "./availability";
+import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter, isRecoveryOnly } from "./follow-rules";
 
 export type ScheduleProvider = {
   id: string;
@@ -167,6 +168,7 @@ export function autoSchedule({
   staffingRequirements,
   schedulingPreferences,
   equityFactors,
+  followRules,
 }: {
   dates: string[];
   providers: ScheduleProvider[];
@@ -182,6 +184,7 @@ export function autoSchedule({
   staffingRequirements: StaffingRequirement[];
   schedulingPreferences: SchedulingPreferences;
   equityFactors: EquityFactor[];
+  followRules?: FollowRuleRow[];
 }): AutoScheduleResult {
   const suggestions: Suggestion[] = [];
   const warnings: string[] = [];
@@ -189,6 +192,7 @@ export function autoSchedule({
 
   const holidaySet = new Set(holidays.map((h) => h.date));
   const dateSet = new Set(dates);
+  const followMap = buildFollowRuleMap(followRules ?? []);
 
   const stByCode = new Map<string, ScheduleShiftType>();
   const stById = new Map<string, ScheduleShiftType>();
@@ -287,12 +291,13 @@ export function autoSchedule({
     const prev = getCell(provider.id, prevDate(date));
     if (prev) {
       const prevSt = stById.get(prev.shiftTypeId);
-      if (prevSt?.postShiftRule === "day_off_after") return false;
+      if (prevSt && !isShiftAllowedAfter(followMap, prev.shiftTypeId, st.id, st.isOffShift)) return false;
       if (st.noConsecutiveGroup && prevSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
     }
     const next = getCell(provider.id, nextDate(date));
     if (next) {
       const nextSt = stById.get(next.shiftTypeId);
+      if (nextSt && !isShiftAllowedAfter(followMap, st.id, next.shiftTypeId, nextSt.isOffShift)) return false;
       if (st.noConsecutiveGroup && nextSt?.noConsecutiveGroup === st.noConsecutiveGroup) return false;
     }
     if (st.maxPerDay != null && countAssigned(st.code, date) >= st.maxPerDay) return false;
@@ -383,7 +388,7 @@ export function autoSchedule({
   }
 
   function wouldBreakPPHours(providerId: string, date: string, st: ScheduleShiftType): boolean {
-    const hasRecoveryCost = st.postShiftRule === "day_off_after";
+    const hasRecoveryCost = isRecoveryOnly(followMap, st.id);
     if (!st.countsTowardFte && !hasRecoveryCost) return false;
 
     const recoveryDate = hasRecoveryCost ? nextDate(date) : null;
@@ -628,7 +633,7 @@ export function autoSchedule({
               const provAvail = remainDates.filter(d => isAvailable(p, d, st));
               if (provAvail.length < pairingFactor) return false;
               const groupHrs = pairingFactor * getShiftHours(p.id, st, overrideMap);
-              const recoveryDays = st.postShiftRule === "day_off_after" ? pairingFactor : 0;
+              const recoveryDays = isRecoveryOnly(followMap, st.id) ? pairingFactor : 0;
               const currentHrs = ppHoursForProvider(p.id, pp);
               const target = pp.targetHours * p.ftePercentage;
               if (target > 0 && currentHrs + groupHrs > target) return false;
@@ -686,7 +691,7 @@ export function autoSchedule({
               );
               usedDates.add(date);
 
-              if (st.postShiftRule === "day_off_after" && offShift) {
+              if (isRecoveryOnly(followMap, st.id) && offShift) {
                 const next = nextDate(date);
                 const nextAvail = evaluateAvailability(chosen.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
                 if (dateSet.has(next) && !isAssigned(chosen.id, next) && nextAvail.available) {
@@ -719,7 +724,7 @@ export function autoSchedule({
             );
             recordAssignment(chosen.id, date);
 
-            if (st.postShiftRule === "day_off_after" && offShift) {
+            if (isRecoveryOnly(followMap, st.id) && offShift) {
               const next = nextDate(date);
               const nextAvail = evaluateAvailability(chosen.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
               if (dateSet.has(next) && !isAssigned(chosen.id, next) && nextAvail.available) {
@@ -772,7 +777,7 @@ export function autoSchedule({
             );
             recordAssignment(chosen.id, date);
 
-            if (st.postShiftRule === "day_off_after" && offShift) {
+            if (isRecoveryOnly(followMap, st.id) && offShift) {
               const next = nextDate(date);
               const nextAvail = evaluateAvailability(chosen.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
               if (dateSet.has(next) && !isAssigned(chosen.id, next) && nextAvail.available) {

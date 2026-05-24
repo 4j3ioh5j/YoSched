@@ -10,7 +10,7 @@ export default async function Home() {
   const sessionRole = await getSessionRole();
   const role = sessionRole?.role ?? "viewer";
   const canEdit = role === "admin" || role === "manager";
-  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors] =
+  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules] =
     await Promise.all([
       prisma.provider.findMany({
         where: { isActive: true },
@@ -29,6 +29,7 @@ export default async function Home() {
       prisma.staffingRequirement.findMany(),
       prisma.schedulingPreferences.findFirst(),
       prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
+      prisma.shiftFollowRule.findMany(),
     ]);
 
   const fairness = computeFairness({
@@ -150,6 +151,11 @@ export default async function Home() {
         }))}
         fairnessData={fairnessData}
         fairnessAverages={fairness.averages}
+        followRules={followRules.map((r) => ({
+          sourceShiftId: r.sourceShiftId,
+          allowedShiftId: r.allowedShiftId,
+          allowOffShifts: r.allowOffShifts,
+        }))}
       />
     </main>
   );

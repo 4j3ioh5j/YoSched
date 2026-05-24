@@ -60,6 +60,8 @@ model ShiftType {
   standingCommitments StandingCommitment[]
   eligibleProviders            ProviderEligibleShift[]
   defaultForEmploymentTypes    EmploymentTypeDefaultShift[]
+  followRulesAsSource  ShiftFollowRule[] @relation("followRuleSource")
+  followRulesAsAllowed ShiftFollowRule[] @relation("followRuleAllowed")
 
   @@map("shift_types")
 }
@@ -343,4 +345,18 @@ model EmploymentTypeDefaultAvailability {
   employmentType EmploymentType @relation(fields: [employmentTypeId], references: [id], onDelete: Cascade)
 
   @@map("employment_type_default_availability")
+}
+
+model ShiftFollowRule {
+  id             String   @id @default(cuid())
+  sourceShiftId  String
+  allowedShiftId String?
+  allowOffShifts Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  sourceShift  ShiftType  @relation("followRuleSource", fields: [sourceShiftId], references: [id], onDelete: Cascade)
+  allowedShift ShiftType? @relation("followRuleAllowed", fields: [allowedShiftId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceShiftId, allowedShiftId])
+  @@map("shift_follow_rules")
 }

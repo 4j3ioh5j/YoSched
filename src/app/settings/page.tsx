@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function Settings() {
   const sessionRole = await getSessionRole();
   if (!sessionRole || sessionRole.role !== "admin") redirect("/");
-  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors, followRules] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
@@ -21,6 +21,7 @@ export default async function Settings() {
       include: { _count: { select: { providers: true } }, defaultEligibleShifts: true, defaultAvailability: true },
     }),
     prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.shiftFollowRule.findMany(),
   ]);
 
   const schedulingPrefs = {
@@ -104,6 +105,12 @@ export default async function Settings() {
           sortOrder: f.sortOrder,
         }))}
         shiftCodes={shiftTypes.filter((st) => !st.isOffShift && !st.isLeave).map((st) => st.code)}
+        followRules={followRules.map((r) => ({
+          id: r.id,
+          sourceShiftId: r.sourceShiftId,
+          allowedShiftId: r.allowedShiftId,
+          allowOffShifts: r.allowOffShifts,
+        }))}
       />
     </main>
   );

@@ -86,6 +86,13 @@ type EquityFactorData = {
   sortOrder: number;
 };
 
+type FollowRuleData = {
+  id: string;
+  sourceShiftId: string;
+  allowedShiftId: string | null;
+  allowOffShifts: boolean;
+};
+
 type Props = {
   shiftTypes: ShiftType[];
   staffingReqs: StaffingReq[];
@@ -96,6 +103,7 @@ type Props = {
   employmentTypes: EmploymentTypeData[];
   equityFactors: EquityFactorData[];
   shiftCodes: string[];
+  followRules: FollowRuleData[];
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -226,11 +234,105 @@ function FieldRow({ label, description, children }: { label: string; description
   );
 }
 
-function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUndo: (a: UndoAction) => void }) {
+function FollowRulesEditor({ sourceShiftId, allShifts, followRules, onSave }: {
+  sourceShiftId: string;
+  allShifts: ShiftType[];
+  followRules: FollowRuleData[];
+  onSave: (updated: FollowRuleData[]) => void;
+}) {
+  const currentRules = followRules.filter((r) => r.sourceShiftId === sourceShiftId);
+  const hasRules = currentRules.length > 0;
+  const allowOffShifts = currentRules.some((r) => r.allowOffShifts);
+  const allowedIds = new Set(currentRules.map((r) => r.allowedShiftId).filter(Boolean) as string[]);
+  const [saving, setSaving] = useState(false);
+
+  const candidates = allShifts.filter((s) => s.id !== sourceShiftId && !s.isOffShift);
+
+  async function save(newAllowedIds: Set<string>, newAllowOff: boolean) {
+    setSaving(true);
+    const rules: Array<{ allowedShiftId: string | null; allowOffShifts: boolean }> = [];
+    if (newAllowOff) rules.push({ allowedShiftId: null, allowOffShifts: true });
+    for (const id of newAllowedIds) rules.push({ allowedShiftId: id, allowOffShifts: false });
+    const res = await fetch("/api/settings/shift-follow-rules", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourceShiftId, rules }),
+    });
+    if (res.ok) {
+      const saved = await res.json() as Array<{ id: string; sourceShiftId: string; allowedShiftId: string | null; allowOffShifts: boolean }>;
+      onSave(saved.map((r) => ({ id: r.id, sourceShiftId: r.sourceShiftId, allowedShiftId: r.allowedShiftId, allowOffShifts: r.allowOffShifts })));
+    }
+    setSaving(false);
+  }
+
+  function toggleRestricted(on: boolean) {
+    if (on) {
+      save(new Set(), true);
+    } else {
+      save(new Set(), false);
+    }
+  }
+
+  function toggleOff(checked: boolean) {
+    save(allowedIds, checked);
+  }
+
+  function toggleShift(shiftId: string, checked: boolean) {
+    const next = new Set(allowedIds);
+    if (checked) next.add(shiftId);
+    else next.delete(shiftId);
+    save(next, allowOffShifts);
+  }
+
+  return (
+    <div className="space-y-2">
+      <FieldRow label="Restrict follow shifts" description="Limit which shifts can be assigned the day after this one">
+        <input
+          type="checkbox"
+          checked={hasRules}
+          onChange={(e) => toggleRestricted(e.target.checked)}
+          disabled={saving}
+          className="rounded border-slate-600 w-4 h-4"
+        />
+      </FieldRow>
+      {hasRules && (
+        <div className="ml-4 pl-4 border-l-2 border-slate-700 space-y-1.5">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={allowOffShifts}
+              onChange={(e) => toggleOff(e.target.checked)}
+              disabled={saving}
+              className="rounded border-slate-600 w-3.5 h-3.5"
+            />
+            <span className="text-slate-300">Any off-shift</span>
+          </label>
+          {candidates.map((s) => (
+            <label key={s.id} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={allowedIds.has(s.id)}
+                onChange={(e) => toggleShift(s.id, e.target.checked)}
+                disabled={saving}
+                className="rounded border-slate-600 w-3.5 h-3.5"
+              />
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
+              <span className="text-slate-300">{s.code}</span>
+              <span className="text-slate-600 text-xs">{s.name}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial: ShiftType[]; pushUndo: (a: UndoAction) => void; initialFollowRules: FollowRuleData[] }) {
   const [shifts, setShifts] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [followRules, setFollowRules] = useState(initialFollowRules);
   const dragIdx = useRef<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
@@ -514,18 +616,12 @@ function ShiftTypesSection({ initial, pushUndo }: { initial: ShiftType[]; pushUn
               <FieldRow label="Count hours on weekends" description="Include weekend hours in pay period totals">
                 <input type="checkbox" checked={editingShift.countsOnWeekend} onChange={(e) => updateField(editingShift.id, "countsOnWeekend", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
               </FieldRow>
-              <FieldRow label="After this shift" description="What happens the next day. Use a preset or type a custom rule name.">
-                <div className="flex gap-1">
-                  <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm flex-1" value={editingShift.postShiftRule ?? ""} onChange={(e) => updateField(editingShift.id, "postShiftRule", e.target.value || null)}>
-                    <option value="">Nothing special</option>
-                    <option value="day_off_after">Must have the next day off</option>
-                    {editingShift.postShiftRule && !["", "day_off_after"].includes(editingShift.postShiftRule) && (
-                      <option value={editingShift.postShiftRule}>{editingShift.postShiftRule}</option>
-                    )}
-                  </select>
-                  <input type="text" className="w-28 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" placeholder="Custom…" value={editingShift.postShiftRule && !["day_off_after"].includes(editingShift.postShiftRule) ? editingShift.postShiftRule : ""} onChange={(e) => updateField(editingShift.id, "postShiftRule", e.target.value || null)} />
-                </div>
-              </FieldRow>
+              <FollowRulesEditor
+                sourceShiftId={editingShift.id}
+                allShifts={shifts}
+                followRules={followRules}
+                onSave={(updated) => setFollowRules((prev) => [...prev.filter((r) => r.sourceShiftId !== editingShift.id), ...updated])}
+              />
             </div>
 
             <div className="px-6 py-4 border-t border-slate-700">
@@ -1966,13 +2062,13 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules }: Props) {
   const undo = useUndo();
 
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
-        <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} />
+        <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} initialFollowRules={initialFollowRules} />
         <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} shiftTypes={shiftTypes} />
         <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
