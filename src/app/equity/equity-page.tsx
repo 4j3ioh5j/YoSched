@@ -397,23 +397,16 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
 
         <div className="flex flex-wrap gap-3 mb-5">
           <div className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3 min-w-[140px]">
-            <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Avg Shift Desirability</div>
-            <div className={`text-lg font-semibold tabular-nums ${averages.desirabilityScore < 0 ? "text-red-400" : "text-emerald-400"}`}>
-              {averages.desirabilityScore > 0 ? "+" : ""}{averages.desirabilityScore.toFixed(1)}
-            </div>
-            <div className="text-[10px] text-slate-600">per 1.0 FTE</div>
-          </div>
-          <div className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3 min-w-[140px]">
             <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Avg Holidays</div>
             <div className="text-lg font-semibold tabular-nums text-amber-400">
               {averages.holidayWorkCount.toFixed(1)}
             </div>
             <div className="text-[10px] text-slate-600">per 1.0 FTE</div>
           </div>
-          {Object.entries(averages.perShift).map(([code, avg]) => (
+          {Object.entries(averages.perShift).map(([code, avg], i) => (
             <div key={code} className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-4 py-3 min-w-[140px]">
               <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">Avg {code}</div>
-              <div className="text-lg font-semibold tabular-nums text-slate-300">
+              <div className="text-lg font-semibold tabular-nums" style={{ color: CHART_COLORS[trackedShiftCodes.indexOf(code) % CHART_COLORS.length] }}>
                 {avg.toFixed(1)}
               </div>
               <div className="text-[10px] text-slate-600">per 1.0 FTE</div>
@@ -480,13 +473,11 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                           {row.holidayWorkCount}
                         </span>
                       </td>
-                      {trackedShiftCodes.map((code) => {
+                      {trackedShiftCodes.map((code, i) => {
                         const val = row.shiftCounts[code] || 0;
-                        const avg = shiftAvgs[code] || 0;
-                        const diff = val - avg;
                         return (
                           <td key={code} className="px-3 py-2.5 text-right">
-                            <span className={`text-sm tabular-nums ${Math.abs(diff) > avg * 0.3 ? (diff > 0 ? "text-red-400" : "text-blue-400") : "text-slate-400"}`}>
+                            <span className="text-sm tabular-nums" style={{ color: CHART_COLORS[i % CHART_COLORS.length] }}>
                               {val}
                             </span>
                           </td>
