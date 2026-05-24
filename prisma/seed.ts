@@ -12,8 +12,8 @@ async function main() {
   // --- Shift Types ---
   const shiftTypes = [
     { code: "OR",     name: "Operating Room",       defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#3b82f6", sortOrder: 1, isFillShift: true, schedulePriority: 100 },
-    { code: "ORC",    name: "OR Call",               defaultHours: 16, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#6366f1", sortOrder: 2, postShiftRule: "day_off_after", schedulePriority: 20, noConsecutiveGroup: "call-late", maxPerDay: 1 },
-    { code: "ORL",    name: "OR Late",               defaultHours: 12, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#8b5cf6", sortOrder: 3, schedulePriority: 30, noConsecutiveGroup: "call-late", maxPerDay: 1 },
+    { code: "ORC",    name: "OR Call",               defaultHours: 16, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#8b5cf6", sortOrder: 2, postShiftRule: "day_off_after", schedulePriority: 20, noConsecutiveGroup: "call-late", maxPerDay: 1 },
+    { code: "ORL",    name: "OR Late",               defaultHours: 12, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#6366f1", sortOrder: 3, schedulePriority: 30, noConsecutiveGroup: "call-late", maxPerDay: 1 },
     { code: "ADM",    name: "Administrative",         defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#f59e0b", sortOrder: 4 },
     { code: "PREOP",  name: "Pre-op Clinic",          defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#10b981", sortOrder: 5 },
     { code: "PAIN",   name: "Pain Service",           defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#ef4444", sortOrder: 7 },
