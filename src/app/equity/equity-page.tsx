@@ -401,7 +401,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
     let cmp = 0;
     if (sortKey === "initials") cmp = a.initials.localeCompare(b.initials);
     else if (sortKey === "overall") cmp = a.deviation.overall - b.deviation.overall;
-    else if (sortKey === "desirability") cmp = a.desirabilityScore - b.desirabilityScore;
+    else if (sortKey === "desirability") cmp = a.displayDeviation.desirability - b.displayDeviation.desirability;
     else if (sortKey === "oppAdj") cmp = a.deviation.desirability - b.deviation.desirability;
     else if (sortKey === "holiday") cmp = a.holidayWorkCount - b.holidayWorkCount;
     else if (sortKey === "hours") cmp = a.totalHours - b.totalHours;
@@ -503,7 +503,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                 <tr className="bg-slate-800/80 border-b border-slate-700">
                   <SortHeader label="Provider" sortId="initials" className="text-left w-44" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   <SortHeader label="Equity" sortId="overall" className="text-center w-28" title="Overall workload balance" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
-                  <SortHeader label="Desirability" sortId="desirability" className="text-right w-24" title="Raw desirability score" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                  <SortHeader label="Desirability" sortId="desirability" className="text-right w-24" title="FTE-normalized desirability z-score" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   <SortHeader label="Opp. Adj." sortId="oppAdj" className="text-right w-20" title="Opportunity-adjusted z-score (only eligible shifts)" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title="Number of holidays worked" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
                   {trackedShiftCodes.map((code) => (
@@ -543,8 +543,8 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                         </div>
                       </td>
                       <td className="px-3 py-2.5 text-right">
-                        <span className={`text-sm font-medium tabular-nums ${row.desirabilityScore > 0 ? "text-emerald-400" : row.desirabilityScore < 0 ? "text-red-400" : "text-slate-600"}`}>
-                          {row.desirabilityScore > 0 ? "+" : ""}{row.desirabilityScore}
+                        <span className={`text-sm tabular-nums ${row.displayDeviation.desirability > 0.3 ? "text-red-400" : row.displayDeviation.desirability < -0.3 ? "text-emerald-400" : "text-slate-400"}`}>
+                          {row.displayDeviation.desirability > 0 ? "+" : ""}{row.displayDeviation.desirability.toFixed(2)}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 text-right">
