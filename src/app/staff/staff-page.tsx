@@ -598,8 +598,8 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
 
   return (
     <div className="py-2.5">
-      <div className="text-sm text-slate-200 mb-1">Eligible shifts</div>
-      <div className="text-xs text-slate-500 mb-2">Toggle eligibility. Click ▸ to add temporal rules or minimums.</div>
+      <div className="text-sm text-slate-200 mb-1">Auto-schedule these shifts</div>
+      <div className="text-xs text-slate-500 mb-2">Toggle shifts to auto-schedule. Click ▸ to add rules or minimums.</div>
       <div className="space-y-2">
         <div>
           <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Work</div>
