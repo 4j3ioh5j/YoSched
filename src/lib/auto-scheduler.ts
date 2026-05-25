@@ -1,6 +1,7 @@
 import { computeFairness, type FairnessSummary, type EquityFactor } from "./fairness";
-import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule } from "./availability";
+import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule, type PayPeriodRange } from "./availability";
 import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter, isRecoveryOnly } from "./follow-rules";
+import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
 
 export type ScheduleProvider = {
   id: string;
@@ -11,6 +12,8 @@ export type ScheduleProvider = {
   isActive: boolean;
   isAutoScheduled: boolean;
   specialQualifications: string[];
+  shiftEligibilityRules?: ShiftEligibilityRule[];
+  shiftMinimumTargets?: ShiftMinTarget[];
 };
 
 export type ScheduleShiftType = {
@@ -346,6 +349,13 @@ export function autoSchedule({
 
   function isAvailable(provider: ScheduleProvider, date: string, st: ScheduleShiftType): boolean {
     if (isAssigned(provider.id, date)) return false;
+    if (provider.shiftEligibilityRules && provider.shiftEligibilityRules.length > 0) {
+      const eligResult = evaluateShiftEligibility(
+        provider.shiftEligibilityRules, st.id, date,
+        payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
+      );
+      if (eligResult !== null && !eligResult.eligible && !(eligResult.weight < 0 && eligResult.weight > -10)) return false;
+    }
     if (!st.ignoresWorkingDays) {
       const avail = evaluateAvailability(
         provider.availabilityRules, date, payPeriods,
@@ -424,8 +434,43 @@ export function autoSchedule({
     eligibleShiftSets.set(p.id, new Set(p.eligibleShiftTypeIds));
   }
 
-  function eligibleProviders(st: ScheduleShiftType): ScheduleProvider[] {
-    return activeProviders.filter((p) => eligibleShiftSets.get(p.id)?.has(st.id));
+  function eligibleProviders(st: ScheduleShiftType, date?: string): ScheduleProvider[] {
+    return activeProviders.filter((p) => {
+      if (date && p.shiftEligibilityRules && p.shiftEligibilityRules.length > 0) {
+        const result = evaluateShiftEligibility(
+          p.shiftEligibilityRules, st.id, date,
+          payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
+        );
+        if (result !== null) return result.eligible || (result.weight < 0 && result.weight > -10);
+      }
+      return eligibleShiftSets.get(p.id)?.has(st.id) ?? false;
+    });
+  }
+
+  function getMinimumDeficit(provider: ScheduleProvider, st: ScheduleShiftType, date: string): number {
+    if (!provider.shiftMinimumTargets || provider.shiftMinimumTargets.length === 0) return 0;
+    const targets = provider.shiftMinimumTargets.filter((t) => t.shiftTypeId === st.id);
+    if (targets.length === 0) return 0;
+
+    let maxDeficit = 0;
+    for (const target of targets) {
+      const bounds = getWindowBounds(
+        target, date,
+        payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
+      );
+      if (!bounds) continue;
+
+      const assigned: string[] = [];
+      for (const [k, v] of grid.entries()) {
+        if (k.startsWith(provider.id + ":") && v.code === st.code) {
+          const d = k.split(":")[1];
+          if (d >= bounds.start && d <= bounds.end) assigned.push(d);
+        }
+      }
+      const { met, needed, current } = checkMinimumTargetMet(target, assigned);
+      if (!met) maxDeficit = Math.max(maxDeficit, needed - current);
+    }
+    return maxDeficit;
   }
 
   function getRequiredCount(st: ScheduleShiftType, date: string): number {
@@ -513,6 +558,14 @@ export function autoSchedule({
         if (!avail.available) continue;
         if (holidaySet.has(date)) continue;
 
+        if (provider.shiftEligibilityRules && provider.shiftEligibilityRules.length > 0) {
+          const eligResult = evaluateShiftEligibility(
+            provider.shiftEligibilityRules, st.id, date,
+            payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
+          );
+          if (eligResult !== null && !eligResult.eligible && !(eligResult.weight < 0 && eligResult.weight > -10)) continue;
+        }
+
         assign(
           sc.providerId,
           date,
@@ -556,8 +609,13 @@ export function autoSchedule({
     const lastRunDate = new Map<string, string>();
     for (const p of eligible) runCount.set(p.id, 0);
 
-    function pickProvider(pool: ScheduleProvider[]): ScheduleProvider {
+    function pickProvider(pool: ScheduleProvider[], date?: string): ScheduleProvider {
       pool.sort((a, b) => {
+        if (date) {
+          const defA = getMinimumDeficit(a, st, date);
+          const defB = getMinimumDeficit(b, st, date);
+          if (defA !== defB) return defB - defA;
+        }
         const countDiff = (runCount.get(a.id) ?? 0) - (runCount.get(b.id) ?? 0);
         if (countDiff !== 0) return countDiff;
         const lastA = lastRunDate.get(a.id) ?? "";
@@ -610,7 +668,7 @@ export function autoSchedule({
             isAvailable(p, sat, st) && isAvailable(p, sun, st)
         );
         if (pool.length === 0) continue;
-        const chosen = pickProvider(pool);
+        const chosen = pickProvider(pool, sat);
         assign(chosen.id, sat, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
         assign(chosen.id, sun, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
         recordAssignment(chosen.id, sat);
@@ -637,7 +695,7 @@ export function autoSchedule({
           continue;
         }
 
-        const chosen = pickProvider(available);
+        const chosen = pickProvider(available, date);
         assign(chosen.id, date, st, `Holiday ${st.code} (even dist — ${chosen.initials})`, `holiday-${stepName}`, 0.8);
         recordAssignment(chosen.id, date);
       }
@@ -696,7 +754,7 @@ export function autoSchedule({
               continue;
             }
 
-            const chosen = pickProvider([...available]);
+            const chosen = pickProvider([...available], remainDates[0]);
             const provAvailDates = remainDates.filter(d => isAvailable(chosen, d, st));
             provAvailDates.sort((a, b) => a.localeCompare(b));
 
@@ -770,7 +828,7 @@ export function autoSchedule({
               warnings.push(`No eligible ${st.code} provider for ${date} (partial PP)`);
               continue;
             }
-            const chosen = pickProvider([...available]);
+            const chosen = pickProvider([...available], date);
             const desirability = dwMap.get(`${st.id}:${getDow(date)}`) ?? 0;
             assign(
               chosen.id, date, st,
@@ -820,7 +878,7 @@ export function autoSchedule({
 
           for (let i = 0; i < needed; i++) {
             if (pool.length === 0) break;
-            const chosen = pickProvider([...pool]);
+            const chosen = pickProvider([...pool], date);
 
             assign(
               chosen.id,
@@ -1035,6 +1093,37 @@ export function autoSchedule({
       for (const provider of activeProviders) {
         if (!isAssigned(provider.id, date)) {
           assign(provider.id, date, offShift, "Day off", "off", 0.95);
+        }
+      }
+    }
+  }
+
+  // ── Check minimum targets (after all assignments are final) ──
+  for (const provider of activeProviders) {
+    if (!provider.shiftMinimumTargets || provider.shiftMinimumTargets.length === 0) continue;
+    for (const target of provider.shiftMinimumTargets) {
+      const st = stById.get(target.shiftTypeId);
+      if (!st) continue;
+      const ppRanges = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
+      const checkedWindows = new Set<string>();
+
+      for (const date of dates) {
+        const bounds = getWindowBounds(target, date, ppRanges);
+        if (!bounds) continue;
+        const windowKey = `${bounds.start}:${bounds.end}`;
+        if (checkedWindows.has(windowKey)) continue;
+        checkedWindows.add(windowKey);
+
+        const assigned: string[] = [];
+        for (const [k, v] of grid.entries()) {
+          if (k.startsWith(provider.id + ":") && v.code === st.code) {
+            const d = k.split(":")[1];
+            if (d >= bounds.start && d <= bounds.end) assigned.push(d);
+          }
+        }
+        const { met, current, needed } = checkMinimumTargetMet(target, assigned);
+        if (!met) {
+          warnings.push(`${provider.initials}: only ${current}/${needed} ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
         }
       }
     }

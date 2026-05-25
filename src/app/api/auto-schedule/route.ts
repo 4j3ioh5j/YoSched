@@ -53,6 +53,8 @@ export async function POST(req: NextRequest) {
     availabilityRules,
     equityFactors,
     followRules,
+    shiftEligibilityRules,
+    shiftMinimumTargets,
   ] = await Promise.all([
     prisma.provider.findMany({ where: { isActive: true } }),
     prisma.shiftType.findMany(),
@@ -82,6 +84,8 @@ export async function POST(req: NextRequest) {
     prisma.availabilityRule.findMany(),
     prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.shiftFollowRule.findMany(),
+    prisma.shiftEligibilityRule.findMany(),
+    prisma.shiftMinimumTarget.findMany(),
   ]);
 
   const payPeriods = allPayPeriods;
@@ -117,6 +121,22 @@ export async function POST(req: NextRequest) {
     rulesMap.get(ar.providerId)!.push(ar);
   }
 
+  const eligRulesMap = new Map<string, typeof shiftEligibilityRules>();
+  for (const er of shiftEligibilityRules) {
+    if (!eligRulesMap.has(er.providerId)) {
+      eligRulesMap.set(er.providerId, []);
+    }
+    eligRulesMap.get(er.providerId)!.push(er);
+  }
+
+  const minTargetsMap = new Map<string, typeof shiftMinimumTargets>();
+  for (const mt of shiftMinimumTargets) {
+    if (!minTargetsMap.has(mt.providerId)) {
+      minTargetsMap.set(mt.providerId, []);
+    }
+    minTargetsMap.get(mt.providerId)!.push(mt);
+  }
+
   const result = autoSchedule({
     dates,
     providers: providers.map((p) => ({
@@ -137,6 +157,21 @@ export async function POST(req: NextRequest) {
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
       specialQualifications: p.specialQualifications,
+      shiftEligibilityRules: (eligRulesMap.get(p.id) ?? []).map((er) => ({
+        shiftTypeId: er.shiftTypeId,
+        dayOfWeek: er.dayOfWeek,
+        type: er.type as "eligible" | "ineligible",
+        strength: er.strength as "rule" | "preference",
+        pattern: er.pattern as "every" | "pp_week_1" | "pp_week_2" | "every_n",
+        cycleLength: er.cycleLength,
+        cycleOffset: er.cycleOffset,
+      })),
+      shiftMinimumTargets: (minTargetsMap.get(p.id) ?? []).map((mt) => ({
+        shiftTypeId: mt.shiftTypeId,
+        minCount: mt.minCount,
+        window: mt.window as "week" | "pay_period" | "month" | "days",
+        windowDays: mt.windowDays,
+      })),
     })),
     shiftTypes: shiftTypes.map((st) => ({
       id: st.id,

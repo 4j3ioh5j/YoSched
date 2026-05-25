@@ -63,6 +63,8 @@ model ShiftType {
   defaultForEmploymentTypes    EmploymentTypeDefaultShift[]
   followRulesAsSource  ShiftFollowRule[] @relation("followRuleSource")
   followRulesAsAllowed ShiftFollowRule[] @relation("followRuleAllowed")
+  shiftEligibilityRules        ShiftEligibilityRule[]
+  shiftMinimumTargets          ShiftMinimumTarget[]
 
   @@map("shift_types")
 }
@@ -118,9 +120,11 @@ model Provider {
   shiftOverrides    ProviderShiftOverride[]
   standingCommitments StandingCommitment[]
   dayPreferences    ProviderDayPreference[]
-  eligibleShifts    ProviderEligibleShift[]
-  availabilityRules AvailabilityRule[]     @relation("providerRules")
-  conditionedRules  AvailabilityRule[]     @relation("conditionProvider")
+  eligibleShifts          ProviderEligibleShift[]
+  availabilityRules       AvailabilityRule[]     @relation("providerRules")
+  conditionedRules        AvailabilityRule[]     @relation("conditionProvider")
+  shiftEligibilityRules   ShiftEligibilityRule[]
+  shiftMinimumTargets     ShiftMinimumTarget[]
 
   @@map("providers")
 }
@@ -361,4 +365,37 @@ model ShiftFollowRule {
 
   @@unique([sourceShiftId, allowedShiftId])
   @@map("shift_follow_rules")
+}
+
+model ShiftEligibilityRule {
+  id          String @id @default(cuid())
+  providerId  String
+  shiftTypeId String
+  dayOfWeek   Int
+  type        String @default("eligible")
+  strength    String @default("rule")
+  pattern     String @default("every")
+  cycleLength Int?
+  cycleOffset Int?
+
+  provider  Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
+
+  @@index([providerId, shiftTypeId])
+  @@map("shift_eligibility_rules")
+}
+
+model ShiftMinimumTarget {
+  id          String @id @default(cuid())
+  providerId  String
+  shiftTypeId String
+  minCount    Int
+  window      String
+  windowDays  Int?
+
+  provider  Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, shiftTypeId, window])
+  @@map("shift_minimum_targets")
 }

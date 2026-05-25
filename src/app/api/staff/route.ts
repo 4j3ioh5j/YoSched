@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 export async function PUT(req: NextRequest) {
   const { error } = await requireAuth("manager");
   if (error) return error;
-  const { id, eligibleShiftTypeIds, availabilityRules, ...data } = await req.json();
+  const { id, eligibleShiftTypeIds, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   await prisma.provider.update({
@@ -53,11 +53,44 @@ export async function PUT(req: NextRequest) {
         });
       }
     }
+
+    if (Array.isArray(shiftEligibilityRules)) {
+      await tx.shiftEligibilityRule.deleteMany({ where: { providerId: id } });
+      if (shiftEligibilityRules.length > 0) {
+        await tx.shiftEligibilityRule.createMany({
+          data: shiftEligibilityRules.map((r: Record<string, unknown>) => ({
+            providerId: id,
+            shiftTypeId: r.shiftTypeId as string,
+            dayOfWeek: r.dayOfWeek as number,
+            type: (r.type as string) ?? "eligible",
+            strength: (r.strength as string) ?? "rule",
+            pattern: (r.pattern as string) ?? "every",
+            cycleLength: r.cycleLength as number | undefined,
+            cycleOffset: r.cycleOffset as number | undefined,
+          })),
+        });
+      }
+    }
+
+    if (Array.isArray(shiftMinimumTargets)) {
+      await tx.shiftMinimumTarget.deleteMany({ where: { providerId: id } });
+      if (shiftMinimumTargets.length > 0) {
+        await tx.shiftMinimumTarget.createMany({
+          data: shiftMinimumTargets.map((t: Record<string, unknown>) => ({
+            providerId: id,
+            shiftTypeId: t.shiftTypeId as string,
+            minCount: t.minCount as number,
+            window: t.window as string,
+            windowDays: t.windowDays as number | undefined,
+          })),
+        });
+      }
+    }
   });
 
   const result = await prisma.provider.findUnique({
     where: { id },
-    include: { employmentType: true, eligibleShifts: true, availabilityRules: true },
+    include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true },
   });
 
   return NextResponse.json(result);
@@ -118,7 +151,7 @@ export async function POST(req: NextRequest) {
 
   const result = await prisma.provider.findUnique({
     where: { id: created.id },
-    include: { employmentType: true, eligibleShifts: true, availabilityRules: true },
+    include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true },
   });
 
   return NextResponse.json(result);

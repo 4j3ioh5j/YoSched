@@ -14,6 +14,23 @@ type AvailabilityRule = {
   conditionType?: string | null;
 };
 
+type ShiftEligibilityRuleData = {
+  shiftTypeId: string;
+  dayOfWeek: number;
+  type: string;
+  strength: string;
+  pattern: string;
+  cycleLength?: number | null;
+  cycleOffset?: number | null;
+};
+
+type ShiftMinimumTargetData = {
+  shiftTypeId: string;
+  minCount: number;
+  window: string;
+  windowDays?: number | null;
+};
+
 type Provider = {
   id: string;
   name: string;
@@ -23,6 +40,8 @@ type Provider = {
   ftePercentage: number;
   availabilityRules: AvailabilityRule[];
   eligibleShiftTypeIds: string[];
+  shiftEligibilityRules: ShiftEligibilityRuleData[];
+  shiftMinimumTargets: ShiftMinimumTargetData[];
   specialQualifications: string[];
   isActive: boolean;
   isAutoScheduled: boolean;
@@ -362,6 +381,241 @@ function AvailabilityEditor({
   );
 }
 
+const WINDOW_LABELS: Record<string, string> = {
+  week: "per week",
+  pay_period: "per pay period",
+  month: "per month",
+  days: "per N days",
+};
+
+function ShiftEligibilityEditor({
+  shiftType,
+  rules,
+  minimumTarget,
+  onRulesChange,
+  onMinimumChange,
+}: {
+  shiftType: ShiftTypeInfo;
+  rules: ShiftEligibilityRuleData[];
+  minimumTarget: ShiftMinimumTargetData | undefined;
+  onRulesChange: (rules: ShiftEligibilityRuleData[]) => void;
+  onMinimumChange: (target: ShiftMinimumTargetData | undefined) => void;
+}) {
+  function addRule() {
+    onRulesChange([...rules, { shiftTypeId: shiftType.id, dayOfWeek: 1, type: "eligible", strength: "rule", pattern: "every" }]);
+  }
+
+  function updateRule(idx: number, updates: Partial<ShiftEligibilityRuleData>) {
+    onRulesChange(rules.map((r, i) => (i === idx ? { ...r, ...updates } : r)));
+  }
+
+  function removeRule(idx: number) {
+    onRulesChange(rules.filter((_, i) => i !== idx));
+  }
+
+  return (
+    <div className="mt-2 space-y-2 pl-2 border-l-2 border-slate-700">
+      <div className="text-[10px] uppercase tracking-wider text-slate-600">Eligibility rules</div>
+      {rules.map((rule, idx) => (
+        <div key={idx} className="flex items-center gap-1.5 text-xs flex-wrap">
+          <select
+            value={rule.dayOfWeek}
+            onChange={(e) => updateRule(idx, { dayOfWeek: parseInt(e.target.value) })}
+            className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600"
+          >
+            {DAY_INDICES.map((d) => <option key={d} value={d}>{DAY_LABELS[d]}</option>)}
+          </select>
+          <select
+            value={rule.type}
+            onChange={(e) => updateRule(idx, { type: e.target.value })}
+            className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600"
+          >
+            <option value="eligible">eligible</option>
+            <option value="ineligible">ineligible</option>
+          </select>
+          <select
+            value={rule.pattern}
+            onChange={(e) => updateRule(idx, { pattern: e.target.value })}
+            className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600"
+          >
+            {Object.entries(PATTERN_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          {rule.pattern === "every_n" && (
+            <>
+              <input
+                type="number" min={2} max={12}
+                value={rule.cycleLength ?? 2}
+                onChange={(e) => updateRule(idx, { cycleLength: parseInt(e.target.value) || 2 })}
+                className="w-10 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
+              />
+              <span className="text-slate-500">offset</span>
+              <input
+                type="number" min={0} max={(rule.cycleLength ?? 2) - 1}
+                value={rule.cycleOffset ?? 0}
+                onChange={(e) => updateRule(idx, { cycleOffset: parseInt(e.target.value) || 0 })}
+                className="w-10 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
+              />
+            </>
+          )}
+          <select
+            value={rule.strength}
+            onChange={(e) => updateRule(idx, { strength: e.target.value })}
+            className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600"
+          >
+            <option value="rule">Hard</option>
+            <option value="preference">Prefer</option>
+          </select>
+          <button onClick={() => removeRule(idx)} className="text-slate-500 hover:text-red-400 ml-1">×</button>
+        </div>
+      ))}
+      <button onClick={addRule} className="text-xs text-blue-400 hover:text-blue-300">+ Add rule</button>
+
+      <div className="pt-2 border-t border-slate-700/50">
+        <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Minimum target</div>
+        <div className="flex items-center gap-1.5 text-xs">
+          <span className="text-slate-400">At least</span>
+          <input
+            type="number" min={0} max={99}
+            value={minimumTarget?.minCount ?? 0}
+            onChange={(e) => {
+              const val = parseInt(e.target.value) || 0;
+              if (val === 0) { onMinimumChange(undefined); return; }
+              onMinimumChange({ shiftTypeId: shiftType.id, minCount: val, window: minimumTarget?.window ?? "pay_period", windowDays: minimumTarget?.windowDays });
+            }}
+            className="w-10 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
+          />
+          <select
+            value={minimumTarget?.window ?? "pay_period"}
+            onChange={(e) => {
+              if (!minimumTarget) return;
+              onMinimumChange({ ...minimumTarget, window: e.target.value });
+            }}
+            disabled={!minimumTarget}
+            className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600 disabled:opacity-40"
+          >
+            {Object.entries(WINDOW_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          {minimumTarget?.window === "days" && (
+            <input
+              type="number" min={1} max={365}
+              value={minimumTarget.windowDays ?? 7}
+              onChange={(e) => onMinimumChange({ ...minimumTarget, windowDays: parseInt(e.target.value) || 7 })}
+              className="w-12 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
+  ep: Provider;
+  allShiftTypes: ShiftTypeInfo[];
+  updateField: (id: string, field: keyof Provider, value: unknown) => void;
+}) {
+  const [expandedShift, setExpandedShift] = useState<string | null>(null);
+  const workShifts = allShiftTypes.filter((st) => !st.isLeave && st.autoSchedulable);
+  const leaveShifts = allShiftTypes.filter((st) => st.isLeave && st.autoSchedulable);
+
+  function toggleEligible(stId: string) {
+    const isEligible = ep.eligibleShiftTypeIds.includes(stId);
+    const hasRules = ep.shiftEligibilityRules.some((r) => r.shiftTypeId === stId);
+    if (isEligible) {
+      const next = ep.eligibleShiftTypeIds.filter((id) => id !== stId);
+      updateField(ep.id, "eligibleShiftTypeIds", next);
+      if (hasRules) {
+        updateField(ep.id, "shiftEligibilityRules", ep.shiftEligibilityRules.filter((r) => r.shiftTypeId !== stId));
+        updateField(ep.id, "shiftMinimumTargets", ep.shiftMinimumTargets.filter((t) => t.shiftTypeId !== stId));
+      }
+    } else {
+      updateField(ep.id, "eligibleShiftTypeIds", [...ep.eligibleShiftTypeIds, stId]);
+    }
+  }
+
+  function renderShiftButton(st: ShiftTypeInfo) {
+    const isEligible = ep.eligibleShiftTypeIds.includes(st.id);
+    const hasRules = ep.shiftEligibilityRules.some((r) => r.shiftTypeId === st.id);
+    const hasMin = ep.shiftMinimumTargets.some((t) => t.shiftTypeId === st.id);
+    const isExpanded = expandedShift === st.id;
+    const rulesForShift = ep.shiftEligibilityRules.filter((r) => r.shiftTypeId === st.id);
+    const minTarget = ep.shiftMinimumTargets.find((t) => t.shiftTypeId === st.id);
+
+    return (
+      <div key={st.id} className="space-y-0">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => toggleEligible(st.id)}
+            className={`px-2 py-0.5 text-xs font-bold rounded transition-colors border ${isEligible ? "" : "opacity-30"}`}
+            style={{
+              backgroundColor: isEligible ? st.color + "25" : undefined,
+              color: st.color,
+              borderColor: isEligible ? st.color + "50" : "transparent",
+            }}
+            title={st.name}
+          >
+            {st.code}
+          </button>
+          {isEligible && (
+            <button
+              onClick={() => setExpandedShift(isExpanded ? null : st.id)}
+              className="text-slate-500 hover:text-slate-300 text-xs px-1"
+              title="Configure eligibility rules"
+            >
+              {hasRules || hasMin ? (
+                <span className="text-amber-500">{isExpanded ? "▾" : "▸"}</span>
+              ) : (
+                <span>{isExpanded ? "▾" : "▸"}</span>
+              )}
+            </button>
+          )}
+          {isEligible && (hasRules || hasMin) && !isExpanded && (
+            <span className="text-[10px] text-slate-500">
+              {rulesForShift.length > 0 && `${rulesForShift.length} rule${rulesForShift.length > 1 ? "s" : ""}`}
+              {hasRules && hasMin && ", "}
+              {hasMin && `min ${minTarget!.minCount}/${minTarget!.window === "pay_period" ? "PP" : minTarget!.window}`}
+            </span>
+          )}
+        </div>
+        {isExpanded && isEligible && (
+          <ShiftEligibilityEditor
+            shiftType={st}
+            rules={rulesForShift}
+            minimumTarget={minTarget}
+            onRulesChange={(newRules) => {
+              const others = ep.shiftEligibilityRules.filter((r) => r.shiftTypeId !== st.id);
+              updateField(ep.id, "shiftEligibilityRules", [...others, ...newRules]);
+            }}
+            onMinimumChange={(newTarget) => {
+              const others = ep.shiftMinimumTargets.filter((t) => t.shiftTypeId !== st.id);
+              updateField(ep.id, "shiftMinimumTargets", newTarget ? [...others, newTarget] : others);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="py-2.5">
+      <div className="text-sm text-slate-200 mb-1">Eligible shifts</div>
+      <div className="text-xs text-slate-500 mb-2">Toggle eligibility. Click ▸ to add temporal rules or minimums.</div>
+      <div className="space-y-2">
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Work</div>
+          <div className="space-y-1.5">{workShifts.map(renderShiftButton)}</div>
+        </div>
+        {leaveShifts.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Leave</div>
+            <div className="space-y-1.5">{leaveShifts.map(renderShiftButton)}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }: Props) {
   const [providers, setProviders] = useState(initial);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -526,6 +780,8 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
           conditionType: ar.conditionType,
         })),
         eligibleShiftTypeIds: (created.eligibleShifts ?? []).map((es: { shiftTypeId: string }) => es.shiftTypeId),
+        shiftEligibilityRules: [],
+        shiftMinimumTargets: [],
         specialQualifications: created.specialQualifications ?? [],
         isActive: created.isActive,
         isAutoScheduled: created.isAutoScheduled ?? true,
@@ -804,80 +1060,7 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
 
             <div className="px-6 py-4 border-t border-slate-700">
               <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Scheduling</div>
-              <div className="py-2.5">
-                <div className="text-sm text-slate-200 mb-1">Eligible shifts</div>
-                <div className="text-xs text-slate-500 mb-2">Toggle which shift types this person can work.</div>
-                {(() => {
-                  const workShifts = allShiftTypes.filter((st) => !st.isLeave && st.autoSchedulable);
-                  const leaveShifts = allShiftTypes.filter((st) => st.isLeave && st.autoSchedulable);
-                  return (
-                    <div className="space-y-2">
-                      <div>
-                        <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Work</div>
-                        <div className="flex flex-wrap gap-1">
-                          {workShifts.map((st) => {
-                            const isEligible = ep.eligibleShiftTypeIds.includes(st.id);
-                            return (
-                              <button
-                                key={st.id}
-                                onClick={() => {
-                                  const next = isEligible
-                                    ? ep.eligibleShiftTypeIds.filter((id) => id !== st.id)
-                                    : [...ep.eligibleShiftTypeIds, st.id];
-                                  updateField(ep.id, "eligibleShiftTypeIds", next);
-                                }}
-                                className={`px-2 py-0.5 text-xs font-bold rounded transition-colors border ${
-                                  isEligible ? "" : "opacity-30"
-                                }`}
-                                style={{
-                                  backgroundColor: isEligible ? st.color + "25" : undefined,
-                                  color: st.color,
-                                  borderColor: isEligible ? st.color + "50" : "transparent",
-                                }}
-                                title={st.name}
-                              >
-                                {st.code}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      {leaveShifts.length > 0 && (
-                        <div>
-                          <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Leave</div>
-                          <div className="flex flex-wrap gap-1">
-                            {leaveShifts.map((st) => {
-                              const isEligible = ep.eligibleShiftTypeIds.includes(st.id);
-                              return (
-                                <button
-                                  key={st.id}
-                                  onClick={() => {
-                                    const next = isEligible
-                                      ? ep.eligibleShiftTypeIds.filter((id) => id !== st.id)
-                                      : [...ep.eligibleShiftTypeIds, st.id];
-                                    updateField(ep.id, "eligibleShiftTypeIds", next);
-                                  }}
-                                  className={`px-2 py-0.5 text-xs font-bold rounded transition-colors border ${
-                                    isEligible ? "" : "opacity-30"
-                                  }`}
-                                  style={{
-                                    backgroundColor: isEligible ? st.color + "25" : undefined,
-                                    color: st.color,
-                                    borderColor: isEligible ? st.color + "50" : "transparent",
-                                  }}
-                                  title={st.name}
-                                >
-                                  {st.code}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
+              <EligibleShiftsSection ep={ep} allShiftTypes={allShiftTypes} updateField={updateField} />
               <div className="py-2.5">
                 <div className="text-sm text-slate-200 mb-2">Availability</div>
                 <AvailabilityEditor

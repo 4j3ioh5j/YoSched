@@ -9,9 +9,9 @@ export type AvailabilityRule = {
   conditionType?: "working" | "not_working" | null;
 };
 
-type PayPeriodRange = { startDate: string; endDate: string };
+export type PayPeriodRange = { startDate: string; endDate: string };
 
-function ppWeekForDate(
+export function ppWeekForDate(
   dateStr: string,
   payPeriods: PayPeriodRange[]
 ): 1 | 2 | null {
@@ -28,7 +28,7 @@ function ppWeekForDate(
   return null;
 }
 
-function ppIndexForDate(
+export function ppIndexForDate(
   dateStr: string,
   payPeriods: PayPeriodRange[]
 ): number {
@@ -40,8 +40,8 @@ function ppIndexForDate(
   return -1;
 }
 
-function matchesPattern(
-  rule: AvailabilityRule,
+export function matchesPattern(
+  rule: { pattern: string; cycleLength?: number | null; cycleOffset?: number | null },
   dateStr: string,
   payPeriods: PayPeriodRange[]
 ): boolean {

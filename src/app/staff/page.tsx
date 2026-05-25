@@ -12,7 +12,7 @@ export default async function Staff() {
   const [providers, employmentTypes, allShiftTypes] = await Promise.all([
     prisma.provider.findMany({
       orderBy: { sortOrder: "asc" },
-      include: { employmentType: true, eligibleShifts: true, availabilityRules: true },
+      include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true },
     }),
     prisma.employmentType.findMany({
       orderBy: { sortOrder: "asc" },
@@ -44,6 +44,21 @@ export default async function Staff() {
             conditionType: ar.conditionType,
           })),
           eligibleShiftTypeIds: p.eligibleShifts.map((es) => es.shiftTypeId),
+          shiftEligibilityRules: p.shiftEligibilityRules.map((er) => ({
+            shiftTypeId: er.shiftTypeId,
+            dayOfWeek: er.dayOfWeek,
+            type: er.type,
+            strength: er.strength,
+            pattern: er.pattern,
+            cycleLength: er.cycleLength,
+            cycleOffset: er.cycleOffset,
+          })),
+          shiftMinimumTargets: p.shiftMinimumTargets.map((mt) => ({
+            shiftTypeId: mt.shiftTypeId,
+            minCount: mt.minCount,
+            window: mt.window,
+            windowDays: mt.windowDays,
+          })),
           specialQualifications: p.specialQualifications,
           isActive: p.isActive,
           isAutoScheduled: p.isAutoScheduled,

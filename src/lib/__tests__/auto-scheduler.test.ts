@@ -196,6 +196,27 @@ describe("autoSchedule", () => {
       expect(mondayStanding).toHaveLength(0);
     });
 
+    it("skips standing commitments when temporal eligibility rules block the date", () => {
+      const result = runSchedule({
+        providers: [
+          makeProvider("p1", "AB", {
+            shiftEligibilityRules: [
+              { shiftTypeId: "st-or", dayOfWeek: 3, type: "eligible", strength: "rule", pattern: "every" },
+            ],
+          }),
+        ],
+        standingCommitments: [
+          { providerId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "weekly" },
+        ],
+      });
+      // p1 has temporal rules for OR: only Wednesday eligible
+      // Standing commitment is for Monday — should be skipped
+      const mondayStanding = result.suggestions.filter(
+        (s) => s.providerId === "p1" && s.step === "standing" && s.date === "2025-05-12"
+      );
+      expect(mondayStanding).toHaveLength(0);
+    });
+
     it("skips standing commitments for non-autoSchedulable shifts", () => {
       const result = runSchedule({
         standingCommitments: [
@@ -410,6 +431,116 @@ describe("autoSchedule", () => {
       const result = runSchedule();
       const sumByStep = Object.values(result.stats.byStep).reduce((a, b) => a + b, 0);
       expect(sumByStep).toBe(result.stats.totalSlotsFilled);
+    });
+  });
+
+  describe("shift eligibility rules", () => {
+    it("restricts provider to eligible days only via temporal rules", () => {
+      const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true });
+      const providers = [
+        makeProvider("p1", "AB", {
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+          shiftEligibilityRules: [
+            { shiftTypeId: "st-orc", dayOfWeek: 1, type: "eligible", strength: "rule", pattern: "every" },
+          ],
+        }),
+        makeProvider("p2", "CD", {
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+        }),
+      ];
+      const dates = weekdayDates("2025-05-12", 5); // Mon-Fri
+      const result = runSchedule({
+        dates,
+        providers,
+        shiftTypes: [OR, ORC, OFF],
+        staffingRequirements: [
+          { shiftCode: "ORC", dayKey: "1", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "2", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "3", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "4", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "5", minCount: 1 },
+        ],
+      });
+      // p1 has temporal rules for ORC: only Monday eligible
+      // So p1 should only get ORC on Monday, p2 gets the rest
+      const p1Orc = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "ORC");
+      const p1OrcDays = p1Orc.map((s) => new Date(s.date + "T12:00:00").getDay());
+      for (const dow of p1OrcDays) {
+        expect(dow).toBe(1); // Monday only
+      }
+    });
+
+    it("falls back to static eligibility when no temporal rules exist", () => {
+      const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true });
+      const providers = [
+        makeProvider("p1", "AB", {
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+          shiftEligibilityRules: [], // empty = no temporal rules
+        }),
+      ];
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        providers,
+        shiftTypes: [OR, ORC, OFF],
+        staffingRequirements: [{ shiftCode: "ORC", dayKey: "1", minCount: 1 }],
+      });
+      // Should still assign ORC since static eligibility allows it
+      const p1Orc = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "ORC");
+      expect(p1Orc.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("shift minimum targets", () => {
+    it("prioritizes provider below their minimum target", () => {
+      const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true });
+      const providers = [
+        makeProvider("p1", "AB", {
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+          shiftMinimumTargets: [{ shiftTypeId: "st-orc", minCount: 3, window: "pay_period" }],
+        }),
+        makeProvider("p2", "CD", {
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+        }),
+      ];
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        providers,
+        shiftTypes: [OR, ORC, OFF],
+        staffingRequirements: [
+          { shiftCode: "ORC", dayKey: "1", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "2", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "3", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "4", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "5", minCount: 1 },
+        ],
+      });
+      const p1Orc = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "ORC");
+      // p1 has min 3/PP so should get at least 3
+      expect(p1Orc.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("warns when minimum cannot be met", () => {
+      const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true });
+      const providers = [
+        makeProvider("p1", "AB", {
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+          shiftMinimumTargets: [{ shiftTypeId: "st-orc", minCount: 10, window: "pay_period" }],
+        }),
+      ];
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        providers,
+        shiftTypes: [OR, ORC, OFF],
+        staffingRequirements: [
+          { shiftCode: "ORC", dayKey: "1", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "2", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "3", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "4", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "5", minCount: 1 },
+        ],
+      });
+      // 10/PP is impossible with only 5 days — should warn
+      expect(result.warnings.some((w) => w.includes("AB") && w.includes("ORC"))).toBe(true);
     });
   });
 });
