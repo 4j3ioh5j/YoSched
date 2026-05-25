@@ -5,6 +5,9 @@ STAGING_HOST="david@dph-devbox-yosched-staging"
 DEPLOY_DIR="YoSched"
 SERVICE_NAME="yosched-app"
 
+echo "==> Running test gate..."
+pnpm test:fast || { echo "ABORT: test:fast failed — fix before deploying"; exit 1; }
+
 echo "==> Pushing to GitHub..."
 git push
 
