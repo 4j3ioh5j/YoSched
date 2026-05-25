@@ -22,6 +22,7 @@ type ShiftType = {
   weekendPaired: boolean;
   ignoresWorkingDays: boolean;
   maxPerDay: number | null;
+  autoSchedulable: boolean;
 };
 
 type StaffingReq = {
@@ -479,6 +480,7 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
         weekendPaired: created.weekendPaired ?? false,
         ignoresWorkingDays: created.ignoresWorkingDays ?? false,
         maxPerDay: created.maxPerDay ?? null,
+        autoSchedulable: created.autoSchedulable ?? false,
       };
       setShifts((prev) => [...prev, newShift]);
       setEditingId(created.id);
@@ -647,6 +649,9 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
 
             <div className="px-6 py-4 border-t border-slate-700">
               <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Auto-Scheduling Behavior</div>
+              <FieldRow label="Auto-schedulable" description="Allow the auto-scheduler to assign this shift. Disable for rare or manually-assigned shifts.">
+                <input type="checkbox" checked={editingShift.autoSchedulable} onChange={(e) => updateField(editingShift.id, "autoSchedulable", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+              </FieldRow>
               <FieldRow label="Scheduling order" description="When auto-scheduling, which shifts get assigned first. Lower numbers go first. Leave blank if this shift should not be auto-scheduled.">
                 <input type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center" value={editingShift.schedulePriority ?? ""} placeholder="None" onChange={(e) => updateField(editingShift.id, "schedulePriority", e.target.value ? parseInt(e.target.value) : null)} />
               </FieldRow>

@@ -28,6 +28,7 @@ export async function PUT(req: NextRequest) {
       weekendPaired: data.weekendPaired ?? false,
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
       maxPerDay: data.maxPerDay ?? null,
+      autoSchedulable: data.autoSchedulable ?? false,
     },
   });
   return NextResponse.json(updated);
@@ -61,6 +62,7 @@ export async function POST(req: NextRequest) {
       weekendPaired: data.weekendPaired ?? false,
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
       maxPerDay: data.maxPerDay ?? null,
+      autoSchedulable: data.autoSchedulable ?? false,
     },
   });
 

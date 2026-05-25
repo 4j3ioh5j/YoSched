@@ -69,6 +69,7 @@ export default async function Staff() {
           color: st.color ?? "#6b7280",
           category: st.category,
           isLeave: st.isLeave,
+          autoSchedulable: st.autoSchedulable,
         }))}
       />
     </main>

@@ -154,6 +154,7 @@ export async function POST(req: NextRequest) {
       maxPerDay: st.maxPerDay,
       category: st.category,
       postShiftRule: st.postShiftRule,
+      autoSchedulable: st.autoSchedulable,
     })),
     existingAssignments: existingAssignments.map((a) => ({
       providerId: a.providerId,

@@ -29,6 +29,7 @@ export type ScheduleShiftType = {
   maxPerDay: number | null;
   category: string;
   postShiftRule: string | null;
+  autoSchedulable: boolean;
 };
 
 export type ScheduleAssignment = {
@@ -495,7 +496,7 @@ export function autoSchedule({
   // ── STEP 1: Apply standing commitments ──
   for (const sc of standingCommitments) {
     const st = stById.get(sc.shiftTypeId);
-    if (!st) continue;
+    if (!st || !st.autoSchedulable) continue;
     const provider = providers.find((p) => p.id === sc.providerId);
     if (!provider?.isActive) continue;
 
@@ -534,7 +535,7 @@ export function autoSchedule({
   // Sort priority: fewest-in-this-run → longest-gap-since-last → fewest-historical
 
   const scheduledShifts = shiftTypes
-    .filter((st) => st.schedulePriority != null && !st.isFillShift && !st.isOffShift)
+    .filter((st) => st.autoSchedulable && st.schedulePriority != null && !st.isFillShift && !st.isOffShift)
     .sort((a, b) => (a.schedulePriority ?? 0) - (b.schedulePriority ?? 0));
 
   const historicalShiftCounts = new Map<string, Record<string, number>>();

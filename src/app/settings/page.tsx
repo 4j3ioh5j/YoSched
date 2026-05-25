@@ -54,6 +54,7 @@ export default async function Settings() {
           weekendPaired: st.weekendPaired,
           ignoresWorkingDays: st.ignoresWorkingDays,
           maxPerDay: st.maxPerDay,
+          autoSchedulable: st.autoSchedulable,
         }))}
         staffingReqs={staffingReqs.map((r) => ({
           id: r.id,
