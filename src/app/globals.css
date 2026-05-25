@@ -53,6 +53,123 @@ input[type="checkbox"]:disabled {
   cursor: default;
 }
 
+@media print {
+  @page {
+    size: landscape;
+    margin: 0.4in;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Hide non-essential UI */
+  [data-print-hide] {
+    display: none !important;
+  }
+
+  /* Print header (month/year) */
+  [data-print-title] {
+    display: block !important;
+    font-size: 18px;
+    font-weight: 700;
+    text-align: center;
+    padding: 4px 0 8px;
+    color: black;
+  }
+
+  /* Reset the grid container */
+  main {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  main > div {
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  /* Table styling for print */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 9px !important;
+  }
+
+  thead {
+    position: static !important;
+  }
+
+  thead tr {
+    background: #f1f5f9 !important;
+  }
+
+  thead th {
+    background: #f1f5f9 !important;
+    color: #1e293b !important;
+    border: 1px solid #cbd5e1 !important;
+    padding: 3px 2px !important;
+    position: static !important;
+  }
+
+  tbody tr {
+    background: white !important;
+    opacity: 1 !important;
+  }
+
+  tbody td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 2px 1px !important;
+    background: white !important;
+    position: static !important;
+  }
+
+  /* Weekend row shading */
+  tbody tr[data-weekend="true"] td {
+    background: #f8fafc !important;
+  }
+
+  /* Holiday marker */
+  tbody tr[data-holiday="true"] td:first-child {
+    background: #fef3c7 !important;
+  }
+
+  /* Shift codes: keep colors */
+  tbody td div[class*="font-bold"] {
+    font-size: 9px !important;
+    padding: 1px 2px !important;
+    border-radius: 2px !important;
+  }
+
+  /* Hide warning dots, drag handles */
+  span[class*="rounded-full"][class*="absolute"] {
+    display: none !important;
+  }
+
+  /* PP summary rows */
+  tr[class*="bg-slate-800/80"] td {
+    background: #e2e8f0 !important;
+    border-color: #94a3b8 !important;
+    color: #1e293b !important;
+  }
+
+  /* Date column styling */
+  tbody td:first-child {
+    font-weight: 600 !important;
+    color: #1e293b !important;
+    white-space: nowrap !important;
+  }
+
+  /* Scrollable container: no scroll */
+  [class*="overflow-auto"], [class*="overflow-hidden"] {
+    overflow: visible !important;
+    height: auto !important;
+  }
+}
+
 @keyframes drift {
   0% { transform: translate(0, 0); }
   100% { transform: translate(60px, 60px); }

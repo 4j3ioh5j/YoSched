@@ -1064,8 +1064,13 @@ export function ScheduleGrid({
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Print-only title */}
+      <div data-print-title className="hidden">
+        {MONTH_NAMES[viewMonth]} {viewYear}
+      </div>
+
       {/* Toolbar */}
-      <div className="flex items-center gap-2 px-6 py-2 bg-slate-800 border-b border-slate-700 shrink-0">
+      <div data-print-hide className="flex items-center gap-2 px-6 py-2 bg-slate-800 border-b border-slate-700 shrink-0">
         <button
           onClick={prevMonth}
           className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors"
@@ -1090,6 +1095,13 @@ export function ScheduleGrid({
         <span className="ml-2 text-xs text-slate-500">
           {dates[0]} – {dates[dates.length - 1]}
         </span>
+        <button
+          onClick={() => window.print()}
+          className="ml-4 px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
+          title="Print this month"
+        >
+          Print
+        </button>
         {canEdit && (
         <div className="ml-auto flex items-center gap-2">
           {selection.size > 0 && (
@@ -1133,7 +1145,7 @@ export function ScheduleGrid({
 
       {/* Auto-schedule review panel */}
       {autoSuggestions && (
-        <div className="px-6 py-3 bg-emerald-950/50 border-b border-emerald-800 shrink-0">
+        <div data-print-hide className="px-6 py-3 bg-emerald-950/50 border-b border-emerald-800 shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <span className="text-sm font-semibold text-emerald-300">
@@ -1291,6 +1303,8 @@ export function ScheduleGrid({
                 <tr
                   key={date}
                   data-date={date}
+                  data-weekend={isWeekend || undefined}
+                  data-holiday={isHoliday || undefined}
                   className={[
                     isOutsideMonth ? "opacity-40" : "",
                     isWeekend && !isOutsideMonth ? "bg-slate-800/50" : "",
@@ -1402,7 +1416,7 @@ export function ScheduleGrid({
 
       {/* Alerts sidebar */}
       {alerts.length > 0 && (
-        <div className="w-52 shrink-0 border-l border-slate-700 bg-slate-900/50 overflow-y-auto">
+        <div data-print-hide className="w-52 shrink-0 border-l border-slate-700 bg-slate-900/50 overflow-y-auto">
           <div className="sticky top-0 bg-slate-900 px-3 py-2 border-b border-slate-700">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
               Alerts
@@ -1435,16 +1449,18 @@ export function ScheduleGrid({
 
       {/* Shift picker popover */}
       {canEdit && picker && (
-        <ShiftPicker
-          shiftTypes={shiftTypes}
-          currentShiftTypeId={selectionCount > 1 ? null : (assignmentMap.get(`${picker.providerId}:${picker.date}`)?.shiftTypeId ?? null)}
-          position={{ x: picker.x, y: picker.y }}
-          onSelect={handleSelect}
-          onClear={handleClear}
-          onClose={closePicker}
-          warnings={pickerWarnings}
-          bulkCount={selectionCount > 1 ? selectionCount : undefined}
-        />
+        <div data-print-hide>
+          <ShiftPicker
+            shiftTypes={shiftTypes}
+            currentShiftTypeId={selectionCount > 1 ? null : (assignmentMap.get(`${picker.providerId}:${picker.date}`)?.shiftTypeId ?? null)}
+            position={{ x: picker.x, y: picker.y }}
+            onSelect={handleSelect}
+            onClear={handleClear}
+            onClose={closePicker}
+            warnings={pickerWarnings}
+            bulkCount={selectionCount > 1 ? selectionCount : undefined}
+          />
+        </div>
       )}
     </div>
   );

@@ -26,7 +26,7 @@ export function NavHeader() {
   const role = (session?.user as { role?: string })?.role;
 
   return (
-    <header className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-900 shrink-0">
+    <header data-print-hide className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-900 shrink-0">
       <Link href="/" className="text-xl font-bold tracking-tight hover:text-blue-400 transition-colors">
         YoSched
       </Link>
