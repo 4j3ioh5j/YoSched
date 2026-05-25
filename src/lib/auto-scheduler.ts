@@ -752,7 +752,9 @@ export function autoSchedule({
                 }
               }
             }
-            recordAssignment(chosen.id, pickedDates[0]);
+            for (const date of pickedDates) {
+              recordAssignment(chosen.id, date);
+            }
           }
 
           // Remainder dates that couldn't form a complete group (partial PP)
