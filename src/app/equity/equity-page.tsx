@@ -63,26 +63,6 @@ type Props = {
 
 type SortKey = "initials" | "desirability" | "oppAdj" | "holiday" | "hours" | "workDays" | "leaveDays" | string;
 
-function equityColor(burden: number, t: EquityThresholds): string {
-  if (burden > t.high) return "#ef4444";
-  if (burden > t.med) return "#f97316";
-  if (burden > t.low) return "#eab308";
-  if (burden < -t.high) return "#22c55e";
-  if (burden < -t.med) return "#3b82f6";
-  if (burden < -t.low) return "#6366f1";
-  return "#6b7280";
-}
-
-function equityLabel(burden: number, t: EquityThresholds): string {
-  if (burden > t.high) return "Overworked";
-  if (burden > t.med) return "Heavy";
-  if (burden > t.low) return "Slightly Heavy";
-  if (burden < -t.high) return "Light";
-  if (burden < -t.med) return "Easy";
-  if (burden < -t.low) return "Slightly Easy";
-  return "Balanced";
-}
-
 const CHART_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#22c55e", "#06b6d4", "#eab308", "#ef4444"];
 
 function ChartTooltipContent({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; name: string; color: string }>; label?: string }) {
