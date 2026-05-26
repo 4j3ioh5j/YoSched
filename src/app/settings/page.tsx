@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function Settings() {
   const sessionRole = await getSessionRole();
   if (!sessionRole || sessionRole.role !== "admin") redirect("/");
-  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors, followRules] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors, followRules, countColumns] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
@@ -22,6 +22,7 @@ export default async function Settings() {
     }),
     prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.shiftFollowRule.findMany(),
+    prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
 
   const schedulingPrefs = {
@@ -111,6 +112,11 @@ export default async function Settings() {
           allowedShiftId: r.allowedShiftId,
           allowOffShifts: r.allowOffShifts,
           mode: r.mode,
+        }))}
+        countColumns={countColumns.map((c) => ({
+          id: c.id,
+          label: c.label,
+          shiftCodes: c.shiftCodes,
         }))}
       />
     </main>

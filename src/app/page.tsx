@@ -10,7 +10,7 @@ export default async function Home() {
   const sessionRole = await getSessionRole();
   const role = sessionRole?.role ?? "viewer";
   const canEdit = role === "admin" || role === "manager";
-  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules] =
+  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns] =
     await Promise.all([
       prisma.provider.findMany({
         where: { isActive: true },
@@ -30,6 +30,7 @@ export default async function Home() {
       prisma.schedulingPreferences.findFirst(),
       prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.shiftFollowRule.findMany(),
+      prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } }),
     ]);
 
   const fairness = computeFairness({
@@ -155,6 +156,10 @@ export default async function Home() {
           allowedShiftId: r.allowedShiftId,
           allowOffShifts: r.allowOffShifts,
           mode: r.mode,
+        }))}
+        countColumns={countColumns.map((c) => ({
+          label: c.label,
+          shiftCodes: c.shiftCodes,
         }))}
       />
     </main>

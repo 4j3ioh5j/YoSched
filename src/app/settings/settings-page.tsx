@@ -105,6 +105,7 @@ type Props = {
   equityFactors: EquityFactorData[];
   shiftCodes: string[];
   followRules: FollowRuleData[];
+  countColumns: { id: string; label: string; shiftCodes: string[] }[];
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -2083,9 +2084,105 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
   );
 }
 
+// ─── Count Columns Section ──────────────────────────────────────────────────
+
+function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; label: string; shiftCodes: string[] }[]; shiftTypes: ShiftType[] }) {
+  const [columns, setColumns] = useState(initial.map((c) => ({ label: c.label, shiftCodes: [...c.shiftCodes] })));
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const allCodes = shiftTypes.filter((st) => !st.isOffShift).map((st) => st.code);
+
+  async function save() {
+    setStatus("saving");
+    try {
+      const res = await fetch("/api/settings/count-columns", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ columns }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch {
+      setStatus("error");
+    }
+  }
+
+  function addColumn() {
+    setColumns([...columns, { label: "", shiftCodes: [] }]);
+  }
+
+  function removeColumn(idx: number) {
+    setColumns(columns.filter((_, i) => i !== idx));
+  }
+
+  function updateLabel(idx: number, label: string) {
+    setColumns(columns.map((c, i) => (i === idx ? { ...c, label } : c)));
+  }
+
+  function addCode(idx: number, code: string) {
+    setColumns(columns.map((c, i) => (i === idx ? { ...c, shiftCodes: [...c.shiftCodes, code] } : c)));
+  }
+
+  function removeCode(idx: number, code: string) {
+    setColumns(columns.map((c, i) => (i === idx ? { ...c, shiftCodes: c.shiftCodes.filter((sc) => sc !== code) } : c)));
+  }
+
+  return (
+    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
+      <SectionHeader title="Count Columns" description="Define columns that count staff per day on the schedule grid." status={status} />
+
+      <div className="space-y-3">
+        {columns.map((col, idx) => (
+          <div key={idx} className="flex items-start gap-3 bg-slate-900/50 rounded p-3 border border-slate-700">
+            <div className="flex-1 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 w-14">Header:</span>
+                <input
+                  type="text"
+                  value={col.label}
+                  onChange={(e) => updateLabel(idx, e.target.value)}
+                  placeholder="e.g. OR"
+                  className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-sm border border-slate-600 w-32"
+                />
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-slate-500 w-14">Shifts:</span>
+                {col.shiftCodes.map((code) => (
+                  <span key={code} className="inline-flex items-center gap-0.5 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-xs border border-slate-600">
+                    {code}
+                    <button onClick={() => removeCode(idx, code)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>
+                  </span>
+                ))}
+                <select
+                  value=""
+                  onChange={(e) => { if (e.target.value) addCode(idx, e.target.value); }}
+                  className="bg-slate-700 text-slate-400 rounded px-1 py-0.5 text-xs border border-slate-600"
+                >
+                  <option value="">+ add</option>
+                  {allCodes.filter((c) => !col.shiftCodes.includes(c)).map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <button onClick={() => removeColumn(idx)} className="text-slate-500 hover:text-red-400 text-sm mt-1">×</button>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 mt-4">
+        <button onClick={addColumn} className="text-xs text-blue-400 hover:text-blue-300">+ Add column</button>
+        <button onClick={save} disabled={status === "saving"} className="ml-auto px-3 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
+          {status === "saving" ? "Saving..." : "Save"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, countColumns: initialCountColumns }: Props) {
   const undo = useUndo();
 
   return (
@@ -2094,6 +2191,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} initialFollowRules={initialFollowRules} />
         <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} shiftTypes={shiftTypes} />
         <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
+        <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <SchedulingPrefsSection initial={schedulingPrefs} />

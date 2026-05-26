@@ -399,3 +399,12 @@ model ShiftMinimumTarget {
   @@unique([providerId, shiftTypeId, window])
   @@map("shift_minimum_targets")
 }
+
+model CountColumn {
+  id         String   @id @default(cuid())
+  label      String
+  sortOrder  Int      @default(0)
+  shiftCodes String[]
+
+  @@map("count_columns")
+}

@@ -117,6 +117,7 @@ type Props = {
     holidayWorkCount: number;
   };
   followRules?: FollowRuleRow[];
+  countColumns?: { label: string; shiftCodes: string[] }[];
 };
 
 type PickerState = {
@@ -249,6 +250,7 @@ export function ScheduleGrid({
   fairnessData,
   fairnessAverages,
   followRules,
+  countColumns = [],
 }: Props) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
@@ -449,36 +451,24 @@ export function ScheduleGrid({
     return map;
   }, [dates, providers, assignmentMap, shiftTypeMap, holidaySet, staffingMins, staffingReqs]);
 
-  const staffingCountCodes = useMemo(() => {
-    const codes = new Set<string>();
-    for (const req of staffingReqs) {
-      if (req.minCount > 0) codes.add(req.shiftCode);
-    }
-    return codes;
-  }, [staffingReqs]);
-
-  const staffingCounts = useMemo(() => {
-    const counts: Record<string, number | null> = {};
-    for (const date of dates) {
-      const dow = parseDate(date).getDay();
-      const dayKey = holidaySet.has(date) ? "holiday" : String(dow);
-      const hasReqs = staffingReqs.some((r) => r.dayKey === dayKey && r.minCount > 0);
-      if (!hasReqs) {
-        counts[date] = null;
-        continue;
+  const columnCounts = useMemo(() => {
+    return countColumns.map((col) => {
+      const codeSet = new Set(col.shiftCodes);
+      const counts: Record<string, number> = {};
+      for (const date of dates) {
+        let count = 0;
+        for (const p of providers) {
+          const key = `${p.id}:${date}`;
+          const a = assignmentMap.get(key);
+          const sug = !a ? suggestionMap.get(key) : null;
+          const code = a?.code ?? sug?.code;
+          if (code && codeSet.has(code)) count++;
+        }
+        counts[date] = count;
       }
-      let count = 0;
-      for (const p of providers) {
-        const key = `${p.id}:${date}`;
-        const a = assignmentMap.get(key);
-        const sug = !a ? suggestionMap.get(key) : null;
-        const code = a?.code ?? sug?.code;
-        if (code && staffingCountCodes.has(code)) count++;
-      }
-      counts[date] = count;
-    }
-    return counts;
-  }, [dates, providers, assignmentMap, suggestionMap, holidaySet, staffingCountCodes, staffingReqs]);
+      return counts;
+    });
+  }, [dates, providers, assignmentMap, suggestionMap, countColumns]);
 
   function prevMonth() {
     if (viewMonth === 0) {
@@ -1229,9 +1219,11 @@ export function ScheduleGrid({
                   </th>
                 );
               })}
-              <th className="px-2 py-2 text-center text-xs font-medium text-slate-400 border-b border-l border-slate-700 w-[32px] min-w-[32px]">
-                #
-              </th>
+              {countColumns.map((col, ci) => (
+                <th key={ci} className="px-2 py-2 text-center text-xs font-medium text-slate-400 border-b border-l border-slate-700 w-[32px] min-w-[32px]">
+                  {col.label || "#"}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -1276,9 +1268,13 @@ export function ScheduleGrid({
                         </td>
                       );
                     })}
-                    <td className="px-2 py-1 text-center text-[10px] font-mono border-l border-slate-600 text-indigo-400/60 border-y border-y-indigo-500/60">
-                      {pp.targetHours}
-                    </td>
+                    {countColumns.length > 0 ? (
+                      <td colSpan={countColumns.length} className="px-2 py-1 text-center text-[10px] font-mono border-l border-slate-600 text-indigo-400/60 border-y border-y-indigo-500/60">
+                        {pp.targetHours}
+                      </td>
+                    ) : (
+                      <td className="border-y border-y-indigo-500/60" />
+                    )}
                   </tr>
                 );
               }
@@ -1296,7 +1292,6 @@ export function ScheduleGrid({
               const ppEven = ppIdx !== -1 && ppIdx % 2 === 0;
 
               const dw = dayWarnings.get(date);
-              const staffCount = staffingCounts[date];
               const isActiveRow = activeRow === date;
 
               return (
@@ -1397,16 +1392,18 @@ export function ScheduleGrid({
                       </td>
                     );
                   })}
-                  <td
-                    className={[
-                      "px-2 py-1 text-center text-xs font-mono border-l border-slate-700",
-                      isNewPP ? "border-t-2 border-t-indigo-500" : "",
-                      staffCount === null ? "text-slate-600" : dw && dw.length > 0 ? "text-red-400" : "text-slate-400",
-                    ].join(" ")}
-                    title={dw ? dw.map((w) => w.message).join("\n") : undefined}
-                  >
-                    {staffCount !== null ? staffCount : "–"}
-                  </td>
+                  {columnCounts.map((counts, ci) => (
+                    <td
+                      key={ci}
+                      className={[
+                        "px-2 py-1 text-center text-xs font-mono border-l border-slate-700",
+                        isNewPP ? "border-t-2 border-t-indigo-500" : "",
+                        dw && dw.length > 0 ? "text-red-400" : "text-slate-400",
+                      ].join(" ")}
+                    >
+                      {counts[date]}
+                    </td>
+                  ))}
                 </tr>
               );
             })}
