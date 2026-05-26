@@ -198,8 +198,6 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
   onClose: () => void;
 }) {
   useEscape(onClose);
-  const eqColor = equityColor(row.deviation.overall, equityThresholds);
-  const eqText = equityLabel(row.deviation.overall, equityThresholds);
   const fte = row.ftePercentage;
   const [radarOppAdj, setRadarOppAdj] = useState(false);
   const [radarFteNorm, setRadarFteNorm] = useState(true);
@@ -272,14 +270,6 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
         </div>
 
         <div className="p-5 space-y-6">
-          <div className="flex items-center gap-3">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full" style={{ backgroundColor: eqColor + "20" }}>
-              <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: eqColor }} />
-              <span className="text-sm font-semibold" style={{ color: eqColor }}>{eqText}</span>
-            </div>
-            <span className="text-xs text-slate-500">Overall score: {row.deviation.overall.toFixed(2)}</span>
-          </div>
-
           <div>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Profile vs Department Average</h3>
