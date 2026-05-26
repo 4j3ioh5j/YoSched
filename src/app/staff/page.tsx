@@ -56,6 +56,7 @@ export default async function Staff() {
           shiftMinimumTargets: p.shiftMinimumTargets.map((mt) => ({
             shiftTypeId: mt.shiftTypeId,
             minCount: mt.minCount,
+            maxCount: mt.maxCount,
             window: mt.window,
             windowDays: mt.windowDays,
           })),

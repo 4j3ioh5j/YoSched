@@ -169,6 +169,7 @@ export async function POST(req: NextRequest) {
       shiftMinimumTargets: (minTargetsMap.get(p.id) ?? []).map((mt) => ({
         shiftTypeId: mt.shiftTypeId,
         minCount: mt.minCount,
+        maxCount: mt.maxCount,
         window: mt.window as "week" | "pay_period" | "month" | "days",
         windowDays: mt.windowDays,
       })),

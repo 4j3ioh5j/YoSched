@@ -27,6 +27,7 @@ type ShiftEligibilityRuleData = {
 type ShiftMinimumTargetData = {
   shiftTypeId: string;
   minCount: number;
+  maxCount?: number | null;
   window: string;
   windowDays?: number | null;
 };
@@ -471,7 +472,7 @@ function ShiftEligibilityEditor({
       <button onClick={addRule} className="text-xs text-blue-400 hover:text-blue-300">+ Add rule</button>
 
       <div className="pt-2 border-t border-slate-700/50">
-        <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Minimum target</div>
+        <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Min / Max targets</div>
         <div className="flex items-center gap-1.5 text-xs">
           <span className="text-slate-400">At least</span>
           <input
@@ -479,8 +480,20 @@ function ShiftEligibilityEditor({
             value={minimumTarget?.minCount ?? 0}
             onChange={(e) => {
               const val = parseInt(e.target.value) || 0;
-              if (val === 0) { onMinimumChange(undefined); return; }
-              onMinimumChange({ shiftTypeId: shiftType.id, minCount: val, window: minimumTarget?.window ?? "pay_period", windowDays: minimumTarget?.windowDays });
+              if (val === 0 && !minimumTarget?.maxCount) { onMinimumChange(undefined); return; }
+              onMinimumChange({ shiftTypeId: shiftType.id, minCount: val, maxCount: minimumTarget?.maxCount, window: minimumTarget?.window ?? "pay_period", windowDays: minimumTarget?.windowDays });
+            }}
+            className="w-10 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
+          />
+          <span className="text-slate-400">at most</span>
+          <input
+            type="number" min={0} max={99}
+            value={minimumTarget?.maxCount ?? 0}
+            onChange={(e) => {
+              const val = parseInt(e.target.value) || 0;
+              const maxVal = val === 0 ? null : val;
+              if (val === 0 && (minimumTarget?.minCount ?? 0) === 0) { onMinimumChange(undefined); return; }
+              onMinimumChange({ shiftTypeId: shiftType.id, minCount: minimumTarget?.minCount ?? 0, maxCount: maxVal, window: minimumTarget?.window ?? "pay_period", windowDays: minimumTarget?.windowDays });
             }}
             className="w-10 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
           />
@@ -573,7 +586,13 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
             <span className="text-[10px] text-slate-500">
               {rulesForShift.length > 0 && `${rulesForShift.length} rule${rulesForShift.length > 1 ? "s" : ""}`}
               {hasRules && hasMin && ", "}
-              {hasMin && `min ${minTarget!.minCount}/${minTarget!.window === "pay_period" ? "PP" : minTarget!.window}`}
+              {hasMin && (() => {
+                const w = minTarget!.window === "pay_period" ? "PP" : minTarget!.window;
+                const parts: string[] = [];
+                if (minTarget!.minCount > 0) parts.push(`min ${minTarget!.minCount}`);
+                if (minTarget!.maxCount) parts.push(`max ${minTarget!.maxCount}`);
+                return `${parts.join(", ")}/${w}`;
+              })()}
             </span>
           )}
         </div>

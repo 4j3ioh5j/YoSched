@@ -390,6 +390,7 @@ model ShiftMinimumTarget {
   providerId  String
   shiftTypeId String
   minCount    Int
+  maxCount    Int?
   window      String
   windowDays  Int?
 

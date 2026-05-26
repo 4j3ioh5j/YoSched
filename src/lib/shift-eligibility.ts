@@ -13,6 +13,7 @@ export type ShiftEligibilityRule = {
 export type ShiftMinTarget = {
   shiftTypeId: string;
   minCount: number;
+  maxCount?: number | null;
   window: "week" | "pay_period" | "month" | "days";
   windowDays?: number | null;
 };

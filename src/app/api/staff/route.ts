@@ -80,6 +80,7 @@ export async function PUT(req: NextRequest) {
             providerId: id,
             shiftTypeId: t.shiftTypeId as string,
             minCount: t.minCount as number,
+            maxCount: (t.maxCount as number | null) ?? null,
             window: t.window as string,
             windowDays: t.windowDays as number | undefined,
           })),

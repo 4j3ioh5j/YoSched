@@ -374,6 +374,7 @@ export function autoSchedule({
       if (nextSt && !isShiftAllowedAfter(followMap, st.id, next.shiftTypeId, nextSt.isOffShift)) return false;
     }
     if (st.maxPerDay != null && countAssigned(st.code, date) >= st.maxPerDay) return false;
+    if (isAtMaximum(provider, st, date)) return false;
     return true;
   }
 
@@ -471,6 +472,30 @@ export function autoSchedule({
       if (!met) maxDeficit = Math.max(maxDeficit, needed - current);
     }
     return maxDeficit;
+  }
+
+  function isAtMaximum(provider: ScheduleProvider, st: ScheduleShiftType, date: string): boolean {
+    if (!provider.shiftMinimumTargets || provider.shiftMinimumTargets.length === 0) return false;
+    const targets = provider.shiftMinimumTargets.filter((t) => t.shiftTypeId === st.id && t.maxCount != null);
+    if (targets.length === 0) return false;
+
+    for (const target of targets) {
+      const bounds = getWindowBounds(
+        target, date,
+        payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
+      );
+      if (!bounds) continue;
+
+      let count = 0;
+      for (const [k, v] of grid.entries()) {
+        if (k.startsWith(provider.id + ":") && v.code === st.code) {
+          const d = k.split(":")[1];
+          if (d >= bounds.start && d <= bounds.end) count++;
+        }
+      }
+      if (count >= target.maxCount!) return true;
+    }
+    return false;
   }
 
   function getRequiredCount(st: ScheduleShiftType, date: string): number {
@@ -1124,6 +1149,9 @@ export function autoSchedule({
         const { met, current, needed } = checkMinimumTargetMet(target, assigned);
         if (!met) {
           warnings.push(`${provider.initials}: only ${current}/${needed} ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
+        }
+        if (target.maxCount != null && assigned.length > target.maxCount) {
+          warnings.push(`${provider.initials}: ${assigned.length}/${target.maxCount} max ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
         }
       }
     }
