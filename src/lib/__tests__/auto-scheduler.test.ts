@@ -543,4 +543,113 @@ describe("autoSchedule", () => {
       expect(result.warnings.some((w) => w.includes("AB") && w.includes("ORC"))).toBe(true);
     });
   });
+
+  describe("maxCount enforcement", () => {
+    it("caps assignments at maxCount per window", () => {
+      const p = makeProvider("p1", "AB", {
+        eligibleShiftTypeIds: ["st-or", "st-off"],
+        shiftMinimumTargets: [
+          { shiftTypeId: "st-or", minCount: 0, maxCount: 2, window: "pay_period" as const },
+        ],
+      });
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        providers: [p],
+        staffingRequirements: [
+          { shiftCode: "OR", dayKey: "1", minCount: 1 },
+          { shiftCode: "OR", dayKey: "2", minCount: 1 },
+          { shiftCode: "OR", dayKey: "3", minCount: 1 },
+          { shiftCode: "OR", dayKey: "4", minCount: 1 },
+          { shiftCode: "OR", dayKey: "5", minCount: 1 },
+        ],
+      });
+      const orCount = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "OR").length;
+      expect(orCount).toBeLessThanOrEqual(2);
+    });
+
+    it("warns when maxCount is exceeded by existing assignments", () => {
+      const p = makeProvider("p1", "AB", {
+        eligibleShiftTypeIds: ["st-or", "st-off"],
+        shiftMinimumTargets: [
+          { shiftTypeId: "st-or", minCount: 0, maxCount: 1, window: "pay_period" as const },
+        ],
+      });
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        providers: [p],
+        existingAssignments: [
+          { providerId: "p1", date: "2025-05-12", shiftTypeId: "st-or", code: "OR", isLocked: false },
+          { providerId: "p1", date: "2025-05-13", shiftTypeId: "st-or", code: "OR", isLocked: false },
+        ],
+      });
+      expect(result.warnings.some((w) => w.includes("AB") && w.includes("max") && w.includes("OR"))).toBe(true);
+    });
+
+    it("caps standing commitments at maxCount", () => {
+      const p = makeProvider("p1", "AB", {
+        eligibleShiftTypeIds: ["st-or", "st-off"],
+        shiftMinimumTargets: [
+          { shiftTypeId: "st-or", minCount: 0, maxCount: 2, window: "pay_period" as const },
+        ],
+      });
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        providers: [p],
+        standingCommitments: [
+          { providerId: "p1", shiftTypeId: "st-or", dayOfWeek: null, frequency: "weekly" },
+        ],
+      });
+      const orCount = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "OR").length;
+      expect(orCount).toBeLessThanOrEqual(2);
+    });
+
+    it("warns when fill-hours is capped by maxCount", () => {
+      const p = makeProvider("p1", "AB", {
+        eligibleShiftTypeIds: ["st-or", "st-off"],
+        shiftMinimumTargets: [
+          { shiftTypeId: "st-or", minCount: 0, maxCount: 2, window: "pay_period" as const },
+        ],
+      });
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        providers: [p],
+        payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
+      });
+      expect(result.warnings.some((w) => w.includes("AB") && w.includes("capped by max"))).toBe(true);
+    });
+
+    it("caps weekend-paired shifts at maxCount and warns", () => {
+      const CALL = makeShift("st-call", "CALL", {
+        weekendPaired: true,
+        countsOnWeekend: true,
+        schedulePriority: 1,
+      });
+      const p = makeProvider("p1", "AB", {
+        eligibleShiftTypeIds: ["st-call", "st-off"],
+        availabilityRules: [0, 1, 2, 3, 4, 5, 6].map((d) => ({
+          dayOfWeek: d,
+          type: "available" as const,
+          strength: "rule" as const,
+          pattern: "every" as const,
+        })),
+        shiftMinimumTargets: [
+          { shiftTypeId: "st-call", minCount: 0, maxCount: 1, window: "pay_period" as const },
+        ],
+      });
+      // 2025-05-17 is Saturday, 2025-05-18 is Sunday
+      const dates = ["2025-05-12", "2025-05-13", "2025-05-14", "2025-05-15", "2025-05-16", "2025-05-17", "2025-05-18"];
+      const result = runSchedule({
+        dates,
+        providers: [p],
+        shiftTypes: [CALL, OFF],
+        staffingRequirements: [
+          { shiftCode: "CALL", dayKey: "6", minCount: 1 },
+          { shiftCode: "CALL", dayKey: "0", minCount: 1 },
+        ],
+      });
+      const callCount = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "CALL").length;
+      expect(callCount).toBeLessThanOrEqual(1);
+      expect(result.warnings.some((w) => w.includes("AB") && w.includes("capped by max"))).toBe(true);
+    });
+  });
 });

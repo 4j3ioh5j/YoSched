@@ -591,6 +591,8 @@ export function autoSchedule({
           if (eligResult !== null && !eligResult.eligible && !(eligResult.weight < 0 && eligResult.weight > -10)) continue;
         }
 
+        if (isAtMaximum(provider, st, date)) continue;
+
         assign(
           sc.providerId,
           date,
@@ -695,7 +697,11 @@ export function autoSchedule({
         if (pool.length === 0) continue;
         const chosen = pickProvider(pool, sat);
         assign(chosen.id, sat, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
-        assign(chosen.id, sun, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
+        if (!isAtMaximum(chosen, st, sun)) {
+          assign(chosen.id, sun, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
+        } else {
+          warnings.push(`${chosen.initials}: skipped ${st.code} on ${sun} — capped by max shift limit`);
+        }
         recordAssignment(chosen.id, sat);
       }
 
@@ -818,7 +824,9 @@ export function autoSchedule({
               warnings.push(`Could only place ${pickedDates.length}/${pairingFactor} ${st.code} for ${chosen.initials} in PP ${pp.startDate}`);
             }
 
+            const assignedDates: string[] = [];
             for (const date of pickedDates) {
+              if (isAtMaximum(chosen, st, date)) break;
               const desirability = dwMap.get(`${st.id}:${getDow(date)}`) ?? 0;
               assign(
                 chosen.id, date, st,
@@ -826,6 +834,7 @@ export function autoSchedule({
                 stepName, 0.7
               );
               usedDates.add(date);
+              assignedDates.push(date);
 
               if (isRecoveryOnly(followMap, st.id) && offShift) {
                 const next = nextDate(date);
@@ -835,7 +844,7 @@ export function autoSchedule({
                 }
               }
             }
-            for (const date of pickedDates) {
+            for (const date of assignedDates) {
               recordAssignment(chosen.id, date);
             }
           }
@@ -1099,14 +1108,19 @@ export function autoSchedule({
         }
 
         let hours = currentHours;
+        let cappedByMax = false;
         for (const date of fillDates) {
           if (hours >= target) break;
           const shift = holidaySet.has(date) && holShift ? holShift : fillShift;
+          if (isAtMaximum(provider, shift, date)) { cappedByMax = true; break; }
           const shiftHrs = getShiftHours(provider.id, shift, overrideMap);
           assign(provider.id, date, shift,
             `${shift.code} to fill hours (${hours}/${target}hrs)`,
             "fill", 0.6);
           hours += shiftHrs;
+        }
+        if (cappedByMax && hours < target) {
+          warnings.push(`${provider.initials}: ${hours}/${target}hrs in PP ${pp.startDate} — capped by max shift limit`);
         }
       }
     }
