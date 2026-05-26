@@ -300,9 +300,9 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
                 )}
               </div>
             </div>
-            <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4" style={{ height: "calc(100vh - 240px)", minHeight: 500 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="70%">
+            <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4 flex flex-col" style={{ height: "calc(100vh - 240px)", minHeight: 500 }}>
+              <ResponsiveContainer width="100%" className="flex-1 min-h-0">
+                <RadarChart data={radarData} cx="50%" cy="46%">
                   <PolarGrid stroke="#334155" />
                   <PolarAngleAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 13, fontWeight: 500 }} />
                   <PolarRadiusAxis tick={false} axisLine={false} domain={radarDomain} />
