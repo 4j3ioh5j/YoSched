@@ -8,7 +8,6 @@ function makeShiftType(id: string, code: string, overrides: Record<string, unkno
     code,
     defaultHours: 8,
     countsTowardFte: true,
-    postShiftRule: null,
     isOffShift: false,
     ignoresWorkingDays: false,
     ...overrides,

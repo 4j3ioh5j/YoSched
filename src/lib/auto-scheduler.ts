@@ -31,7 +31,7 @@ export type ScheduleShiftType = {
   ignoresWorkingDays: boolean;
   maxPerDay: number | null;
   category: string;
-  postShiftRule: string | null;
+
   autoSchedulable: boolean;
 };
 

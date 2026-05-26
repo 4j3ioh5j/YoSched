@@ -46,7 +46,6 @@ export default async function Settings() {
           isLeave: st.isLeave,
           isPaid: st.isPaid,
           category: st.category,
-          postShiftRule: st.postShiftRule,
           color: st.color ?? "#6b7280",
           sortOrder: st.sortOrder,
           schedulePriority: st.schedulePriority,

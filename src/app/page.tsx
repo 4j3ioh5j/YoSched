@@ -123,7 +123,6 @@ export default async function Home() {
           defaultHours: st.defaultHours,
           countsTowardFte: st.countsTowardFte,
           countsOnWeekend: st.countsOnWeekend,
-          postShiftRule: st.postShiftRule,
         }))}
         payPeriods={payPeriods.map((pp) => ({
           startDate: pp.startDate.toISOString().split("T")[0],

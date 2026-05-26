@@ -40,7 +40,6 @@ model ShiftType {
   isLeave         Boolean  @default(false)
   isPaid          Boolean  @default(true)
   category        String   @default("work") // work, leave, imported, other
-  postShiftRule      String?
   color              String?
   sortOrder          Int      @default(0)
   isOffShift         Boolean  @default(false)

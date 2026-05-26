@@ -13,7 +13,7 @@ type ShiftType = {
   isLeave: boolean;
   isPaid: boolean;
   category: string;
-  postShiftRule: string | null;
+
   color: string;
   sortOrder: number;
   schedulePriority: number | null;
@@ -472,7 +472,6 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
         isLeave: created.isLeave,
         isPaid: created.isPaid,
         category: created.category,
-        postShiftRule: created.postShiftRule,
         color: created.color ?? "#6b7280",
         sortOrder: created.sortOrder,
         schedulePriority: created.schedulePriority ?? null,
@@ -555,7 +554,6 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
               <th className="text-center py-2 px-2 w-16">Hours</th>
               <th className="text-center py-2 px-2 w-20">Category</th>
               <th className="text-center py-2 px-2 w-12">Color</th>
-              <th className="text-center py-2 px-2 w-24">Post-shift</th>
               <th className="text-center py-2 px-2 w-28">Auto-schedule</th>
             </tr>
           </thead>
@@ -582,9 +580,6 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
                 <td className="py-2 px-2 text-center text-xs text-slate-400">{st.category}</td>
                 <td className="py-2 px-2 text-center">
                   <span className="inline-block w-4 h-4 rounded" style={{ backgroundColor: st.color }} />
-                </td>
-                <td className="py-2 px-2 text-center text-xs text-slate-500">
-                  {st.postShiftRule ? "Day off after" : "—"}
                 </td>
                 <td className="py-2 px-2 text-center text-xs text-slate-500">
                   {st.schedulePriority != null ? `#${st.schedulePriority}` : "—"}

@@ -38,7 +38,7 @@ function makeShift(id: string, code: string, overrides: Partial<ScheduleShiftTyp
     ignoresWorkingDays: false,
     maxPerDay: null,
     category: "clinical",
-    postShiftRule: null,
+
     autoSchedulable: true,
     ...overrides,
   };

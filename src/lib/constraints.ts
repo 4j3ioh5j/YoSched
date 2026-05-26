@@ -10,7 +10,6 @@ type ShiftType = {
   code: string;
   defaultHours: number;
   countsTowardFte: boolean;
-  postShiftRule: string | null;
   isOffShift: boolean;
   ignoresWorkingDays: boolean;
 };

@@ -189,7 +189,6 @@ export async function POST(req: NextRequest) {
       ignoresWorkingDays: st.ignoresWorkingDays,
       maxPerDay: st.maxPerDay,
       category: st.category,
-      postShiftRule: st.postShiftRule,
       autoSchedulable: st.autoSchedulable,
     })),
     existingAssignments: existingAssignments.map((a) => ({

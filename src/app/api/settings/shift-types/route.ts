@@ -19,7 +19,7 @@ export async function PUT(req: NextRequest) {
       isLeave: data.isLeave,
       isPaid: data.isPaid,
       category: data.category,
-      postShiftRule: data.postShiftRule || null,
+
       color: data.color,
       sortOrder: data.sortOrder,
       schedulePriority: data.schedulePriority ?? null,
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
       isLeave: data.isLeave ?? false,
       isPaid: data.isPaid ?? true,
       category: data.category ?? "work",
-      postShiftRule: data.postShiftRule || null,
+
       color: data.color ?? "#6b7280",
       sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
       schedulePriority: data.schedulePriority ?? null,

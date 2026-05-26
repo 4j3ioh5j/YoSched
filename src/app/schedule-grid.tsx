@@ -45,7 +45,6 @@ type ShiftType = {
   defaultHours: number;
   countsTowardFte: boolean;
   countsOnWeekend: boolean;
-  postShiftRule: string | null;
 };
 
 type PayPeriod = {

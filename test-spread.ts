@@ -107,7 +107,7 @@ async function main() {
       isLeave: st.isLeave, isOffShift: st.isOffShift, isFillShift: st.isFillShift,
       schedulePriority: st.schedulePriority, weekendPaired: st.weekendPaired,
       ignoresWorkingDays: st.ignoresWorkingDays, maxPerDay: st.maxPerDay,
-      category: st.category, postShiftRule: st.postShiftRule, autoSchedulable: st.autoSchedulable,
+      category: st.category, autoSchedulable: st.autoSchedulable,
     })),
     existingAssignments: existingAssignments.filter(a => a.isLocked).map((a) => ({
       providerId: a.providerId, date: a.date.toISOString().split("T")[0],
