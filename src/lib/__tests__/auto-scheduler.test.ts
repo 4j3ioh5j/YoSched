@@ -652,4 +652,52 @@ describe("autoSchedule", () => {
       expect(result.warnings.some((w) => w.includes("AB") && w.includes("capped by max"))).toBe(true);
     });
   });
+
+  describe("min target proactive scheduling", () => {
+    it("assigns shifts to meet per-provider minimums even without staffing requirements", () => {
+      const ADM = makeShift("st-adm", "ADM", { schedulePriority: null });
+      const p = makeProvider("p1", "AB", {
+        eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"],
+        shiftMinimumTargets: [
+          { shiftTypeId: "st-adm", minCount: 1, window: "pay_period" as const },
+        ],
+      });
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        providers: [p],
+        shiftTypes: [OR, ADM, OFF],
+        staffingRequirements: [],
+      });
+      const admCount = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "ADM").length;
+      expect(admCount).toBeGreaterThanOrEqual(1);
+      expect(result.suggestions.some((s) => s.code === "ADM" && s.step === "min-target")).toBe(true);
+    });
+
+    it("respects eligibility rules when placing min-target shifts", () => {
+      const ADM = makeShift("st-adm", "ADM", { schedulePriority: null });
+      const p = makeProvider("p1", "AB", {
+        eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"],
+        shiftEligibilityRules: [
+          { shiftTypeId: "st-adm", dayOfWeek: 5, type: "eligible" as const, strength: "rule" as const, pattern: "every" as const },
+          { shiftTypeId: "st-adm", dayOfWeek: 1, type: "ineligible" as const, strength: "rule" as const, pattern: "every" as const },
+          { shiftTypeId: "st-adm", dayOfWeek: 2, type: "ineligible" as const, strength: "rule" as const, pattern: "every" as const },
+          { shiftTypeId: "st-adm", dayOfWeek: 3, type: "ineligible" as const, strength: "rule" as const, pattern: "every" as const },
+          { shiftTypeId: "st-adm", dayOfWeek: 4, type: "ineligible" as const, strength: "rule" as const, pattern: "every" as const },
+        ],
+        shiftMinimumTargets: [
+          { shiftTypeId: "st-adm", minCount: 1, window: "pay_period" as const },
+        ],
+      });
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        providers: [p],
+        shiftTypes: [OR, ADM, OFF],
+        staffingRequirements: [],
+      });
+      const admSuggestions = result.suggestions.filter((s) => s.code === "ADM");
+      expect(admSuggestions.length).toBe(1);
+      // 2025-05-16 is Friday (day 5) — the only eligible day
+      expect(admSuggestions[0].date).toBe("2025-05-16");
+    });
+  });
 });

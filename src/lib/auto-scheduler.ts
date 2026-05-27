@@ -939,6 +939,66 @@ export function autoSchedule({
     }
   }
 
+  // ── STEP 2b: Satisfy per-provider shift minimum targets ──
+  //
+  // If a provider has a minCount target for a shift (e.g. "at least 1 ADM per PP"),
+  // proactively assign that shift on eligible days even without global staffing
+  // requirements. This runs after staffing reqs so those slots are filled first.
+
+  for (const provider of activeProviders) {
+    if (!provider.shiftMinimumTargets || provider.shiftMinimumTargets.length === 0) continue;
+    const ppRanges = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
+
+    for (const target of provider.shiftMinimumTargets) {
+      if (target.minCount <= 0) continue;
+      if (target.window === "days") continue; // rolling windows have overlapping bounds — post-schedule warning only
+      const st = stById.get(target.shiftTypeId);
+      if (!st || !st.autoSchedulable || st.isOffShift) continue;
+
+      const checkedWindows = new Set<string>();
+      for (const date of dates) {
+        const bounds = getWindowBounds(target, date, ppRanges);
+        if (!bounds) continue;
+        const windowKey = `${bounds.start}:${bounds.end}`;
+        if (checkedWindows.has(windowKey)) continue;
+        checkedWindows.add(windowKey);
+
+        function countInWindow(): number {
+          let n = 0;
+          for (const [k, v] of grid.entries()) {
+            if (k.startsWith(provider.id + ":") && v.code === st!.code) {
+              const d = k.split(":")[1];
+              if (d >= bounds!.start && d <= bounds!.end) n++;
+            }
+          }
+          return n;
+        }
+
+        const deficit = target.minCount - countInWindow();
+        if (deficit <= 0) continue;
+
+        const windowDates = dates.filter((d) => d >= bounds.start && d <= bounds.end);
+        const candidateDates = windowDates.filter((d) =>
+          !isAssigned(provider.id, d) && isAvailable(provider, d, st)
+        );
+        if (candidateDates.length === 0) {
+          warnings.push(`${provider.initials}: no available days for ${st.code} min target in ${target.window} (${bounds.start}..${bounds.end})`);
+          continue;
+        }
+
+        for (const candidate of candidateDates) {
+          if (countInWindow() >= target.minCount) break;
+          if (isAtMaximum(provider, st, candidate)) break;
+          assign(
+            provider.id, candidate, st,
+            `${st.code} (min target: ${target.minCount}/${target.window === "pay_period" ? "PP" : target.window})`,
+            "min-target", 0.75
+          );
+        }
+      }
+    }
+  }
+
   // ── STEP 3: Fill shift to hit FTE hour targets (day-off clustering) ──
 
   const holShift = shiftTypes.find((st) => st.code === "HOL" && st.countsTowardFte) ?? null;
