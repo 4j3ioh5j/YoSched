@@ -1346,10 +1346,14 @@ const WEEKDAY_LABELS: Record<number, string> = {
   0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat",
 };
 const WEIGHT_LABELS: Record<number, string> = {
-  [-2]: "Very Bad", [-1]: "Bad", 0: "", 1: "Good", 2: "Great",
+  [-5]: "Terrible", [-4]: "Very Bad", [-3]: "Bad", [-2]: "Poor", [-1]: "Slightly Bad",
+  0: "",
+  1: "Slightly Good", 2: "Fair", 3: "Good", 4: "Very Good", 5: "Great",
 };
 const WEIGHT_BG: Record<number, string> = {
-  [-2]: "bg-red-900/40", [-1]: "bg-red-900/20", 0: "", 1: "bg-emerald-900/20", 2: "bg-emerald-900/40",
+  [-5]: "bg-red-900/60", [-4]: "bg-red-900/50", [-3]: "bg-red-900/40", [-2]: "bg-red-900/30", [-1]: "bg-red-900/20",
+  0: "",
+  1: "bg-emerald-900/20", 2: "bg-emerald-900/30", 3: "bg-emerald-900/40", 4: "bg-emerald-900/50", 5: "bg-emerald-900/60",
 };
 
 function DesirabilitySection({
@@ -1459,11 +1463,17 @@ function DesirabilitySection({
                         onChange={(e) => setWeight(st.id, day, parseInt(e.target.value))}
                         title={WEIGHT_LABELS[w] || "Neutral"}
                       >
+                        <option value={-5}>-5</option>
+                        <option value={-4}>-4</option>
+                        <option value={-3}>-3</option>
                         <option value={-2}>-2</option>
                         <option value={-1}>-1</option>
                         <option value={0}>0</option>
                         <option value={1}>+1</option>
                         <option value={2}>+2</option>
+                        <option value={3}>+3</option>
+                        <option value={4}>+4</option>
+                        <option value={5}>+5</option>
                       </select>
                     </td>
                   );
@@ -1481,11 +1491,11 @@ function DesirabilitySection({
           Save Desirability
         </button>
         <div className="flex items-center gap-3 text-[11px] text-slate-500">
-          <span className="inline-block w-3 h-3 rounded bg-red-900/40" /> Very undesirable (-2)
-          <span className="inline-block w-3 h-3 rounded bg-red-900/20" /> Bad (-1)
+          <span className="inline-block w-3 h-3 rounded bg-red-900/60" /> Terrible (-5)
+          <span className="inline-block w-3 h-3 rounded bg-red-900/30" /> Poor (-2)
           <span className="inline-block w-3 h-3 rounded border border-slate-600" /> Neutral (0)
-          <span className="inline-block w-3 h-3 rounded bg-emerald-900/20" /> Good (+1)
-          <span className="inline-block w-3 h-3 rounded bg-emerald-900/40" /> Great (+2)
+          <span className="inline-block w-3 h-3 rounded bg-emerald-900/30" /> Fair (+2)
+          <span className="inline-block w-3 h-3 rounded bg-emerald-900/60" /> Great (+5)
         </div>
       </div>
     </section>

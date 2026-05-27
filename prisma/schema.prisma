@@ -171,7 +171,7 @@ model DesirabilityWeight {
   id          String @id @default(cuid())
   shiftTypeId String
   dayOfWeek   Int    // 0=Sun..6=Sat
-  weight      Int    // -2 (very bad) to +2 (very good)
+  weight      Int    // -5 (terrible) to +5 (great)
   reason      String?
 
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
