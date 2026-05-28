@@ -626,9 +626,10 @@ export function ScheduleGrid({
     e.preventDefault();
     dragSelecting.current = true;
     dragSelectMoved.current = false;
-    dragSelectAnchor.current = { providerId, date };
-    setSelection(new Set([`${providerId}:${date}`]));
-    setSelectionAnchor({ providerId, date });
+    const anchor = selectionAnchor ?? { providerId, date };
+    dragSelectAnchor.current = anchor;
+    setSelection(computeRectSelection(anchor, { providerId, date }));
+    if (!selectionAnchor) setSelectionAnchor({ providerId, date });
     setActiveRow(date);
     setActiveCol(providerId);
     setPicker(null);
