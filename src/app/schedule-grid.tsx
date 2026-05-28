@@ -5,7 +5,7 @@ import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
-import { formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
+import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 
 type AvailabilityRuleData = {
   dayOfWeek: number;
@@ -1086,7 +1086,7 @@ export function ScheduleGrid({
           {MONTH_NAMES[viewMonth]} {viewYear}
         </span>
         <span className="ml-2 text-xs text-slate-500">
-          {dates[0]} – {dates[dates.length - 1]}
+          {formatDate(parseDate(dates[0]), dateFormat)} – {formatDate(parseDate(dates[dates.length - 1]), dateFormat)}
         </span>
         <button
           onClick={() => window.print()}
