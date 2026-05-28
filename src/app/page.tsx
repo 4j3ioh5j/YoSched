@@ -15,7 +15,7 @@ export default async function Home() {
       prisma.provider.findMany({
         where: { isActive: true },
         orderBy: { sortOrder: "asc" },
-        include: { availabilityRules: true, eligibleShifts: true },
+        include: { availabilityRules: true, eligibleShifts: true, employmentType: true },
       }),
       prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.assignment.findMany({
@@ -93,6 +93,7 @@ export default async function Home() {
           initials: p.initials,
           name: p.name,
           ftePercentage: p.ftePercentage ?? 1.0,
+          employmentTypeName: p.employmentType.name,
           availabilityRules: p.availabilityRules.map((ar) => ({
             dayOfWeek: ar.dayOfWeek,
             type: ar.type,

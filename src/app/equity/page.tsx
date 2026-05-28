@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function Equity() {
   const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs, equityFactors, eligibilities] =
     await Promise.all([
-      prisma.provider.findMany({ orderBy: { sortOrder: "asc" } }),
+      prisma.provider.findMany({ orderBy: { sortOrder: "asc" }, include: { employmentType: true } }),
       prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.assignment.findMany({ include: { shiftType: true } }),
       prisma.holiday.findMany({ orderBy: { date: "asc" } }),
@@ -121,6 +121,7 @@ export default async function Equity() {
       name: p.name,
       isAutoScheduled: p.isAutoScheduled,
       ftePercentage: p.ftePercentage ?? 1.0,
+      employmentTypeName: p.employmentType.name,
       totalHours: providerHours[m.providerId] || 0,
       shiftTally: shiftTallies[m.providerId] || {},
     };

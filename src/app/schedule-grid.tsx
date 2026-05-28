@@ -20,6 +20,7 @@ type Provider = {
   initials: string;
   name: string;
   ftePercentage: number;
+  employmentTypeName: string;
   availabilityRules: AvailabilityRuleData[];
   isAutoScheduled: boolean;
 };
@@ -1450,13 +1451,16 @@ export function ScheduleGrid({
                 const fe = fairnessData?.[p.id];
                 const fColor = fe ? fairnessColor(fe.deviation.overall) : undefined;
                 const fLabel = fe ? fairnessLabel(fe.deviation.overall) : undefined;
+                const empLabel = p.employmentTypeName === "FTE"
+                  ? `${p.ftePercentage * 100}% FTE`
+                  : p.employmentTypeName;
                 const fTooltip = fe
-                  ? `${p.name} (${p.ftePercentage * 100}% FTE)\n` +
+                  ? `${p.name} (${empLabel})\n` +
                     `Equity: ${fLabel}\n` +
                     `Desirability: ${-fe.displayDeviation.desirability > 0 ? "+" : ""}${(-fe.displayDeviation.desirability).toFixed(2)}σ\n` +
                     `Holiday work: ${fe.metrics.holidayWorkCount} (avg ${fairnessAverages?.holidayWorkCount.toFixed(1)})\n` +
                     `Work days: ${fe.metrics.totalWorkDays} | Leave: ${fe.metrics.totalLeaveDays}`
-                  : `${p.name} (${p.ftePercentage * 100}% FTE)`;
+                  : `${p.name} (${empLabel})`;
                 return (
                   <th
                     key={p.id}

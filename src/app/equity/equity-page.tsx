@@ -21,6 +21,7 @@ type EquityRow = {
   name: string;
   isAutoScheduled: boolean;
   ftePercentage: number;
+  employmentTypeName: string;
   desirabilityScore: number;
   undesirableShiftCount: number;
   desirableShiftCount: number;
@@ -242,7 +243,7 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
           <div className="flex items-center gap-3">
             <span className="font-mono font-bold text-lg text-slate-100">{row.initials}</span>
             <span className="text-sm text-slate-400">{row.name}</span>
-            {row.ftePercentage < 1 && (
+            {row.employmentTypeName === "FTE" && row.ftePercentage < 1 && (
               <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/30 text-amber-400/80 font-mono">{(row.ftePercentage * 100).toFixed(0)}% FTE</span>
             )}
           </div>
@@ -474,7 +475,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                         <div className="flex items-center gap-2">
                           <span className={`font-mono font-bold text-sm w-9 ${!row.isAutoScheduled ? "text-amber-400" : "text-slate-200"}`}>{row.initials}</span>
                           <span className="text-xs text-slate-500 truncate max-w-[60px]">{row.name}</span>
-                          {row.ftePercentage < 1 && (
+                          {row.employmentTypeName === "FTE" && row.ftePercentage < 1 && (
                             <span className="text-[10px] px-1 py-px rounded bg-amber-900/30 text-amber-400/80 font-mono">{(row.ftePercentage * 100).toFixed(0)}%</span>
                           )}
                         </div>
