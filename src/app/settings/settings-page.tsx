@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEscape } from "@/lib/use-escape";
-import { DATE_FORMAT_OPTIONS } from "@/lib/date-format";
+import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
 
 type ShiftType = {
   id: string;
@@ -989,7 +989,12 @@ function StaffingSection({
 
 // ─── Pay Periods Section ────────────────────────────────────────────────────
 
-function PayPeriodsSection({ initial, pushUndo }: { initial: PayPeriod[]; pushUndo: (a: UndoAction) => void }) {
+function formatDateStr(dateStr: string, fmt: DateFormatKey): string {
+  const d = new Date(dateStr + "T12:00:00");
+  return formatDate(d, fmt);
+}
+
+function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeriod[]; pushUndo: (a: UndoAction) => void; dateFormat: DateFormatKey }) {
   const [periods, setPeriods] = useState(initial);
   const [startDate, setStartDate] = useState(initial[0]?.startDate ?? "2025-12-14");
   const [periodCount, setPeriodCount] = useState(initial.length || 26);
@@ -1135,8 +1140,8 @@ function PayPeriodsSection({ initial, pushUndo }: { initial: PayPeriod[]; pushUn
             {periods.map((pp, i) => (
               <>
                 <span key={`n-${pp.id}`} className="text-slate-400">PP {i + 1}</span>
-                <span key={`s-${pp.id}`} className="text-slate-300 font-mono">{pp.startDate}</span>
-                <span key={`e-${pp.id}`} className="text-slate-300 font-mono">{pp.endDate}</span>
+                <span key={`s-${pp.id}`} className="text-slate-300 font-mono">{formatDateStr(pp.startDate, dateFormat)}</span>
+                <span key={`e-${pp.id}`} className="text-slate-300 font-mono">{formatDateStr(pp.endDate, dateFormat)}</span>
               </>
             ))}
           </div>
@@ -1149,7 +1154,7 @@ function PayPeriodsSection({ initial, pushUndo }: { initial: PayPeriod[]; pushUn
 
 // ─── Holidays Section ───────────────────────────────────────────────────────
 
-function HolidaysSection({ initial, payPeriods, pushUndo }: { initial: Holiday[]; payPeriods: PayPeriod[]; pushUndo: (a: UndoAction) => void }) {
+function HolidaysSection({ initial, payPeriods, pushUndo, dateFormat }: { initial: Holiday[]; payPeriods: PayPeriod[]; pushUndo: (a: UndoAction) => void; dateFormat: DateFormatKey }) {
   const [holidays, setHolidays] = useState(initial);
   const [newDate, setNewDate] = useState("");
   const [newName, setNewName] = useState("");
@@ -1323,7 +1328,7 @@ function HolidaysSection({ initial, payPeriods, pushUndo }: { initial: Holiday[]
             {holidays.map((h) => (
               <div key={h.id} className="flex items-center justify-between py-1.5 px-3 rounded hover:bg-slate-700/30">
                 <div className="flex items-center gap-3">
-                  <span className="text-sm font-mono text-slate-400">{h.date}</span>
+                  <span className="text-sm font-mono text-slate-400">{formatDateStr(h.date, dateFormat)}</span>
                   <span className="text-sm text-slate-200">{h.name}</span>
                 </div>
                 <button
@@ -1684,13 +1689,13 @@ function EquityFactorsSection({
   );
 }
 
-function DateFormatSection({ initial }: { initial: string }) {
-  const [selected, setSelected] = useState<string>(initial);
+function DateFormatSection({ selected, onChange }: { selected: string; onChange: (fmt: string) => void }) {
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
 
   async function save(format: string) {
-    setSelected(format);
+    const prev = selected;
+    onChange(format);
     setStatus("saving");
     try {
       const res = await fetch("/api/settings/scheduling-preferences", {
@@ -1702,7 +1707,7 @@ function DateFormatSection({ initial }: { initial: string }) {
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2000);
     } catch (e) {
-      setSelected(initial);
+      onChange(prev);
       setError(e instanceof Error ? e.message : "Failed");
       setStatus("error");
     }
@@ -2244,6 +2249,7 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
 
 export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, countColumns: initialCountColumns }: Props) {
   const undo = useUndo();
+  const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -2254,10 +2260,10 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
-        <DateFormatSection initial={schedulingPrefs.dateFormat} />
+        <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
         <SchedulingPrefsSection initial={schedulingPrefs} />
-        <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} />
-        <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} />
+        <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
+        <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
       </div>
 
       {undo.pending && (
