@@ -1455,14 +1455,16 @@ export function ScheduleGrid({
                 const empLabel = p.employmentTypeName === "FTE"
                   ? `${p.ftePercentage * 100}% FTE`
                   : p.employmentTypeName;
+                const zFmt = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(2)}σ`;
+                const fte = p.ftePercentage || 1;
                 const fTooltip = fe
                   ? `${p.name} (${empLabel})\n` +
-                    `Equity: ${fLabel}\n` +
-                    `Desirability: ${fe.metrics.desirabilityScore} (avg ${fairnessAverages?.desirabilityScore.toFixed(1)})\n` +
-                    `Holiday: ${fe.metrics.holidayWorkCount} (avg ${fairnessAverages?.holidayWorkCount.toFixed(1)})\n` +
-                    `CALL: ${fe.metrics.shiftCounts["CALL"] ?? 0} (avg ${(fairnessAverages?.perShift["CALL"] ?? 0).toFixed(1)})\n` +
-                    `ORC: ${fe.metrics.shiftCounts["ORC"] ?? 0} (avg ${(fairnessAverages?.perShift["ORC"] ?? 0).toFixed(1)})\n` +
-                    `ORL: ${fe.metrics.shiftCounts["ORL"] ?? 0} (avg ${(fairnessAverages?.perShift["ORL"] ?? 0).toFixed(1)})`
+                    `Equity: ${zFmt(fe.displayDeviation.overall)}\n` +
+                    `Desirability: ${zFmt(-fe.displayDeviation.desirability)}\n` +
+                    `Holiday: ${fe.metrics.holidayWorkCount} (avg ${((fairnessAverages?.holidayWorkCount ?? 0) * fte).toFixed(1)})\n` +
+                    `CALL: ${fe.metrics.shiftCounts["CALL"] ?? 0} (avg ${((fairnessAverages?.perShift["CALL"] ?? 0) * fte).toFixed(1)})\n` +
+                    `ORC: ${fe.metrics.shiftCounts["ORC"] ?? 0} (avg ${((fairnessAverages?.perShift["ORC"] ?? 0) * fte).toFixed(1)})\n` +
+                    `ORL: ${fe.metrics.shiftCounts["ORL"] ?? 0} (avg ${((fairnessAverages?.perShift["ORL"] ?? 0) * fte).toFixed(1)})`
                   : `${p.name} (${empLabel})`;
                 return (
                   <th
