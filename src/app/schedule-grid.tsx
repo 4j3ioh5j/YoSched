@@ -562,6 +562,15 @@ export function ScheduleGrid({
     setPicker(null);
   }
 
+  function pickerPositionForCell(providerId: string, date: string): { x: number; y: number } {
+    const el = document.querySelector(`[data-cell="${providerId}:${date}"]`);
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      return { x: rect.right, y: rect.bottom };
+    }
+    return { x: 200, y: 200 };
+  }
+
   function handleCellContextMenu(providerId: string, date: string, e: React.MouseEvent) {
     e.preventDefault();
     if (!canEdit) return;
@@ -571,7 +580,8 @@ export function ScheduleGrid({
     setActiveCol(providerId);
     setSelection(new Set());
     setSelectionAnchor({ providerId, date });
-    setPicker({ providerId, date, x: e.clientX, y: e.clientY });
+    const pos = pickerPositionForCell(providerId, date);
+    setPicker({ providerId, date, ...pos });
   }
 
   function pushUndo(ops: UndoOp[]) {
@@ -654,19 +664,36 @@ export function ScheduleGrid({
         if (!existing?.isLocked) {
           setSelection(new Set());
           setSelectionAnchor({ providerId: activeCol, date: activeRow });
-          const el = document.querySelector(`[data-date="${activeRow}"]`);
-          const rect = el?.getBoundingClientRect();
-          setPicker({ providerId: activeCol, date: activeRow, x: rect?.left ?? 200, y: rect?.top ?? 200 });
+          const pos = pickerPositionForCell(activeCol, activeRow);
+          setPicker({ providerId: activeCol, date: activeRow, ...pos });
         }
       }
       if ((e.key === "Delete" || e.key === "Backspace") && !picker && canEdit && activeRow && activeCol) {
         e.preventDefault();
         clearRef.current({ providerId: activeCol, date: activeRow });
       }
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) && !picker && activeRow && activeCol) {
+        e.preventDefault();
+        const dateIdx = dates.indexOf(activeRow);
+        const provIdx = providers.findIndex((p) => p.id === activeCol);
+        if (dateIdx === -1 || provIdx === -1) return;
+        let newDateIdx = dateIdx;
+        let newProvIdx = provIdx;
+        if (e.key === "ArrowUp") newDateIdx = Math.max(0, dateIdx - 1);
+        if (e.key === "ArrowDown") newDateIdx = Math.min(dates.length - 1, dateIdx + 1);
+        if (e.key === "ArrowLeft") newProvIdx = Math.max(0, provIdx - 1);
+        if (e.key === "ArrowRight") newProvIdx = Math.min(providers.length - 1, provIdx + 1);
+        const newDate = dates[newDateIdx];
+        const newProv = providers[newProvIdx];
+        setActiveRow(newDate);
+        setActiveCol(newProv.id);
+        const el = document.querySelector(`[data-cell="${newProv.id}:${newDate}"]`);
+        el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit, activeRow, activeCol, assignmentMap]);
+  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, providers]);
 
   const handleSelect = useCallback(async (shiftTypeId: string) => {
     if (!picker) return;
@@ -1379,6 +1406,7 @@ export function ScheduleGrid({
                     return (
                       <td
                         key={p.id}
+                        data-cell={cellKey}
                         className={[
                           `px-0.5 py-0.5 text-center border-slate-700/30 border relative ${canEdit ? "cursor-pointer" : "cursor-default"}`,
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
