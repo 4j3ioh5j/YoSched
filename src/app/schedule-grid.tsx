@@ -578,8 +578,11 @@ export function ScheduleGrid({
     if (existing?.isLocked) return;
     setActiveRow(date);
     setActiveCol(providerId);
-    setSelection(new Set());
-    setSelectionAnchor({ providerId, date });
+    const cellKey = `${providerId}:${date}`;
+    if (selection.size === 0 || !selection.has(cellKey)) {
+      setSelection(new Set());
+      setSelectionAnchor({ providerId, date });
+    }
     const pos = pickerPositionForCell(providerId, date);
     setPicker({ providerId, date, ...pos });
   }
@@ -662,8 +665,9 @@ export function ScheduleGrid({
         e.preventDefault();
         const existing = assignmentMap.get(`${activeCol}:${activeRow}`);
         if (!existing?.isLocked) {
-          setSelection(new Set());
-          setSelectionAnchor({ providerId: activeCol, date: activeRow });
+          if (selection.size === 0) {
+            setSelectionAnchor({ providerId: activeCol, date: activeRow });
+          }
           const pos = pickerPositionForCell(activeCol, activeRow);
           setPicker({ providerId: activeCol, date: activeRow, ...pos });
         }
