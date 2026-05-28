@@ -298,7 +298,11 @@ export function ScheduleGrid({
   const [selectionAnchor, setSelectionAnchor] = useState<{ providerId: string; date: string } | null>(null);
 
   const [showMonthPicker, setShowMonthPicker] = useState(false);
-  const [showPPRows, setShowPPRows] = useState(true);
+  const [showPPRows, setShowPPRows] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const saved = localStorage.getItem("yosched:showPPRows");
+    return saved !== null ? saved === "true" : false;
+  });
   const monthPickerRef = useRef<HTMLDivElement>(null);
 
   // Shift+drag-select state
@@ -1340,7 +1344,7 @@ export function ScheduleGrid({
           {formatDate(parseDate(dates[0]), dateFormat)} – {formatDate(parseDate(dates[dates.length - 1]), dateFormat)}
         </span>
         <button
-          onClick={() => setShowPPRows((v) => !v)}
+          onClick={() => setShowPPRows((v) => { const next = !v; localStorage.setItem("yosched:showPPRows", String(next)); return next; })}
           className={["ml-4 px-3 py-1 text-sm rounded transition-colors", showPPRows ? "bg-indigo-700 hover:bg-indigo-600 text-indigo-100" : "bg-slate-700 hover:bg-slate-600 text-slate-400"].join(" ")}
           title="Toggle pay period hour totals"
         >
