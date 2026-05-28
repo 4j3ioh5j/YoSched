@@ -307,6 +307,15 @@ export function ScheduleGrid({
   });
   const monthPickerRef = useRef<HTMLDivElement>(null);
 
+  // Resizable split between grid and alerts
+  const [alertSplitPct, setAlertSplitPct] = useState(() => {
+    if (typeof window === "undefined") return 80;
+    const saved = localStorage.getItem("yosched:alertSplitPct");
+    return saved !== null ? Number(saved) : 80;
+  });
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const splitDragging = useRef(false);
+
   // Shift+drag-select state
   const dragSelecting = useRef(false);
   const dragSelectMoved = useRef(false);
@@ -1439,9 +1448,9 @@ export function ScheduleGrid({
         </div>
       )}
 
-      <div className="flex-1 flex overflow-hidden">
+      <div ref={splitContainerRef} className="flex-1 flex overflow-hidden">
       {/* Scrollable grid area */}
-      <div ref={scrollRef} className="flex-1 overflow-auto">
+      <div ref={scrollRef} className="overflow-auto" style={{ width: alerts.length > 0 ? `${alertSplitPct}%` : "100%" }}>
         <table className="border-collapse text-sm">
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-800">
@@ -1682,16 +1691,40 @@ export function ScheduleGrid({
         </table>
       </div>
 
-      {/* Alerts sidebar */}
+      {/* Resize handle + Alerts sidebar */}
       {alerts.length > 0 && (
-        <div data-print-hide className="w-52 shrink-0 border-l border-slate-700 bg-slate-900/50 overflow-y-auto">
+        <>
+        <div
+          data-print-hide
+          className="w-1 shrink-0 cursor-col-resize bg-slate-700 hover:bg-blue-500 active:bg-blue-400 transition-colors"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            splitDragging.current = true;
+            let lastPct = alertSplitPct;
+            const onMove = (ev: MouseEvent) => {
+              if (!splitDragging.current || !splitContainerRef.current) return;
+              const rect = splitContainerRef.current.getBoundingClientRect();
+              lastPct = Math.min(95, Math.max(50, ((ev.clientX - rect.left) / rect.width) * 100));
+              setAlertSplitPct(lastPct);
+            };
+            const onUp = () => {
+              splitDragging.current = false;
+              localStorage.setItem("yosched:alertSplitPct", String(lastPct));
+              document.removeEventListener("mousemove", onMove);
+              document.removeEventListener("mouseup", onUp);
+            };
+            document.addEventListener("mousemove", onMove);
+            document.addEventListener("mouseup", onUp);
+          }}
+        />
+        <div data-print-hide className="shrink-0 bg-slate-900/50 overflow-y-auto flex flex-col" style={{ width: `${100 - alertSplitPct}%` }}>
           <div className="sticky top-0 bg-slate-900 px-3 py-2 border-b border-slate-700">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
               Alerts
             </span>
             <span className="ml-1.5 text-[11px] text-slate-500">{alerts.length}</span>
           </div>
-          <div className="px-2 py-1">
+          <div className="px-2 py-1 overflow-y-auto">
             {alerts.map((a, i) => (
               <div
                 key={i}
@@ -1712,6 +1745,7 @@ export function ScheduleGrid({
             ))}
           </div>
         </div>
+        </>
       )}
       </div>
 
