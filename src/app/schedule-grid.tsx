@@ -117,6 +117,7 @@ type Props = {
   fairnessAverages?: {
     desirabilityScore: number;
     holidayWorkCount: number;
+    perShift: Record<string, number>;
   };
   followRules?: FollowRuleRow[];
   countColumns?: { label: string; shiftCodes: string[] }[];
@@ -1457,9 +1458,11 @@ export function ScheduleGrid({
                 const fTooltip = fe
                   ? `${p.name} (${empLabel})\n` +
                     `Equity: ${fLabel}\n` +
-                    `Desirability: ${-fe.displayDeviation.desirability > 0 ? "+" : ""}${(-fe.displayDeviation.desirability).toFixed(2)}σ\n` +
-                    `Holiday work: ${fe.metrics.holidayWorkCount} (avg ${fairnessAverages?.holidayWorkCount.toFixed(1)})\n` +
-                    `Work days: ${fe.metrics.totalWorkDays} | Leave: ${fe.metrics.totalLeaveDays}`
+                    `Desirability: ${fe.metrics.desirabilityScore} (avg ${fairnessAverages?.desirabilityScore.toFixed(1)})\n` +
+                    `Holiday: ${fe.metrics.holidayWorkCount} (avg ${fairnessAverages?.holidayWorkCount.toFixed(1)})\n` +
+                    `CALL: ${fe.metrics.shiftCounts["CALL"] ?? 0} (avg ${(fairnessAverages?.perShift["CALL"] ?? 0).toFixed(1)})\n` +
+                    `ORC: ${fe.metrics.shiftCounts["ORC"] ?? 0} (avg ${(fairnessAverages?.perShift["ORC"] ?? 0).toFixed(1)})\n` +
+                    `ORL: ${fe.metrics.shiftCounts["ORL"] ?? 0} (avg ${(fairnessAverages?.perShift["ORL"] ?? 0).toFixed(1)})`
                   : `${p.name} (${empLabel})`;
                 return (
                   <th
