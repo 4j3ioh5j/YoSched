@@ -553,8 +553,10 @@ export function ScheduleGrid({
       return;
     }
 
-    // Plain click on a selected cell — just keep it selected
+    // Plain click on a selected cell — open picker, keep selection
     if (selection.size > 0 && selection.has(cellKey)) {
+      const pos = pickerPositionForCell(providerId, date);
+      setPicker({ providerId, date, ...pos });
       return;
     }
 
