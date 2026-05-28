@@ -1248,7 +1248,7 @@ export function ScheduleGrid({
                       const target = pp.targetHours * p.ftePercentage;
                       const diff = hours - target;
                       const pct = target > 0 ? hours / target : 0;
-                      const isPPHighlighted = activeCol === p.id || hoverCol === p.id;
+
 
                       let color = "text-slate-500";
                       if (hours > 0) {
@@ -1262,7 +1262,7 @@ export function ScheduleGrid({
                         <td
                           key={p.id}
                           className="px-0 py-1 text-center border-slate-600/50 border border-y-indigo-500/60"
-                          style={isPPHighlighted ? { backgroundColor: "rgba(29,78,216,0.35)" } : undefined}
+                          style={undefined}
                           title={`${p.initials}: ${hours}/${target}hrs (${diff >= 0 ? "+" : ""}${diff})`}
                         >
                           <div className={`text-[10px] font-mono font-bold ${color}`}>
@@ -1340,7 +1340,7 @@ export function ScheduleGrid({
                     const isDragTarget = dragOver === cellKey;
                     const isDragSrc = dragSource?.providerId === p.id && dragSource?.date === date;
                     const isSelected = selection.has(cellKey);
-                    const isHighlighted = activeCol === p.id || hoverCol === p.id || isActiveRow;
+                    const isActiveCell = activeCol === p.id && isActiveRow;
                     const suggestion = suggestionMap.get(cellKey);
                     const isSuggested = !!suggestion;
 
@@ -1350,15 +1350,16 @@ export function ScheduleGrid({
                         className={[
                           `px-0.5 py-0.5 text-center border-slate-700/30 border relative ${canEdit ? "cursor-pointer" : "cursor-default"}`,
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
-                          !isHighlighted && !ppEven ? "bg-slate-800/20" : "",
+                          !ppEven ? "bg-slate-800/20" : "",
                           isPickerTarget ? "ring-1 ring-inset ring-blue-400" : "",
                           isSelected ? "ring-2 ring-inset ring-emerald-400 bg-emerald-900/20" : "",
                           isDragTarget ? "ring-2 ring-inset ring-cyan-400 bg-cyan-900/20" : "",
                           isDragSrc ? "opacity-30" : "",
                           isSuggested && !a ? "bg-emerald-900/30" : "",
                           !a && !isSaving && !isSuggested ? "hover:bg-slate-700/30" : "",
+                          isActiveCell ? "ring-2 ring-inset ring-blue-400 z-[2]" : "",
                         ].join(" ")}
-                        style={isHighlighted ? { backgroundColor: "rgba(29,78,216,0.35)" } : undefined}
+                        style={isActiveCell ? { backgroundColor: "rgba(29,78,216,0.45)" } : undefined}
                         onClick={(e) => handleCellClick(p.id, date, e)}
                         onDragOver={(e) => handleDragOver(p.id, date, e)}
                         onDragLeave={handleDragLeave}
