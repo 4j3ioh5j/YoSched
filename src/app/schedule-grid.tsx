@@ -297,6 +297,11 @@ export function ScheduleGrid({
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [selectionAnchor, setSelectionAnchor] = useState<{ providerId: string; date: string } | null>(null);
 
+  // Shift+drag-select state
+  const dragSelecting = useRef(false);
+  const dragSelectMoved = useRef(false);
+  const dragSelectAnchor = useRef<{ providerId: string; date: string } | null>(null);
+
   // Undo/redo stacks — each entry is a group of changes applied together
   type UndoOp = { providerId: string; date: string; prev: AssignmentData | null; next: AssignmentData | null };
   type UndoEntry = UndoOp[];
@@ -515,23 +520,11 @@ export function ScheduleGrid({
     const cellKey = `${providerId}:${date}`;
 
     if (e.shiftKey) {
-      // Shift+click: range select, no picker
-      if (selectionAnchor && selectionAnchor.providerId === providerId) {
-        const anchorIdx = dates.indexOf(selectionAnchor.date);
-        const targetIdx = dates.indexOf(date);
-        if (anchorIdx !== -1 && targetIdx !== -1) {
-          const start = Math.min(anchorIdx, targetIdx);
-          const end = Math.max(anchorIdx, targetIdx);
-          const newSel = new Set<string>();
-          for (let i = start; i <= end; i++) {
-            const k = `${providerId}:${dates[i]}`;
-            const a = assignmentMap.get(k);
-            if (!a?.isLocked) newSel.add(k);
-          }
-          setSelection(newSel);
-        }
+      if (dragSelectMoved.current) { dragSelectMoved.current = false; return; }
+      // Shift+click: rectangular range select from anchor
+      if (selectionAnchor) {
+        setSelection(computeRectSelection(selectionAnchor, { providerId, date }));
       } else {
-        // No anchor or different provider — start fresh selection
         setSelection(new Set([cellKey]));
         setSelectionAnchor({ providerId, date });
       }
@@ -595,6 +588,56 @@ export function ScheduleGrid({
     const pos = pickerPositionForCell(providerId, date);
     setPicker({ providerId, date, ...pos });
   }
+
+  function computeRectSelection(anchor: { providerId: string; date: string }, target: { providerId: string; date: string }): Set<string> {
+    const aDateIdx = dates.indexOf(anchor.date);
+    const tDateIdx = dates.indexOf(target.date);
+    const aProvIdx = providers.findIndex((p) => p.id === anchor.providerId);
+    const tProvIdx = providers.findIndex((p) => p.id === target.providerId);
+    if (aDateIdx === -1 || tDateIdx === -1 || aProvIdx === -1 || tProvIdx === -1) return new Set();
+    const dStart = Math.min(aDateIdx, tDateIdx);
+    const dEnd = Math.max(aDateIdx, tDateIdx);
+    const pStart = Math.min(aProvIdx, tProvIdx);
+    const pEnd = Math.max(aProvIdx, tProvIdx);
+    const sel = new Set<string>();
+    for (let di = dStart; di <= dEnd; di++) {
+      for (let pi = pStart; pi <= pEnd; pi++) {
+        const k = `${providers[pi].id}:${dates[di]}`;
+        if (!assignmentMap.get(k)?.isLocked) sel.add(k);
+      }
+    }
+    return sel;
+  }
+
+  function handleCellMouseDown(providerId: string, date: string, e: React.MouseEvent) {
+    if (!canEdit || e.button !== 0 || !e.shiftKey) return;
+    e.preventDefault();
+    dragSelecting.current = true;
+    dragSelectMoved.current = false;
+    dragSelectAnchor.current = { providerId, date };
+    setSelection(new Set([`${providerId}:${date}`]));
+    setSelectionAnchor({ providerId, date });
+    setActiveRow(date);
+    setActiveCol(providerId);
+    setPicker(null);
+  }
+
+  function handleCellMouseEnter(providerId: string, date: string) {
+    if (!dragSelecting.current || !dragSelectAnchor.current) return;
+    dragSelectMoved.current = true;
+    const sel = computeRectSelection(dragSelectAnchor.current, { providerId, date });
+    setSelection(sel);
+    setActiveRow(date);
+    setActiveCol(providerId);
+  }
+
+  useEffect(() => {
+    function onMouseUp() {
+      dragSelecting.current = false;
+    }
+    document.addEventListener("mouseup", onMouseUp);
+    return () => document.removeEventListener("mouseup", onMouseUp);
+  }, []);
 
   function pushUndo(ops: UndoOp[]) {
     undoStack.current.push(ops);
@@ -719,6 +762,7 @@ export function ScheduleGrid({
     const cells: { providerId: string; date: string }[] = [];
     if (selection.size > 0) {
       for (const key of selection) {
+        if (assignmentMap.get(key)?.isLocked) continue;
         const [pid, d] = key.split(":");
         cells.push({ providerId: pid, date: d });
       }
@@ -793,12 +837,14 @@ export function ScheduleGrid({
     const cells: { providerId: string; date: string }[] = [];
     if (selection.size > 0) {
       for (const key of selection) {
+        if (assignmentMap.get(key)?.isLocked) continue;
         const [pid, d] = key.split(":");
         cells.push({ providerId: pid, date: d });
       }
     } else {
       cells.push({ providerId: picker.providerId, date: picker.date });
     }
+    if (cells.length === 0) { setPicker(null); return; }
 
     // Build undo group
     const undoOps: UndoOp[] = cells.map(({ providerId, date }) => {
@@ -880,12 +926,16 @@ export function ScheduleGrid({
     const cells: { providerId: string; date: string }[] = [];
     if (!target && selection.size > 0) {
       for (const key of selection) {
-        const [pid, d] = key.split(":");
-        if (assignmentMap.has(key)) cells.push({ providerId: pid, date: d });
+        const a = assignmentMap.get(key);
+        if (a && !a.isLocked) {
+          const [pid, d] = key.split(":");
+          cells.push({ providerId: pid, date: d });
+        }
       }
     } else if (anchor) {
       const key = `${anchor.providerId}:${anchor.date}`;
-      if (assignmentMap.has(key)) {
+      const a = assignmentMap.get(key);
+      if (a && !a.isLocked) {
         cells.push(anchor);
       }
     }
@@ -1499,6 +1549,8 @@ export function ScheduleGrid({
                           isActiveCell ? "ring-2 ring-inset ring-blue-400 z-[2]" : "",
                         ].join(" ")}
                         style={isActiveCell ? { backgroundColor: "rgba(29,78,216,0.45)" } : undefined}
+                        onMouseDown={(e) => handleCellMouseDown(p.id, date, e)}
+                        onMouseEnter={() => { handleCellMouseEnter(p.id, date); setHoverCol(p.id); }}
                         onClick={(e) => handleCellClick(p.id, date, e)}
                         onContextMenu={(e) => handleCellContextMenu(p.id, date, e)}
                         onDragOver={(e) => handleDragOver(p.id, date, e)}
