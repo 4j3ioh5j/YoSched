@@ -307,11 +307,11 @@ export function ScheduleGrid({
   });
   const monthPickerRef = useRef<HTMLDivElement>(null);
 
-  // Resizable split between grid and alerts
-  const [alertSplitPct, setAlertSplitPct] = useState(() => {
-    if (typeof window === "undefined") return 80;
-    const saved = localStorage.getItem("yosched:alertSplitPct");
-    return saved !== null ? Number(saved) : 80;
+  // Resizable alerts panel width (pixels)
+  const [alertWidth, setAlertWidth] = useState(() => {
+    if (typeof window === "undefined") return 220;
+    const saved = localStorage.getItem("yosched:alertWidth");
+    return saved !== null ? Number(saved) : 220;
   });
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const splitDragging = useRef(false);
@@ -1450,7 +1450,7 @@ export function ScheduleGrid({
 
       <div ref={splitContainerRef} className="flex-1 flex overflow-hidden">
       {/* Scrollable grid area */}
-      <div ref={scrollRef} className="overflow-auto shrink-0" style={{ width: alerts.length > 0 ? `calc(${alertSplitPct}% - 2px)` : "100%" }}>
+      <div ref={scrollRef} className="flex-1 min-w-0 overflow-auto">
         <table className="border-collapse text-sm">
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-800">
@@ -1700,16 +1700,16 @@ export function ScheduleGrid({
           onMouseDown={(e) => {
             e.preventDefault();
             splitDragging.current = true;
-            let lastPct = alertSplitPct;
+            let lastWidth = alertWidth;
             const onMove = (ev: MouseEvent) => {
               if (!splitDragging.current || !splitContainerRef.current) return;
               const rect = splitContainerRef.current.getBoundingClientRect();
-              lastPct = Math.min(95, Math.max(50, ((ev.clientX - rect.left) / rect.width) * 100));
-              setAlertSplitPct(lastPct);
+              lastWidth = Math.min(rect.width * 0.5, Math.max(120, rect.right - ev.clientX));
+              setAlertWidth(lastWidth);
             };
             const onUp = () => {
               splitDragging.current = false;
-              localStorage.setItem("yosched:alertSplitPct", String(lastPct));
+              localStorage.setItem("yosched:alertWidth", String(Math.round(lastWidth)));
               document.removeEventListener("mousemove", onMove);
               document.removeEventListener("mouseup", onUp);
             };
@@ -1717,7 +1717,7 @@ export function ScheduleGrid({
             document.addEventListener("mouseup", onUp);
           }}
         />
-        <div data-print-hide className="flex-1 min-w-0 bg-slate-900/50 overflow-y-auto flex flex-col">
+        <div data-print-hide className="shrink-0 bg-slate-900/50 overflow-y-auto flex flex-col" style={{ width: alertWidth }}>
           <div className="sticky top-0 bg-slate-900 px-3 py-2 border-b border-slate-700">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
               Alerts
