@@ -46,6 +46,7 @@ type ShiftType = {
   defaultHours: number;
   countsTowardFte: boolean;
   countsOnWeekend: boolean;
+  hotkey?: string | null;
 };
 
 type PayPeriod = {
@@ -334,6 +335,14 @@ export function ScheduleGrid({
   const shiftTypeMap = useMemo(() => {
     const map = new Map<string, ShiftType>();
     for (const st of shiftTypes) map.set(st.id, st);
+    return map;
+  }, [shiftTypes]);
+
+  const hotkeyMap = useMemo(() => {
+    const map = new Map<string, ShiftType>();
+    for (const st of shiftTypes) {
+      if (st.hotkey) map.set(st.hotkey.toUpperCase(), st);
+    }
     return map;
   }, [shiftTypes]);
 
@@ -694,10 +703,86 @@ export function ScheduleGrid({
         const el = document.querySelector(`[data-cell="${newProv.id}:${newDate}"]`);
         el?.scrollIntoView({ block: "nearest", inline: "nearest" });
       }
+      if (!picker && canEdit && e.key.length === 1 && /^[a-zA-Z]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey && (activeRow || selection.size > 0)) {
+        const st = hotkeyMap.get(e.key.toUpperCase());
+        if (st) {
+          e.preventDefault();
+          hotkeyAssignRef.current(st);
+        }
+      }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, providers]);
+  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, providers, hotkeyMap, selection]);
+
+  const hotkeyAssign = useCallback(async (st: ShiftType) => {
+    const cells: { providerId: string; date: string }[] = [];
+    if (selection.size > 0) {
+      for (const key of selection) {
+        const [pid, d] = key.split(":");
+        cells.push({ providerId: pid, date: d });
+      }
+    } else if (activeCol && activeRow) {
+      const existing = assignmentMap.get(`${activeCol}:${activeRow}`);
+      if (existing?.isLocked) return;
+      cells.push({ providerId: activeCol, date: activeRow });
+    }
+    if (cells.length === 0) return;
+
+    const undoOps: UndoOp[] = cells.map(({ providerId, date }) => {
+      const prev = assignmentMap.get(`${providerId}:${date}`) ?? null;
+      const next: AssignmentData = {
+        id: `temp-${providerId}:${date}`,
+        providerId,
+        date,
+        shiftTypeId: st.id,
+        isLocked: false,
+        code: st.code,
+        color: st.color,
+      };
+      return { providerId, date, prev, next };
+    });
+    pushUndo(undoOps);
+
+    setPicker(null);
+    setSelection(new Set());
+    setSelectionAnchor(null);
+    setSaving("bulk");
+
+    setLocalAssignments((prev) => {
+      const keys = new Set(cells.map((c) => `${c.providerId}:${c.date}`));
+      const filtered = prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`));
+      const temps = cells.map((c) => ({
+        id: `temp-${c.providerId}:${c.date}`,
+        providerId: c.providerId,
+        date: c.date,
+        shiftTypeId: st.id,
+        isLocked: false,
+        code: st.code,
+        color: st.color,
+      }));
+      return [...filtered, ...temps];
+    });
+
+    try {
+      const res = await fetch("/api/assignments/bulk", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cells, shiftTypeId: st.id }),
+      });
+      if (res.ok) {
+        const { applied } = await res.json() as { applied: AssignmentData[] };
+        setLocalAssignments((prev) => {
+          const savedKeys = new Set(applied.map((s) => `${s.providerId}:${s.date}`));
+          return [...prev.filter((a) => !savedKeys.has(`${a.providerId}:${a.date}`)), ...applied];
+        });
+      }
+    } catch { /* optimistic stays */ }
+    setSaving(null);
+  }, [selection, activeCol, activeRow, assignmentMap]);
+
+  const hotkeyAssignRef = useRef(hotkeyAssign);
+  useEffect(() => { hotkeyAssignRef.current = hotkeyAssign; }, [hotkeyAssign]);
 
   const handleSelect = useCallback(async (shiftTypeId: string) => {
     if (!picker) return;

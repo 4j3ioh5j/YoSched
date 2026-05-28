@@ -29,6 +29,7 @@ export async function PUT(req: NextRequest) {
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
       maxPerDay: data.maxPerDay ?? null,
       autoSchedulable: data.autoSchedulable ?? false,
+      hotkey: data.hotkey ?? null,
     },
   });
   return NextResponse.json(updated);
@@ -63,6 +64,7 @@ export async function POST(req: NextRequest) {
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
       maxPerDay: data.maxPerDay ?? null,
       autoSchedulable: data.autoSchedulable ?? false,
+      hotkey: data.hotkey ?? null,
     },
   });
 

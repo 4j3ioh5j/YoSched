@@ -24,6 +24,7 @@ type ShiftType = {
   ignoresWorkingDays: boolean;
   maxPerDay: number | null;
   autoSchedulable: boolean;
+  hotkey: string | null;
 };
 
 type StaffingReq = {
@@ -483,6 +484,7 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
         ignoresWorkingDays: created.ignoresWorkingDays ?? false,
         maxPerDay: created.maxPerDay ?? null,
         autoSchedulable: created.autoSchedulable ?? false,
+        hotkey: created.hotkey ?? null,
       };
       setShifts((prev) => [...prev, newShift]);
       setEditingId(created.id);
@@ -627,6 +629,9 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
               </FieldRow>
               <FieldRow label="Color" description="Display color on the grid">
                 <input type="color" className="w-8 h-8 rounded cursor-pointer border-0" value={editingShift.color} onChange={(e) => updateField(editingShift.id, "color", e.target.value)} />
+              </FieldRow>
+              <FieldRow label="Quick key" description="Single letter to assign this shift from the keyboard">
+                <input className="w-12 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-center uppercase" maxLength={1} value={editingShift.hotkey ?? ""} onChange={(e) => updateField(editingShift.id, "hotkey", e.target.value.toUpperCase().slice(0, 1) || null)} />
               </FieldRow>
               <FieldRow label="This is a leave type" description="Check if this represents time off (AL, SL, etc.)">
                 <input type="checkbox" checked={editingShift.isLeave} onChange={(e) => updateField(editingShift.id, "isLeave", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />

@@ -50,6 +50,7 @@ model ShiftType {
   noConsecutiveGroup String?
   maxPerDay          Int?
   autoSchedulable    Boolean  @default(false)
+  hotkey             String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
