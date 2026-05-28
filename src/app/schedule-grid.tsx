@@ -1270,14 +1270,6 @@ export function ScheduleGrid({
                     ].join(" ")}>
                       {p.initials}
                     </span>
-                    {fColor && (
-                      <div className="flex justify-center mt-0.5">
-                        <div
-                          className="w-2 h-2 rounded-full"
-                          style={{ backgroundColor: fColor }}
-                        />
-                      </div>
-                    )}
                   </th>
                 );
               })}
@@ -1331,9 +1323,7 @@ export function ScheduleGrid({
                       );
                     })}
                     {countColumns.length > 0 ? (
-                      <td colSpan={countColumns.length} className="px-2 py-1 text-center text-[10px] font-mono border-l border-slate-600 text-indigo-400/60 border-y border-y-indigo-500/60">
-                        {pp.targetHours}
-                      </td>
+                      <td colSpan={countColumns.length} className="px-2 py-1 text-center text-[10px] font-mono border-l border-slate-600 text-indigo-400/60 border-y border-y-indigo-500/60" />
                     ) : (
                       <td className="border-y border-y-indigo-500/60" />
                     )}
