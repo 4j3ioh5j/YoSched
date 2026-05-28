@@ -1654,7 +1654,13 @@ export function ScheduleGrid({
             currentShiftTypeId={selectionCount > 1 ? null : (assignmentMap.get(`${picker.providerId}:${picker.date}`)?.shiftTypeId ?? null)}
             position={{ x: picker.x, y: picker.y }}
             onSelect={handleSelect}
-            onClear={handleClear}
+            onClear={() => {
+              if (selection.size > 0) {
+                handleClear();
+              } else if (picker) {
+                handleClear({ providerId: picker.providerId, date: picker.date });
+              }
+            }}
             onClose={closePicker}
             warnings={pickerWarnings}
             bulkCount={selectionCount > 1 ? selectionCount : undefined}
