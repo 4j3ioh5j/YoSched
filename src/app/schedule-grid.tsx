@@ -551,13 +551,24 @@ export function ScheduleGrid({
       return;
     }
 
-    // Plain click on a selected cell — open picker for the selection
+    // Plain click on a selected cell — just keep it selected
     if (selection.size > 0 && selection.has(cellKey)) {
-      setPicker({ providerId, date, x: e.clientX, y: e.clientY });
       return;
     }
 
-    // Plain click on non-selected cell — clear selection, single-cell picker
+    // Plain click on non-selected cell — select it, no picker
+    setSelection(new Set());
+    setSelectionAnchor({ providerId, date });
+    setPicker(null);
+  }
+
+  function handleCellContextMenu(providerId: string, date: string, e: React.MouseEvent) {
+    e.preventDefault();
+    if (!canEdit) return;
+    const existing = assignmentMap.get(`${providerId}:${date}`);
+    if (existing?.isLocked) return;
+    setActiveRow(date);
+    setActiveCol(providerId);
     setSelection(new Set());
     setSelectionAnchor({ providerId, date });
     setPicker({ providerId, date, x: e.clientX, y: e.clientY });
@@ -617,6 +628,7 @@ export function ScheduleGrid({
 
   const undoRef = useRef(handleUndo);
   const redoRef = useRef(handleRedo);
+  const clearRef = useRef<(target?: { providerId: string; date: string }) => Promise<void>>(async () => {});
   useEffect(() => { undoRef.current = handleUndo; }, [handleUndo]);
   useEffect(() => { redoRef.current = handleRedo; }, [handleRedo]);
 
@@ -633,11 +645,28 @@ export function ScheduleGrid({
       if (e.key === "Escape" && !picker) {
         setSelection(new Set());
         setSelectionAnchor(null);
+        setActiveRow(null);
+        setActiveCol(null);
+      }
+      if (e.key === "Tab" && !picker && canEdit && activeRow && activeCol) {
+        e.preventDefault();
+        const existing = assignmentMap.get(`${activeCol}:${activeRow}`);
+        if (!existing?.isLocked) {
+          setSelection(new Set());
+          setSelectionAnchor({ providerId: activeCol, date: activeRow });
+          const el = document.querySelector(`[data-date="${activeRow}"]`);
+          const rect = el?.getBoundingClientRect();
+          setPicker({ providerId: activeCol, date: activeRow, x: rect?.left ?? 200, y: rect?.top ?? 200 });
+        }
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && !picker && canEdit && activeRow && activeCol) {
+        e.preventDefault();
+        clearRef.current({ providerId: activeCol, date: activeRow });
       }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit]);
+  }, [picker, canEdit, activeRow, activeCol, assignmentMap]);
 
   const handleSelect = useCallback(async (shiftTypeId: string) => {
     if (!picker) return;
@@ -726,20 +755,22 @@ export function ScheduleGrid({
     }
   }, [picker, shiftTypeMap, assignmentMap, selection]);
 
-  const handleClear = useCallback(async () => {
-    if (!picker) return;
+  const handleClear = useCallback(async (target?: { providerId: string; date: string }) => {
+    const anchor = target ?? (picker ? { providerId: picker.providerId, date: picker.date } : null);
+    if (!anchor && selection.size === 0) return;
 
-    // Determine cells to clear: selection or single cell
+    // Explicit target (Delete key) always clears just that cell;
+    // selection path only used from picker (no target)
     const cells: { providerId: string; date: string }[] = [];
-    if (selection.size > 0) {
+    if (!target && selection.size > 0) {
       for (const key of selection) {
         const [pid, d] = key.split(":");
         if (assignmentMap.has(key)) cells.push({ providerId: pid, date: d });
       }
-    } else {
-      const { providerId, date } = picker;
-      if (assignmentMap.has(`${providerId}:${date}`)) {
-        cells.push({ providerId, date });
+    } else if (anchor) {
+      const key = `${anchor.providerId}:${anchor.date}`;
+      if (assignmentMap.has(key)) {
+        cells.push(anchor);
       }
     }
 
@@ -785,6 +816,7 @@ export function ScheduleGrid({
       setSaving(null);
     }
   }, [picker, assignmentMap, selection]);
+  useEffect(() => { clearRef.current = handleClear; }, [handleClear]);
 
   const closePicker = useCallback(() => {
     setPicker(null);
@@ -1361,6 +1393,7 @@ export function ScheduleGrid({
                         ].join(" ")}
                         style={isActiveCell ? { backgroundColor: "rgba(29,78,216,0.45)" } : undefined}
                         onClick={(e) => handleCellClick(p.id, date, e)}
+                        onContextMenu={(e) => handleCellContextMenu(p.id, date, e)}
                         onDragOver={(e) => handleDragOver(p.id, date, e)}
                         onDragLeave={handleDragLeave}
                         onDrop={(e) => handleDrop(p.id, date, e)}
