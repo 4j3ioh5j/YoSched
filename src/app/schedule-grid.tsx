@@ -1381,7 +1381,7 @@ export function ScheduleGrid({
                             title={
                               cw && cw.length > 0
                                 ? cw.map((w) => w.message).join("\n")
-                                : `${p.initials}: ${a.code} on ${date}${a.isLocked ? " (locked)" : ""}`
+                                : `${p.initials}: ${a.code} on ${formatDate(parseDate(date), dateFormat)}${a.isLocked ? " (locked)" : ""}`
                             }
                           >
                             {a.code}
