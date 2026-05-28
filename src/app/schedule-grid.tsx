@@ -298,6 +298,7 @@ export function ScheduleGrid({
   const [selectionAnchor, setSelectionAnchor] = useState<{ providerId: string; date: string } | null>(null);
 
   const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [showPPRows, setShowPPRows] = useState(true);
   const monthPickerRef = useRef<HTMLDivElement>(null);
 
   // Shift+drag-select state
@@ -1339,8 +1340,15 @@ export function ScheduleGrid({
           {formatDate(parseDate(dates[0]), dateFormat)} – {formatDate(parseDate(dates[dates.length - 1]), dateFormat)}
         </span>
         <button
+          onClick={() => setShowPPRows((v) => !v)}
+          className={["ml-4 px-3 py-1 text-sm rounded transition-colors", showPPRows ? "bg-indigo-700 hover:bg-indigo-600 text-indigo-100" : "bg-slate-700 hover:bg-slate-600 text-slate-400"].join(" ")}
+          title="Toggle pay period hour totals"
+        >
+          PP Totals
+        </button>
+        <button
           onClick={() => window.print()}
-          className="ml-4 px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
+          className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
           title="Print this month"
         >
           Print
@@ -1474,6 +1482,7 @@ export function ScheduleGrid({
           <tbody>
             {rowItems.map((item) => {
               if (item.type === "pp-summary") {
+                if (!showPPRows) return null;
                 const { pp, ppIndex } = item;
                 const provHours = ppHours.get(pp.startDate);
                 return (
@@ -1483,14 +1492,13 @@ export function ScheduleGrid({
                       style={{ background: "#1a2340" }}
                     >
                       <span className="text-indigo-400">PP {ppIndex + 1}</span>
-                      <span className="text-slate-500 ml-1">hrs</span>
+                      <span className="text-slate-500 ml-1">+/–</span>
                     </td>
                     {providers.map((p) => {
                       const hours = provHours?.get(p.id) ?? 0;
                       const target = pp.targetHours * p.ftePercentage;
                       const diff = hours - target;
                       const pct = target > 0 ? hours / target : 0;
-
 
                       let color = "text-slate-500";
                       if (hours > 0) {
@@ -1500,15 +1508,16 @@ export function ScheduleGrid({
                         else color = "text-slate-400";
                       }
 
+                      const diffLabel = diff >= 0 ? `+${diff}` : `${diff}`;
+
                       return (
                         <td
                           key={p.id}
                           className="px-0 py-1 text-center border-slate-600/50 border border-y-indigo-500/60"
-                          style={undefined}
-                          title={`${p.initials}: ${hours}/${target}hrs (${diff >= 0 ? "+" : ""}${diff})`}
+                          title={`${p.initials}: ${hours}hrs / ${target}hrs target (${diffLabel})`}
                         >
                           <div className={`text-[10px] font-mono font-bold ${color}`}>
-                            {hours > 0 ? hours : "–"}
+                            {hours > 0 ? diffLabel : "–"}
                           </div>
                         </td>
                       );
