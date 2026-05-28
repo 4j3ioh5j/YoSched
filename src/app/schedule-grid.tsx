@@ -728,7 +728,11 @@ export function ScheduleGrid({
       }
       if ((e.key === "Delete" || e.key === "Backspace") && !picker && canEdit && activeRow && activeCol) {
         e.preventDefault();
-        clearRef.current({ providerId: activeCol, date: activeRow });
+        if (selection.size > 0) {
+          clearRef.current();
+        } else {
+          clearRef.current({ providerId: activeCol, date: activeRow });
+        }
       }
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) && !picker && activeRow && activeCol) {
         e.preventDefault();
