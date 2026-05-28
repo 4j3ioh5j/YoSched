@@ -297,6 +297,9 @@ export function ScheduleGrid({
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [selectionAnchor, setSelectionAnchor] = useState<{ providerId: string; date: string } | null>(null);
 
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const monthPickerRef = useRef<HTMLDivElement>(null);
+
   // Shift+drag-select state
   const dragSelecting = useRef(false);
   const dragSelectMoved = useRef(false);
@@ -641,6 +644,17 @@ export function ScheduleGrid({
     return () => document.removeEventListener("mouseup", onMouseUp);
   }, []);
 
+  useEffect(() => {
+    if (!showMonthPicker) return;
+    function onClick(e: MouseEvent) {
+      if (monthPickerRef.current && !monthPickerRef.current.contains(e.target as Node)) {
+        setShowMonthPicker(false);
+      }
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [showMonthPicker]);
+
   function pushUndo(ops: UndoOp[]) {
     undoStack.current.push(ops);
     redoStack.current = [];
@@ -701,6 +715,10 @@ export function ScheduleGrid({
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      if (showMonthPicker) {
+        if (e.key === "Escape") setShowMonthPicker(false);
+        return;
+      }
       if (canEdit && (e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
         undoRef.current();
@@ -762,7 +780,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, providers, hotkeyMap, selection]);
+  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, providers, hotkeyMap, selection, showMonthPicker]);
 
   const hotkeyAssign = useCallback(async (st: ShiftType) => {
     const cells: { providerId: string; date: string }[] = [];
@@ -1286,9 +1304,37 @@ export function ScheduleGrid({
         >
           →
         </button>
-        <span className="ml-4 text-base font-semibold text-slate-200">
-          {MONTH_NAMES[viewMonth]} {viewYear}
-        </span>
+        <div className="relative ml-4" ref={monthPickerRef}>
+          <button
+            onClick={() => setShowMonthPicker((v) => !v)}
+            className="text-base font-semibold text-slate-200 hover:text-white hover:bg-slate-700 px-2 py-0.5 rounded transition-colors"
+          >
+            {MONTH_NAMES[viewMonth]} {viewYear}
+          </button>
+          {showMonthPicker && (
+            <div className="absolute top-full left-0 mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-3 w-[240px]">
+              <div className="flex items-center justify-between mb-2">
+                <button onClick={() => setViewYear((y) => y - 1)} className="px-2 py-0.5 text-sm text-slate-400 hover:text-white hover:bg-slate-700 rounded">←</button>
+                <span className="text-sm font-semibold text-slate-200">{viewYear}</span>
+                <button onClick={() => setViewYear((y) => y + 1)} className="px-2 py-0.5 text-sm text-slate-400 hover:text-white hover:bg-slate-700 rounded">→</button>
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                {MONTH_NAMES.map((name, i) => (
+                  <button
+                    key={i}
+                    onClick={() => { setViewMonth(i); setShowMonthPicker(false); }}
+                    className={[
+                      "px-2 py-1.5 text-xs rounded transition-colors",
+                      i === viewMonth ? "bg-blue-600 text-white font-semibold" : "text-slate-300 hover:bg-slate-700",
+                    ].join(" ")}
+                  >
+                    {name.slice(0, 3)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         <span className="ml-2 text-xs text-slate-500">
           {formatDate(parseDate(dates[0]), dateFormat)} – {formatDate(parseDate(dates[dates.length - 1]), dateFormat)}
         </span>
