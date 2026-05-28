@@ -1450,7 +1450,7 @@ export function ScheduleGrid({
 
       <div ref={splitContainerRef} className="flex-1 flex overflow-hidden">
       {/* Scrollable grid area */}
-      <div ref={scrollRef} className="overflow-auto" style={{ width: alerts.length > 0 ? `${alertSplitPct}%` : "100%" }}>
+      <div ref={scrollRef} className="overflow-auto shrink-0" style={{ width: alerts.length > 0 ? `calc(${alertSplitPct}% - 2px)` : "100%" }}>
         <table className="border-collapse text-sm">
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-800">
@@ -1717,7 +1717,7 @@ export function ScheduleGrid({
             document.addEventListener("mouseup", onUp);
           }}
         />
-        <div data-print-hide className="shrink-0 bg-slate-900/50 overflow-y-auto flex flex-col" style={{ width: `${100 - alertSplitPct}%` }}>
+        <div data-print-hide className="flex-1 min-w-0 bg-slate-900/50 overflow-y-auto flex flex-col">
           <div className="sticky top-0 bg-slate-900 px-3 py-2 border-b border-slate-700">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
               Alerts
