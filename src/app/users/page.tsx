@@ -21,7 +21,7 @@ export default async function Page() {
   return (
     <>
       <NavHeader />
-      <UsersPage initialUsers={users} currentUserId={sessionRole!.userId} deviceTrustDays={prefs?.deviceTrustDays ?? 30} />
+      <UsersPage initialUsers={users} currentUserId={sessionRole!.userId} deviceTrustDays={prefs?.deviceTrustDays ?? 30} dateFormat={prefs?.dateFormat ?? "MMMM D, YYYY"} />
     </>
   );
 }

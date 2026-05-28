@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useEscape } from "@/lib/use-escape";
+import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 
 type LoginLogEntry = {
   id: string;
@@ -34,11 +35,14 @@ export function UsersPage({
   initialUsers,
   currentUserId,
   deviceTrustDays: initialTrustDays,
+  dateFormat: dateFormatProp,
 }: {
   initialUsers: User[];
   currentUserId: string;
   deviceTrustDays: number;
+  dateFormat?: string;
 }) {
+  const dateFormat = (dateFormatProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
   const [users, setUsers] = useState(initialUsers);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -284,7 +288,7 @@ export function UsersPage({
           </tbody>
         </table>
 
-        <LoginLogSection />
+        <LoginLogSection dateFormat={dateFormat} />
       </div>
     </main>
   );
@@ -301,7 +305,7 @@ const REASON_LABELS: Record<string, { label: string; color: string }> = {
   totp_verified: { label: "TOTP verified", color: "text-green-400" },
 };
 
-function LoginLogSection() {
+function LoginLogSection({ dateFormat }: { dateFormat: DateFormatKey }) {
   const [logs, setLogs] = useState<LoginLogEntry[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -348,7 +352,7 @@ function LoginLogSection() {
                 return (
                   <tr key={log.id} className="border-b border-slate-800/30 hover:bg-slate-800/20">
                     <td className="py-1.5 px-3 text-slate-500 font-mono whitespace-nowrap">
-                      {new Date(log.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}
+                      {(() => { const dt = new Date(log.createdAt); return `${formatDate(dt, dateFormat)} ${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`; })()}
                     </td>
                     <td className="py-1.5 px-3 text-slate-300">{log.email}</td>
                     <td className="py-1.5 px-3">

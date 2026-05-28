@@ -22,6 +22,9 @@ git pull --ff-only
 echo "--- pnpm install"
 pnpm install --frozen-lockfile
 
+echo "--- prisma migrate"
+npx prisma migrate deploy
+
 echo "--- prisma generate"
 npx prisma generate
 

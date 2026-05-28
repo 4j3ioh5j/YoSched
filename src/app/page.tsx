@@ -160,6 +160,7 @@ export default async function Home() {
           label: c.label,
           shiftCodes: c.shiftCodes,
         }))}
+        dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
       />
     </main>
   );

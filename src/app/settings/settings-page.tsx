@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEscape } from "@/lib/use-escape";
+import { DATE_FORMAT_OPTIONS } from "@/lib/date-format";
 
 type ShiftType = {
   id: string;
@@ -57,6 +58,7 @@ type SchedulingPrefs = {
   prefer3DayWeekends: boolean;
   prefer4DayWeekends: boolean;
   preferSequentialOff: boolean;
+  dateFormat: string;
 };
 
 type DefaultAvailabilityRule = {
@@ -1682,6 +1684,59 @@ function EquityFactorsSection({
   );
 }
 
+function DateFormatSection({ initial }: { initial: string }) {
+  const [selected, setSelected] = useState<string>(initial);
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+
+  async function save(format: string) {
+    setSelected(format);
+    setStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dateFormat: format }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setSelected(initial);
+      setError(e instanceof Error ? e.message : "Failed");
+      setStatus("error");
+    }
+  }
+
+  return (
+    <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
+      <SectionHeader
+        title="Date Format"
+        description="Choose how dates are displayed throughout the application."
+        status={status}
+        error={error}
+      />
+      <div className="grid grid-cols-3 gap-2 mt-4">
+        {DATE_FORMAT_OPTIONS.map((opt) => (
+          <button
+            key={opt.key}
+            onClick={() => save(opt.key)}
+            className={[
+              "flex items-center justify-between px-4 py-3 rounded-lg border text-sm transition-colors",
+              selected === opt.key
+                ? "bg-blue-600/20 border-blue-500 text-blue-300"
+                : "bg-slate-700/30 border-slate-600/50 text-slate-300 hover:border-slate-500",
+            ].join(" ")}
+          >
+            <span className="font-medium">{opt.label}</span>
+            <span className="text-xs text-slate-500 ml-3">{opt.key}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
   const [prefs, setPrefs] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
@@ -2199,6 +2254,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
+        <DateFormatSection initial={schedulingPrefs.dateFormat} />
         <SchedulingPrefsSection initial={schedulingPrefs} />
         <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} />
         <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} />

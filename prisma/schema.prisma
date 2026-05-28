@@ -247,6 +247,7 @@ model SchedulingPreferences {
   equityThresholdMed    Float   @default(0.75)
   equityThresholdHigh   Float   @default(1.5)
   deviceTrustDays       Int     @default(30)
+  dateFormat            String  @default("MMMM D, YYYY")
 
   @@map("scheduling_preferences")
 }

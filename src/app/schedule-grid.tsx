@@ -5,6 +5,7 @@ import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
+import { formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 
 type AvailabilityRuleData = {
   dayOfWeek: number;
@@ -117,6 +118,7 @@ type Props = {
   };
   followRules?: FollowRuleRow[];
   countColumns?: { label: string; shiftCodes: string[] }[];
+  dateFormat?: string;
 };
 
 type PickerState = {
@@ -171,12 +173,12 @@ function getMonthDateRange(year: number, month: number, _payPeriods: PayPeriod[]
   return dates;
 }
 
-function formatDateLabel(dateStr: string): { day: string; date: string; dow: number; dayNum: number; month: number } {
+function formatDateLabel(dateStr: string, dateFormat: DateFormatKey = DEFAULT_DATE_FORMAT): { day: string; date: string; dow: number; dayNum: number; month: number } {
   const d = parseDate(dateStr);
   const dow = d.getDay();
   return {
     day: DAY_NAMES[dow],
-    date: `${d.getMonth() + 1}/${d.getDate()}`,
+    date: formatDateCompact(d, dateFormat),
     dow,
     dayNum: d.getDate(),
     month: d.getMonth(),
@@ -250,7 +252,9 @@ export function ScheduleGrid({
   fairnessAverages,
   followRules,
   countColumns = [],
+  dateFormat: dateFormatProp,
 }: Props) {
+  const dateFormat = (dateFormatProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
@@ -1279,7 +1283,7 @@ export function ScheduleGrid({
               }
 
               const { date } = item;
-              const label = formatDateLabel(date);
+              const label = formatDateLabel(date, dateFormat);
               const isWeekend = label.dow === 0 || label.dow === 6;
               const isHoliday = holidaySet.has(date);
               const isOutsideMonth = date < firstOfMonth || date > lastOfMonth;

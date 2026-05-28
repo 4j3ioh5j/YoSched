@@ -29,6 +29,7 @@ export default async function Settings() {
     prefer3DayWeekends: schedulingPrefsRow?.prefer3DayWeekends ?? true,
     prefer4DayWeekends: schedulingPrefsRow?.prefer4DayWeekends ?? true,
     preferSequentialOff: schedulingPrefsRow?.preferSequentialOff ?? true,
+    dateFormat: schedulingPrefsRow?.dateFormat ?? "MMMM D, YYYY",
   };
 
   return (
