@@ -154,7 +154,7 @@ export function GroupsSection({ canEdit }: { canEdit: boolean }) {
               {groups.map((group) => (
                 <tr key={group.id} className="border-b border-slate-800/50 hover:bg-slate-800/30">
                   <td className="py-2 px-2">
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${GROUP_BADGE[group.name] || "bg-slate-600 text-slate-300"}`}>
+                    <span className={`inline-block w-[88px] text-center text-xs py-0.5 rounded ${GROUP_BADGE[group.name] || "bg-slate-600 text-slate-300"}`}>
                       {group.name}
                     </span>
                     {group.isSystem && <span className="ml-1.5 text-[10px] text-slate-600">system</span>}

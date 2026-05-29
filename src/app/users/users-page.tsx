@@ -331,9 +331,10 @@ export function UsersPage({
           </tbody>
         </table>
 
-        <LoginLogSection dateFormat={dateFormat} />
-
-        {canViewGroups && <GroupsSection canEdit={canEditGroups} />}
+        <div className="mt-6 space-y-4">
+          <LoginLogSection dateFormat={dateFormat} />
+          {canViewGroups && <GroupsSection canEdit={canEditGroups} />}
+        </div>
       </div>
     </main>
   );
@@ -365,53 +366,55 @@ function LoginLogSection({ dateFormat }: { dateFormat: DateFormatKey }) {
   }, [expanded, loaded]);
 
   return (
-    <div className="mt-8">
+    <section className="bg-slate-800/50 border border-slate-700/50 rounded-lg">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors"
+        className="w-full flex items-center justify-between px-4 py-3 text-left"
       >
-        <span className="text-xs">{expanded ? "▼" : "▶"}</span>
-        Login Activity
-        {logs.length > 0 && <span className="text-xs text-slate-600">({logs.length})</span>}
+        <h2 className="text-sm font-medium text-slate-300">
+          Login Activity
+          {logs.length > 0 && <span className="ml-2 text-xs text-slate-600">({logs.length})</span>}
+        </h2>
+        <span className="text-xs text-slate-500">{expanded ? "▼" : "▶"}</span>
       </button>
       {expanded && (
-        <div className="mt-3 border border-slate-800 rounded-lg overflow-hidden">
+        <div className="px-4 pb-4">
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-left text-slate-500 bg-slate-800/60 border-b border-slate-800">
-                <th className="py-2 px-3">Time</th>
-                <th className="py-2 px-3">Email</th>
-                <th className="py-2 px-3">Result</th>
-                <th className="py-2 px-3">Detail</th>
-                <th className="py-2 px-3">IP</th>
-                <th className="py-2 px-3">Browser</th>
+              <tr className="text-left text-slate-500 border-b border-slate-700">
+                <th className="py-2 px-2">Time</th>
+                <th className="py-2 px-2">Email</th>
+                <th className="py-2 px-2">Result</th>
+                <th className="py-2 px-2">Detail</th>
+                <th className="py-2 px-2">IP</th>
+                <th className="py-2 px-2">Browser</th>
               </tr>
             </thead>
             <tbody>
               {logs.length === 0 && loaded && (
-                <tr><td colSpan={6} className="py-4 px-3 text-center text-slate-600">No login activity recorded yet.</td></tr>
+                <tr><td colSpan={6} className="py-4 px-2 text-center text-slate-600">No login activity recorded yet.</td></tr>
               )}
               {logs.map((log) => {
                 const r = log.reason ? REASON_LABELS[log.reason] : null;
                 const ua = log.userAgent?.replace(/^Mozilla\/5\.0 \(/, "")?.split(")")[0] || log.userAgent;
                 return (
-                  <tr key={log.id} className="border-b border-slate-800/30 hover:bg-slate-800/20">
-                    <td className="py-1.5 px-3 text-slate-500 font-mono whitespace-nowrap">
+                  <tr key={log.id} className="border-b border-slate-800/50 hover:bg-slate-800/30">
+                    <td className="py-1.5 px-2 text-slate-500 font-mono whitespace-nowrap">
                       {(() => { const dt = new Date(log.createdAt); return `${formatDate(dt, dateFormat)} ${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`; })()}
                     </td>
-                    <td className="py-1.5 px-3 text-slate-300">{log.email}</td>
-                    <td className="py-1.5 px-3">
+                    <td className="py-1.5 px-2 text-slate-300">{log.email}</td>
+                    <td className="py-1.5 px-2">
                       {log.success ? (
                         <span className="text-green-400">Success</span>
                       ) : (
                         <span className="text-red-400">Failed</span>
                       )}
                     </td>
-                    <td className="py-1.5 px-3">
+                    <td className="py-1.5 px-2">
                       <span className={r?.color || "text-slate-500"}>{r?.label || log.reason || "—"}</span>
                     </td>
-                    <td className="py-1.5 px-3 text-slate-500 font-mono">{log.ipAddress || "—"}</td>
-                    <td className="py-1.5 px-3 text-slate-600 truncate max-w-[200px]" title={log.userAgent || ""}>{ua || "—"}</td>
+                    <td className="py-1.5 px-2 text-slate-500 font-mono">{log.ipAddress || "—"}</td>
+                    <td className="py-1.5 px-2 text-slate-600 truncate max-w-[200px]" title={log.userAgent || ""}>{ua || "—"}</td>
                   </tr>
                 );
               })}
@@ -419,6 +422,6 @@ function LoginLogSection({ dateFormat }: { dateFormat: DateFormatKey }) {
           </table>
         </div>
       )}
-    </div>
+    </section>
   );
 }
