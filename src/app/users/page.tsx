@@ -31,6 +31,8 @@ export default async function Page() {
         currentUserId={result.userId!}
         currentGroupLevel={result.groupLevel!}
         groups={groups}
+        canViewGroups={result.permissions!.includes("groups:view")}
+        canEditGroups={result.permissions!.includes("groups:edit")}
         deviceTrustDays={prefs?.deviceTrustDays ?? 30}
         dateFormat={prefs?.dateFormat ?? "MMMM D, YYYY"}
       />

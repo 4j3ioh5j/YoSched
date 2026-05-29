@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
+import { GroupsSection } from "../settings/groups-section";
 
 type LoginLogEntry = {
   id: string;
@@ -45,6 +46,8 @@ export function UsersPage({
   currentUserId,
   currentGroupLevel,
   groups,
+  canViewGroups,
+  canEditGroups,
   deviceTrustDays: initialTrustDays,
   dateFormat: dateFormatProp,
 }: {
@@ -52,6 +55,8 @@ export function UsersPage({
   currentUserId: string;
   currentGroupLevel: number;
   groups: GroupOption[];
+  canViewGroups: boolean;
+  canEditGroups: boolean;
   deviceTrustDays: number;
   dateFormat?: string;
 }) {
@@ -327,6 +332,8 @@ export function UsersPage({
         </table>
 
         <LoginLogSection dateFormat={dateFormat} />
+
+        {canViewGroups && <GroupsSection canEdit={canEditGroups} />}
       </div>
     </main>
   );

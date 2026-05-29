@@ -109,7 +109,6 @@ type Props = {
   shiftCodes: string[];
   followRules: FollowRuleData[];
   countColumns: { id: string; label: string; shiftCodes: string[] }[];
-  groupsSection?: React.ReactNode;
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -2253,7 +2252,7 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, countColumns: initialCountColumns, groupsSection }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, countColumns: initialCountColumns }: Props) {
   const undo = useUndo();
   const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
 
@@ -2270,7 +2269,6 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <SchedulingPrefsSection initial={schedulingPrefs} />
         <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
         <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
-        {groupsSection}
       </div>
 
       {undo.pending && (

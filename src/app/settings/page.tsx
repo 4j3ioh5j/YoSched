@@ -1,6 +1,5 @@
 import { prisma } from "@/lib/prisma";
 import { SettingsPage } from "./settings-page";
-import { GroupsSection } from "./groups-section";
 import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
@@ -11,8 +10,6 @@ export default async function Settings() {
   const { error, permissions } = await getSession("settings:view");
   if (error) redirect("/");
   const canEditSettings = permissions!.includes("settings:edit");
-  const canViewGroups = permissions!.includes("groups:view");
-  const canEditGroups = permissions!.includes("groups:edit");
   const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors, followRules, countColumns] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
@@ -123,7 +120,6 @@ export default async function Settings() {
           label: c.label,
           shiftCodes: c.shiftCodes,
         }))}
-        groupsSection={canViewGroups ? <GroupsSection canEdit={canEditGroups} /> : null}
       />
     </main>
   );
