@@ -340,7 +340,9 @@ export function autoSchedule({
   });
 
   function getCell(providerId: string, date: string) {
-    return grid.get(`${providerId}:${date}`);
+    const cell = grid.get(`${providerId}:${date}`);
+    if (cell && offShift && cell.shiftTypeId === offShift.id && !cell.locked) return undefined;
+    return cell;
   }
 
   function isAssigned(providerId: string, date: string): boolean {
