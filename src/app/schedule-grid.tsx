@@ -1451,7 +1451,7 @@ export function ScheduleGrid({
       <div ref={splitContainerRef} className="flex-1 flex overflow-hidden">
       {/* Scrollable grid area */}
       <div ref={scrollRef} className="shrink-0 overflow-auto" style={{ width: `calc(100% - ${alerts.length > 0 ? alertWidth + 4 : 0}px)` }}>
-        <table className="border-collapse text-sm">
+        <table className="border-collapse text-sm w-full">
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-800">
               <th className="sticky left-0 z-20 bg-slate-800 px-3 py-2 text-left text-xs font-medium text-slate-400 border-b border-r border-slate-700 w-[88px] min-w-[88px]">
