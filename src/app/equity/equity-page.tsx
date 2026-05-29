@@ -170,15 +170,15 @@ function OverviewCharts({ data, trackedShiftCodes, allShiftCodes, showHoliday }:
 }
 
 const RADAR_PARAM_TIPS: Record<string, string> = {
-  "Undesirable": "Desirability burden score.\nCounts shifts weighted by how undesirable they are.\nHigher = more undesirable shifts worked.",
-  "Holidays": "Number of holidays worked.\nHolidays are high-burden dates shared equitably.",
+  "Undesirable": "Desirability burden score. Counts shifts weighted by how undesirable they are. Higher = more undesirable shifts worked.",
+  "Holidays": "Number of holidays worked. Holidays are high-burden dates shared equitably across staff.",
 };
 
 function radarParamTip(label: string): string {
-  return RADAR_PARAM_TIPS[label] ?? `Count of ${label} shifts assigned.\nTracked as an equity factor for fair distribution.`;
+  return RADAR_PARAM_TIPS[label] ?? `Count of ${label} shifts assigned. Tracked as an equity factor for fair distribution.`;
 }
 
-const RADAR_INFO = `This radar chart compares one staff member (blue) against the\ndepartment median (dashed gray) across all tracked equity factors.\n\nFTE-Normalized mode: Values are z-scores (standard deviations\nfrom the mean), adjusted for each person's FTE percentage.\nOutward from the dashed line = more burden than average.\n\nActual Counts mode: Raw shift counts with dept median overlay.\n\nOpp-Adjusted mode: Desirability is adjusted so providers are\nonly compared against shifts they're eligible to work.`;
+const RADAR_INFO = "This radar chart compares one staff member (blue) against the department median (dashed gray) across all tracked equity factors.\n\nFTE-Normalized mode: Values are z-scores (standard deviations from the mean), adjusted for each person's FTE percentage. Outward from the dashed line = more burden than average.\n\nActual Counts mode: Raw shift counts with department median overlay.\n\nOpp-Adjusted mode: Desirability is adjusted so providers are only compared against shifts they're eligible to work.";
 
 function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThresholds, globalMaxDev, onClose, setTip }: {
   row: EquityRow;
@@ -401,16 +401,16 @@ function SortHeader({ label, sortId, className, title, sortKey, sortAsc, onSort,
 }
 
 const COLUMN_FORMULAS: Record<string, string> = {
-  desirability: "FTE-normalized z-score of undesirable shift burden.\nFormula: -(count / FTE - dept_mean) / std_dev\nPositive = fewer undesirable shifts than average.",
-  oppAdj: "Opportunity-adjusted desirability z-score.\nOnly counts shift types the provider is eligible for.\nFormula: -(count / FTE - expected) / std_dev\nControls for providers who can't work certain shifts.",
-  holiday: "Raw count of holidays worked.\nNot FTE-normalized — holidays are assigned\nregardless of FTE percentage.",
-  hours: "Total hours from FTE-counted shifts only.\nExcludes leave, off days, and shifts\nwhere countsTowardFte = false.",
-  workDays: "Total days with a work-category assignment.\nIncludes OR, ADM, PREOP, PAIN, ICU, etc.",
-  leaveDays: "Total days with a leave-category assignment.\nIncludes AL, SL, HOL, PPL, AA, ILD, JD.",
+  desirability: "FTE-normalized z-score of undesirable shift burden.\n\nFormula: -(count / FTE - dept_mean) / std_dev\n\nPositive = fewer undesirable shifts than average.",
+  oppAdj: "Opportunity-adjusted desirability z-score. Only counts shift types the provider is eligible for.\n\nFormula: -(count / FTE - expected) / std_dev\n\nControls for providers who can't work certain shifts.",
+  holiday: "Raw count of holidays worked. Not FTE-normalized — holidays are assigned regardless of FTE percentage.",
+  hours: "Total hours from FTE-counted shifts only. Excludes leave, off days, and shifts where countsTowardFte = false.",
+  workDays: "Total days with a work-category assignment. Includes OR, ADM, PREOP, PAIN, ICU, etc.",
+  leaveDays: "Total days with a leave-category assignment. Includes AL, SL, HOL, PPL, AA, ILD, JD.",
 };
 
 function shiftFormula(code: string) {
-  return `Raw count of ${code} shifts assigned.\nCompare to the FTE-normalized department\naverage shown in the summary cards above.`;
+  return `Raw count of ${code} shifts assigned. Compare to the FTE-normalized department average shown in the summary cards above.`;
 }
 
 export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds, activeFactors }: Props) {
