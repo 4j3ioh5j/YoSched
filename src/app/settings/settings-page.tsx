@@ -1,8 +1,11 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
+
+const CanEditContext = createContext(true);
+function useCanEdit() { return useContext(CanEditContext); }
 
 type ShiftType = {
   id: string;
@@ -109,6 +112,7 @@ type Props = {
   shiftCodes: string[];
   followRules: FollowRuleData[];
   countColumns: { id: string; label: string; shiftCodes: string[] }[];
+  canEdit?: boolean;
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -252,6 +256,7 @@ function FollowRulesEditor({ sourceShiftId, allShifts, state, onChange }: {
   state: FollowRuleState;
   onChange: (state: FollowRuleState) => void;
 }) {
+  const canEdit = useCanEdit();
   const candidates = allShifts.filter((s) => !s.isOffShift);
 
   return (
@@ -259,12 +264,13 @@ function FollowRulesEditor({ sourceShiftId, allShifts, state, onChange }: {
       <FieldRow label="Restrict follow shifts" description="Limit which shifts can be assigned the day after this one">
         <input
           type="checkbox"
+          disabled={!canEdit}
           checked={state.enabled}
           onChange={(e) => onChange(e.target.checked
             ? { enabled: true, mode: "allow", allowOffShifts: true, checkedIds: new Set() }
             : { enabled: false, mode: "allow", allowOffShifts: false, checkedIds: new Set() }
           )}
-          className="rounded border-slate-600 w-4 h-4"
+          className="rounded border-slate-600 w-4 h-4 disabled:opacity-50"
         />
       </FieldRow>
       {state.enabled && (
@@ -272,15 +278,15 @@ function FollowRulesEditor({ sourceShiftId, allShifts, state, onChange }: {
           <div className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() => onChange({ ...state, mode: "allow", checkedIds: new Set(), allowOffShifts: false })}
-              className={`px-2.5 py-1 text-[11px] rounded transition-colors ${state.mode === "allow" ? "bg-emerald-600/20 text-emerald-400 border border-emerald-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
+              onClick={() => canEdit && onChange({ ...state, mode: "allow", checkedIds: new Set(), allowOffShifts: false })}
+              className={`px-2.5 py-1 text-[11px] rounded transition-colors ${state.mode === "allow" ? "bg-emerald-600/20 text-emerald-400 border border-emerald-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"} ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               Allow
             </button>
             <button
               type="button"
-              onClick={() => onChange({ ...state, mode: "block", checkedIds: new Set(), allowOffShifts: false })}
-              className={`px-2.5 py-1 text-[11px] rounded transition-colors ${state.mode === "block" ? "bg-red-600/20 text-red-400 border border-red-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
+              onClick={() => canEdit && onChange({ ...state, mode: "block", checkedIds: new Set(), allowOffShifts: false })}
+              className={`px-2.5 py-1 text-[11px] rounded transition-colors ${state.mode === "block" ? "bg-red-600/20 text-red-400 border border-red-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"} ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               Block
             </button>
@@ -288,9 +294,10 @@ function FollowRulesEditor({ sourceShiftId, allShifts, state, onChange }: {
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
+              disabled={!canEdit}
               checked={state.allowOffShifts}
               onChange={(e) => onChange({ ...state, allowOffShifts: e.target.checked })}
-              className="rounded border-slate-600 w-3.5 h-3.5"
+              className="rounded border-slate-600 w-3.5 h-3.5 disabled:opacity-50"
             />
             <span className="text-slate-300">{state.mode === "allow" ? "Any off-shift" : "Block off-shifts"}</span>
           </label>
@@ -298,6 +305,7 @@ function FollowRulesEditor({ sourceShiftId, allShifts, state, onChange }: {
             <label key={s.id} className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
+                disabled={!canEdit}
                 checked={state.checkedIds.has(s.id)}
                 onChange={(e) => {
                   const next = new Set(state.checkedIds);
@@ -305,7 +313,7 @@ function FollowRulesEditor({ sourceShiftId, allShifts, state, onChange }: {
                   else next.delete(s.id);
                   onChange({ ...state, checkedIds: next });
                 }}
-                className="rounded border-slate-600 w-3.5 h-3.5"
+                className="rounded border-slate-600 w-3.5 h-3.5 disabled:opacity-50"
               />
               <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
               <span className="text-slate-300">{s.code}</span>
@@ -319,6 +327,7 @@ function FollowRulesEditor({ sourceShiftId, allShifts, state, onChange }: {
 }
 
 function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial: ShiftType[]; pushUndo: (a: UndoAction) => void; initialFollowRules: FollowRuleData[] }) {
+  const canEdit = useCanEdit();
   const [shifts, setShifts] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
@@ -565,15 +574,15 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
             {shifts.map((st, i) => (
               <tr
                 key={st.id}
-                draggable
-                onDragStart={() => handleDragStart(i)}
-                onDragOver={(e) => handleDragOver(e, i)}
-                onDrop={() => handleDrop(i)}
+                draggable={canEdit}
+                onDragStart={() => canEdit && handleDragStart(i)}
+                onDragOver={(e) => canEdit && handleDragOver(e, i)}
+                onDrop={() => canEdit && handleDrop(i)}
                 onDragEnd={handleDragEnd}
-                className={`transition-colors cursor-pointer ${dragOverIdx === i ? "bg-blue-900/30 border-t border-blue-500" : "hover:bg-slate-700/30"}`}
-                onClick={() => setEditingId(st.id)}
+                className={`transition-colors ${canEdit ? "cursor-pointer" : ""} ${dragOverIdx === i ? "bg-blue-900/30 border-t border-blue-500" : "hover:bg-slate-700/30"}`}
+                onClick={() => canEdit && setEditingId(st.id)}
               >
-                <td className="py-2 px-1 w-8 text-center cursor-grab" onClick={(e) => e.stopPropagation()}>
+                <td className={`py-2 px-1 w-8 text-center ${canEdit ? "cursor-grab" : ""}`} onClick={(e) => e.stopPropagation()}>
                   <span className="text-slate-600 text-xs select-none">⠿</span>
                 </td>
                 <td className="py-2 px-2">
@@ -612,35 +621,35 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
             <div className="px-6 py-4">
               <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Basic Info</div>
               <FieldRow label="Code" description="Short code shown on the grid">
-                <input className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono" value={editingShift.code} onChange={(e) => updateField(editingShift.id, "code", e.target.value.toUpperCase())} />
+                <input disabled={!canEdit} className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono disabled:opacity-50" value={editingShift.code} onChange={(e) => updateField(editingShift.id, "code", e.target.value.toUpperCase())} />
               </FieldRow>
               <FieldRow label="Name" description="Full name of this shift type">
-                <input className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={editingShift.name} onChange={(e) => updateField(editingShift.id, "name", e.target.value)} />
+                <input disabled={!canEdit} className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50" value={editingShift.name} onChange={(e) => updateField(editingShift.id, "name", e.target.value)} />
               </FieldRow>
               <FieldRow label="Hours per shift" description="How many hours this shift counts for">
-                <input type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center" value={editingShift.defaultHours} onChange={(e) => updateField(editingShift.id, "defaultHours", parseFloat(e.target.value) || 0)} />
+                <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.defaultHours} onChange={(e) => updateField(editingShift.id, "defaultHours", parseFloat(e.target.value) || 0)} />
               </FieldRow>
               <FieldRow label="Category" description="Work shifts, leave, or other">
-                <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={editingShift.category} onChange={(e) => updateField(editingShift.id, "category", e.target.value)}>
+                <select disabled={!canEdit} className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50" value={editingShift.category} onChange={(e) => updateField(editingShift.id, "category", e.target.value)}>
                   <option value="work">Work</option>
                   <option value="leave">Leave</option>
                   <option value="other">Other</option>
                 </select>
               </FieldRow>
               <FieldRow label="Color" description="Display color on the grid">
-                <input type="color" className="w-8 h-8 rounded cursor-pointer border-0" value={editingShift.color} onChange={(e) => updateField(editingShift.id, "color", e.target.value)} />
+                <input disabled={!canEdit} type="color" className="w-8 h-8 rounded cursor-pointer border-0 disabled:opacity-50 disabled:cursor-not-allowed" value={editingShift.color} onChange={(e) => updateField(editingShift.id, "color", e.target.value)} />
               </FieldRow>
               <FieldRow label="Quick key" description="Single letter to assign this shift from the keyboard">
-                <input className="w-12 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-center uppercase" maxLength={1} value={editingShift.hotkey ?? ""} onChange={(e) => updateField(editingShift.id, "hotkey", e.target.value.toUpperCase().slice(0, 1) || null)} />
+                <input disabled={!canEdit} className="w-12 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-center uppercase disabled:opacity-50" maxLength={1} value={editingShift.hotkey ?? ""} onChange={(e) => updateField(editingShift.id, "hotkey", e.target.value.toUpperCase().slice(0, 1) || null)} />
               </FieldRow>
               <FieldRow label="This is a leave type" description="Check if this represents time off (AL, SL, etc.)">
-                <input type="checkbox" checked={editingShift.isLeave} onChange={(e) => updateField(editingShift.id, "isLeave", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+                <input disabled={!canEdit} type="checkbox" checked={editingShift.isLeave} onChange={(e) => updateField(editingShift.id, "isLeave", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Counts toward FTE hours" description="Include these hours in pay period totals">
-                <input type="checkbox" checked={editingShift.countsTowardFte} onChange={(e) => updateField(editingShift.id, "countsTowardFte", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+                <input disabled={!canEdit} type="checkbox" checked={editingShift.countsTowardFte} onChange={(e) => updateField(editingShift.id, "countsTowardFte", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Count hours on weekends" description="Include weekend hours in pay period totals">
-                <input type="checkbox" checked={editingShift.countsOnWeekend} onChange={(e) => updateField(editingShift.id, "countsOnWeekend", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+                <input disabled={!canEdit} type="checkbox" checked={editingShift.countsOnWeekend} onChange={(e) => updateField(editingShift.id, "countsOnWeekend", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FollowRulesEditor
                 sourceShiftId={editingShift.id}
@@ -653,60 +662,67 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
             <div className="px-6 py-4 border-t border-slate-700">
               <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Auto-Scheduling Behavior</div>
               <FieldRow label="Auto-schedulable" description="Allow the auto-scheduler to assign this shift. Disable for rare or manually-assigned shifts.">
-                <input type="checkbox" checked={editingShift.autoSchedulable} onChange={(e) => updateField(editingShift.id, "autoSchedulable", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+                <input disabled={!canEdit} type="checkbox" checked={editingShift.autoSchedulable} onChange={(e) => updateField(editingShift.id, "autoSchedulable", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Scheduling order" description="When auto-scheduling, which shifts get assigned first. Lower numbers go first. Leave blank if this shift should not be auto-scheduled.">
-                <input type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center" value={editingShift.schedulePriority ?? ""} placeholder="None" onChange={(e) => updateField(editingShift.id, "schedulePriority", e.target.value ? parseInt(e.target.value) : null)} />
+                <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.schedulePriority ?? ""} placeholder="None" onChange={(e) => updateField(editingShift.id, "schedulePriority", e.target.value ? parseInt(e.target.value) : null)} />
               </FieldRow>
               <FieldRow label="Pair Saturday and Sunday" description="Assign the same person to both Saturday and Sunday when filling this shift on weekends">
-                <input type="checkbox" checked={editingShift.weekendPaired} onChange={(e) => updateField(editingShift.id, "weekendPaired", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+                <input disabled={!canEdit} type="checkbox" checked={editingShift.weekendPaired} onChange={(e) => updateField(editingShift.id, "weekendPaired", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Can be assigned on days off" description="Allow this shift to be assigned even on a provider's non-working days (e.g., weekend call)">
-                <input type="checkbox" checked={editingShift.ignoresWorkingDays} onChange={(e) => updateField(editingShift.id, "ignoresWorkingDays", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+                <input disabled={!canEdit} type="checkbox" checked={editingShift.ignoresWorkingDays} onChange={(e) => updateField(editingShift.id, "ignoresWorkingDays", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Default shift for filling hours" description="Use this shift to fill remaining hours when a provider is under their pay period target">
-                <input type="checkbox" checked={editingShift.isFillShift} onChange={(e) => updateField(editingShift.id, "isFillShift", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+                <input disabled={!canEdit} type="checkbox" checked={editingShift.isFillShift} onChange={(e) => updateField(editingShift.id, "isFillShift", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Represents a day off" description="This shift means the provider is not working (used for post-shift recovery days)">
-                <input type="checkbox" checked={editingShift.isOffShift} onChange={(e) => updateField(editingShift.id, "isOffShift", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+                <input disabled={!canEdit} type="checkbox" checked={editingShift.isOffShift} onChange={(e) => updateField(editingShift.id, "isOffShift", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
 <FieldRow label="Maximum per day" description="Limit how many providers can be assigned this shift on the same day. Set to 1 if only one person should do this shift per day. Leave blank for no limit.">
-                <input type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center" value={editingShift.maxPerDay ?? ""} placeholder="No limit" onChange={(e) => updateField(editingShift.id, "maxPerDay", e.target.value ? parseInt(e.target.value) : null)} />
+                <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.maxPerDay ?? ""} placeholder="No limit" onChange={(e) => updateField(editingShift.id, "maxPerDay", e.target.value ? parseInt(e.target.value) : null)} />
               </FieldRow>
             </div>
 
             <div className="flex items-center justify-between px-6 py-4 border-t border-slate-700">
-              <button
-                onClick={() => deleteShift(editingShift.id)}
-                className="px-3 py-1.5 text-sm bg-red-900/50 hover:bg-red-800 text-red-300 rounded transition-colors"
-              >
-                Delete Shift Type
-              </button>
+              {canEdit && (
+                <button
+                  onClick={() => deleteShift(editingShift.id)}
+                  className="px-3 py-1.5 text-sm bg-red-900/50 hover:bg-red-800 text-red-300 rounded transition-colors"
+                >
+                  Delete Shift Type
+                </button>
+              )}
+              {!canEdit && <div />}
               <div className="flex gap-2">
                 <button
                   onClick={cancelEdit}
                   className="px-4 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors"
                 >
-                  Cancel
+                  {canEdit ? "Cancel" : "Close"}
                 </button>
-                <button
-                  onClick={() => saveShift(editingShift)}
-                  className="px-4 py-1.5 text-sm bg-blue-700 hover:bg-blue-600 rounded transition-colors font-medium"
-                >
-                  Save Changes
-                </button>
+                {canEdit && (
+                  <button
+                    onClick={() => saveShift(editingShift)}
+                    className="px-4 py-1.5 text-sm bg-blue-700 hover:bg-blue-600 rounded transition-colors font-medium"
+                  >
+                    Save Changes
+                  </button>
+                )}
               </div>
             </div>
           </div>
         </div>
       )}
 
-      <button
-        onClick={addShift}
-        className="mt-3 px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
-      >
-        + Add Shift Type
-      </button>
+      {canEdit && (
+        <button
+          onClick={addShift}
+          className="mt-3 px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
+        >
+          + Add Shift Type
+        </button>
+      )}
     </section>
   );
 }
@@ -728,6 +744,7 @@ function StaffingSection({
   shiftTypes: ShiftType[];
   pushUndo: (a: UndoAction) => void;
 }) {
+  const canEdit = useCanEdit();
   const [grid, setGrid] = useState(() => {
     const map: Record<string, number> = {};
     for (const r of initial) map[`${r.shiftCode}:${r.dayKey}`] = r.minCount;
@@ -882,8 +899,8 @@ function StaffingSection({
                 return (
                   <th key={code} className="py-2 px-2 text-center w-16 relative">
                     <button
-                      onClick={() => setEditingCol(isEditing ? null : code)}
-                      className="px-2 py-1 text-xs font-bold font-mono rounded transition-colors hover:brightness-125"
+                      onClick={() => canEdit && setEditingCol(isEditing ? null : code)}
+                      className={`px-2 py-1 text-xs font-bold font-mono rounded transition-colors ${canEdit ? "hover:brightness-125" : ""}`}
                       style={{ backgroundColor: (st?.color ?? "#94a3b8") + "30", color: st?.color ?? "#94a3b8" }}
                     >
                       {code}
@@ -916,15 +933,17 @@ function StaffingSection({
                   </th>
                 );
               })}
-              <th className="py-2 px-2 w-12">
-                <button
-                  onClick={() => setShowAddPicker(!showAddPicker)}
-                  className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-                  title="Add shift column"
-                >
-                  +
-                </button>
-              </th>
+              {canEdit && (
+                <th className="py-2 px-2 w-12">
+                  <button
+                    onClick={() => setShowAddPicker(!showAddPicker)}
+                    className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                    title="Add shift column"
+                  >
+                    +
+                  </button>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-700/50">
@@ -947,7 +966,8 @@ function StaffingSection({
                       <input
                         type="number"
                         min={0}
-                        className="w-12 bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-sm text-center font-mono"
+                        disabled={!canEdit}
+                        className="w-12 bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-sm text-center font-mono disabled:opacity-50"
                         value={grid[`${code}:${day}`] ?? 0}
                         onChange={(e) => updateCell(code, day, parseInt(e.target.value) || 0)}
                       />
@@ -961,7 +981,7 @@ function StaffingSection({
         </table>
       </div>
 
-      {showAddPicker && (
+      {canEdit && showAddPicker && (
         <div ref={addPickerRef} className="mt-2 p-2 bg-slate-800 border border-slate-600 rounded-lg shadow-xl min-w-[200px]">
           <div className="text-[10px] uppercase tracking-wider text-slate-500 px-2 py-1">Add column</div>
           <div className="grid grid-cols-3 gap-0.5">
@@ -982,12 +1002,14 @@ function StaffingSection({
         </div>
       )}
 
-      <button
-        onClick={save}
-        className="mt-4 px-4 py-2 text-sm bg-blue-700 hover:bg-blue-600 rounded transition-colors font-medium"
-      >
-        Save Staffing Rules
-      </button>
+      {canEdit && (
+        <button
+          onClick={save}
+          className="mt-4 px-4 py-2 text-sm bg-blue-700 hover:bg-blue-600 rounded transition-colors font-medium"
+        >
+          Save Staffing Rules
+        </button>
+      )}
     </section>
   );
 }
@@ -1000,6 +1022,7 @@ function formatDateStr(dateStr: string, fmt: DateFormatKey): string {
 }
 
 function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeriod[]; pushUndo: (a: UndoAction) => void; dateFormat: DateFormatKey }) {
+  const canEdit = useCanEdit();
   const [periods, setPeriods] = useState(initial);
   const [startDate, setStartDate] = useState(initial[0]?.startDate ?? "2025-12-14");
   const [periodCount, setPeriodCount] = useState(initial.length || 26);
@@ -1092,16 +1115,19 @@ function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeri
         <div className="flex gap-2 items-center">
           <input
             type="number"
-            className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm font-mono"
+            disabled={!canEdit}
+            className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm font-mono disabled:opacity-50"
             value={baseHours}
             onChange={(e) => setBaseHours(parseFloat(e.target.value) || 80)}
           />
-          <button
-            onClick={saveBaseHours}
-            className="px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 rounded transition-colors"
-          >
-            {hoursStatus === "saving" ? "Saving…" : hoursStatus === "saved" ? "Saved" : "Save"}
-          </button>
+          {canEdit && (
+            <button
+              onClick={saveBaseHours}
+              className="px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 rounded transition-colors"
+            >
+              {hoursStatus === "saving" ? "Saving…" : hoursStatus === "saved" ? "Saved" : "Save"}
+            </button>
+          )}
           <span className="text-xs text-slate-500">Fractional FTE hours are computed from this value</span>
         </div>
       </div>
@@ -1111,7 +1137,8 @@ function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeri
           <label className="text-xs text-slate-400 block mb-1">First Period Start</label>
           <input
             type="date"
-            className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm"
+            disabled={!canEdit}
+            className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm disabled:opacity-50"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
           />
@@ -1121,16 +1148,19 @@ function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeri
           <div className="flex gap-2">
             <input
               type="number"
-              className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm"
+              disabled={!canEdit}
+              className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm disabled:opacity-50"
               value={periodCount}
               onChange={(e) => setPeriodCount(parseInt(e.target.value) || 26)}
             />
-            <button
-              onClick={regenerate}
-              className="px-3 py-1.5 text-xs bg-amber-700 hover:bg-amber-600 rounded transition-colors"
-            >
-              Regenerate
-            </button>
+            {canEdit && (
+              <button
+                onClick={regenerate}
+                className="px-3 py-1.5 text-xs bg-amber-700 hover:bg-amber-600 rounded transition-colors"
+              >
+                Regenerate
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1160,6 +1190,7 @@ function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeri
 // ─── Holidays Section ───────────────────────────────────────────────────────
 
 function HolidaysSection({ initial, payPeriods, pushUndo, dateFormat }: { initial: Holiday[]; payPeriods: PayPeriod[]; pushUndo: (a: UndoAction) => void; dateFormat: DateFormatKey }) {
+  const canEdit = useCanEdit();
   const [holidays, setHolidays] = useState(initial);
   const [newDate, setNewDate] = useState("");
   const [newName, setNewName] = useState("");
@@ -1292,38 +1323,42 @@ function HolidaysSection({ initial, payPeriods, pushUndo, dateFormat }: { initia
         error={error}
       />
 
-      <div className="mb-4">
-        <button
-          onClick={autoPopulate}
-          className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
-        >
-          Auto-populate federal holidays ({coveredYears.join(", ")})
-        </button>
-      </div>
+      {canEdit && (
+        <div className="mb-4">
+          <button
+            onClick={autoPopulate}
+            className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
+          >
+            Auto-populate federal holidays ({coveredYears.join(", ")})
+          </button>
+        </div>
+      )}
 
-      <div className="flex gap-2 mb-4">
-        <input
-          type="date"
-          className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm"
-          value={newDate}
-          onChange={(e) => setNewDate(e.target.value)}
-        />
-        <input
-          type="text"
-          placeholder="Holiday name"
-          className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm flex-1 max-w-xs"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && addHoliday()}
-        />
-        <button
-          onClick={addHoliday}
-          disabled={!newDate || !newName}
-          className="px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed rounded transition-colors"
-        >
-          Add
-        </button>
-      </div>
+      {canEdit && (
+        <div className="flex gap-2 mb-4">
+          <input
+            type="date"
+            className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm"
+            value={newDate}
+            onChange={(e) => setNewDate(e.target.value)}
+          />
+          <input
+            type="text"
+            placeholder="Holiday name"
+            className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm flex-1 max-w-xs"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addHoliday()}
+          />
+          <button
+            onClick={addHoliday}
+            disabled={!newDate || !newName}
+            className="px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed rounded transition-colors"
+          >
+            Add
+          </button>
+        </div>
+      )}
 
       {holidays.length === 0 ? (
         <p className="text-sm text-slate-500 italic">No holidays configured</p>
@@ -1336,12 +1371,14 @@ function HolidaysSection({ initial, payPeriods, pushUndo, dateFormat }: { initia
                   <span className="text-sm font-mono text-slate-400">{formatDateStr(h.date, dateFormat)}</span>
                   <span className="text-sm text-slate-200">{h.name}</span>
                 </div>
-                <button
-                  onClick={() => removeHoliday(h.id)}
-                  className="text-xs text-red-400 hover:text-red-300 transition-colors"
-                >
-                  Remove
-                </button>
+                {canEdit && (
+                  <button
+                    onClick={() => removeHoliday(h.id)}
+                    className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                  >
+                    Remove
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -1377,6 +1414,7 @@ function DesirabilitySection({
   shiftTypes: ShiftType[];
   pushUndo: (a: UndoAction) => void;
 }) {
+  const canEdit = useCanEdit();
   const workShifts = shiftTypes.filter((st) => st.category === "work");
 
   const [grid, setGrid] = useState(() => {
@@ -1470,7 +1508,8 @@ function DesirabilitySection({
                   return (
                     <td key={day} className={`py-1.5 px-1 text-center ${WEIGHT_BG[w] ?? ""}`}>
                       <select
-                        className="bg-transparent border border-slate-600 rounded px-1.5 py-0.5 text-xs text-center cursor-pointer hover:border-slate-400 transition-colors w-14"
+                        disabled={!canEdit}
+                        className="bg-transparent border border-slate-600 rounded px-1.5 py-0.5 text-xs text-center cursor-pointer hover:border-slate-400 transition-colors w-14 disabled:opacity-50 disabled:cursor-not-allowed"
                         value={w}
                         onChange={(e) => setWeight(st.id, day, parseInt(e.target.value))}
                         title={WEIGHT_LABELS[w] || "Neutral"}
@@ -1496,12 +1535,14 @@ function DesirabilitySection({
         </table>
       </div>
       <div className="flex items-center gap-4 mt-4">
-        <button
-          onClick={save}
-          className="px-4 py-2 text-sm bg-blue-700 hover:bg-blue-600 rounded transition-colors font-medium"
-        >
-          Save Desirability
-        </button>
+        {canEdit && (
+          <button
+            onClick={save}
+            className="px-4 py-2 text-sm bg-blue-700 hover:bg-blue-600 rounded transition-colors font-medium"
+          >
+            Save Desirability
+          </button>
+        )}
         <div className="flex items-center gap-3 text-[11px] text-slate-500">
           <span className="inline-block w-3 h-3 rounded bg-red-900/60" /> Terrible (-5)
           <span className="inline-block w-3 h-3 rounded bg-red-900/30" /> Poor (-2)
@@ -1523,6 +1564,7 @@ function EquityFactorsSection({
   initial: EquityFactorData[];
   availableShiftCodes: string[];
 }) {
+  const canEdit = useCanEdit();
   const [factors, setFactors] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
@@ -1597,10 +1639,11 @@ function EquityFactorsSection({
         {factors.map((f, idx) => (
           <div key={idx} className="flex items-center gap-3 bg-slate-700/30 border border-slate-600/50 rounded-lg px-4 py-2.5">
             <button
-              onClick={() => updateFactor(idx, { enabled: !f.enabled })}
+              onClick={() => canEdit && updateFactor(idx, { enabled: !f.enabled })}
               className={[
                 "w-8 h-[20px] rounded-full transition-colors shrink-0 relative",
                 f.enabled ? "bg-blue-600" : "bg-slate-600",
+                !canEdit ? "opacity-50 cursor-not-allowed" : "",
               ].join(" ")}
             >
               <span
@@ -1614,7 +1657,8 @@ function EquityFactorsSection({
             <div className="flex-1 min-w-0">
               {f.factorType === "shift" ? (
                 <select
-                  className="bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-slate-200"
+                  disabled={!canEdit}
+                  className="bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
                   value={f.shiftCode ?? ""}
                   onChange={(e) => updateFactor(idx, { shiftCode: e.target.value })}
                 >
@@ -1636,7 +1680,8 @@ function EquityFactorsSection({
                 min={0.1}
                 max={10}
                 step={0.1}
-                className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-center text-slate-200"
+                disabled={!canEdit}
+                className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-center text-slate-200 disabled:opacity-50"
                 value={f.weight}
                 onChange={(e) => updateFactor(idx, { weight: parseFloat(e.target.value) || 1 })}
               />
@@ -1645,19 +1690,21 @@ function EquityFactorsSection({
               </span>
             </div>
 
-            <button
-              onClick={() => removeFactor(idx)}
-              className="text-slate-600 hover:text-red-400 transition-colors text-sm"
-              title="Remove factor"
-            >
-              ×
-            </button>
+            {canEdit && (
+              <button
+                onClick={() => removeFactor(idx)}
+                className="text-slate-600 hover:text-red-400 transition-colors text-sm"
+                title="Remove factor"
+              >
+                ×
+              </button>
+            )}
           </div>
         ))}
       </div>
 
       <div className="mt-3 flex items-center gap-2">
-        {canAddShift && (
+        {canEdit && canAddShift && (
           <button
             onClick={addShiftFactor}
             className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded transition-colors text-slate-300"
@@ -1665,7 +1712,7 @@ function EquityFactorsSection({
             + Shift code
           </button>
         )}
-        {!hasDesirability && (
+        {canEdit && !hasDesirability && (
           <button
             onClick={() => addBuiltinFactor("desirability")}
             className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded transition-colors text-slate-300"
@@ -1673,7 +1720,7 @@ function EquityFactorsSection({
             + Shift Desirability
           </button>
         )}
-        {!hasHoliday && (
+        {canEdit && !hasHoliday && (
           <button
             onClick={() => addBuiltinFactor("holiday")}
             className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded transition-colors text-slate-300"
@@ -1682,19 +1729,22 @@ function EquityFactorsSection({
           </button>
         )}
         <div className="flex-1" />
-        <button
-          onClick={save}
-          disabled={status === "saving"}
-          className="px-4 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 rounded transition-colors font-medium"
-        >
-          {status === "saving" ? "Saving..." : "Save"}
-        </button>
+        {canEdit && (
+          <button
+            onClick={save}
+            disabled={status === "saving"}
+            className="px-4 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 rounded transition-colors font-medium"
+          >
+            {status === "saving" ? "Saving..." : "Save"}
+          </button>
+        )}
       </div>
     </section>
   );
 }
 
 function DateFormatSection({ selected, onChange }: { selected: string; onChange: (fmt: string) => void }) {
+  const canEdit = useCanEdit();
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
 
@@ -1730,12 +1780,14 @@ function DateFormatSection({ selected, onChange }: { selected: string; onChange:
         {DATE_FORMAT_OPTIONS.map((opt) => (
           <button
             key={opt.key}
-            onClick={() => save(opt.key)}
+            onClick={() => canEdit && save(opt.key)}
+            disabled={!canEdit}
             className={[
               "flex items-center justify-between px-4 py-3 rounded-lg border text-sm transition-colors",
               selected === opt.key
                 ? "bg-blue-600/20 border-blue-500 text-blue-300"
                 : "bg-slate-700/30 border-slate-600/50 text-slate-300 hover:border-slate-500",
+              !canEdit ? "disabled:opacity-60 disabled:cursor-not-allowed" : "",
             ].join(" ")}
           >
             <span className="font-medium">{opt.label}</span>
@@ -1748,6 +1800,7 @@ function DateFormatSection({ selected, onChange }: { selected: string; onChange:
 }
 
 function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
+  const canEdit = useCanEdit();
   const [prefs, setPrefs] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
@@ -1791,10 +1844,11 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
         {items.map(({ key, label, description }) => (
           <label key={key} className="flex items-start gap-3 cursor-pointer group">
             <button
-              onClick={() => toggle(key)}
+              onClick={() => canEdit && toggle(key)}
               className={[
                 "mt-0.5 w-10 h-[22px] rounded-full transition-colors shrink-0 relative",
                 prefs[key] ? "bg-blue-600" : "bg-slate-600",
+                !canEdit ? "opacity-50 cursor-not-allowed" : "",
               ].join(" ")}
             >
               <span
@@ -1822,6 +1876,7 @@ const ET_DAY_INDICES = [0, 1, 2, 3, 4, 5, 6];
 const ET_DAY_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
 
 function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: EmploymentTypeData[]; pushUndo: (a: UndoAction) => void; shiftTypes: ShiftType[] }) {
+  const canEdit = useCanEdit();
   const [types, setTypes] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
@@ -1976,8 +2031,8 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
           {types.map((t) => (
             <tr
               key={t.id}
-              className="hover:bg-slate-700/30 cursor-pointer transition-colors"
-              onClick={() => setEditingId(t.id)}
+              className={`hover:bg-slate-700/30 ${canEdit ? "cursor-pointer" : ""} transition-colors`}
+              onClick={() => canEdit && setEditingId(t.id)}
             >
               <td className="py-2 px-2 font-medium text-slate-200">{t.name}</td>
               <td className="py-2 px-2 text-center">
@@ -2016,21 +2071,21 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
             <div className="px-6 py-4 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-200">Name</span>
-                <input className="w-40 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={et.name} onChange={(e) => updateField(et.id, "name", e.target.value)} />
+                <input disabled={!canEdit} className="w-40 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50" value={et.name} onChange={(e) => updateField(et.id, "name", e.target.value)} />
               </div>
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm text-slate-200">Auto-schedule</div>
                   <div className="text-xs text-slate-500">Include in auto-scheduler by default</div>
                 </div>
-                <input type="checkbox" checked={et.defaultIsAutoScheduled} onChange={(e) => updateField(et.id, "defaultIsAutoScheduled", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
+                <input disabled={!canEdit} type="checkbox" checked={et.defaultIsAutoScheduled} onChange={(e) => updateField(et.id, "defaultIsAutoScheduled", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </div>
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm text-slate-200">FTE percentage</div>
                   <div className="text-xs text-slate-500">Default target hours ratio</div>
                 </div>
-                <select className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={et.defaultFtePercentage} onChange={(e) => updateField(et.id, "defaultFtePercentage", parseFloat(e.target.value))}>
+                <select disabled={!canEdit} className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50" value={et.defaultFtePercentage} onChange={(e) => updateField(et.id, "defaultFtePercentage", parseFloat(e.target.value))}>
                   {[1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0].map((v) => (
                     <option key={v} value={v}>{(v * 100).toFixed(0)}%</option>
                   ))}
@@ -2049,12 +2104,13 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
                           <button
                             key={st.id}
                             onClick={() => {
+                              if (!canEdit) return;
                               const next = isEligible
                                 ? et.defaultEligibleShiftTypeIds.filter((id) => id !== st.id)
                                 : [...et.defaultEligibleShiftTypeIds, st.id];
                               updateField(et.id, "defaultEligibleShiftTypeIds", next);
                             }}
-                            className={`px-2 py-0.5 text-xs font-bold rounded transition-colors border ${isEligible ? "" : "opacity-30"}`}
+                            className={`px-2 py-0.5 text-xs font-bold rounded transition-colors border ${isEligible ? "" : "opacity-30"} ${!canEdit ? "cursor-not-allowed" : ""}`}
                             style={{
                               backgroundColor: isEligible ? st.color + "25" : undefined,
                               color: st.color,
@@ -2077,12 +2133,13 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
                             <button
                               key={st.id}
                               onClick={() => {
+                                if (!canEdit) return;
                                 const next = isEligible
                                   ? et.defaultEligibleShiftTypeIds.filter((id) => id !== st.id)
                                   : [...et.defaultEligibleShiftTypeIds, st.id];
                                 updateField(et.id, "defaultEligibleShiftTypeIds", next);
                               }}
-                              className={`px-2 py-0.5 text-xs font-bold rounded transition-colors border ${isEligible ? "" : "opacity-30"}`}
+                              className={`px-2 py-0.5 text-xs font-bold rounded transition-colors border ${isEligible ? "" : "opacity-30"} ${!canEdit ? "cursor-not-allowed" : ""}`}
                               style={{
                                 backgroundColor: isEligible ? st.color + "25" : undefined,
                                 color: st.color,
@@ -2107,6 +2164,7 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
                       <button
                         key={d}
                         onClick={() => {
+                          if (!canEdit) return;
                           const next = active
                             ? et.defaultAvailabilityRules.filter((r) => r.dayOfWeek !== d)
                             : [...et.defaultAvailabilityRules, { dayOfWeek: d, type: "available", strength: "rule", pattern: "every" }];
@@ -2115,7 +2173,7 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
                         className={[
                           "w-10 h-8 text-xs rounded font-medium transition-colors",
                           active ? "bg-blue-600/50 text-blue-200 border border-blue-500/50" : "bg-slate-700 text-slate-500 border border-slate-600",
-                          "hover:brightness-125",
+                          canEdit ? "hover:brightness-125" : "opacity-50 cursor-not-allowed",
                         ].join(" ")}
                       >
                         {ET_DAY_LABELS[d]}
@@ -2127,29 +2185,33 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
             </div>
 
             <div className="flex items-center justify-between px-6 py-4 border-t border-slate-700">
-              <button
-                onClick={() => deleteType(et.id)}
-                disabled={et.providerCount > 0}
-                title={et.providerCount > 0 ? `${et.providerCount} staff member(s) use this type` : ""}
-                className="px-3 py-1.5 text-xs bg-red-900/50 hover:bg-red-800/50 text-red-400 border border-red-800/50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                Delete
-              </button>
+              {canEdit ? (
+                <button
+                  onClick={() => deleteType(et.id)}
+                  disabled={et.providerCount > 0}
+                  title={et.providerCount > 0 ? `${et.providerCount} staff member(s) use this type` : ""}
+                  className="px-3 py-1.5 text-xs bg-red-900/50 hover:bg-red-800/50 text-red-400 border border-red-800/50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  Delete
+                </button>
+              ) : <div />}
               <div className="flex gap-2">
-                <button onClick={cancelEdit} className="px-4 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors">Cancel</button>
-                <button onClick={() => saveType(et)} className="px-4 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 rounded transition-colors font-medium">Save</button>
+                <button onClick={cancelEdit} className="px-4 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors">{canEdit ? "Cancel" : "Close"}</button>
+                {canEdit && <button onClick={() => saveType(et)} className="px-4 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 rounded transition-colors font-medium">Save</button>}
               </div>
             </div>
           </div>
         </div>
       )}
 
-      <button
-        onClick={addType}
-        className="mt-3 px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
-      >
-        + Add Employment Type
-      </button>
+      {canEdit && (
+        <button
+          onClick={addType}
+          className="mt-3 px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
+        >
+          + Add Employment Type
+        </button>
+      )}
     </section>
   );
 }
@@ -2157,6 +2219,7 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
 // ─── Count Columns Section ──────────────────────────────────────────────────
 
 function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; label: string; shiftCodes: string[] }[]; shiftTypes: ShiftType[] }) {
+  const canEdit = useCanEdit();
   const [columns, setColumns] = useState(initial.map((c) => ({ label: c.label, shiftCodes: [...c.shiftCodes] })));
   const [status, setStatus] = useState<SaveStatus>("idle");
   const allCodes = shiftTypes.filter((st) => !st.isOffShift).map((st) => st.code);
@@ -2209,10 +2272,11 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
                 <span className="text-xs text-slate-500 w-14">Header:</span>
                 <input
                   type="text"
+                  disabled={!canEdit}
                   value={col.label}
                   onChange={(e) => updateLabel(idx, e.target.value)}
                   placeholder="e.g. OR"
-                  className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-sm border border-slate-600 w-32"
+                  className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-sm border border-slate-600 w-32 disabled:opacity-50"
                 />
               </div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -2220,31 +2284,33 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
                 {col.shiftCodes.map((code) => (
                   <span key={code} className="inline-flex items-center gap-0.5 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-xs border border-slate-600">
                     {code}
-                    <button onClick={() => removeCode(idx, code)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>
+                    {canEdit && <button onClick={() => removeCode(idx, code)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>}
                   </span>
                 ))}
-                <select
-                  value=""
-                  onChange={(e) => { if (e.target.value) addCode(idx, e.target.value); }}
-                  className="bg-slate-700 text-slate-400 rounded px-1 py-0.5 text-xs border border-slate-600"
-                >
-                  <option value="">+ add</option>
-                  {allCodes.filter((c) => !col.shiftCodes.includes(c)).map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                {canEdit && (
+                  <select
+                    value=""
+                    onChange={(e) => { if (e.target.value) addCode(idx, e.target.value); }}
+                    className="bg-slate-700 text-slate-400 rounded px-1 py-0.5 text-xs border border-slate-600"
+                  >
+                    <option value="">+ add</option>
+                    {allCodes.filter((c) => !col.shiftCodes.includes(c)).map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                )}
               </div>
             </div>
-            <button onClick={() => removeColumn(idx)} className="text-slate-500 hover:text-red-400 text-sm mt-1">×</button>
+            {canEdit && <button onClick={() => removeColumn(idx)} className="text-slate-500 hover:text-red-400 text-sm mt-1">×</button>}
           </div>
         ))}
       </div>
 
       <div className="flex items-center gap-3 mt-4">
-        <button onClick={addColumn} className="text-xs text-blue-400 hover:text-blue-300">+ Add column</button>
-        <button onClick={save} disabled={status === "saving"} className="ml-auto px-3 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
+        {canEdit && <button onClick={addColumn} className="text-xs text-blue-400 hover:text-blue-300">+ Add column</button>}
+        {canEdit && <button onClick={save} disabled={status === "saving"} className="ml-auto px-3 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
           {status === "saving" ? "Saving..." : "Save"}
-        </button>
+        </button>}
       </div>
     </section>
   );
@@ -2252,13 +2318,19 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, countColumns: initialCountColumns }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, countColumns: initialCountColumns, canEdit = true }: Props) {
   const undo = useUndo();
   const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
 
   return (
+    <CanEditContext.Provider value={canEdit}>
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+        {!canEdit && (
+          <div className="px-4 py-2.5 bg-slate-800/60 border border-slate-700/50 rounded text-xs text-slate-400 text-center">
+            View-only — you do not have permission to edit settings
+          </div>
+        )}
         <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} initialFollowRules={initialFollowRules} />
         <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} shiftTypes={shiftTypes} />
         <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
@@ -2275,5 +2347,6 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <UndoToast action={undo.pending} onUndo={undo.execute} onDismiss={undo.dismiss} />
       )}
     </div>
+    </CanEditContext.Provider>
   );
 }

@@ -120,6 +120,7 @@ export default async function Settings() {
           label: c.label,
           shiftCodes: c.shiftCodes,
         }))}
+        canEdit={canEditSettings}
       />
     </main>
   );
