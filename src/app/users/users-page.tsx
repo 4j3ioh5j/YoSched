@@ -241,15 +241,23 @@ export function UsersPage({
           )}
         </div>
 
-        <table className="w-full text-sm">
+        <table className="w-full text-sm table-fixed">
+          <colgroup>
+            <col className="w-[18%]" />
+            <col />
+            <col className="w-[110px]" />
+            <col className="w-[80px]" />
+            <col className="w-[56px]" />
+            <col className="w-[160px]" />
+          </colgroup>
           <thead>
-            <tr className="text-left text-slate-400 border-b border-slate-800">
-              <th className="py-2 px-3">Name</th>
-              <th className="py-2 px-3">Email</th>
-              <th className="py-2 px-3">Group</th>
-              <th className="py-2 px-3">Status</th>
-              <th className="py-2 px-3">2FA</th>
-              <th className="py-2 px-3 w-40"></th>
+            <tr className="text-left text-slate-400 border-b border-slate-800 text-xs uppercase tracking-wider">
+              <th className="py-2.5 px-3 font-medium">Name</th>
+              <th className="py-2.5 px-3 font-medium">Email</th>
+              <th className="py-2.5 px-3 font-medium">Group</th>
+              <th className="py-2.5 px-3 font-medium">Status</th>
+              <th className="py-2.5 px-3 font-medium">2FA</th>
+              <th className="py-2.5 px-3 font-medium"></th>
             </tr>
           </thead>
           <tbody>
@@ -258,35 +266,35 @@ export function UsersPage({
               const manageable = canManageUser(user);
               return (
                 <tr key={user.id} className={`border-b border-slate-800/50 hover:bg-slate-800/30 ${!user.isActive ? "opacity-50" : ""}`}>
-                  <td className="py-2 px-3">{user.name}</td>
-                  <td className="py-2 px-3 text-slate-400">{user.email}</td>
-                  <td className="py-2 px-3">
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${GROUP_BADGE[gName] || "bg-slate-600 text-slate-300"}`}>
+                  <td className="py-2.5 px-3 truncate">{user.name}</td>
+                  <td className="py-2.5 px-3 text-slate-400 truncate">{user.email}</td>
+                  <td className="py-2.5 px-3">
+                    <span className={`inline-block w-[88px] text-center text-xs py-0.5 rounded ${GROUP_BADGE[gName] || "bg-slate-600 text-slate-300"}`}>
                       {gName || user.role}
                     </span>
                   </td>
-                  <td className="py-2 px-3">
+                  <td className="py-2.5 px-3">
                     {manageable ? (
                       <button
                         onClick={() => handleToggleActive(user)}
-                        className={`text-xs px-1.5 py-0.5 rounded transition-colors ${user.isActive ? "bg-green-800/50 text-green-300 hover:bg-green-800/80" : "bg-red-900/50 text-red-400 hover:bg-red-900/80"}`}
+                        className={`inline-block w-[60px] text-center text-xs py-0.5 rounded transition-colors ${user.isActive ? "bg-green-800/50 text-green-300 hover:bg-green-800/80" : "bg-red-900/50 text-red-400 hover:bg-red-900/80"}`}
                       >
                         {user.isActive ? "Active" : "Disabled"}
                       </button>
                     ) : (
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${user.isActive ? "bg-green-800/50 text-green-300" : "bg-red-900/50 text-red-400"}`}>
+                      <span className={`inline-block w-[60px] text-center text-xs py-0.5 rounded ${user.isActive ? "bg-green-800/50 text-green-300" : "bg-red-900/50 text-red-400"}`}>
                         {user.isActive ? "Active" : "Disabled"}
                       </span>
                     )}
                   </td>
-                  <td className="py-2 px-3">
+                  <td className="py-2.5 px-3">
                     {user.totpEnabled ? (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-green-800/50 text-green-300">On</span>
+                      <span className="inline-block w-[32px] text-center text-xs py-0.5 rounded bg-green-800/50 text-green-300">On</span>
                     ) : (
-                      <span className="text-xs text-slate-600">Off</span>
+                      <span className="inline-block w-[32px] text-center text-xs py-0.5 text-slate-600">Off</span>
                     )}
                   </td>
-                  <td className="py-2 px-3 text-right">
+                  <td className="py-2.5 px-3 text-right whitespace-nowrap">
                     {manageable && user.totpEnabled && (
                       <button
                         onClick={() => handleReset2FA(user.id)}
