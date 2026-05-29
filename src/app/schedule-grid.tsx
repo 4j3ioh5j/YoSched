@@ -269,6 +269,7 @@ export function ScheduleGrid({
   const [activeRow, setActiveRow] = useState<string | null>(null);
   const [activeCol, setActiveCol] = useState<string | null>(null);
   const [hoverCol, setHoverCol] = useState<string | null>(null);
+  const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [autoSuggestions, setAutoSuggestions] = useState<Array<{
     providerId: string;
     date: string;
@@ -1481,10 +1482,13 @@ export function ScheduleGrid({
                     key={p.id}
                     className="px-1 py-1 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer"
                     style={isActiveCol || hoverCol === p.id ? { backgroundColor: "rgba(29,78,216,0.7)" } : undefined}
-                    title={fTooltip}
                     onClick={() => setActiveCol(activeCol === p.id ? null : p.id)}
-                    onMouseEnter={() => setHoverCol(p.id)}
-                    onMouseLeave={() => setHoverCol(null)}
+                    onMouseEnter={(e) => {
+                      setHoverCol(p.id);
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setTooltip({ text: fTooltip, x: rect.left + rect.width / 2, y: rect.bottom + 4 });
+                    }}
+                    onMouseLeave={() => { setHoverCol(null); setTooltip(null); }}
                   >
                     <span className={[
                       !p.isAutoScheduled ? "text-amber-400" : "text-slate-300",
@@ -1771,6 +1775,14 @@ export function ScheduleGrid({
             warnings={pickerWarnings}
             bulkCount={selectionCount > 1 ? selectionCount : undefined}
           />
+        </div>
+      )}
+      {tooltip && (
+        <div
+          className="fixed z-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-slate-200 bg-slate-800 border border-slate-600 rounded shadow-xl whitespace-pre pointer-events-none"
+          style={{ left: tooltip.x, top: tooltip.y, transform: "translateX(-50%)" }}
+        >
+          {tooltip.text}
         </div>
       )}
     </div>
