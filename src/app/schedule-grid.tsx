@@ -1847,7 +1847,7 @@ export function ScheduleGrid({
             el.style.left = `${left}px`;
             el.style.top = `${top}px`;
           }}
-          className="fixed z-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-slate-200 bg-slate-800 border border-slate-600 rounded shadow-xl whitespace-pre pointer-events-none"
+          className="fixed z-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-slate-200 bg-slate-800 border border-slate-600 rounded shadow-xl whitespace-pre-wrap pointer-events-none max-w-xs"
           style={{ left: -9999, top: -9999 }}
         >
           {tooltip.text}
