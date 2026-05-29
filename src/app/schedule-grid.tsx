@@ -1701,10 +1701,13 @@ export function ScheduleGrid({
             e.preventDefault();
             splitDragging.current = true;
             let lastWidth = alertWidth;
+            const tableEl = scrollRef.current?.querySelector("table");
+            const minGridWidth = tableEl ? tableEl.scrollWidth : 400;
             const onMove = (ev: MouseEvent) => {
               if (!splitDragging.current || !splitContainerRef.current) return;
               const rect = splitContainerRef.current.getBoundingClientRect();
-              lastWidth = Math.min(rect.width * 0.5, Math.max(120, rect.right - ev.clientX));
+              const maxAlert = rect.width - minGridWidth - 4;
+              lastWidth = Math.min(maxAlert, Math.max(120, rect.right - ev.clientX));
               setAlertWidth(lastWidth);
             };
             const onUp = () => {
