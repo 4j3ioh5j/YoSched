@@ -8,13 +8,15 @@ type User = {
   email: string;
   name: string;
   role: string;
+  groupName?: string;
   totpEnabled: boolean;
 };
 
-const ROLE_BADGE: Record<string, string> = {
-  admin: "bg-amber-700 text-amber-100",
-  manager: "bg-blue-700 text-blue-100",
-  viewer: "bg-slate-600 text-slate-300",
+const GROUP_BADGE: Record<string, string> = {
+  Admin: "bg-amber-700 text-amber-100",
+  "Super User": "bg-blue-700 text-blue-100",
+  Scheduler: "bg-emerald-700 text-emerald-100",
+  Staff: "bg-slate-600 text-slate-300",
 };
 
 export function AccountPage({ user }: { user: User }) {
@@ -143,10 +145,10 @@ export function AccountPage({ user }: { user: User }) {
               <p className="text-slate-400">{user.email}</p>
             </div>
             <div>
-              <span className="text-slate-500">Role</span>
+              <span className="text-slate-500">Group</span>
               <p>
-                <span className={`text-xs px-1.5 py-0.5 rounded ${ROLE_BADGE[user.role]}`}>
-                  {user.role}
+                <span className={`text-xs px-1.5 py-0.5 rounded ${GROUP_BADGE[user.groupName ?? ""] || "bg-slate-600 text-slate-300"}`}>
+                  {user.groupName || user.role}
                 </span>
               </p>
             </div>

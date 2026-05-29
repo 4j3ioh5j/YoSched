@@ -1,9 +1,9 @@
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/auth-guard";
+import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET() {
-  const { error } = await requireAuth("admin");
+  const { error } = await getSession("settings:view");
   if (error) return error;
 
   const columns = await prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } });
@@ -11,7 +11,7 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
-  const { error } = await requireAuth("admin");
+  const { error } = await getSession("settings:edit");
   if (error) return error;
 
   const { columns } = await req.json();

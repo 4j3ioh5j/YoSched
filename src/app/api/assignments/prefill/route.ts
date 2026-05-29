@@ -1,9 +1,9 @@
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/auth-guard";
+import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireAuth("manager");
+  const { error } = await getSession("schedule:edit");
   if (error) return error;
   const { dates } = await req.json() as { dates: string[] };
   if (!Array.isArray(dates) || dates.length === 0) {

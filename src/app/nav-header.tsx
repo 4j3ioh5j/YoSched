@@ -4,26 +4,27 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 
-const ROLE_LEVEL: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
-
-const NAV_ITEMS = [
-  { label: "Schedule", href: "/", minRole: "viewer" },
-  { label: "Staff", href: "/staff", minRole: "manager" },
-  { label: "Statistics", href: "/equity", minRole: "viewer" },
-  { label: "Settings", href: "/settings", minRole: "admin" },
-  { label: "Users", href: "/users", minRole: "admin" },
+const NAV_ITEMS: { label: string; href: string; requiredPermission: string | null }[] = [
+  { label: "Schedule", href: "/", requiredPermission: null },
+  { label: "Staff", href: "/staff", requiredPermission: "staff:view" },
+  { label: "Statistics", href: "/equity", requiredPermission: "statistics:view" },
+  { label: "Settings", href: "/settings", requiredPermission: "settings:view" },
+  { label: "Users", href: "/users", requiredPermission: "users:view" },
 ];
 
-const ROLE_BADGE: Record<string, string> = {
-  admin: "bg-amber-700 text-amber-100",
-  manager: "bg-blue-700 text-blue-100",
-  viewer: "bg-slate-600 text-slate-300",
+const GROUP_BADGE: Record<string, string> = {
+  Admin: "bg-amber-700 text-amber-100",
+  "Super User": "bg-blue-700 text-blue-100",
+  Scheduler: "bg-emerald-700 text-emerald-100",
+  Staff: "bg-slate-600 text-slate-300",
 };
 
 export function NavHeader() {
   const pathname = usePathname();
   const { data: session } = useSession();
-  const role = (session?.user as { role?: string })?.role;
+  const user = session?.user as { permissions?: string[]; groupName?: string } | undefined;
+  const permissions = user?.permissions ?? [];
+  const groupName = user?.groupName ?? "";
 
   return (
     <header data-print-hide className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-900 shrink-0">
@@ -31,7 +32,7 @@ export function NavHeader() {
         YoSched
       </Link>
       <nav className="flex items-center gap-1">
-        {NAV_ITEMS.filter((item) => (ROLE_LEVEL[role ?? "viewer"] ?? 0) >= (ROLE_LEVEL[item.minRole] ?? 0)).map((item) => {
+        {NAV_ITEMS.filter((item) => !item.requiredPermission || permissions.includes(item.requiredPermission)).map((item) => {
           const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
             <Link
@@ -55,9 +56,9 @@ export function NavHeader() {
             <Link href="/account" className="text-sm text-slate-300 hover:text-slate-100 transition-colors">
               {session.user.name}
             </Link>
-            {role && (
-              <span className={`text-xs px-1.5 py-0.5 rounded ${ROLE_BADGE[role] || ROLE_BADGE.viewer}`}>
-                {role}
+            {groupName && (
+              <span className={`text-xs px-1.5 py-0.5 rounded ${GROUP_BADGE[groupName] || "bg-slate-600 text-slate-300"}`}>
+                {groupName}
               </span>
             )}
           </div>

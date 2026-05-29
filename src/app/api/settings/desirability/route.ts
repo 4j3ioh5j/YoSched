@@ -1,9 +1,9 @@
-import { requireAuth } from "@/lib/auth-guard";
+import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 export async function PUT(req: NextRequest) {
-  const { error } = await requireAuth("admin");
+  const { error } = await getSession("settings:edit");
   if (error) return error;
   const { weights } = (await req.json()) as {
     weights: Array<{

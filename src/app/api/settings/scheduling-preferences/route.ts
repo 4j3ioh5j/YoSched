@@ -1,10 +1,10 @@
-import { requireAuth } from "@/lib/auth-guard";
+import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { isValidDateFormat } from "@/lib/date-format";
 
 export async function GET() {
-  const { error } = await requireAuth("admin");
+  const { error } = await getSession("settings:view");
   if (error) return error;
   let prefs = await prisma.schedulingPreferences.findFirst();
   if (!prefs) {
@@ -16,7 +16,7 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
-  const { error } = await requireAuth("admin");
+  const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
   const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat } = body;

@@ -29,6 +29,11 @@ export const authConfig: NextAuthConfig = {
         if ((user as { totpVerifiedAt?: number }).totpVerifiedAt) {
           token.totpVerifiedAt = (user as { totpVerifiedAt: number }).totpVerifiedAt;
         }
+        const u = user as { groupId?: string; groupName?: string; groupLevel?: number; permissions?: string[] };
+        token.groupId = u.groupId;
+        token.groupName = u.groupName;
+        token.groupLevel = u.groupLevel;
+        token.permissions = u.permissions;
       }
       return token;
     },
@@ -37,6 +42,10 @@ export const authConfig: NextAuthConfig = {
         session.user.id = token.sub!;
         (session.user as { role: string }).role = token.role as string;
         (session.user as { totpVerifiedAt?: number }).totpVerifiedAt = token.totpVerifiedAt as number | undefined;
+        (session.user as { groupId?: string }).groupId = token.groupId as string | undefined;
+        (session.user as { groupName?: string }).groupName = token.groupName as string | undefined;
+        (session.user as { groupLevel?: number }).groupLevel = token.groupLevel as number | undefined;
+        (session.user as { permissions?: string[] }).permissions = token.permissions as string[] | undefined;
       }
       return session;
     },

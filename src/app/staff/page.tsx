@@ -1,14 +1,14 @@
 import { prisma } from "@/lib/prisma";
 import { StaffPage } from "./staff-page";
 import { NavHeader } from "../nav-header";
-import { getSessionRole } from "@/lib/auth-guard";
+import { getSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function Staff() {
-  const sessionRole = await getSessionRole();
-  if (!sessionRole || !["admin", "manager"].includes(sessionRole.role)) redirect("/");
+  const { error, permissions } = await getSession("staff:view");
+  if (error) redirect("/");
   const [providers, employmentTypes, allShiftTypes] = await Promise.all([
     prisma.provider.findMany({
       orderBy: { sortOrder: "asc" },

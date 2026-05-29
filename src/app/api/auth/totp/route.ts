@@ -1,12 +1,12 @@
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/auth-guard";
+import { getSession } from "@/lib/auth-guard";
 import { encrypt } from "@/lib/crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { generateSecret, generateURI, verifySync } from "otplib";
 import * as QRCode from "qrcode";
 
 export async function GET() {
-  const { error, session } = await requireAuth("viewer");
+  const { error, session } = await getSession();
   if (error) return error;
 
   const secret = generateSecret();
@@ -17,7 +17,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { error, session } = await requireAuth("viewer");
+  const { error, session } = await getSession();
   if (error) return error;
 
   const { secret, code } = await req.json();
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE() {
-  const { error, session } = await requireAuth("viewer");
+  const { error, session } = await getSession();
   if (error) return error;
 
   await prisma.user.update({

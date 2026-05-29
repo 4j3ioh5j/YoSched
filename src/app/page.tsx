@@ -2,14 +2,15 @@ import { prisma } from "@/lib/prisma";
 import { computeFairness } from "@/lib/fairness";
 import { ScheduleGrid } from "./schedule-grid";
 import { NavHeader } from "./nav-header";
-import { getSessionRole } from "@/lib/auth-guard";
+import { getSession } from "@/lib/auth-guard";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const sessionRole = await getSessionRole();
-  const role = sessionRole?.role ?? "viewer";
-  const canEdit = role === "admin" || role === "manager";
+  const { error, permissions } = await getSession("schedule:view");
+  if (error) redirect("/login");
+  const canEdit = permissions!.includes("schedule:edit");
   const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns] =
     await Promise.all([
       prisma.provider.findMany({

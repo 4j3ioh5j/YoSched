@@ -1,9 +1,9 @@
-import { requireAuth } from "@/lib/auth-guard";
+import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET() {
-  const { error } = await requireAuth("admin");
+  const { error } = await getSession("settings:view");
   if (error) return error;
   const rules = await prisma.shiftFollowRule.findMany({
     include: { sourceShift: { select: { code: true } }, allowedShift: { select: { code: true } } },
@@ -13,7 +13,7 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
-  const { error } = await requireAuth("admin");
+  const { error } = await getSession("settings:edit");
   if (error) return error;
   const { sourceShiftId, mode, rules } = await req.json() as {
     sourceShiftId: string;

@@ -19,6 +19,7 @@ model User {
   name           String
   passwordHash   String
   role           Role      @default(viewer)
+  groupId        String?
   isActive       Boolean   @default(true)
   totpSecret     String?
   totpEnabled    Boolean   @default(false)
@@ -27,7 +28,23 @@ model User {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  group Group? @relation(fields: [groupId], references: [id])
+
   @@map("users")
+}
+
+model Group {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  permissions       String[] @default([])
+  level             Int      @default(0)
+  isSystem          Boolean  @default(false)
+  permissionsLocked Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  users             User[]
+
+  @@map("groups")
 }
 
 model ShiftType {

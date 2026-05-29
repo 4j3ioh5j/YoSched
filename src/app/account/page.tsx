@@ -12,14 +12,14 @@ export default async function Page() {
 
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { id: true, email: true, name: true, role: true, totpEnabled: true },
+    select: { id: true, email: true, name: true, role: true, totpEnabled: true, group: { select: { name: true } } },
   });
   if (!user) redirect("/login");
 
   return (
     <>
       <NavHeader />
-      <AccountPage user={user} />
+      <AccountPage user={{ ...user, groupName: user.group?.name }} />
     </>
   );
 }

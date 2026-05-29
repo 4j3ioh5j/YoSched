@@ -39,7 +39,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const rl = checkRateLimit(email.toLowerCase());
         if (!rl.allowed) return null;
 
-        const user = await prisma.user.findUnique({ where: { email } });
+        const user = await prisma.user.findUnique({ where: { email }, include: { group: true } });
         if (!user) return null;
 
         if (!user.isActive) return null;
@@ -76,7 +76,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           });
         }
 
-        return { id: user.id, email: user.email, name: user.name, role: user.role, totpVerifiedAt };
+        return {
+          id: user.id, email: user.email, name: user.name, role: user.role, totpVerifiedAt,
+          groupId: user.groupId ?? undefined, groupName: user.group?.name, groupLevel: user.group?.level,
+          permissions: user.group?.permissions ?? [],
+        };
       },
     }),
   ],

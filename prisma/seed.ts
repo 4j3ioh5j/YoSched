@@ -348,6 +348,33 @@ async function main() {
   });
   console.log("Seeded scheduling preferences");
 
+  // --- Groups ---
+  const ALL_PERMISSIONS = [
+    "schedule:view", "schedule:edit", "schedule:auto",
+    "staff:view", "staff:edit", "statistics:view",
+    "settings:view", "settings:edit",
+    "users:view", "users:edit",
+    "groups:view", "groups:edit",
+  ];
+
+  const groupDefs = [
+    { name: "Admin", permissions: ALL_PERMISSIONS, level: 3, isSystem: true, permissionsLocked: true },
+    { name: "Super User", permissions: ALL_PERMISSIONS, level: 2, isSystem: true, permissionsLocked: true },
+    { name: "Scheduler", permissions: ["schedule:view", "schedule:edit", "schedule:auto", "staff:view", "staff:edit", "statistics:view", "settings:view", "settings:edit"], level: 1, isSystem: true, permissionsLocked: false },
+    { name: "Staff", permissions: ["schedule:view", "statistics:view", "settings:view"], level: 0, isSystem: true, permissionsLocked: false },
+  ];
+
+  for (const g of groupDefs) {
+    await prisma.group.upsert({
+      where: { name: g.name },
+      update: { permissions: g.permissions, level: g.level, isSystem: g.isSystem, permissionsLocked: g.permissionsLocked },
+      create: g,
+    });
+  }
+  console.log(`Seeded ${groupDefs.length} groups`);
+
+  const adminGroup = await prisma.group.findUnique({ where: { name: "Admin" } });
+
   // --- Default Admin User ---
   await prisma.user.upsert({
     where: { email: "admin@yosched.local" },
@@ -357,6 +384,7 @@ async function main() {
       name: "Admin",
       passwordHash: hashSync("admin", 12),
       role: "admin",
+      groupId: adminGroup!.id,
     },
   });
   console.log("Seeded default admin user (admin@yosched.local / admin)");

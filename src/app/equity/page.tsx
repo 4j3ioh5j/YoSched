@@ -2,10 +2,14 @@ import { prisma } from "@/lib/prisma";
 import { computeFairness } from "@/lib/fairness";
 import { EquityPage } from "./equity-page";
 import { NavHeader } from "../nav-header";
+import { getSession } from "@/lib/auth-guard";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function Equity() {
+  const { error } = await getSession("statistics:view");
+  if (error) redirect("/");
   const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs, equityFactors, eligibilities] =
     await Promise.all([
       prisma.provider.findMany({ orderBy: { sortOrder: "asc" }, include: { employmentType: true } }),

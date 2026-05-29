@@ -1,11 +1,11 @@
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/auth-guard";
+import { getSession } from "@/lib/auth-guard";
 import { validatePassword } from "@/lib/password";
 import { NextRequest, NextResponse } from "next/server";
 import { compare, hash } from "bcryptjs";
 
 export async function PUT(req: NextRequest) {
-  const { error, session } = await requireAuth("viewer");
+  const { error, session } = await getSession();
   if (error) return error;
 
   const { currentPassword, newPassword } = await req.json();

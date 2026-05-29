@@ -20,43 +20,59 @@ type User = {
   email: string;
   name: string;
   role: string;
+  groupId?: string | null;
+  group?: { name: string; level: number } | null;
   isActive: boolean;
   totpEnabled?: boolean;
   createdAt: string | Date;
 };
 
-const ROLE_BADGE: Record<string, string> = {
-  admin: "bg-amber-700 text-amber-100",
-  manager: "bg-blue-700 text-blue-100",
-  viewer: "bg-slate-600 text-slate-300",
+type GroupOption = {
+  id: string;
+  name: string;
+  level: number;
+};
+
+const GROUP_BADGE: Record<string, string> = {
+  Admin: "bg-amber-700 text-amber-100",
+  "Super User": "bg-blue-700 text-blue-100",
+  Scheduler: "bg-emerald-700 text-emerald-100",
+  Staff: "bg-slate-600 text-slate-300",
 };
 
 export function UsersPage({
   initialUsers,
   currentUserId,
+  currentGroupLevel,
+  groups,
   deviceTrustDays: initialTrustDays,
   dateFormat: dateFormatProp,
 }: {
   initialUsers: User[];
   currentUserId: string;
+  currentGroupLevel: number;
+  groups: GroupOption[];
   deviceTrustDays: number;
   dateFormat?: string;
 }) {
   const dateFormat = (dateFormatProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
+  const assignableGroups = groups.filter((g) => g.level < currentGroupLevel);
+  const defaultGroupId = assignableGroups.find((g) => g.name === "Staff")?.id ?? assignableGroups[0]?.id ?? "";
+
   const [users, setUsers] = useState(initialUsers);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ email: "", name: "", password: "", confirmPassword: "", role: "viewer" });
+  const [form, setForm] = useState({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId });
   const [error, setError] = useState("");
   const [trustDays, setTrustDays] = useState(initialTrustDays);
   const [savingTrust, setSavingTrust] = useState(false);
 
   const resetForm = useCallback(() => {
-    setForm({ email: "", name: "", password: "", confirmPassword: "", role: "viewer" });
+    setForm({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId });
     setShowForm(false);
     setEditingId(null);
     setError("");
-  }, []);
+  }, [defaultGroupId]);
   useEscape(resetForm);
 
   async function handleSave() {
@@ -70,7 +86,7 @@ export function UsersPage({
     const endpoint = "/api/users";
 
     if (editingId) {
-      const body: Record<string, string> = { id: editingId, email: form.email, name: form.name, role: form.role };
+      const body: Record<string, string> = { id: editingId, email: form.email, name: form.name, groupId: form.groupId };
       if (form.password) body.password = form.password;
       const res = await fetch(endpoint, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) { setError((await res.json()).error); return; }
@@ -108,9 +124,15 @@ export function UsersPage({
   }
 
   function startEdit(user: User) {
-    setForm({ email: user.email, name: user.name, password: "", confirmPassword: "", role: user.role });
+    setForm({ email: user.email, name: user.name, password: "", confirmPassword: "", groupId: user.groupId ?? defaultGroupId });
     setEditingId(user.id);
     setShowForm(true);
+  }
+
+  function canManageUser(user: User): boolean {
+    if (user.id === currentUserId) return false;
+    const userLevel = user.group?.level ?? 0;
+    return userLevel < currentGroupLevel;
   }
 
   return (
@@ -162,13 +184,13 @@ export function UsersPage({
                 className="px-3 py-2 bg-slate-900 border border-slate-700 rounded text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <select
-                value={form.role}
-                onChange={(e) => setForm({ ...form, role: e.target.value })}
+                value={form.groupId}
+                onChange={(e) => setForm({ ...form, groupId: e.target.value })}
                 className="px-3 py-2 bg-slate-900 border border-slate-700 rounded text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="viewer">Viewer</option>
-                <option value="manager">Manager</option>
-                <option value="admin">Admin</option>
+                {assignableGroups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
               </select>
             </div>
             {error && <p className="text-sm text-red-400">{error}</p>}
@@ -224,67 +246,75 @@ export function UsersPage({
             <tr className="text-left text-slate-400 border-b border-slate-800">
               <th className="py-2 px-3">Name</th>
               <th className="py-2 px-3">Email</th>
-              <th className="py-2 px-3">Role</th>
+              <th className="py-2 px-3">Group</th>
               <th className="py-2 px-3">Status</th>
               <th className="py-2 px-3">2FA</th>
               <th className="py-2 px-3 w-40"></th>
             </tr>
           </thead>
           <tbody>
-            {users.map((user) => (
-              <tr key={user.id} className={`border-b border-slate-800/50 hover:bg-slate-800/30 ${!user.isActive ? "opacity-50" : ""}`}>
-                <td className="py-2 px-3">{user.name}</td>
-                <td className="py-2 px-3 text-slate-400">{user.email}</td>
-                <td className="py-2 px-3">
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${ROLE_BADGE[user.role] || ROLE_BADGE.viewer}`}>
-                    {user.role}
-                  </span>
-                </td>
-                <td className="py-2 px-3">
-                  {user.id !== currentUserId ? (
-                    <button
-                      onClick={() => handleToggleActive(user)}
-                      className={`text-xs px-1.5 py-0.5 rounded transition-colors ${user.isActive ? "bg-green-800/50 text-green-300 hover:bg-green-800/80" : "bg-red-900/50 text-red-400 hover:bg-red-900/80"}`}
-                    >
-                      {user.isActive ? "Active" : "Disabled"}
-                    </button>
-                  ) : (
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-green-800/50 text-green-300">Active</span>
-                  )}
-                </td>
-                <td className="py-2 px-3">
-                  {user.totpEnabled ? (
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-green-800/50 text-green-300">On</span>
-                  ) : (
-                    <span className="text-xs text-slate-600">Off</span>
-                  )}
-                </td>
-                <td className="py-2 px-3 text-right">
-                  {user.totpEnabled && (
-                    <button
-                      onClick={() => handleReset2FA(user.id)}
-                      className="text-xs text-amber-500/60 hover:text-amber-400 mr-2"
-                    >
-                      Reset 2FA
-                    </button>
-                  )}
-                  <button
-                    onClick={() => startEdit(user)}
-                    className="text-xs text-slate-500 hover:text-slate-300 mr-2"
-                  >
-                    Edit
-                  </button>
-                  {user.id !== currentUserId && (
-                    <button
-                      onClick={() => handleDelete(user.id)}
-                      className="text-xs text-red-500/60 hover:text-red-400"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {users.map((user) => {
+              const gName = user.group?.name ?? "";
+              const manageable = canManageUser(user);
+              return (
+                <tr key={user.id} className={`border-b border-slate-800/50 hover:bg-slate-800/30 ${!user.isActive ? "opacity-50" : ""}`}>
+                  <td className="py-2 px-3">{user.name}</td>
+                  <td className="py-2 px-3 text-slate-400">{user.email}</td>
+                  <td className="py-2 px-3">
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${GROUP_BADGE[gName] || "bg-slate-600 text-slate-300"}`}>
+                      {gName || user.role}
+                    </span>
+                  </td>
+                  <td className="py-2 px-3">
+                    {manageable ? (
+                      <button
+                        onClick={() => handleToggleActive(user)}
+                        className={`text-xs px-1.5 py-0.5 rounded transition-colors ${user.isActive ? "bg-green-800/50 text-green-300 hover:bg-green-800/80" : "bg-red-900/50 text-red-400 hover:bg-red-900/80"}`}
+                      >
+                        {user.isActive ? "Active" : "Disabled"}
+                      </button>
+                    ) : (
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${user.isActive ? "bg-green-800/50 text-green-300" : "bg-red-900/50 text-red-400"}`}>
+                        {user.isActive ? "Active" : "Disabled"}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 px-3">
+                    {user.totpEnabled ? (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-green-800/50 text-green-300">On</span>
+                    ) : (
+                      <span className="text-xs text-slate-600">Off</span>
+                    )}
+                  </td>
+                  <td className="py-2 px-3 text-right">
+                    {manageable && user.totpEnabled && (
+                      <button
+                        onClick={() => handleReset2FA(user.id)}
+                        className="text-xs text-amber-500/60 hover:text-amber-400 mr-2"
+                      >
+                        Reset 2FA
+                      </button>
+                    )}
+                    {manageable && (
+                      <button
+                        onClick={() => startEdit(user)}
+                        className="text-xs text-slate-500 hover:text-slate-300 mr-2"
+                      >
+                        Edit
+                      </button>
+                    )}
+                    {manageable && (
+                      <button
+                        onClick={() => handleDelete(user.id)}
+                        className="text-xs text-red-500/60 hover:text-red-400"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
 
