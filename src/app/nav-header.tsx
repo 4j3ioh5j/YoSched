@@ -52,16 +52,14 @@ export function NavHeader() {
       </nav>
       {session?.user && (
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Link href="/account" className="text-sm text-slate-300 hover:text-slate-100 transition-colors">
-              {session.user.name}
-            </Link>
+          <Link href="/account" className="flex items-center gap-2 px-2.5 py-1 rounded border border-slate-700 hover:border-slate-500 hover:bg-slate-800 transition-colors">
+            <span className="text-sm text-slate-200">{session.user.name}</span>
             {groupName && (
-              <span className={`text-xs px-1.5 py-0.5 rounded ${GROUP_BADGE[groupName] || "bg-slate-600 text-slate-300"}`}>
+              <span className={`inline-block w-[88px] text-center text-xs py-0.5 rounded ${GROUP_BADGE[groupName] || "bg-slate-600 text-slate-300"}`}>
                 {groupName}
               </span>
             )}
-          </div>
+          </Link>
           <button
             onClick={async () => {
               await signOut({ redirect: false });
