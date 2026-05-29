@@ -1760,8 +1760,7 @@ export function ScheduleGrid({
             e.preventDefault();
             splitDragging.current = true;
             let lastWidth = alertWidth;
-            const tableEl = scrollRef.current?.querySelector("table");
-            const minGridWidth = tableEl ? tableEl.scrollWidth : 400;
+            const minGridWidth = 200;
             const onMove = (ev: MouseEvent) => {
               if (!splitDragging.current || !splitContainerRef.current) return;
               const rect = splitContainerRef.current.getBoundingClientRect();
