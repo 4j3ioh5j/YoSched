@@ -1834,8 +1834,21 @@ export function ScheduleGrid({
       )}
       {tooltip && (
         <div
+          ref={(el) => {
+            if (!el) return;
+            const w = el.offsetWidth;
+            const h = el.offsetHeight;
+            const pad = 8;
+            let left = tooltip.x - w / 2;
+            let top = tooltip.y;
+            if (left + w + pad > window.innerWidth) left = window.innerWidth - w - pad;
+            if (left < pad) left = pad;
+            if (top + h + pad > window.innerHeight) top = tooltip.y - h - 8;
+            el.style.left = `${left}px`;
+            el.style.top = `${top}px`;
+          }}
           className="fixed z-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-slate-200 bg-slate-800 border border-slate-600 rounded shadow-xl whitespace-pre pointer-events-none"
-          style={{ left: tooltip.x, top: tooltip.y, transform: "translateX(-50%)" }}
+          style={{ left: -9999, top: -9999 }}
         >
           {tooltip.text}
         </div>

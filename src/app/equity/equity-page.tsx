@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { useEscape } from "@/lib/use-escape";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -365,8 +365,21 @@ function TipOverlay({ tip }: { tip: TipState }) {
   if (!tip) return null;
   return (
     <div
+      ref={(el) => {
+        if (!el) return;
+        const w = el.offsetWidth;
+        const h = el.offsetHeight;
+        const pad = 8;
+        let left = tip.x - w / 2;
+        let top = tip.y;
+        if (left + w + pad > window.innerWidth) left = window.innerWidth - w - pad;
+        if (left < pad) left = pad;
+        if (top + h + pad > window.innerHeight) top = tip.y - h - 8;
+        el.style.left = `${left}px`;
+        el.style.top = `${top}px`;
+      }}
       className="fixed z-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-slate-200 bg-slate-800 border border-slate-600 rounded shadow-xl whitespace-pre pointer-events-none max-w-xs"
-      style={{ left: tip.x, top: tip.y, transform: "translateX(-50%)" }}
+      style={{ left: -9999, top: -9999 }}
     >
       {tip.text}
     </div>
