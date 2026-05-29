@@ -169,7 +169,18 @@ function OverviewCharts({ data, trackedShiftCodes, allShiftCodes, showHoliday }:
   );
 }
 
-function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThresholds, globalMaxDev, onClose }: {
+const RADAR_PARAM_TIPS: Record<string, string> = {
+  "Undesirable": "Desirability burden score.\nCounts shifts weighted by how undesirable they are.\nHigher = more undesirable shifts worked.",
+  "Holidays": "Number of holidays worked.\nHolidays are high-burden dates shared equitably.",
+};
+
+function radarParamTip(label: string): string {
+  return RADAR_PARAM_TIPS[label] ?? `Count of ${label} shifts assigned.\nTracked as an equity factor for fair distribution.`;
+}
+
+const RADAR_INFO = `This radar chart compares one staff member (blue) against the\ndepartment median (dashed gray) across all tracked equity factors.\n\nFTE-Normalized mode: Values are z-scores (standard deviations\nfrom the mean), adjusted for each person's FTE percentage.\nOutward from the dashed line = more burden than average.\n\nActual Counts mode: Raw shift counts with dept median overlay.\n\nOpp-Adjusted mode: Desirability is adjusted so providers are\nonly compared against shifts they're eligible to work.`;
+
+function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThresholds, globalMaxDev, onClose, setTip }: {
   row: EquityRow;
   allRows: EquityRow[];
   averages: Averages;
@@ -177,6 +188,7 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
   equityThresholds: EquityThresholds;
   globalMaxDev: number;
   onClose: () => void;
+  setTip: SetTip;
 }) {
   useEscape(onClose);
   const fte = row.ftePercentage;
@@ -253,7 +265,10 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
         <div className="p-5 space-y-6">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Profile vs Department Average</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Profile vs Department Average
+                <InfoTip text={RADAR_INFO} setTip={setTip} />
+              </h3>
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => setRadarFteNorm(!radarFteNorm)}
@@ -275,7 +290,29 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
               <ResponsiveContainer width="100%" className="flex-1 min-h-0">
                 <RadarChart data={radarData} cx="50%" cy="46%">
                   <PolarGrid stroke="#334155" />
-                  <PolarAngleAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 13, fontWeight: 500 }} />
+                  <PolarAngleAxis
+                    dataKey="label"
+                    tick={(props: Record<string, unknown>) => {
+                      const x = Number(props.x);
+                      const y = Number(props.y);
+                      const anchor = String(props.textAnchor) as "start" | "middle" | "end";
+                      const label = (props.payload as { value: string })?.value ?? "";
+                      return (
+                        <text
+                          x={x} y={y}
+                          textAnchor={anchor}
+                          fill="#94a3b8"
+                          fontSize={13}
+                          fontWeight={500}
+                          className="cursor-help"
+                          onMouseEnter={(e) => showTip(setTip, radarParamTip(label), e)}
+                          onMouseLeave={() => setTip(null)}
+                        >
+                          {label}
+                        </text>
+                      );
+                    }}
+                  />
                   <PolarRadiusAxis tick={false} axisLine={false} domain={radarDomain} />
                   <Radar name="Dept Median" dataKey="average" stroke="#475569" fill="#475569" fillOpacity={0.1} strokeWidth={1.5} strokeDasharray="4 4" />
                   <Radar name={row.initials} dataKey="provider" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} />
@@ -304,20 +341,67 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
   );
 }
 
-function SortHeader({ label, sortId, className, title, sortKey, sortAsc, onSort }: { label: string; sortId: SortKey; className?: string; title?: string; sortKey: SortKey; sortAsc: boolean; onSort: (key: SortKey) => void }) {
+type TipState = { text: string; x: number; y: number } | null;
+type SetTip = (t: TipState) => void;
+
+function showTip(set: SetTip, text: string, e: React.MouseEvent) {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  set({ text, x: r.left + r.width / 2, y: r.bottom + 4 });
+}
+
+function InfoTip({ text, setTip }: { text: string; setTip: SetTip }) {
+  return (
+    <span
+      className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-slate-600 text-[9px] text-slate-500 hover:text-slate-300 hover:border-slate-400 cursor-help ml-1 align-middle transition-colors"
+      onMouseEnter={(e) => showTip(setTip, text, e)}
+      onMouseLeave={() => setTip(null)}
+    >
+      i
+    </span>
+  );
+}
+
+function TipOverlay({ tip }: { tip: TipState }) {
+  if (!tip) return null;
+  return (
+    <div
+      className="fixed z-50 px-2.5 py-1.5 text-[11px] leading-relaxed text-slate-200 bg-slate-800 border border-slate-600 rounded shadow-xl whitespace-pre pointer-events-none max-w-xs"
+      style={{ left: tip.x, top: tip.y, transform: "translateX(-50%)" }}
+    >
+      {tip.text}
+    </div>
+  );
+}
+
+function SortHeader({ label, sortId, className, title, sortKey, sortAsc, onSort, setTip }: { label: string; sortId: SortKey; className?: string; title?: string; sortKey: SortKey; sortAsc: boolean; onSort: (key: SortKey) => void; setTip?: SetTip }) {
   const active = sortKey === sortId;
   return (
     <th
       className={`py-2.5 px-3 text-[11px] font-semibold uppercase tracking-wider cursor-pointer hover:text-slate-300 transition-colors select-none whitespace-nowrap ${active ? "text-slate-200" : "text-slate-500"} ${className || ""}`}
       onClick={() => onSort(sortId)}
-      title={title}
+      onMouseEnter={setTip && title ? (e) => showTip(setTip, title, e) : undefined}
+      onMouseLeave={setTip ? () => setTip(null) : undefined}
     >
       {label}{active ? (sortAsc ? " ▲" : " ▼") : ""}
     </th>
   );
 }
 
+const COLUMN_FORMULAS: Record<string, string> = {
+  desirability: "FTE-normalized z-score of undesirable shift burden.\nFormula: -(count / FTE - dept_mean) / std_dev\nPositive = fewer undesirable shifts than average.",
+  oppAdj: "Opportunity-adjusted desirability z-score.\nOnly counts shift types the provider is eligible for.\nFormula: -(count / FTE - expected) / std_dev\nControls for providers who can't work certain shifts.",
+  holiday: "Raw count of holidays worked.\nNot FTE-normalized — holidays are assigned\nregardless of FTE percentage.",
+  hours: "Total hours from FTE-counted shifts only.\nExcludes leave, off days, and shifts\nwhere countsTowardFte = false.",
+  workDays: "Total days with a work-category assignment.\nIncludes OR, ADM, PREOP, PAIN, ICU, etc.",
+  leaveDays: "Total days with a leave-category assignment.\nIncludes AL, SL, HOL, PPL, AA, ILD, JD.",
+};
+
+function shiftFormula(code: string) {
+  return `Raw count of ${code} shifts assigned.\nCompare to the FTE-normalized department\naverage shown in the summary cards above.`;
+}
+
 export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds, activeFactors }: Props) {
+  const [tip, setTip] = useState<TipState>(null);
   const showDesirability = activeFactors.some((f) => f.factorType === "desirability" && f.enabled);
   const showHoliday = activeFactors.some((f) => f.factorType === "holiday" && f.enabled);
   const activeShiftCodes = activeFactors
@@ -448,16 +532,16 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-800/80 border-b border-slate-700">
-                  <SortHeader label="Staff Member" sortId="initials" className="text-left w-44" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
-                  {showDesirability && <SortHeader label="Desirability" sortId="desirability" className="text-right w-24" title="FTE-normalized desirability z-score" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />}
-                  {showDesirability && <SortHeader label="Opp. Adj." sortId="oppAdj" className="text-right w-20" title="Opportunity-adjusted z-score (only eligible shifts)" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />}
-                  {showHoliday && <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title="Number of holidays worked" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />}
+                  <SortHeader label="Staff Member" sortId="initials" className="text-left w-44" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />
+                  {showDesirability && <SortHeader label="Desirability" sortId="desirability" className="text-right w-24" title={COLUMN_FORMULAS.desirability} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />}
+                  {showDesirability && <SortHeader label="Opp. Adj." sortId="oppAdj" className="text-right w-20" title={COLUMN_FORMULAS.oppAdj} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />}
+                  {showHoliday && <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title={COLUMN_FORMULAS.holiday} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />}
                   {activeShiftCodes.map((code) => (
-                    <SortHeader key={code} label={code} sortId={`shift:${code}`} className="text-right w-16" title={`Total ${code} shifts`} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                    <SortHeader key={code} label={code} sortId={`shift:${code}`} className="text-right w-16" title={shiftFormula(code)} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />
                   ))}
-                  <SortHeader label="Hours" sortId="hours" className="text-right w-20" title="Total FTE-counted hours" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
-                  <SortHeader label="Work Days" sortId="workDays" className="text-right w-20" title="Total work days" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
-                  <SortHeader label="Leave Days" sortId="leaveDays" className="text-right w-20" title="Total leave days" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                  <SortHeader label="Hours" sortId="hours" className="text-right w-20" title={COLUMN_FORMULAS.hours} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />
+                  <SortHeader label="Work Days" sortId="workDays" className="text-right w-20" title={COLUMN_FORMULAS.workDays} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />
+                  <SortHeader label="Leave Days" sortId="leaveDays" className="text-right w-20" title={COLUMN_FORMULAS.leaveDays} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />
                   {showTallies && shiftCodes.map((code) => (
                     <th key={code} className="px-2 py-2.5 text-[11px] font-medium text-slate-600 text-right whitespace-nowrap">{code}</th>
                   ))}
@@ -547,8 +631,10 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
           equityThresholds={equityThresholds}
           globalMaxDev={globalMaxDev}
           onClose={() => setSelectedProvider(null)}
+          setTip={setTip}
         />
       )}
+      <TipOverlay tip={tip} />
     </div>
   );
 }
