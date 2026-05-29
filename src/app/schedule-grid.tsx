@@ -357,6 +357,45 @@ export function ScheduleGrid({
     }
   }, [firstOfMonth]);
 
+  // Pre-fill empty cells with X (off day) for the visible date range
+  const prefillRan = useRef<string | null>(null);
+  useEffect(() => {
+    const key = `${viewYear}-${viewMonth}`;
+    if (prefillRan.current === key) return;
+    prefillRan.current = key;
+    const offShift = shiftTypes.find((st) => st.isOffShift);
+    if (!offShift || providers.length === 0) return;
+    fetch("/api/assignments/prefill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dates }),
+    }).then((r) => r.json()).then((data) => {
+      if (data.created > 0) {
+        setLocalAssignments((prev) => {
+          const existing = new Set(prev.map((a) => `${a.providerId}:${a.date}`));
+          const newAssignments: AssignmentData[] = [];
+          for (const d of dates) {
+            for (const p of providers) {
+              if (!existing.has(`${p.id}:${d}`)) {
+                newAssignments.push({
+                  id: `prefill-${p.id}:${d}`,
+                  providerId: p.id,
+                  date: d,
+                  shiftTypeId: offShift.id,
+                  isLocked: false,
+                  code: offShift.code,
+                  color: offShift.color ?? "#d1d5db",
+                });
+              }
+            }
+          }
+          return newAssignments.length > 0 ? [...prev, ...newAssignments] : prev;
+        });
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewYear, viewMonth]);
+
   const rowItems = useMemo(() => buildRowItems(dates, payPeriods), [dates, payPeriods]);
 
   const assignmentMap = useMemo(() => {

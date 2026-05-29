@@ -344,7 +344,10 @@ export function autoSchedule({
   }
 
   function isAssigned(providerId: string, date: string): boolean {
-    return grid.has(`${providerId}:${date}`);
+    const cell = grid.get(`${providerId}:${date}`);
+    if (!cell) return false;
+    if (offShift && cell.shiftTypeId === offShift.id && !cell.locked) return false;
+    return true;
   }
 
   function isAvailable(provider: ScheduleProvider, date: string, st: ScheduleShiftType): boolean {
@@ -387,7 +390,8 @@ export function autoSchedule({
     confidence: number
   ) {
     const key = `${providerId}:${date}`;
-    if (grid.has(key)) return;
+    const existing = grid.get(key);
+    if (existing && !(offShift && existing.shiftTypeId === offShift.id && !existing.locked)) return;
     grid.set(key, { shiftTypeId: shiftType.id, code: shiftType.code, locked: false });
     suggestions.push({
       providerId,
