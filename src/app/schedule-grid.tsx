@@ -1699,7 +1699,7 @@ export function ScheduleGrid({
                         onDragLeave={handleDragLeave}
                         onDrop={(e) => handleDrop(p.id, date, e)}
                       >
-                        {a ? (
+                        {a && !(isSuggested && shiftTypeMap.get(a.shiftTypeId)?.isOffShift && !a.isLocked) ? (
                           <div
                             draggable={canEdit && !a.isLocked}
                             onDragStart={(e) => handleDragStart(p.id, date, e)}
