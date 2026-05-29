@@ -230,13 +230,23 @@ function buildRowItems(dates: string[], payPeriods: PayPeriod[]): RowItem[] {
   return items;
 }
 
-function WarningDot({ warnings }: { warnings: Warning[] }) {
+type TooltipState = { text: string; x: number; y: number } | null;
+type SetTooltip = (t: TooltipState) => void;
+
+function showTip(setTooltip: SetTooltip, text: string, e: React.MouseEvent) {
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  setTooltip({ text, x: rect.left + rect.width / 2, y: rect.bottom + 4 });
+}
+
+function WarningDot({ warnings, setTooltip }: { warnings: Warning[]; setTooltip: SetTooltip }) {
   if (warnings.length === 0) return null;
   const hasError = warnings.some((w) => w.type === "post-shift" || w.type === "over-hours");
+  const text = warnings.map((w) => w.message).join("\n");
   return (
     <span
       className={`absolute top-0 right-0 w-1.5 h-1.5 rounded-full ${hasError ? "bg-red-500" : "bg-amber-500"}`}
-      title={warnings.map((w) => w.message).join("\n")}
+      onMouseEnter={(e) => showTip(setTooltip, text, e)}
+      onMouseLeave={() => setTooltip(null)}
     />
   );
 }
@@ -1171,7 +1181,8 @@ export function ScheduleGrid({
           borderColor: isHeavy ? color + "90" : color + "40",
           borderStyle: isHeavy ? "solid" : "dashed",
         }}
-        title={`Suggested: ${sug.code}\n${sug.reason}`}
+        onMouseEnter={(e) => showTip(setTooltip, `Suggested: ${sug.code}\n${sug.reason}`, e)}
+        onMouseLeave={() => setTooltip(null)}
       >
         {sug.code}
       </div>
@@ -1541,7 +1552,8 @@ export function ScheduleGrid({
                         <td
                           key={p.id}
                           className="px-0 py-1 text-center border-slate-600/50 border border-y-indigo-500/60"
-                          title={`${p.initials}: ${hours}hrs / ${target}hrs target (${diffLabel})`}
+                          onMouseEnter={(e) => showTip(setTooltip, `${p.initials}: ${hours}hrs / ${target}hrs target (${diffLabel})`, e)}
+                          onMouseLeave={() => setTooltip(null)}
                         >
                           <div className={`text-[10px] font-mono font-bold ${color}`}>
                             {hours > 0 ? diffLabel : "–"}
@@ -1602,7 +1614,10 @@ export function ScheduleGrid({
                       {label.date}
                     </span>
                     {isHoliday && (
-                      <span className="ml-1 text-amber-400 text-[10px]" title={holidayNames.get(date)}>
+                      <span className="ml-1 text-amber-400 text-[10px]"
+                        onMouseEnter={(e) => showTip(setTooltip, holidayNames.get(date) ?? "", e)}
+                        onMouseLeave={() => setTooltip(null)}
+                      >
                         ★
                       </span>
                     )}
@@ -1659,11 +1674,12 @@ export function ScheduleGrid({
                               backgroundColor: shiftTypeMap.get(a.shiftTypeId)?.isOffShift ? "transparent" : a.color + "30",
                               color: shiftTypeMap.get(a.shiftTypeId)?.isOffShift ? "#475569" : a.color,
                             }}
-                            title={
+                            onMouseEnter={(e) => showTip(setTooltip,
                               cw && cw.length > 0
                                 ? cw.map((w) => w.message).join("\n")
-                                : `${p.initials}: ${a.code} on ${formatDate(parseDate(date), dateFormat)}${a.isLocked ? " (locked)" : ""}`
-                            }
+                                : `${p.initials}: ${a.code} on ${formatDate(parseDate(date), dateFormat)}${a.isLocked ? " (locked)" : ""}`,
+                              e)}
+                            onMouseLeave={() => setTooltip(null)}
                           >
                             {a.code}
                           </div>
@@ -1672,7 +1688,7 @@ export function ScheduleGrid({
                         ) : isSaving ? (
                           <div className="text-[11px] text-slate-600">...</div>
                         ) : null}
-                        {cw && <WarningDot warnings={cw} />}
+                        {cw && <WarningDot warnings={cw} setTooltip={setTooltip} />}
                       </td>
                     );
                   })}
