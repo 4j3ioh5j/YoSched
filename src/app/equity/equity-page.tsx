@@ -403,6 +403,10 @@ function SortHeader({ label, sortId, className, title, sortKey, sortAsc, onSort,
 const COLUMN_FORMULAS: Record<string, string> = {
   desirability: "FTE-normalized z-score of undesirable shift burden.\n\nFormula: -(count / FTE - dept_mean) / std_dev\n\nPositive = fewer undesirable shifts than average.",
   oppAdj: "Opportunity-adjusted desirability z-score. Only counts shift types the provider is eligible for.\n\nFormula: -(count / FTE - expected) / std_dev\n\nControls for providers who can't work certain shifts.",
+  holiday: "Holidays worked",
+  hours: "Total FTE-counted hours",
+  workDays: "Total work days",
+  leaveDays: "Total leave days",
 };
 
 export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds, activeFactors }: Props) {
@@ -540,13 +544,13 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
                   <SortHeader label="Staff Member" sortId="initials" className="text-left w-44" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />
                   {showDesirability && <SortHeader label="Desirability" sortId="desirability" className="text-right w-24" title={COLUMN_FORMULAS.desirability} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />}
                   {showDesirability && <SortHeader label="Opp. Adj." sortId="oppAdj" className="text-right w-20" title={COLUMN_FORMULAS.oppAdj} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />}
-                  {showHoliday && <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />}
+                  {showHoliday && <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title={COLUMN_FORMULAS.holiday} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />}
                   {activeShiftCodes.map((code) => (
-                    <SortHeader key={code} label={code} sortId={`shift:${code}`} className="text-right w-16" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                    <SortHeader key={code} label={code} sortId={`shift:${code}`} className="text-right w-16" title={`Total ${code} shifts`} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />
                   ))}
-                  <SortHeader label="Hours" sortId="hours" className="text-right w-20" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
-                  <SortHeader label="Work Days" sortId="workDays" className="text-right w-20" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
-                  <SortHeader label="Leave Days" sortId="leaveDays" className="text-right w-20" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} />
+                  <SortHeader label="Hours" sortId="hours" className="text-right w-20" title={COLUMN_FORMULAS.hours} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />
+                  <SortHeader label="Work Days" sortId="workDays" className="text-right w-20" title={COLUMN_FORMULAS.workDays} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />
+                  <SortHeader label="Leave Days" sortId="leaveDays" className="text-right w-20" title={COLUMN_FORMULAS.leaveDays} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />
                   {showTallies && shiftCodes.map((code) => (
                     <th key={code} className="px-2 py-2.5 text-[11px] font-medium text-slate-600 text-right whitespace-nowrap">{code}</th>
                   ))}
