@@ -361,7 +361,7 @@ export function ScheduleGrid({
   const prefillRan = useRef<string | null>(null);
   useEffect(() => {
     const key = `${viewYear}-${viewMonth}`;
-    if (prefillRan.current === key) return;
+    if (prefillRan.current === key || !canEdit) return;
     prefillRan.current = key;
     const offShift = shiftTypes.find((st) => st.isOffShift);
     if (!offShift || providers.length === 0) return;
