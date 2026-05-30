@@ -1023,8 +1023,10 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
             <span className="flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" /> Advanced rules
             </span>
-            <span className="text-slate-600">|</span>
-            <span>Click row to edit</span>
+            {canEdit && <>
+              <span className="text-slate-600">|</span>
+              <span>Click row to edit</span>
+            </>}
           </div>
         </div>
       </div>
