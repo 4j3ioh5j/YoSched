@@ -8,21 +8,21 @@ export async function PUT(req: NextRequest) {
   const { id, eligibleShiftTypeIds, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  await prisma.provider.update({
-    where: { id },
-    data: {
-      name: data.name,
-      initials: data.initials,
-      employmentTypeId: data.employmentTypeId,
-      ftePercentage: data.ftePercentage,
-      specialQualifications: data.specialQualifications ?? [],
-      isActive: data.isActive,
-      isAutoScheduled: data.isAutoScheduled,
-      sortOrder: data.sortOrder,
-    },
-  });
-
   await prisma.$transaction(async (tx) => {
+    await tx.provider.update({
+      where: { id },
+      data: {
+        name: data.name,
+        initials: data.initials,
+        employmentTypeId: data.employmentTypeId,
+        ftePercentage: data.ftePercentage,
+        specialQualifications: data.specialQualifications ?? [],
+        isActive: data.isActive,
+        isAutoScheduled: data.isAutoScheduled,
+        sortOrder: data.sortOrder,
+      },
+    });
+
     if (Array.isArray(eligibleShiftTypeIds)) {
       await tx.providerEligibleShift.deleteMany({ where: { providerId: id } });
       if (eligibleShiftTypeIds.length > 0) {

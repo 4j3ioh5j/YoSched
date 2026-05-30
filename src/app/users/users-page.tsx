@@ -46,8 +46,10 @@ export function UsersPage({
   currentUserId,
   currentGroupLevel,
   groups,
+  canEditUsers,
   canViewGroups,
   canEditGroups,
+  canEditSettings,
   deviceTrustDays: initialTrustDays,
   dateFormat: dateFormatProp,
 }: {
@@ -55,8 +57,10 @@ export function UsersPage({
   currentUserId: string;
   currentGroupLevel: number;
   groups: GroupOption[];
+  canEditUsers: boolean;
   canViewGroups: boolean;
   canEditGroups: boolean;
+  canEditSettings: boolean;
   deviceTrustDays: number;
   dateFormat?: string;
 }) {
@@ -135,6 +139,7 @@ export function UsersPage({
   }
 
   function canManageUser(user: User): boolean {
+    if (!canEditUsers) return false;
     if (user.id === currentUserId) return false;
     const userLevel = user.group?.level ?? 0;
     return userLevel < currentGroupLevel;
@@ -145,7 +150,7 @@ export function UsersPage({
       <div className="max-w-7xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-xl font-bold">Users</h1>
-          {!showForm && (
+          {canEditUsers && !showForm && (
             <button
               onClick={() => { resetForm(); setShowForm(true); }}
               className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 rounded transition-colors"
@@ -224,19 +229,21 @@ export function UsersPage({
             max={365}
             value={trustDays}
             onChange={(e) => setTrustDays(Math.max(1, Math.min(365, parseInt(e.target.value) || 1)))}
-            className="w-14 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono text-slate-200 text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
+            disabled={!canEditSettings}
+            className="w-14 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono text-slate-200 text-center focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
           />
           <span>days before re-prompting.</span>
-          {trustDays !== initialTrustDays && (
+          {canEditSettings && trustDays !== initialTrustDays && (
             <button
               disabled={savingTrust}
               onClick={async () => {
                 setSavingTrust(true);
-                await fetch("/api/settings/scheduling-preferences", {
+                const res = await fetch("/api/settings/scheduling-preferences", {
                   method: "PUT",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ deviceTrustDays: trustDays }),
                 });
+                if (!res.ok) setTrustDays(initialTrustDays);
                 setSavingTrust(false);
               }}
               className="ml-auto px-2 py-0.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors disabled:opacity-50"

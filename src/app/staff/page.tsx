@@ -26,6 +26,7 @@ export default async function Staff() {
       <NavHeader />
 
       <StaffPage
+        canEdit={permissions!.includes("staff:edit")}
         providers={providers.map((p) => ({
           id: p.id,
           name: p.name,

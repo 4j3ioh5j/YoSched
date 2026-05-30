@@ -76,6 +76,7 @@ type ShiftTypeInfo = {
 };
 
 type Props = {
+  canEdit: boolean;
   providers: Provider[];
   employmentTypes: EmploymentType[];
   allShiftTypes: ShiftTypeInfo[];
@@ -635,7 +636,7 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
   );
 }
 
-export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }: Props) {
+export function StaffPage({ canEdit, providers: initial, employmentTypes, allShiftTypes }: Props) {
   const [providers, setProviders] = useState(initial);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -701,13 +702,17 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
     const prev = initial.find((p) => p.id === provider.id) ?? providers.find((p) => p.id === provider.id);
     setSaving(true);
     try {
-      await fetch("/api/staff", {
+      const res = await fetch("/api/staff", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(provider),
       });
+      if (!res.ok) {
+        if (prev) setProviders((cur) => cur.map((p) => p.id === provider.id ? prev : p));
+        return;
+      }
       setEditingId(null);
-        if (prev) {
+      if (prev) {
         pushUndo({
           label: `Updated ${provider.initials}`,
           execute: async () => {
@@ -737,6 +742,7 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
+      if (!res.ok) return;
       const result = await res.json();
       if (result.deactivated) {
         setProviders((prev) => prev.map((p) => p.id === id ? { ...p, isActive: false } : p));
@@ -780,6 +786,7 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: "New Provider", initials: "NEW", employmentTypeId: defaultType?.id }),
       });
+      if (!res.ok) return;
       const created = await res.json();
       const newProv: Provider = {
         id: created.id,
@@ -890,13 +897,15 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                 {showInactive ? "Hide" : "Show"} inactive ({inactiveProviders.length})
               </button>
             )}
-            <button
-              onClick={addProvider}
-              disabled={saving}
-              className="px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 rounded transition-colors font-medium"
-            >
-              + Add Staff
-            </button>
+            {canEdit && (
+              <button
+                onClick={addProvider}
+                disabled={saving}
+                className="px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 rounded transition-colors font-medium"
+              >
+                + Add Staff
+              </button>
+            )}
           </div>
         </div>
 
@@ -931,8 +940,8 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                   return (
                     <tr
                       key={p.id}
-                      className="hover:bg-slate-800/50 cursor-pointer transition-colors"
-                      onClick={() => setEditingId(p.id)}
+                      className={`hover:bg-slate-800/50 transition-colors ${canEdit ? "cursor-pointer" : ""}`}
+                      onClick={() => canEdit && setEditingId(p.id)}
                     >
                       <td className="py-2 px-3">
                         <span className={`font-mono font-bold ${!p.isAutoScheduled ? "text-amber-400" : "text-slate-200"}`}>
@@ -986,8 +995,8 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
                 {showInactive && inactiveProviders.map((p) => (
                   <tr
                     key={p.id}
-                    className="hover:bg-slate-800/50 cursor-pointer transition-colors opacity-50"
-                    onClick={() => setEditingId(p.id)}
+                    className={`hover:bg-slate-800/50 transition-colors opacity-50 ${canEdit ? "cursor-pointer" : ""}`}
+                    onClick={() => canEdit && setEditingId(p.id)}
                   >
                     <td className="py-2 px-3"><span className="font-mono font-bold text-slate-500">{p.initials}</span></td>
                     <td className="py-2 px-3"><span className="text-sm text-slate-500">{p.name}</span></td>
@@ -1092,26 +1101,30 @@ export function StaffPage({ providers: initial, employmentTypes, allShiftTypes }
             </div>
 
             <div className="flex items-center justify-between px-6 py-4 border-t border-slate-700">
-              <button
-                onClick={() => deleteProvider(ep.id)}
-                className="px-3 py-1.5 text-xs bg-red-900/50 hover:bg-red-800/50 text-red-400 border border-red-800/50 rounded transition-colors"
-              >
-                Delete
-              </button>
+              {canEdit && (
+                <button
+                  onClick={() => deleteProvider(ep.id)}
+                  className="px-3 py-1.5 text-xs bg-red-900/50 hover:bg-red-800/50 text-red-400 border border-red-800/50 rounded transition-colors"
+                >
+                  Delete
+                </button>
+              )}
               <div className="flex gap-2">
                 <button
                   onClick={cancelEdit}
                   className="px-4 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors"
                 >
-                  Cancel
+                  {canEdit ? "Cancel" : "Close"}
                 </button>
-                <button
-                  onClick={() => saveProvider(ep)}
-                  disabled={saving}
-                  className="px-4 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 rounded transition-colors font-medium"
-                >
-                  {saving ? "Saving..." : "Save"}
-                </button>
+                {canEdit && (
+                  <button
+                    onClick={() => saveProvider(ep)}
+                    disabled={saving}
+                    className="px-4 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 rounded transition-colors font-medium"
+                  >
+                    {saving ? "Saving..." : "Save"}
+                  </button>
+                )}
               </div>
             </div>
           </div>
