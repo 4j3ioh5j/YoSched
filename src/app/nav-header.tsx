@@ -29,7 +29,7 @@ export function NavHeader() {
   return (
     <header data-print-hide className="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-900 shrink-0">
       <Link href="/" className="text-xl font-bold tracking-tight hover:text-blue-400 transition-colors">
-        YoSched
+        <span className="text-white">Yo</span><span style={{ color: "#63b3ed" }}>Sched</span>
       </Link>
       <nav className="flex items-center gap-1">
         {NAV_ITEMS.filter((item) => !item.requiredPermission || permissions.includes(item.requiredPermission)).map((item) => {
