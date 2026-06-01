@@ -9,6 +9,7 @@ const CHARTS: { chart: GraphChart; label: string }[] = [
   { chart: "bar", label: "Bar" },
   { chart: "pie", label: "Pie" },
   { chart: "heatmap", label: "Heatmap" },
+  { chart: "line", label: "Line" },
 ];
 
 export function ChartTypePicker({
