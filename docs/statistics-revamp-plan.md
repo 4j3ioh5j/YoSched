@@ -283,8 +283,12 @@ just seeds the spec). Low effort; include in slice 2.
      CR #332 APPROVED, deployed. `shapeHeatmap` (pure, +4 tests): providers × shift-codes,
      each cell = raw count tinted by the FTE-normalized per-shift z-score via `fairnessColor()`;
      honors `spec.weighting`. Additive — bar stays default; engine untouched.
-   - **4b (NEXT)** — **Pie** + `MetricPicker` (wires `spec.metric`) + **`compat.ts`** (valid
-     chart×metric combos + grey-out). This is where `spec.metric` first drives behavior.
+   - **4b-i (DONE)** — `MetricPicker` (Shift count | Hours | Holidays) + **`compat.ts`** +
+     scalar `shapeMetricBar` + `MetricBarView`. Commit `0afac39`, CR #336 APPROVED, deployed.
+     First time `spec.metric` drives behavior; heatmap valid only for shiftCount; `coerceChart`
+     keeps the spec from invalid combos. Signed z-score metrics (desirability/equityDeviation)
+     deferred (debatable bar semantics) — table/radar-only for now.
+   - **4b-ii (NEXT)** — **Pie** (dept share by provider of the chosen count metric).
    - **4c** — **Line/area** + `buckets.ts` (`payPeriod` + `month`); `spec.timeBucket`.
 5. **Saved views** — Prisma model + migration + `statistics:manage` permission + backfill +
    API + `SavedViews.tsx`.
@@ -313,6 +317,7 @@ reworking.
 
 ## 16. Review history
 
+- **Slice 4b-i — CR #336 APPROVED.** Metric picker + compat + scalar bars. Deployed `0afac39`.
 - **Slice 4a — CR #332 APPROVED.** Equity heatmap + chart-type picker. Deployed `30d680f`.
 - **Slice 3 — CR #330 APPROVED.** Global transform toggles. Deployed `d75592c`. (Follow-up
   UI fixes to slice 2 also shipped: CR #326 Custom-date inputs, CR #328 staff-list narrowing.)
