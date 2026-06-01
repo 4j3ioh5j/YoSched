@@ -1,0 +1,246 @@
+# Statistics Graphing Revamp — Implementation Plan
+
+Status: **PLANNING** (no code written yet)
+Owner: yosched
+Last updated: 2026-06-01
+
+---
+
+## 1. Goal
+
+Replace the fixed Statistics page (`/equity`) with a configurable graphing tool. The user
+picks a **date range**, **which staff** to include (by name, by employment type FTE vs Fee
+Basis, by FTE %), a **chart type** (bar, pie, radar, heatmap, line), and **transforms**
+(FTE‑normalized vs raw, opportunity‑weighted vs not). Configurations are **savable per user
+and re‑runnable**, and graphs can be **exported to PNG/CSV**.
+
+## 2. Principles
+
+- **One source of truth: `GraphSpec`.** Every control reads/writes a single serializable
+  object. The chart is a pure function of it. Saving a view = persisting that object.
+- **Client‑side compute.** Ship raw data to the browser once; re‑run the metric engine on
+  every spec change. No per‑interaction API calls. Justified because `computeFairness()`
+  (`src/lib/fairness.ts:86`) is already a pure function over plain arrays, and the dataset is
+  small (~30 providers × 365 days ≈ 10–15k assignment rows/year).
+- **Logic in pure, tested modules; views stay thin.** Charts/DOM remain view‑only (untested,
+  as today); all real logic lives in unit‑tested helpers (template: the `src/lib/alerts.ts`
+  extraction).
+- **Small, independently shippable slices**, each through test → Code‑Review → deploy.
+
+## 3. Architecture — the pipeline
+
+```
+raw data (loaded once)
+  → filter(spec.dateRange, spec.staff)        → scoped data
+  → computeFairness(...) + shift tally          → per‑provider metrics
+  → transform(spec.metric, spec.normalize,
+              spec.weighting)                    → series
+  → bucketByTime(spec.timeBucket)  [line only]   → time series
+  → render(spec.chart)                           → chart
+```
+
+Each arrow is a small pure module, independently unit‑testable.
+
+## 4. `GraphSpec` type
+
+```ts
+type GraphSpec = {
+  version: 1;
+  dateRange:
+    | { kind: "payPeriods"; payPeriodIds: string[] }
+    | { kind: "custom"; start: string; end: string };
+  staff: {
+    all?: boolean;
+    names?: string[];                 // explicit provider ids
+    employmentType?: string | null;   // "FTE" | "Fee Basis"
+    minFtePct?: number | null;
+  };
+  metric: "shiftCount" | "hours" | "holidays" | "desirability" | "equityDeviation";
+  groupByShiftCode?: boolean;         // stacked breakdowns
+  chart: "bar" | "pie" | "radar" | "heatmap" | "line";
+  normalize: "raw" | "fte";           // ÷ ftePercentage
+  weighting: "none" | "opportunity";  // opportunity‑adjusted vs plain
+  timeBucket?: "payPeriod" | "month"; // line/trend only
+};
+```
+
+`DEFAULT_SPEC` reproduces today's bar chart so the new pipeline can ship invisibly first.
+
+## 5. File / component layout
+
+```
+src/lib/graph/
+  spec.ts        # GraphSpec type, DEFAULT_SPEC, encode/decode (URL), validate (zod)
+  filter.ts      # filterAssignments(raw, spec) -> scoped
+  series.ts      # shapeSeries(metrics, spec) -> chart-ready data
+  buckets.ts     # bucketByTime(assignments, spec) for line charts
+  compat.ts      # valid chart types per metric (+ greying rules)
+src/app/equity/
+  equity-page.tsx          # orchestrator: holds spec state, runs pipeline via useMemo
+  controls/
+    PickerBar.tsx, DateRangePicker.tsx, StaffPicker.tsx,
+    MetricPicker.tsx, ChartTypePicker.tsx, TransformToggles.tsx
+  charts/
+    BarView.tsx, PieView.tsx, RadarView.tsx, HeatmapView.tsx, LineView.tsx
+  saved/
+    SavedViews.tsx          # dropdown + save / save-as / rename / delete / share
+  export/
+    exportPng.ts, exportCsv.ts
+```
+
+`src/lib/fairness.ts` stays the engine. We only add a client‑callable path (it's already
+pure) and the time‑bucketing loop.
+
+## 6. Engine changes (minimal)
+
+- **Expose raw data to the client.** `equity/page.tsx` currently pre‑computes on the server
+  and ships derived `EquityRow[]`. Change it to also pass the normalized raw arrays:
+  assignments (with shiftType), providers (with employmentType + FTE + eligibility),
+  desirabilityWeights, holidays, equityFactors, payPeriods. All small.
+- **Wrap `computeFairness` for client use** — call it inside a `useMemo` keyed on
+  `(scopedAssignments, spec)`. No engine rewrite.
+- **Time bucketing** (`buckets.ts`): for `chart === "line"`, split scoped assignments into
+  per‑pay‑period or per‑month buckets and run `computeFairness` per bucket → a series of
+  points. This is the only place the engine is looped.
+
+## 7. Picker UI
+
+A compact control bar above the chart; each control writes to `GraphSpec`:
+
+- **Date range** — segmented: *Pay periods* (multiselect) | *Custom* (from/to). Reuses the
+  existing pay‑period data.
+- **Staff** — *All / By name / By type / By FTE %*, composable (e.g. Fee Basis AND ≥ 0.5).
+  "By name" = multi‑select chips; "By FTE %" reuses the existing min‑FTE control
+  (`equity-page.tsx:492`); "By type" reads `employmentType.name`.
+- **Metric** dropdown, **Chart type** icon toggle, **Normalize** + **Weighting** toggles
+  (promoted from today's radar‑only toggles to global).
+- `compat.ts` greys out nonsensical combos (e.g. pie of equity z‑scores).
+
+## 8. Chart types
+
+| Chart | Best for | Status |
+|------|---------|--------|
+| **Bar** | per‑provider counts/hours, stacked by shift code | exists |
+| **Radar** | one/few providers across metric axes; keep both toggles | exists |
+| **Pie** | one provider's shift‑mix, or dept share of one shift | new |
+| **Heatmap** | providers × shift‑codes (or × day‑of‑week), color via `fairnessColor()` | new — highest value |
+| **Line/area** | trend over time via `buckets.ts` | new |
+
+Recharts (already a dep, v3.8) covers bar/pie/radar/line. Heatmap: a lightweight CSS‑grid
+component reusing `fairnessColor()`.
+
+## 9. Saved views
+
+Per the decisions: **begin saving per‑user now** (anticipating upcoming per‑user
+settings/color profiles). New views **default to global/shared**, with a **user‑only
+(private)** option. **Editing requires a new permission; regular staff cannot edit by
+default.**
+
+### 9.1 Data model — new Prisma model
+```prisma
+model SavedGraphView {
+  id        String   @id @default(cuid())
+  name      String
+  spec      Json     // a GraphSpec
+  ownerId   String?  // User id of creator
+  isShared  Boolean  @default(true)   // default global; false = private to owner
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  owner     User?    @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  @@index([ownerId])
+  @@index([isShared])
+}
+```
+Migration via `prisma migrate` (deploy.sh already runs `migrate deploy`).
+
+### 9.2 Visibility / read rules
+- A user sees: all `isShared = true` views **plus** their own `isShared = false` views.
+- New view default: `isShared = true`. A "Private to me" toggle sets `isShared = false`.
+
+### 9.3 New permission: `statistics:manage`
+Controls create/update/delete of saved views (both shared and private). Without it a user can
+**view and run** saved views but not create/edit/delete. Touch points:
+- `prisma/seed.ts:352` — add `"statistics:manage"` to `ALL_PERMISSIONS`; grant to **Admin**
+  and **Super User** groups (already get all). **Scheduler** gets it; **Staff** does not.
+- `src/app/settings/groups-section.tsx:16` — add to the UI permission catalog (category
+  "statistics").
+- `src/lib/auth-guard.ts` — add to the hardcoded fallback lists for the appropriate levels.
+- **Backfill migration** — grant `statistics:manage` to existing Admin/Super User/Scheduler
+  groups (mirror `20260529120100_seed_groups_backfill_users`).
+
+> Open sub‑question deferred to build time: should private‑view creation require
+> `statistics:manage` too, or should any `statistics:view` user be able to save *their own*
+> private views? The decision "editing not allowed by default for regular staff" is read here
+> as **all saves require `statistics:manage`** for now (simplest, consistent). Revisit when
+> the per‑user profiles feature lands.
+
+### 9.4 API
+`src/app/api/statistics/views/route.ts` (+ `[id]/route.ts`):
+- `GET` — list visible views (shared + own). Requires `statistics:view`.
+- `POST` / `PUT` / `DELETE` — require `statistics:manage`; non‑shared views editable only by
+  their owner. Validate incoming `spec` against `GraphSpec` (zod) before persisting so a bad
+  blob can't be stored.
+
+### 9.5 UI — `SavedViews.tsx`
+Dropdown of visible views; selecting one does `setSpec(view.spec)` and the pipeline re‑runs
+instantly. Buttons: **Save** (overwrite current, if permitted), **Save as…** (name + shared/
+private), **Rename**, **Delete**, **Share/Unshare**. Buttons hidden/disabled without
+`statistics:manage`.
+
+## 10. URL encoding (shareable links, free)
+
+`spec.ts` provides `encode/decode` so the active spec can live in the URL (`?g=...`): gives
+back/forward + copy‑link sharing with zero DB cost. Composes with saved views (a saved view
+just seeds the spec). Low effort; include in slice 2.
+
+## 11. Export (PNG + CSV)
+
+- **CSV** (`exportCsv.ts`) — serialize the current `series` (the shaped data behind the
+  chart) to CSV. Pure + unit‑testable.
+- **PNG** (`exportPng.ts`) — Recharts renders SVG; serialize the chart SVG → canvas → PNG
+  (no heavy new dep). Heatmap (CSS grid) exported via the same SVG/canvas path or
+  `html-to-image` if needed (evaluate at build time, prefer no new dep).
+
+## 12. Testing strategy
+
+- Unit‑test the pure modules — `filter.ts`, `series.ts`, `buckets.ts`, `compat.ts`,
+  `spec.ts` (encode/decode round‑trip), `exportCsv.ts`. These hold the real logic.
+- API route: spec‑validation + owner‑scoping + permission tests.
+- Charts/DOM stay view‑only (untested), kept thin so logic lives in tested modules.
+
+## 13. Delivery slices (each: write tests → `PLAN:`/`REVIEW:` gate → deploy)
+
+1. **Plumbing** — `GraphSpec` + `DEFAULT_SPEC`; ship raw data client‑side; reproduce today's
+   bar chart through the pipeline (no visible change; proves the architecture). Tests for
+   `filter`/`series`.
+2. **Filters + URL** — date‑range (pay periods + custom) and staff picker; URL encode/decode.
+   Already more capable than today.
+3. **Transforms** — global normalize/weighting toggles across charts.
+4. **Chart types** — pie + heatmap, then line/trend (adds `buckets.ts`, both `payPeriod` and
+   `month` buckets).
+5. **Saved views** — Prisma model + migration + `statistics:manage` permission + backfill +
+   API + `SavedViews.tsx`.
+6. **Export + polish** — PNG/CSV, compat greying, empty/error states.
+
+Saved views land in slice 5 but the spec is designed for them from slice 1, so nothing needs
+reworking.
+
+## 14. Decisions captured
+
+- **Saved views**: per‑user from the start (anticipating per‑user profiles); default global,
+  user‑only option available.
+- **Editing**: gated by new `statistics:manage` permission; **Staff** group excluded by
+  default.
+- **Time axis**: support **both** pay‑period and month buckets (selectable).
+- **Scope**: build the full pipeline through slice 4; nothing dropped from v1.
+- **Export**: PNG **and** CSV in scope (slice 6).
+
+## 15. Still‑open (resolve at build time, not blocking)
+
+- Private‑view creation permission nuance (see 9.3) — default to "all saves need
+  `statistics:manage`" for now.
+- PNG export library choice — prefer SVG→canvas with no new dep; fall back to `html-to-image`
+  only if the heatmap needs it.
+- Exact metric list final naming and which become chart axes on radar.
+```
