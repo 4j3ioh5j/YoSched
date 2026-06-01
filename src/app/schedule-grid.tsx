@@ -1327,6 +1327,9 @@ export function ScheduleGrid({
   const alerts = useMemo(() => {
     const items: Array<{ date: string; message: string; type: "error" | "warn" }> = [];
     for (const date of dates) {
+      // Only surface alerts for days in the currently-viewed month, not the
+      // pay-period padding rows from the adjacent months.
+      if (date < firstOfMonth || date > lastOfMonth) continue;
       const dw = dayWarnings.get(date);
       if (dw) {
         for (const w of dw) {
@@ -1339,7 +1342,7 @@ export function ScheduleGrid({
       }
     }
     return items;
-  }, [dates, dayWarnings]);
+  }, [dates, dayWarnings, firstOfMonth, lastOfMonth]);
 
   // Group alerts by date so each row gets a single positioned block.
   const alertGroups = useMemo(() => {
