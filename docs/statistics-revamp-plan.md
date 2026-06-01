@@ -288,8 +288,9 @@ just seeds the spec). Low effort; include in slice 2.
      First time `spec.metric` drives behavior; heatmap valid only for shiftCount; `coerceChart`
      keeps the spec from invalid combos. Signed z-score metrics (desirability/equityDeviation)
      deferred (debatable bar semantics) — table/radar-only for now.
-   - **4b-ii (NEXT)** — **Pie** (dept share by provider of the chosen count metric).
-   - **4c** — **Line/area** + `buckets.ts` (`payPeriod` + `month`); `spec.timeBucket`.
+   - **4b-ii (DONE)** — **Pie** (dept share by provider of the chosen count metric). Commit
+     `a707736`, CR #338 APPROVED, deployed. Pure `shapePie` (+5 tests); `PieView` donut.
+   - **4c (NEXT)** — **Line/area** + `buckets.ts` (`payPeriod` + `month`); `spec.timeBucket`.
 5. **Saved views** — Prisma model + migration + `statistics:manage` permission + backfill +
    API + `SavedViews.tsx`.
 6. **Export + polish** — PNG/CSV, compat greying, empty/error states.
@@ -317,6 +318,7 @@ reworking.
 
 ## 16. Review history
 
+- **Slice 4b-ii — CR #338 APPROVED.** Pie / department share. Deployed `a707736`.
 - **Slice 4b-i — CR #336 APPROVED.** Metric picker + compat + scalar bars. Deployed `0afac39`.
 - **Slice 4a — CR #332 APPROVED.** Equity heatmap + chart-type picker. Deployed `30d680f`.
 - **Slice 3 — CR #330 APPROVED.** Global transform toggles. Deployed `d75592c`. (Follow-up
