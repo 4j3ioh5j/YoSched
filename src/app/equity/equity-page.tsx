@@ -13,6 +13,7 @@ import { MetricPicker } from "./controls/MetricPicker";
 import { TimeBucketPicker } from "./controls/TimeBucketPicker";
 import { SavedViews } from "./saved/SavedViews";
 import { toCsvText, buildEquityCsvRows } from "@/lib/graph/export-csv";
+import { toPng } from "html-to-image";
 import { coerceChart } from "@/lib/graph/compat";
 import { buildBuckets } from "@/lib/graph/buckets";
 import { computeTrend } from "@/lib/graph/trend";
@@ -440,6 +441,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
   // links. The first render is skipped so an untouched page keeps a clean URL.
   const [spec, setSpec] = useState<GraphSpec>(initialSpec);
   const firstRender = useRef(true);
+  const chartRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (firstRender.current) {
@@ -554,6 +556,74 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
     URL.revokeObjectURL(url);
   };
 
+  // The active chart, computed once so we can both render it and know whether a
+  // chart exists (drives the Export PNG button's enabled state).
+  const chartNode = (() => {
+    const perFte = spec.normalize === "fte";
+    const oppAdj = spec.weighting === "opportunity";
+    const codes = chartCodes;
+    const metric = spec.metric;
+    const isCode = metric.startsWith("shift:");
+
+    // Line — trend over time buckets, one line per filtered provider.
+    if (spec.chart === "line") {
+      if (!trend || trend.points.length === 0) return null;
+      const label = metric === "shiftCount" ? "All shifts" : isCode ? metric.slice(6) : metric === "holidays" ? "Holidays" : metric === "desirability" ? "Desirability" : "Hours";
+      return <LineView trend={trend} title={`${label} over time${perFte && metric !== "desirability" ? " — per 1.0 FTE" : ""}`} />;
+    }
+
+    // Heatmap — the all-codes equity grid; valid for "all shifts" or a
+    // specific code (it shows the chosen code in context of the others).
+    if (spec.chart === "heatmap" && (metric === "shiftCount" || isCode)) {
+      if (codes.length === 0) return null;
+      return (
+        <HeatmapView
+          data={filteredData}
+          codes={codes}
+          opportunityAdjusted={oppAdj}
+          thresholds={equityThresholds}
+          onSelect={(initials) => {
+            const match = filteredData.find((d) => d.initials === initials);
+            if (match) setSelectedProvider(match.providerId);
+          }}
+          setTip={setTip}
+        />
+      );
+    }
+
+    // Pie — department share by provider; valid for the count metrics.
+    if (spec.chart === "pie" && (metric === "shiftCount" || isCode || metric === "holidays" || metric === "hours")) {
+      return <PieView data={filteredData} metric={metric} codes={codes} perFte={perFte} />;
+    }
+
+    // Bar / fallback. "All shifts" keeps the stacked-by-code distribution;
+    // every other metric is one value per provider.
+    if (metric === "shiftCount") {
+      if (!(codes.length > 0 || showHoliday)) return null;
+      return (
+        <OverviewCharts
+          data={filteredData}
+          trackedShiftCodes={codes}
+          allShiftCodes={trackedShiftCodes}
+          showHoliday={showHoliday}
+          perFte={perFte}
+        />
+      );
+    }
+    return <MetricBarView data={filteredData} metric={metric} perFte={perFte} opportunityAdjusted={oppAdj} />;
+  })();
+
+  // Rasterize the rendered chart (SVG recharts + the div-grid heatmap) to PNG.
+  const downloadPng = async () => {
+    const node = chartRef.current;
+    if (!node) return;
+    const dataUrl = await toPng(node, { backgroundColor: "#0f172a", pixelRatio: 2 });
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `statistics-${dateRange.min}_to_${dateRange.max}.png`;
+    a.click();
+  };
+
   return (
     <div className="flex-1 overflow-auto">
       <div className="px-6 py-6">
@@ -572,6 +642,14 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
               title="Download the table as CSV"
             >
               Export CSV
+            </button>
+            <button
+              onClick={downloadPng}
+              disabled={!showCharts || !chartNode}
+              className="px-3 py-1.5 text-xs rounded transition-colors bg-slate-700 text-slate-300 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Download the current chart as a PNG image"
+            >
+              Export PNG
             </button>
             <button
               onClick={() => setShowCharts(!showCharts)}
@@ -646,60 +724,15 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
           </div>
         )}
 
-        {showCharts && (() => {
-          const perFte = spec.normalize === "fte";
-          const oppAdj = spec.weighting === "opportunity";
-          const codes = chartCodes;
-          const metric = spec.metric;
-          const isCode = metric.startsWith("shift:");
-
-          // Line — trend over time buckets, one line per filtered provider.
-          if (spec.chart === "line") {
-            if (!trend || trend.points.length === 0) return null;
-            const label = metric === "shiftCount" ? "All shifts" : isCode ? metric.slice(6) : metric === "holidays" ? "Holidays" : metric === "desirability" ? "Desirability" : "Hours";
-            return <LineView trend={trend} title={`${label} over time${perFte && metric !== "desirability" ? " — per 1.0 FTE" : ""}`} />;
-          }
-
-          // Heatmap — the all-codes equity grid; valid for "all shifts" or a
-          // specific code (it shows the chosen code in context of the others).
-          if (spec.chart === "heatmap" && (metric === "shiftCount" || isCode)) {
-            if (codes.length === 0) return null;
-            return (
-              <HeatmapView
-                data={filteredData}
-                codes={codes}
-                opportunityAdjusted={oppAdj}
-                thresholds={equityThresholds}
-                onSelect={(initials) => {
-                  const match = filteredData.find((d) => d.initials === initials);
-                  if (match) setSelectedProvider(match.providerId);
-                }}
-                setTip={setTip}
-              />
-            );
-          }
-
-          // Pie — department share by provider; valid for the count metrics.
-          if (spec.chart === "pie" && (metric === "shiftCount" || isCode || metric === "holidays" || metric === "hours")) {
-            return <PieView data={filteredData} metric={metric} codes={codes} perFte={perFte} />;
-          }
-
-          // Bar / fallback. "All shifts" keeps the stacked-by-code distribution;
-          // every other metric is one value per provider.
-          if (metric === "shiftCount") {
-            if (!(codes.length > 0 || showHoliday)) return null;
-            return (
-              <OverviewCharts
-                data={filteredData}
-                trackedShiftCodes={codes}
-                allShiftCodes={trackedShiftCodes}
-                showHoliday={showHoliday}
-                perFte={perFte}
-              />
-            );
-          }
-          return <MetricBarView data={filteredData} metric={metric} perFte={perFte} opportunityAdjusted={oppAdj} />;
-        })()}
+        {showCharts && (
+          <div ref={chartRef}>
+            {chartNode ?? (
+              <div className="bg-slate-800/30 border border-slate-700/50 rounded-lg px-4 py-10 mb-5 text-center text-sm text-slate-500">
+                No chart for this metric and filter combination.
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="bg-slate-800/30 border border-slate-700 rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
