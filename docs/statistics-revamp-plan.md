@@ -278,7 +278,14 @@ just seeds the spec). Low effort; include in slice 2.
    - Engine untouched (both deviation maps already existed). `compat.ts` grey‑out + weighting
      across more chart types deferred to slice 4 as planned.
 4. **Chart types** — pie + heatmap, then line/trend (adds `buckets.ts`, both `payPeriod` and
-   `month` buckets).
+   `month` buckets). **Split into 4a/4b/4c** (like 1b):
+   - **4a (DONE)** — Equity **Heatmap** + `ChartTypePicker` (Bar | Heatmap). Commit `30d680f`,
+     CR #332 APPROVED, deployed. `shapeHeatmap` (pure, +4 tests): providers × shift-codes,
+     each cell = raw count tinted by the FTE-normalized per-shift z-score via `fairnessColor()`;
+     honors `spec.weighting`. Additive — bar stays default; engine untouched.
+   - **4b (NEXT)** — **Pie** + `MetricPicker` (wires `spec.metric`) + **`compat.ts`** (valid
+     chart×metric combos + grey-out). This is where `spec.metric` first drives behavior.
+   - **4c** — **Line/area** + `buckets.ts` (`payPeriod` + `month`); `spec.timeBucket`.
 5. **Saved views** — Prisma model + migration + `statistics:manage` permission + backfill +
    API + `SavedViews.tsx`.
 6. **Export + polish** — PNG/CSV, compat greying, empty/error states.
@@ -306,6 +313,7 @@ reworking.
 
 ## 16. Review history
 
+- **Slice 4a — CR #332 APPROVED.** Equity heatmap + chart-type picker. Deployed `30d680f`.
 - **Slice 3 — CR #330 APPROVED.** Global transform toggles. Deployed `d75592c`. (Follow-up
   UI fixes to slice 2 also shipped: CR #326 Custom-date inputs, CR #328 staff-list narrowing.)
 - **Slice 2 — CR #322 APPROVED (one NOTE: `decodeSpec` should default `groupByShiftCode`
