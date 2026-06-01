@@ -290,7 +290,14 @@ just seeds the spec). Low effort; include in slice 2.
      deferred (debatable bar semantics) — table/radar-only for now.
    - **4b-ii (DONE)** — **Pie** (dept share by provider of the chosen count metric). Commit
      `a707736`, CR #338 APPROVED, deployed. Pure `shapePie` (+5 tests); `PieView` donut.
-   - **4c (NEXT)** — **Line/area** + `buckets.ts` (`payPeriod` + `month`); `spec.timeBucket`.
+   - **4c (DONE)** — **Line/trend** + `buckets.ts` + `trend.ts`. Commit `fa48a00`, CR #342
+     APPROVED, deployed. One line per filtered provider; `computeTrend` loops
+     `computeStatsModel` per pay-period/month bucket (the single engine loop). `TimeBucketPicker`
+     shown only for the line chart.
+   - **Slice 4 COMPLETE.** Full chart matrix live: Bar / Pie / Heatmap / Line, driven by
+     Metric (All shifts / per-code / Holiday / Desirability) × Transform × date/staff filters,
+     `compat.ts` greying invalid combos. Also shipped this session: metric picker = equity
+     factors; header dates use the configured date format; heatmap sizing fix.
 5. **Saved views** — Prisma model + migration + `statistics:manage` permission + backfill +
    API + `SavedViews.tsx`.
 6. **Export + polish** — PNG/CSV, compat greying, empty/error states.
@@ -318,6 +325,8 @@ reworking.
 
 ## 16. Review history
 
+- **Slice 4c — CR #342 APPROVED.** Line/trend + buckets. Deployed `fa48a00`. (Slice 4 complete.)
+- **Metric picker = equity factors + formatted header dates — CR #340 APPROVED.** Deployed `b69dc1b`.
 - **Slice 4b-ii — CR #338 APPROVED.** Pie / department share. Deployed `a707736`.
 - **Slice 4b-i — CR #336 APPROVED.** Metric picker + compat + scalar bars. Deployed `0afac39`.
 - **Slice 4a — CR #332 APPROVED.** Equity heatmap + chart-type picker. Deployed `30d680f`.
