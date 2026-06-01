@@ -50,3 +50,44 @@ export function shapeBarSeries(
       return row;
     });
 }
+
+/* ------------------------------------------------------------------ *
+ * Heatmap — providers × shift codes, each cell carrying its raw count and the
+ * provider's FTE-normalized per-shift z-score (deviation). The view colors the
+ * cell from the deviation via `fairnessColor()`; this shaper stays color-free
+ * so it is pure and unit-testable. `opportunityAdjusted` selects the
+ * eligibility-adjusted deviations (spec.weighting === "opportunity") over the
+ * plain ones, mirroring the radar.
+ * ------------------------------------------------------------------ */
+
+type PerShift = { perShift: Record<string, number> };
+
+export type HeatmapInput = {
+  initials: string;
+  shiftCounts: Record<string, number>;
+  deviation: PerShift;
+  displayDeviation: PerShift;
+};
+
+export type HeatmapCell = { code: string; count: number; deviation: number };
+export type HeatmapRow = { initials: string; cells: HeatmapCell[] };
+
+export function shapeHeatmap(
+  rows: HeatmapInput[],
+  codes: string[],
+  opportunityAdjusted: boolean,
+): HeatmapRow[] {
+  return [...rows]
+    .sort((a, b) => a.initials.localeCompare(b.initials))
+    .map((r) => {
+      const dev = opportunityAdjusted ? r.deviation : r.displayDeviation;
+      return {
+        initials: r.initials,
+        cells: codes.map((code) => ({
+          code,
+          count: r.shiftCounts[code] ?? 0,
+          deviation: dev.perShift[code] ?? 0,
+        })),
+      };
+    });
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shapeBarSeries, type BarSeriesInput } from "../series";
+import { shapeBarSeries, shapeHeatmap, type BarSeriesInput, type HeatmapInput } from "../series";
 
 const row = (
   initials: string,
@@ -63,5 +63,52 @@ describe("shapeBarSeries", () => {
     expect(shapeBarSeries([row("AB", { CALL: 4 }, 0, 0)], ["CALL"], false, true)).toEqual([
       { initials: "AB", CALL: 4 },
     ]);
+  });
+});
+
+const hRow = (
+  initials: string,
+  shiftCounts: Record<string, number>,
+  plain: Record<string, number>,
+  opp: Record<string, number>,
+): HeatmapInput => ({
+  initials,
+  shiftCounts,
+  displayDeviation: { perShift: plain },
+  deviation: { perShift: opp },
+});
+
+describe("shapeHeatmap", () => {
+  const rows = [
+    hRow("ZZ", { CALL: 3, ORC: 1 }, { CALL: 0.5, ORC: -0.2 }, { CALL: 1.1, ORC: -0.9 }),
+    hRow("AA", { CALL: 5 }, { CALL: -1.0 }, { CALL: -2.0 }),
+  ];
+
+  it("emits one row per provider, sorted by initials, one cell per code", () => {
+    const out = shapeHeatmap(rows, ["CALL", "ORC"], false);
+    expect(out.map((r) => r.initials)).toEqual(["AA", "ZZ"]);
+    expect(out[0].cells.map((c) => c.code)).toEqual(["CALL", "ORC"]);
+  });
+
+  it("pairs raw counts with the plain deviation; missing counts/devs default to 0", () => {
+    const out = shapeHeatmap(rows, ["CALL", "ORC"], false);
+    const aa = out.find((r) => r.initials === "AA")!;
+    expect(aa.cells).toEqual([
+      { code: "CALL", count: 5, deviation: -1.0 },
+      { code: "ORC", count: 0, deviation: 0 },
+    ]);
+  });
+
+  it("uses opportunity-adjusted deviations when requested (counts unchanged)", () => {
+    const zz = shapeHeatmap(rows, ["CALL", "ORC"], true).find((r) => r.initials === "ZZ")!;
+    expect(zz.cells).toEqual([
+      { code: "CALL", count: 3, deviation: 1.1 },
+      { code: "ORC", count: 1, deviation: -0.9 },
+    ]);
+  });
+
+  it("does not mutate the input array order", () => {
+    shapeHeatmap(rows, ["CALL"], false);
+    expect(rows.map((r) => r.initials)).toEqual(["ZZ", "AA"]);
   });
 });
