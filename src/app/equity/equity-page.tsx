@@ -7,6 +7,7 @@ import { shapeBarSeries } from "@/lib/graph/series";
 import { encodeSpec, type GraphSpec } from "@/lib/graph/spec";
 import { DateRangePicker } from "./controls/DateRangePicker";
 import { StaffPicker } from "./controls/StaffPicker";
+import { TransformToggles } from "./controls/TransformToggles";
 import { computeStatsModel, type RawStatsData } from "@/lib/graph/model";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -92,11 +93,12 @@ function shiftColor(code: string, allCodes: string[]): string {
 
 const HOLIDAY_COLOR = "#ef4444";
 
-function OverviewCharts({ data, trackedShiftCodes, allShiftCodes, showHoliday }: {
+function OverviewCharts({ data, trackedShiftCodes, allShiftCodes, showHoliday, perFte }: {
   data: EquityRow[];
   trackedShiftCodes: string[];
   allShiftCodes: string[];
   showHoliday: boolean;
+  perFte: boolean;
 }) {
   const allToggleCodes = [...(showHoliday ? ["Holidays"] : []), ...trackedShiftCodes];
   const [visibleShifts, setVisibleShifts] = useState<Set<string>>(() => new Set(allToggleCodes));
@@ -115,14 +117,16 @@ function OverviewCharts({ data, trackedShiftCodes, allShiftCodes, showHoliday }:
   const anyVisible = visibleCodes.length > 0 || holidayVisible;
 
   const shiftData = useMemo(
-    () => shapeBarSeries(data, visibleCodes, holidayVisible),
-    [data, visibleCodes, holidayVisible],
+    () => shapeBarSeries(data, visibleCodes, holidayVisible, perFte),
+    [data, visibleCodes, holidayVisible, perFte],
   );
 
   return (
     <div className="mb-6">
       <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Shift Distribution</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+          Shift Distribution{perFte ? " — per 1.0 FTE" : ""}
+        </h3>
         <div className="flex items-center gap-1.5 mb-3">
           {allToggleCodes.map((code) => {
             const color = code === "Holidays" ? HOLIDAY_COLOR : shiftColor(code, allShiftCodes);
@@ -170,20 +174,25 @@ function radarParamTip(label: string): string {
 
 const RADAR_INFO = "This radar chart compares one staff member (blue) against the department median (dashed gray) across all tracked equity factors.\n\nFTE-Normalized mode: Values are z-scores (standard deviations from the mean), adjusted for each person's FTE percentage. Outward from the dashed line = more burden than average.\n\nActual Counts mode: Raw shift counts with department median overlay.\n\nOpp-Adjusted mode: Desirability is adjusted so providers are only compared against shifts they're eligible to work.";
 
-function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThresholds, globalMaxDev, onClose, setTip }: {
+function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThresholds, globalMaxDev, normalize, weighting, onTransformChange, onClose, setTip }: {
   row: EquityRow;
   allRows: EquityRow[];
   averages: Averages;
   trackedShiftCodes: string[];
   equityThresholds: EquityThresholds;
   globalMaxDev: number;
+  normalize: "raw" | "fte";
+  weighting: "none" | "opportunity";
+  onTransformChange: (patch: Partial<GraphSpec>) => void;
   onClose: () => void;
   setTip: SetTip;
 }) {
   useEscape(onClose);
   const fte = row.ftePercentage;
-  const [radarOppAdj, setRadarOppAdj] = useState(false);
-  const [radarFteNorm, setRadarFteNorm] = useState(true);
+  // The radar's transform is the global spec transform — the panel buttons just
+  // write it, so the chart-bar and radar always agree.
+  const radarFteNorm = normalize === "fte";
+  const radarOppAdj = weighting === "opportunity";
 
   const globalMaxDevAdj = useMemo(() => {
     let max = 0.5;
@@ -261,14 +270,14 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
               </h3>
               <div className="flex items-center gap-1.5">
                 <button
-                  onClick={() => setRadarFteNorm(!radarFteNorm)}
+                  onClick={() => onTransformChange({ normalize: radarFteNorm ? "raw" : "fte" })}
                   className={`px-2.5 py-1 text-[10px] rounded transition-colors ${!radarFteNorm ? "bg-amber-600/20 text-amber-400 border border-amber-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
                 >
                   {radarFteNorm ? "FTE-Normalized" : "Actual Counts"}
                 </button>
                 {radarFteNorm && (
                   <button
-                    onClick={() => setRadarOppAdj(!radarOppAdj)}
+                    onClick={() => onTransformChange({ weighting: radarOppAdj ? "none" : "opportunity" })}
                     className={`px-2.5 py-1 text-[10px] rounded transition-colors ${radarOppAdj ? "bg-purple-600/20 text-purple-400 border border-purple-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
                   >
                     {radarOppAdj ? "Opp-Adjusted" : "Raw Z-Scores"}
@@ -526,6 +535,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: P
             }))}
             onChange={(staff) => setSpec((s) => ({ ...s, staff }))}
           />
+          <TransformToggles spec={spec} onChange={(patch) => setSpec((s) => ({ ...s, ...patch }))} />
           {isFiltered && (
             <span className="text-xs text-slate-500 pl-[72px]">{filteredData.length} of {data.length} providers shown</span>
           )}
@@ -560,6 +570,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: P
             trackedShiftCodes={activeShiftCodes.filter((c) => trackedShiftCodes.includes(c))}
             allShiftCodes={trackedShiftCodes}
             showHoliday={showHoliday}
+            perFte={spec.normalize === "fte"}
           />
         )}
 
@@ -666,6 +677,9 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: P
           trackedShiftCodes={trackedShiftCodes}
           equityThresholds={equityThresholds}
           globalMaxDev={globalMaxDev}
+          normalize={spec.normalize}
+          weighting={spec.weighting}
+          onTransformChange={(patch) => setSpec((s) => ({ ...s, ...patch }))}
           onClose={() => setSelectedProvider(null)}
           setTip={setTip}
         />

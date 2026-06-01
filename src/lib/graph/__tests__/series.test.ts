@@ -5,7 +5,8 @@ const row = (
   initials: string,
   shiftCounts: Record<string, number>,
   holidayWorkCount = 0,
-): BarSeriesInput => ({ initials, holidayWorkCount, shiftCounts });
+  ftePercentage = 1,
+): BarSeriesInput => ({ initials, holidayWorkCount, shiftCounts, ftePercentage });
 
 describe("shapeBarSeries", () => {
   it("returns [] when no codes and holidays are excluded", () => {
@@ -42,5 +43,25 @@ describe("shapeBarSeries", () => {
     const data = [row("ZZ", {}), row("AA", {})];
     shapeBarSeries(data, [], true);
     expect(data.map((d) => d.initials)).toEqual(["ZZ", "AA"]);
+  });
+
+  it("leaves counts unchanged when perFte is omitted (default)", () => {
+    expect(shapeBarSeries([row("AB", { CALL: 4 }, 0, 0.5)], ["CALL"], false)).toEqual([
+      { initials: "AB", CALL: 4 },
+    ]);
+  });
+
+  it("divides counts by FTE percentage when perFte is set", () => {
+    const data = [row("AB", { CALL: 4 }, 2, 0.5), row("CD", { CALL: 3 }, 1, 1)];
+    expect(shapeBarSeries(data, ["CALL"], true, true)).toEqual([
+      { initials: "AB", Holidays: 4, CALL: 8 },
+      { initials: "CD", Holidays: 1, CALL: 3 },
+    ]);
+  });
+
+  it("treats an FTE of 0 as 1.0 (no divide-by-zero) under perFte", () => {
+    expect(shapeBarSeries([row("AB", { CALL: 4 }, 0, 0)], ["CALL"], false, true)).toEqual([
+      { initials: "AB", CALL: 4 },
+    ]);
   });
 });
