@@ -2,6 +2,8 @@
 
 import React, { useState, useMemo } from "react";
 import { useEscape } from "@/lib/use-escape";
+import { filterByMinFte } from "@/lib/graph/filter";
+import { shapeBarSeries } from "@/lib/graph/series";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
@@ -117,17 +119,10 @@ function OverviewCharts({ data, trackedShiftCodes, allShiftCodes, showHoliday }:
   const holidayVisible = showHoliday && visibleShifts.has("Holidays");
   const anyVisible = visibleCodes.length > 0 || holidayVisible;
 
-  const shiftData = useMemo(() => {
-    if (!anyVisible) return [];
-    return [...data].sort((a, b) => a.initials.localeCompare(b.initials)).map((d) => {
-      const row: Record<string, string | number> = { initials: d.initials };
-      if (holidayVisible) row["Holidays"] = d.holidayWorkCount;
-      for (const code of visibleCodes) {
-        row[code] = d.shiftCounts[code] || 0;
-      }
-      return row;
-    });
-  }, [data, visibleCodes, holidayVisible, anyVisible]);
+  const shiftData = useMemo(
+    () => shapeBarSeries(data, visibleCodes, holidayVisible),
+    [data, visibleCodes, holidayVisible],
+  );
 
   return (
     <div className="mb-6">
@@ -424,10 +419,7 @@ export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shift
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
   const [minFte, setMinFte] = useState(0);
 
-  const filteredData = useMemo(() =>
-    minFte > 0 ? data.filter((d) => d.ftePercentage >= minFte) : data,
-    [data, minFte],
-  );
+  const filteredData = useMemo(() => filterByMinFte(data, minFte), [data, minFte]);
 
   const selectedRow = selectedProvider ? filteredData.find((d) => d.providerId === selectedProvider) : null;
 
