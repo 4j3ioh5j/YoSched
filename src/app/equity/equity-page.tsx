@@ -11,6 +11,7 @@ import { TransformToggles } from "./controls/TransformToggles";
 import { ChartTypePicker } from "./controls/ChartTypePicker";
 import { MetricPicker } from "./controls/MetricPicker";
 import { TimeBucketPicker } from "./controls/TimeBucketPicker";
+import { SavedViews } from "./saved/SavedViews";
 import { coerceChart } from "@/lib/graph/compat";
 import { buildBuckets } from "@/lib/graph/buckets";
 import { computeTrend } from "@/lib/graph/trend";
@@ -70,6 +71,7 @@ type Props = {
   payPeriods: PayPeriodRef[];
   initialSpec: GraphSpec;
   dateFormat: string;
+  canManageViews: boolean;
 };
 
 /** Format an ISO YYYY-MM-DD string with the user's configured date format.
@@ -427,7 +429,7 @@ const COLUMN_FORMULAS: Record<string, string> = {
   leaveDays: "Total leave days",
 };
 
-export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dateFormat }: Props) {
+export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dateFormat, canManageViews }: Props) {
   const [tip, setTip] = useState<TipState>(null);
   const dateFmt = (dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey;
 
@@ -558,6 +560,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
         </div>
 
         <div className="flex flex-col gap-3 mb-5 bg-slate-800/30 border border-slate-700/50 rounded-lg px-4 py-3">
+          <SavedViews currentSpec={spec} onSelect={setSpec} canManage={canManageViews} />
           <DateRangePicker
             value={spec.dateRange}
             payPeriods={payPeriods}

@@ -20,6 +20,7 @@ const ALL_PERMISSIONS = [
   { key: "staff:view", label: "View Staff", category: "Staff" },
   { key: "staff:edit", label: "Edit Staff", category: "Staff" },
   { key: "statistics:view", label: "View Statistics", category: "Statistics" },
+  { key: "statistics:manage", label: "Manage Statistics Views", category: "Statistics" },
   { key: "settings:view", label: "View Settings", category: "Settings" },
   { key: "settings:edit", label: "Edit Settings", category: "Settings" },
   { key: "users:view", label: "View Users", category: "Users" },

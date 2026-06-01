@@ -351,7 +351,7 @@ async function main() {
   // --- Groups ---
   const ALL_PERMISSIONS = [
     "schedule:view", "schedule:edit", "schedule:auto",
-    "staff:view", "staff:edit", "statistics:view",
+    "staff:view", "staff:edit", "statistics:view", "statistics:manage",
     "settings:view", "settings:edit",
     "users:view", "users:edit",
     "groups:view", "groups:edit",
@@ -360,7 +360,7 @@ async function main() {
   const groupDefs = [
     { name: "Admin", permissions: ALL_PERMISSIONS, level: 3, isSystem: true, permissionsLocked: true },
     { name: "Super User", permissions: ALL_PERMISSIONS, level: 2, isSystem: true, permissionsLocked: true },
-    { name: "Scheduler", permissions: ["schedule:view", "schedule:edit", "schedule:auto", "staff:view", "staff:edit", "statistics:view", "settings:view", "settings:edit"], level: 1, isSystem: true, permissionsLocked: false },
+    { name: "Scheduler", permissions: ["schedule:view", "schedule:edit", "schedule:auto", "staff:view", "staff:edit", "statistics:view", "statistics:manage", "settings:view", "settings:edit"], level: 1, isSystem: true, permissionsLocked: false },
     { name: "Staff", permissions: ["schedule:view", "statistics:view", "settings:view"], level: 0, isSystem: true, permissionsLocked: false },
   ];
 

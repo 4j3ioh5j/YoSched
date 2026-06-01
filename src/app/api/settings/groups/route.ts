@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const ALL_PERMISSIONS: Permission[] = [
   "schedule:view", "schedule:edit", "schedule:auto",
-  "staff:view", "staff:edit", "statistics:view",
+  "staff:view", "staff:edit", "statistics:view", "statistics:manage",
   "settings:view", "settings:edit",
   "users:view", "users:edit",
   "groups:view", "groups:edit",

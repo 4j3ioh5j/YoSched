@@ -118,6 +118,11 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Cannot delete a user at or above your group level" }, { status: 403 });
   }
 
+  // Delete the user's PRIVATE saved graph views first. The FK uses onDelete: SetNull,
+  // which keeps their SHARED views as department-owned (ownerId = null) but would leave
+  // private views (isShared = false) invisible to everyone — dead rows. Remove them.
+  await prisma.savedGraphView.deleteMany({ where: { ownerId: id, isShared: false } });
+
   await prisma.user.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }

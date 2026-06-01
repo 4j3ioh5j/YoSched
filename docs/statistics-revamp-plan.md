@@ -298,8 +298,12 @@ just seeds the spec). Low effort; include in slice 2.
      Metric (All shifts / per-code / Holiday / Desirability) × Transform × date/staff filters,
      `compat.ts` greying invalid combos. Also shipped this session: metric picker = equity
      factors; header dates use the configured date format; heatmap sizing fix.
-5. **Saved views** — Prisma model + migration + `statistics:manage` permission + backfill +
-   API + `SavedViews.tsx`.
+5. **Saved views (DONE — pending CR/deploy)** — `SavedGraphView` Prisma model + migration +
+   `User.savedGraphViews` inverse + new `statistics:manage` permission (5 touch points) +
+   backfill migration + CRUD API (`/api/statistics/views` + `[id]`) + `SavedViews.tsx`
+   dropdown. `coerceSpec` extracted from `decodeSpec` as the shared trust boundary (URL + API).
+   Owner-deletion deletes the owner's PRIVATE views (CR #313); shared views survive as
+   department-owned (`ownerId = null`). Ownership rules pure-tested in `view-access.ts`.
 6. **Export + polish** — PNG/CSV, compat greying, empty/error states.
 
 Saved views land in slice 5 but the spec is designed for them from slice 1, so nothing needs
@@ -324,6 +328,17 @@ reworking.
 - Exact metric list final naming and which become chart axes on radar.
 
 ## 16. Review history
+
+- **Slice 5 PLAN — CR #344 APPROVED (2026‑06‑01).** Saved-views approach (DB migration + new
+  `statistics:manage` permission) approved before coding, per the higher-risk gate. Implemented:
+  model + 2 migrations (table; permission backfill), 5 permission touch points, `coerceSpec`
+  trust boundary, CRUD API, owner-deletion orphan fix, `SavedViews.tsx`.
+- **Slice 5 REVIEW — CR #346 BLOCKED → fixed (2026‑06‑01).** Finding: PUT making a *shared*
+  view private left `ownerId` untouched, so a department-owned shared view (`ownerId = null`)
+  became an invisible orphan and another user's shared view became private to its original
+  owner (locking out the actor). Fix: `nextOwnerId` — the acting user claims ownership on a
+  shared→private transition; ownership untouched otherwise. Pure-tested (5 regression cases).
+  301 tests (was 287). *(REVIEW round 2 pending.)*
 
 - **Slice 4c — CR #342 APPROVED.** Line/trend + buckets. Deployed `fa48a00`. (Slice 4 complete.)
 - **Metric picker = equity factors + formatted header dates — CR #340 APPROVED.** Deployed `b69dc1b`.

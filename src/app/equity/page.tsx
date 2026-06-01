@@ -18,8 +18,9 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
   // raw per-date assignment list to the browser for client-side recompute, which
   // is the schedule itself. Do not drop schedule:view here without moving the
   // raw-data computation back to the server (see docs/statistics-revamp-plan.md).
-  const { error } = await getSession(["statistics:view", "schedule:view"]);
-  if (error) redirect("/");
+  const session = await getSession(["statistics:view", "schedule:view"]);
+  if (session.error) redirect("/");
+  const canManageViews = session.permissions.includes("statistics:manage");
   const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs, equityFactors, eligibilities, overrides] =
     await Promise.all([
       prisma.provider.findMany({ orderBy: { sortOrder: "asc" }, include: { employmentType: true } }),
@@ -108,7 +109,7 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
   return (
     <main className="flex flex-col h-screen">
       <NavHeader />
-      <EquityPage raw={raw} equityThresholds={equityThresholds} payPeriods={payPeriodRefs} initialSpec={initialSpec} dateFormat={schedPrefs?.dateFormat ?? DEFAULT_DATE_FORMAT} />
+      <EquityPage raw={raw} equityThresholds={equityThresholds} payPeriods={payPeriodRefs} initialSpec={initialSpec} dateFormat={schedPrefs?.dateFormat ?? DEFAULT_DATE_FORMAT} canManageViews={canManageViews} />
     </main>
   );
 }

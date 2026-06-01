@@ -30,7 +30,26 @@ model User {
 
   group Group? @relation(fields: [groupId], references: [id])
 
+  savedGraphViews SavedGraphView[]
+
   @@map("users")
+}
+
+model SavedGraphView {
+  id        String   @id @default(cuid())
+  name      String
+  spec      Json // a GraphSpec
+  ownerId   String? // User id of creator; null = department-owned (e.g. owner deleted)
+  isShared  Boolean  @default(true) // default global; false = private to owner
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner User? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId])
+  @@index([isShared])
+  @@map("saved_graph_views")
 }
 
 model Group {

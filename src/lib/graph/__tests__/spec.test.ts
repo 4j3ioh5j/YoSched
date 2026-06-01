@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_SPEC, encodeSpec, decodeSpec, type GraphSpec } from "../spec";
+import { DEFAULT_SPEC, encodeSpec, decodeSpec, coerceSpec, type GraphSpec } from "../spec";
 
 describe("encodeSpec / decodeSpec", () => {
   it("round-trips the default spec", () => {
@@ -78,5 +78,44 @@ describe("encodeSpec / decodeSpec", () => {
     const decoded = decodeSpec(raw)!;
     expect(decoded.staff.employmentType).toBeNull();
     expect(decoded.staff.minFtePct).toBeNull();
+  });
+});
+
+describe("coerceSpec (API trust boundary)", () => {
+  it("returns a fresh default spec for non-object input", () => {
+    expect(coerceSpec(null)).toEqual(DEFAULT_SPEC);
+    expect(coerceSpec(undefined)).toEqual(DEFAULT_SPEC);
+    expect(coerceSpec("nope")).toEqual(DEFAULT_SPEC);
+    expect(coerceSpec(42)).toEqual(DEFAULT_SPEC);
+    expect(coerceSpec([1, 2, 3])).toEqual(DEFAULT_SPEC);
+  });
+
+  it("never throws on hostile blobs and still returns a valid spec", () => {
+    const blob = { metric: { nested: true }, chart: 99, staff: "x", dateRange: [], timeBucket: "decade" };
+    const spec = coerceSpec(blob);
+    expect(spec.version).toBe(1);
+    expect(spec.metric).toBe(DEFAULT_SPEC.metric);
+    expect(spec.chart).toBe(DEFAULT_SPEC.chart);
+    expect(spec.staff).toEqual(DEFAULT_SPEC.staff);
+    expect(spec.dateRange).toEqual(DEFAULT_SPEC.dateRange);
+    expect(spec.timeBucket).toBeUndefined();
+  });
+
+  it("accepts an already-decoded object (round-trips through coerce)", () => {
+    const spec: GraphSpec = {
+      version: 1,
+      dateRange: { kind: "custom", start: "2026-01-01", end: "2026-02-01" },
+      staff: { all: true },
+      metric: "shift:CALL",
+      groupByShiftCode: true,
+      chart: "bar",
+      normalize: "fte",
+      weighting: "opportunity",
+    };
+    expect(coerceSpec(spec)).toEqual(spec);
+  });
+
+  it("drops a stored version other than 1 and pins it to 1", () => {
+    expect(coerceSpec({ version: 7, metric: "hours" }).version).toBe(1);
   });
 });

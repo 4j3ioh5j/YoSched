@@ -108,14 +108,17 @@ function coerceStaff(v: unknown): GraphStaffFilter {
   return Object.keys(staff).length ? staff : { ...DEFAULT_SPEC.staff };
 }
 
-export function decodeSpec(raw: string): GraphSpec | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(decodeURIComponent(raw));
-  } catch {
-    return null;
+/**
+ * Coerce an already-parsed value into a valid GraphSpec. Never throws and always
+ * returns a complete spec: every field is validated against DEFAULT_SPEC and bad
+ * values are dropped. Non-object input yields a fresh DEFAULT_SPEC. This is the
+ * single trust boundary for untrusted specs — shared by the URL decoder
+ * (decodeSpec) and the saved-views API (which persists user-supplied blobs).
+ */
+export function coerceSpec(parsed: unknown): GraphSpec {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ...DEFAULT_SPEC };
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const o = parsed as Record<string, unknown>;
 
   const spec: GraphSpec = {
@@ -131,4 +134,15 @@ export function decodeSpec(raw: string): GraphSpec | null {
     typeof o.groupByShiftCode === "boolean" ? o.groupByShiftCode : DEFAULT_SPEC.groupByShiftCode;
   if (o.timeBucket === "payPeriod" || o.timeBucket === "month") spec.timeBucket = o.timeBucket;
   return spec;
+}
+
+export function decodeSpec(raw: string): GraphSpec | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decodeURIComponent(raw));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  return coerceSpec(parsed);
 }

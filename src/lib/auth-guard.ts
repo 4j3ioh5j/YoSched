@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 export type Permission =
   | "schedule:view" | "schedule:edit" | "schedule:auto"
   | "staff:view" | "staff:edit"
-  | "statistics:view"
+  | "statistics:view" | "statistics:manage"
   | "settings:view" | "settings:edit"
   | "users:view" | "users:edit"
   | "groups:view" | "groups:edit";
@@ -65,11 +65,11 @@ export async function getSession(required?: Permission | Permission[]): Promise<
     // Dual-mode fallback: user not yet assigned to a group (stale data)
     const role = dbUser.role as Role;
     if (role === "admin") {
-      permissions = ["schedule:view", "schedule:edit", "schedule:auto", "staff:view", "staff:edit", "statistics:view", "settings:view", "settings:edit", "users:view", "users:edit", "groups:view", "groups:edit"];
+      permissions = ["schedule:view", "schedule:edit", "schedule:auto", "staff:view", "staff:edit", "statistics:view", "statistics:manage", "settings:view", "settings:edit", "users:view", "users:edit", "groups:view", "groups:edit"];
       groupLevel = 3;
       groupName = "Admin";
     } else if (role === "manager") {
-      permissions = ["schedule:view", "schedule:edit", "schedule:auto", "staff:view", "staff:edit", "statistics:view", "settings:view", "settings:edit", "users:view", "users:edit", "groups:view", "groups:edit"];
+      permissions = ["schedule:view", "schedule:edit", "schedule:auto", "staff:view", "staff:edit", "statistics:view", "statistics:manage", "settings:view", "settings:edit", "users:view", "users:edit", "groups:view", "groups:edit"];
       groupLevel = 2;
       groupName = "Super User";
     } else {
