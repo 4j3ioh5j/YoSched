@@ -96,7 +96,13 @@ pure) and the time‑bucketing loop.
 - **Expose raw data to the client.** `equity/page.tsx` currently pre‑computes on the server
   and ships derived `EquityRow[]`. Change it to also pass the normalized raw arrays:
   assignments (with shiftType), providers (with employmentType + FTE + eligibility),
-  desirabilityWeights, holidays, equityFactors, payPeriods. All small.
+  desirabilityWeights, holidays, equityFactors, payPeriods, **and
+  `providerShiftOverride`**. All small.
+  - **Overrides are required, not optional** (CR #313): the current hours metric depends on
+    per‑provider shift‑hour overrides plus the `countsOnWeekend` logic at
+    `src/app/equity/page.tsx:81`. Slice 1 must include `providerShiftOverride` in the client
+    payload and the `series.ts`/hours tests must cover the override + weekend path, or the
+    new pipeline will silently compute different hours than today.
 - **Wrap `computeFairness` for client use** — call it inside a `useMemo` keyed on
   `(scopedAssignments, spec)`. No engine rewrite.
 - **Time bucketing** (`buckets.ts`): for `chart === "line"`, split scoped assignments into
@@ -152,6 +158,15 @@ model SavedGraphView {
   @@index([isShared])
 }
 ```
+Plus the **inverse relation on `User`** (CR #313): `savedGraphViews SavedGraphView[]`.
+
+**Owner deletion (CR #313):** `onDelete: SetNull` alone would orphan *private* views —
+`isShared = false` with `ownerId = null` is visible to nobody (dead rows). Resolution: keep
+`SetNull` on the relation (so a deleted author's **shared** views survive as
+department‑owned, `ownerId = null`), but the user‑deletion path must **delete the owner's
+private views** (`isShared = false`) first so no invisible rows remain. Cover this in the
+saved‑views slice (slice 5) tests.
+
 Migration via `prisma migrate` (deploy.sh already runs `migrate deploy`).
 
 ### 9.2 Visibility / read rules
@@ -166,6 +181,9 @@ Controls create/update/delete of saved views (both shared and private). Without 
 - `src/app/settings/groups-section.tsx:16` — add to the UI permission catalog (category
   "statistics").
 - `src/lib/auth-guard.ts` — add to the hardcoded fallback lists for the appropriate levels.
+- `src/app/api/settings/groups/route.ts:5` — **its own permission whitelist** (CR #313).
+  Without adding `statistics:manage` here, custom groups cannot be granted the permission
+  through the groups API even though the UI catalog lists it. Easy to miss; required.
 - **Backfill migration** — grant `statistics:manage` to existing Admin/Super User/Scheduler
   groups (mirror `20260529120100_seed_groups_backfill_users`).
 
@@ -243,4 +261,13 @@ reworking.
 - PNG export library choice — prefer SVG→canvas with no new dep; fall back to `html-to-image`
   only if the heatmap needs it.
 - Exact metric list final naming and which become chart axes on radar.
+
+## 16. Review history
+
+- **PLAN review — Code‑Review #313 (2026‑06‑01): approved approach.** Client‑side recompute
+  confirmed sound at this scale; no server graph‑query API needed. Three gaps folded into
+  this doc: (1) `providerShiftOverride` added to the slice‑1 raw payload + hours/weekend
+  tests (§6); (2) `src/app/api/settings/groups/route.ts` added to the RBAC touch points so
+  custom groups can be granted `statistics:manage` (§9.3); (3) `User.savedGraphViews` inverse
+  relation + owner‑deletion handling for orphaned private views (§9.1).
 ```
