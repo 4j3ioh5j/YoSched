@@ -254,6 +254,19 @@ just seeds the spec). Low effort; include in slice 2.
      gate** without moving raw‑data compute back to the server.
 2. **Filters + URL** — date‑range (pay periods + custom) and staff picker; URL encode/decode.
    Already more capable than today.
+   - **Status: DONE** — commit `4948dbb`, Code‑Review #322 APPROVED (NOTE folded in) +
+     #324 APPROVED round 2, deployed (login=200). 255 tests passing.
+   - `spec.ts`: `encodeSpec`/`decodeSpec` (`?g=`), defensive field‑by‑field coercion of
+     untrusted URL input (no zod dep — hand‑rolled); `groupByShiftCode` defaults from
+     `DEFAULT_SPEC` (NOTE #323 fix, before slice‑4 wires it).
+   - `filter.ts`: `filterAssignmentsByDate` (payPeriods union / custom inclusive, lexical ISO
+     compare, empty=no‑op) runs **before** `computeStatsModel`; `filterStaff`
+     (names/type/minFte, AND, identity‑preserving) runs **after** as a display filter so
+     dept‑relative z‑scores stay computed over everyone.
+   - `page.tsx`: decodes `?g` server‑side from `searchParams` → `initialSpec` prop (no client
+     mount‑effect, no hydration mismatch); passes `payPeriods` through. RBAC gate unchanged.
+   - `equity-page.tsx`: holds spec, mirrors to `?g` via `replaceState`; new
+     `controls/{DateRangePicker,StaffPicker}.tsx` (thin views).
 3. **Transforms** — global normalize/weighting toggles across charts.
 4. **Chart types** — pie + heatmap, then line/trend (adds `buckets.ts`, both `payPeriod` and
    `month` buckets).
@@ -284,6 +297,8 @@ reworking.
 
 ## 16. Review history
 
+- **Slice 2 — CR #322 APPROVED (one NOTE: `decodeSpec` should default `groupByShiftCode`
+  from `DEFAULT_SPEC`), folded in and re‑approved CR #324 (round 2).** Deployed `4948dbb`.
 - **PLAN review — Code‑Review #313 (2026‑06‑01): approved approach.** Client‑side recompute
   confirmed sound at this scale; no server graph‑query API needed. Three gaps folded into
   this doc: (1) `providerShiftOverride` added to the slice‑1 raw payload + hours/weekend
