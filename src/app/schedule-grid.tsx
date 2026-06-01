@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
+import { buildAlerts, groupAlertsByDate } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
@@ -1324,39 +1325,15 @@ export function ScheduleGrid({
     }
   }
 
-  const alerts = useMemo(() => {
-    const items: Array<{ date: string; message: string; type: "error" | "warn" }> = [];
-    for (const date of dates) {
-      // Only surface alerts for days in the currently-viewed month, not the
-      // pay-period padding rows from the adjacent months.
-      if (date < firstOfMonth || date > lastOfMonth) continue;
-      const dw = dayWarnings.get(date);
-      if (dw) {
-        for (const w of dw) {
-          items.push({
-            date,
-            message: w.message,
-            type: w.type === "shift-count" ? "error" : "warn",
-          });
-        }
-      }
-    }
-    return items;
-  }, [dates, dayWarnings, firstOfMonth, lastOfMonth]);
+  // Only days in the currently-viewed month get alerts — the grid also renders
+  // pay-period padding rows from adjacent months, which must not produce alerts.
+  const alerts = useMemo(
+    () => buildAlerts(dates, dayWarnings, firstOfMonth, lastOfMonth),
+    [dates, dayWarnings, firstOfMonth, lastOfMonth],
+  );
 
   // Group alerts by date so each row gets a single positioned block.
-  const alertGroups = useMemo(() => {
-    const map = new Map<string, { date: string; items: Array<{ message: string; type: "error" | "warn" }> }>();
-    for (const a of alerts) {
-      let g = map.get(a.date);
-      if (!g) {
-        g = { date: a.date, items: [] };
-        map.set(a.date, g);
-      }
-      g.items.push({ message: a.message, type: a.type });
-    }
-    return [...map.values()];
-  }, [alerts]);
+  const alertGroups = useMemo(() => groupAlertsByDate(alerts), [alerts]);
 
   // Vertically align each alert block with the schedule row it refers to,
   // and keep them in sync as the grid scrolls.
