@@ -12,6 +12,7 @@ import { ChartTypePicker } from "./controls/ChartTypePicker";
 import { MetricPicker } from "./controls/MetricPicker";
 import { TimeBucketPicker } from "./controls/TimeBucketPicker";
 import { SavedViews } from "./saved/SavedViews";
+import { toCsvText, buildEquityCsvRows } from "@/lib/graph/export-csv";
 import { coerceChart } from "@/lib/graph/compat";
 import { buildBuckets } from "@/lib/graph/buckets";
 import { computeTrend } from "@/lib/graph/trend";
@@ -533,6 +534,26 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
     return sortAsc ? cmp : -cmp;
   });
 
+  // Export the visible data table to CSV (mirrors the on-screen columns).
+  const downloadCsv = () => {
+    const csv = toCsvText(
+      buildEquityCsvRows(sorted, {
+        showDesirability,
+        showHoliday,
+        activeShiftCodes,
+        showTallies,
+        tallyCodes: shiftCodes,
+      }),
+    );
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `statistics-${dateRange.min}_to_${dateRange.max}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex-1 overflow-auto">
       <div className="px-6 py-6">
@@ -544,6 +565,14 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={downloadCsv}
+              disabled={sorted.length === 0}
+              className="px-3 py-1.5 text-xs rounded transition-colors bg-slate-700 text-slate-300 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Download the table as CSV"
+            >
+              Export CSV
+            </button>
             <button
               onClick={() => setShowCharts(!showCharts)}
               className={`px-3 py-1.5 text-xs rounded transition-colors ${showCharts ? "bg-blue-600/20 text-blue-400 border border-blue-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600"}`}
