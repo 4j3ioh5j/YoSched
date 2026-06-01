@@ -268,6 +268,15 @@ just seeds the spec). Low effort; include in slice 2.
    - `equity-page.tsx`: holds spec, mirrors to `?g` via `replaceState`; new
      `controls/{DateRangePicker,StaffPicker}.tsx` (thin views).
 3. **Transforms** — global normalize/weighting toggles across charts.
+   - **Status: DONE** — commit `d75592c`, Code‑Review #330 APPROVED, deployed.
+   - `spec.normalize` ("raw"|"fte") and `spec.weighting` ("none"|"opportunity") promoted from
+     the radar panel's old local `useState` to a global `TransformToggles` control; the radar's
+     inline buttons now write the spec (single source of truth, shareable via `?g=`).
+   - Bar chart honors `normalize`: `shapeBarSeries(..., perFte)` shows per‑1.0‑FTE rates
+     (`count/(fte||1)`, 0‑FTE→1.0), +3 tests. Radar maps `weighting` to `deviation`
+     (opportunity‑adjusted) vs `displayDeviation` (plain z); weighting disabled under "raw".
+   - Engine untouched (both deviation maps already existed). `compat.ts` grey‑out + weighting
+     across more chart types deferred to slice 4 as planned.
 4. **Chart types** — pie + heatmap, then line/trend (adds `buckets.ts`, both `payPeriod` and
    `month` buckets).
 5. **Saved views** — Prisma model + migration + `statistics:manage` permission + backfill +
@@ -297,6 +306,8 @@ reworking.
 
 ## 16. Review history
 
+- **Slice 3 — CR #330 APPROVED.** Global transform toggles. Deployed `d75592c`. (Follow-up
+  UI fixes to slice 2 also shipped: CR #326 Custom-date inputs, CR #328 staff-list narrowing.)
 - **Slice 2 — CR #322 APPROVED (one NOTE: `decodeSpec` should default `groupByShiftCode`
   from `DEFAULT_SPEC`), folded in and re‑approved CR #324 (round 2).** Deployed `4948dbb`.
 - **PLAN review — Code‑Review #313 (2026‑06‑01): approved approach.** Client‑side recompute
