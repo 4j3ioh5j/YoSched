@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shapeBarSeries, shapeHeatmap, shapeMetricBar, type BarSeriesInput, type HeatmapInput, type MetricBarInput } from "../series";
+import { shapeBarSeries, shapeHeatmap, shapeMetricBar, shapePie, type BarSeriesInput, type HeatmapInput, type MetricBarInput, type PieInput } from "../series";
 
 const row = (
   initials: string,
@@ -142,6 +142,56 @@ describe("shapeMetricBar", () => {
     expect(shapeMetricBar(data, "hours", true)).toEqual([
       { initials: "AB", value: 200 },
       { initials: "CD", value: 90 },
+    ]);
+  });
+});
+
+const pRow = (
+  initials: string,
+  shiftCounts: Record<string, number>,
+  totalHours = 0,
+  holidayWorkCount = 0,
+  ftePercentage = 1,
+): PieInput => ({ initials, shiftCounts, totalHours, holidayWorkCount, ftePercentage });
+
+describe("shapePie", () => {
+  const rows = [
+    pRow("AA", { CALL: 2, ORC: 1 }, 100, 1),
+    pRow("BB", { CALL: 5 }, 200, 0),
+    pRow("CC", {}, 0, 0),
+  ];
+
+  it("sums the given codes for shiftCount and sorts largest-first", () => {
+    expect(shapePie(rows, "shiftCount", ["CALL", "ORC"])).toEqual([
+      { initials: "BB", value: 5 },
+      { initials: "AA", value: 3 },
+    ]);
+  });
+
+  it("only counts the codes passed in", () => {
+    expect(shapePie(rows, "shiftCount", ["CALL"])).toEqual([
+      { initials: "BB", value: 5 },
+      { initials: "AA", value: 2 },
+    ]);
+  });
+
+  it("uses the scalar total for hours and drops zero slices (CC)", () => {
+    expect(shapePie(rows, "hours", [])).toEqual([
+      { initials: "BB", value: 200 },
+      { initials: "AA", value: 100 },
+    ]);
+  });
+
+  it("drops zero slices for holidays (only AA has any)", () => {
+    expect(shapePie(rows, "holidays", [])).toEqual([{ initials: "AA", value: 1 }]);
+  });
+
+  it("divides by FTE under perFte and re-sorts by the per-FTE value", () => {
+    const data = [pRow("AA", {}, 100, 0, 1), pRow("BB", {}, 80, 0, 0.5)];
+    // BB: 80/0.5 = 160 > AA: 100
+    expect(shapePie(data, "hours", [], true)).toEqual([
+      { initials: "BB", value: 160 },
+      { initials: "AA", value: 100 },
     ]);
   });
 });

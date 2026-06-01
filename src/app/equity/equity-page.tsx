@@ -13,6 +13,7 @@ import { MetricPicker } from "./controls/MetricPicker";
 import { coerceChart } from "@/lib/graph/compat";
 import { HeatmapView } from "./charts/HeatmapView";
 import { MetricBarView } from "./charts/MetricBarView";
+import { PieView } from "./charts/PieView";
 import { computeStatsModel, type RawStatsData } from "@/lib/graph/model";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -576,17 +577,22 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: P
 
         {showCharts && (() => {
           const perFte = spec.normalize === "fte";
+          const codes = activeShiftCodes.filter((c) => trackedShiftCodes.includes(c));
+          // Pie = department share by provider; valid for the count metrics.
+          if (spec.chart === "pie" && (spec.metric === "shiftCount" || spec.metric === "hours" || spec.metric === "holidays")) {
+            return <PieView data={filteredData} metric={spec.metric} codes={codes} perFte={perFte} />;
+          }
           // Scalar metrics (hours/holidays) always have data; the shiftCount
           // distribution / heatmap need at least one active code or holidays.
           if (spec.metric === "hours" || spec.metric === "holidays") {
             return <MetricBarView data={filteredData} metric={spec.metric} perFte={perFte} />;
           }
-          if (!(activeShiftCodes.length > 0 || showHoliday)) return null;
+          if (!(codes.length > 0 || showHoliday)) return null;
           if (spec.chart === "heatmap") {
             return (
               <HeatmapView
                 data={filteredData}
-                codes={activeShiftCodes.filter((c) => trackedShiftCodes.includes(c))}
+                codes={codes}
                 opportunityAdjusted={spec.weighting === "opportunity"}
                 thresholds={equityThresholds}
                 onSelect={(initials) => {
@@ -600,7 +606,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: P
           return (
             <OverviewCharts
               data={filteredData}
-              trackedShiftCodes={activeShiftCodes.filter((c) => trackedShiftCodes.includes(c))}
+              trackedShiftCodes={codes}
               allShiftCodes={trackedShiftCodes}
               showHoliday={showHoliday}
               perFte={perFte}

@@ -7,6 +7,7 @@ import { isCompatible } from "@/lib/graph/compat";
 // drill-down (not a panel chart); pie + line arrive in later slices.
 const CHARTS: { chart: GraphChart; label: string }[] = [
   { chart: "bar", label: "Bar" },
+  { chart: "pie", label: "Pie" },
   { chart: "heatmap", label: "Heatmap" },
 ];
 

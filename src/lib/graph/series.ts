@@ -52,6 +52,48 @@ export function shapeBarSeries(
 }
 
 /* ------------------------------------------------------------------ *
+ * Pie — department share by provider for an additive count metric. Each slice
+ * is one provider sized by their value of the metric; the view turns the
+ * values into shares. shiftCount sums the given (tracked) codes; hours/holidays
+ * are the scalar totals. `perFte` divides by FTE (0-FTE -> 1.0) so the pie can
+ * show share of per-1.0-FTE load. Zero/negative slices are dropped (a pie of
+ * them is meaningless) and the rest are sorted largest-first.
+ * ------------------------------------------------------------------ */
+
+export type PieMetric = "shiftCount" | "hours" | "holidays";
+
+export type PieInput = {
+  initials: string;
+  totalHours: number;
+  holidayWorkCount: number;
+  shiftCounts: Record<string, number>;
+  ftePercentage: number;
+};
+
+export type PieSlice = { initials: string; value: number };
+
+export function shapePie(
+  rows: PieInput[],
+  metric: PieMetric,
+  codes: string[],
+  perFte = false,
+): PieSlice[] {
+  const valueOf = (r: PieInput): number => {
+    const raw =
+      metric === "hours"
+        ? r.totalHours
+        : metric === "holidays"
+          ? r.holidayWorkCount
+          : codes.reduce((s, c) => s + (r.shiftCounts[c] ?? 0), 0);
+    return perFte ? raw / (r.ftePercentage || 1) : raw;
+  };
+  return rows
+    .map((r) => ({ initials: r.initials, value: valueOf(r) }))
+    .filter((s) => s.value > 0)
+    .sort((a, b) => b.value - a.value);
+}
+
+/* ------------------------------------------------------------------ *
  * Heatmap — providers × shift codes, each cell carrying its raw count and the
  * provider's FTE-normalized per-shift z-score (deviation). The view colors the
  * cell from the deviation via `fairnessColor()`; this shaper stays color-free
