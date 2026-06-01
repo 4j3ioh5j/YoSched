@@ -9,7 +9,10 @@ import { DateRangePicker } from "./controls/DateRangePicker";
 import { StaffPicker } from "./controls/StaffPicker";
 import { TransformToggles } from "./controls/TransformToggles";
 import { ChartTypePicker } from "./controls/ChartTypePicker";
+import { MetricPicker } from "./controls/MetricPicker";
+import { coerceChart } from "@/lib/graph/compat";
 import { HeatmapView } from "./charts/HeatmapView";
+import { MetricBarView } from "./charts/MetricBarView";
 import { computeStatsModel, type RawStatsData } from "@/lib/graph/model";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -538,7 +541,11 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: P
             onChange={(staff) => setSpec((s) => ({ ...s, staff }))}
           />
           <TransformToggles spec={spec} onChange={(patch) => setSpec((s) => ({ ...s, ...patch }))} />
-          <ChartTypePicker value={spec.chart} onChange={(chart) => setSpec((s) => ({ ...s, chart }))} />
+          <MetricPicker
+            value={spec.metric}
+            onChange={(metric) => setSpec((s) => ({ ...s, metric, chart: coerceChart(metric, s.chart) }))}
+          />
+          <ChartTypePicker value={spec.chart} metric={spec.metric} onChange={(chart) => setSpec((s) => ({ ...s, chart }))} />
           {isFiltered && (
             <span className="text-xs text-slate-500 pl-[72px]">{filteredData.length} of {data.length} providers shown</span>
           )}
@@ -567,29 +574,39 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: P
           </div>
         )}
 
-        {showCharts && (activeShiftCodes.length > 0 || showHoliday) && (
-          spec.chart === "heatmap" ? (
-            <HeatmapView
-              data={filteredData}
-              codes={activeShiftCodes.filter((c) => trackedShiftCodes.includes(c))}
-              opportunityAdjusted={spec.weighting === "opportunity"}
-              thresholds={equityThresholds}
-              onSelect={(initials) => {
-                const match = filteredData.find((d) => d.initials === initials);
-                if (match) setSelectedProvider(match.providerId);
-              }}
-              setTip={setTip}
-            />
-          ) : (
+        {showCharts && (() => {
+          const perFte = spec.normalize === "fte";
+          // Scalar metrics (hours/holidays) always have data; the shiftCount
+          // distribution / heatmap need at least one active code or holidays.
+          if (spec.metric === "hours" || spec.metric === "holidays") {
+            return <MetricBarView data={filteredData} metric={spec.metric} perFte={perFte} />;
+          }
+          if (!(activeShiftCodes.length > 0 || showHoliday)) return null;
+          if (spec.chart === "heatmap") {
+            return (
+              <HeatmapView
+                data={filteredData}
+                codes={activeShiftCodes.filter((c) => trackedShiftCodes.includes(c))}
+                opportunityAdjusted={spec.weighting === "opportunity"}
+                thresholds={equityThresholds}
+                onSelect={(initials) => {
+                  const match = filteredData.find((d) => d.initials === initials);
+                  if (match) setSelectedProvider(match.providerId);
+                }}
+                setTip={setTip}
+              />
+            );
+          }
+          return (
             <OverviewCharts
               data={filteredData}
               trackedShiftCodes={activeShiftCodes.filter((c) => trackedShiftCodes.includes(c))}
               allShiftCodes={trackedShiftCodes}
               showHoliday={showHoliday}
-              perFte={spec.normalize === "fte"}
+              perFte={perFte}
             />
-          )
-        )}
+          );
+        })()}
 
         <div className="bg-slate-800/30 border border-slate-700 rounded-lg overflow-hidden">
           <div className="overflow-x-auto">

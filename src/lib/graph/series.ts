@@ -72,6 +72,38 @@ export type HeatmapInput = {
 export type HeatmapCell = { code: string; count: number; deviation: number };
 export type HeatmapRow = { initials: string; cells: HeatmapCell[] };
 
+/* ------------------------------------------------------------------ *
+ * Single-metric bar — one value per provider for a scalar count metric
+ * (hours / holidays). `perFte` divides by FTE for a per-1.0-FTE rate (same
+ * rule as shapeBarSeries; 0-FTE treated as 1.0). shiftCount keeps its own
+ * stacked-by-code series (shapeBarSeries); the signed z-score metrics are not
+ * handled here.
+ * ------------------------------------------------------------------ */
+
+export type ScalarMetric = "hours" | "holidays";
+
+export type MetricBarInput = {
+  initials: string;
+  totalHours: number;
+  holidayWorkCount: number;
+  ftePercentage: number;
+};
+
+export type MetricBarRow = { initials: string; value: number };
+
+export function shapeMetricBar(
+  rows: MetricBarInput[],
+  metric: ScalarMetric,
+  perFte = false,
+): MetricBarRow[] {
+  return [...rows]
+    .sort((a, b) => a.initials.localeCompare(b.initials))
+    .map((r) => {
+      const raw = metric === "hours" ? r.totalHours : r.holidayWorkCount;
+      return { initials: r.initials, value: perFte ? raw / (r.ftePercentage || 1) : raw };
+    });
+}
+
 export function shapeHeatmap(
   rows: HeatmapInput[],
   codes: string[],

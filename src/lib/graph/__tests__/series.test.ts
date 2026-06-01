@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shapeBarSeries, shapeHeatmap, type BarSeriesInput, type HeatmapInput } from "../series";
+import { shapeBarSeries, shapeHeatmap, shapeMetricBar, type BarSeriesInput, type HeatmapInput, type MetricBarInput } from "../series";
 
 const row = (
   initials: string,
@@ -110,5 +110,38 @@ describe("shapeHeatmap", () => {
   it("does not mutate the input array order", () => {
     shapeHeatmap(rows, ["CALL"], false);
     expect(rows.map((r) => r.initials)).toEqual(["ZZ", "AA"]);
+  });
+});
+
+const mRow = (
+  initials: string,
+  totalHours: number,
+  holidayWorkCount: number,
+  ftePercentage = 1,
+): MetricBarInput => ({ initials, totalHours, holidayWorkCount, ftePercentage });
+
+describe("shapeMetricBar", () => {
+  const rows = [mRow("ZZ", 100, 2, 0.5), mRow("AA", 200, 4, 1)];
+
+  it("emits {initials, value} per provider, sorted by initials, for hours", () => {
+    expect(shapeMetricBar(rows, "hours")).toEqual([
+      { initials: "AA", value: 200 },
+      { initials: "ZZ", value: 100 },
+    ]);
+  });
+
+  it("reads the holiday count for the holidays metric", () => {
+    expect(shapeMetricBar(rows, "holidays")).toEqual([
+      { initials: "AA", value: 4 },
+      { initials: "ZZ", value: 2 },
+    ]);
+  });
+
+  it("divides by FTE under perFte (0-FTE treated as 1.0)", () => {
+    const data = [mRow("AB", 100, 0, 0.5), mRow("CD", 90, 0, 0)];
+    expect(shapeMetricBar(data, "hours", true)).toEqual([
+      { initials: "AB", value: 200 },
+      { initials: "CD", value: 90 },
+    ]);
   });
 });

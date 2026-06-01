@@ -1,6 +1,7 @@
 "use client";
 
-import type { GraphChart } from "@/lib/graph/spec";
+import type { GraphChart, GraphMetric } from "@/lib/graph/spec";
+import { isCompatible } from "@/lib/graph/compat";
 
 // Chart types selectable for the overview panel. Radar is the per-provider
 // drill-down (not a panel chart); pie + line arrive in later slices.
@@ -11,9 +12,11 @@ const CHARTS: { chart: GraphChart; label: string }[] = [
 
 export function ChartTypePicker({
   value,
+  metric,
   onChange,
 }: {
   value: GraphChart;
+  metric: GraphMetric;
   onChange: (chart: GraphChart) => void;
 }) {
   // Fall back to bar for chart values this slice doesn't render yet.
@@ -22,15 +25,26 @@ export function ChartTypePicker({
     <div className="flex items-center gap-2">
       <span className="text-xs text-slate-500 w-16">Chart</span>
       <div className="flex rounded overflow-hidden border border-slate-700">
-        {CHARTS.map((c) => (
-          <button
-            key={c.chart}
-            onClick={() => onChange(c.chart)}
-            className={`px-2.5 py-1 text-[11px] transition-colors ${active === c.chart ? "bg-blue-600/30 text-blue-300" : "bg-slate-800 text-slate-400 hover:bg-slate-700"}`}
-          >
-            {c.label}
-          </button>
-        ))}
+        {CHARTS.map((c) => {
+          const ok = isCompatible(metric, c.chart);
+          return (
+            <button
+              key={c.chart}
+              onClick={() => ok && onChange(c.chart)}
+              disabled={!ok}
+              title={ok ? undefined : `Not available for this metric`}
+              className={`px-2.5 py-1 text-[11px] transition-colors ${
+                active === c.chart
+                  ? "bg-blue-600/30 text-blue-300"
+                  : ok
+                    ? "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                    : "bg-slate-800 text-slate-700 cursor-not-allowed"
+              }`}
+            >
+              {c.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
