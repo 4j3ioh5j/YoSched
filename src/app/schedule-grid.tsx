@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
@@ -1325,18 +1325,14 @@ export function ScheduleGrid({
   }
 
   const alerts = useMemo(() => {
-    const items: Array<{ date: string; label: string; type: "error" | "warn" }> = [];
-    const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
+    const items: Array<{ date: string; message: string; type: "error" | "warn" }> = [];
     for (const date of dates) {
-      const dow = parseDate(date).getDay();
-      const d = `${DAY[dow]} ${date.slice(5)}`;
       const dw = dayWarnings.get(date);
       if (dw) {
         for (const w of dw) {
           items.push({
             date,
-            label: `${d} — ${w.message}`,
+            message: w.message,
             type: w.type === "shift-count" ? "error" : "warn",
           });
         }
@@ -1344,6 +1340,64 @@ export function ScheduleGrid({
     }
     return items;
   }, [dates, dayWarnings]);
+
+  // Group alerts by date so each row gets a single positioned block.
+  const alertGroups = useMemo(() => {
+    const map = new Map<string, { date: string; items: Array<{ message: string; type: "error" | "warn" }> }>();
+    for (const a of alerts) {
+      let g = map.get(a.date);
+      if (!g) {
+        g = { date: a.date, items: [] };
+        map.set(a.date, g);
+      }
+      g.items.push({ message: a.message, type: a.type });
+    }
+    return [...map.values()];
+  }, [alerts]);
+
+  // Vertically align each alert block with the schedule row it refers to,
+  // and keep them in sync as the grid scrolls.
+  const alertGroupRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const [alertHeaderH, setAlertHeaderH] = useState(0);
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller || alertGroups.length === 0) return;
+    const thead = scroller.querySelector("thead") as HTMLElement | null;
+    const headerH = thead?.offsetHeight ?? 0;
+    setAlertHeaderH(headerH);
+
+    const offsets = new Map<string, number>();
+    const measure = () => {
+      offsets.clear();
+      for (const date of alertGroupRefs.current.keys()) {
+        const row = scroller.querySelector(`tr[data-date="${date}"]`) as HTMLElement | null;
+        if (row) offsets.set(date, row.offsetTop);
+      }
+    };
+    const apply = () => {
+      const top0 = thead?.offsetHeight ?? headerH;
+      const st = scroller.scrollTop;
+      for (const [date, el] of alertGroupRefs.current) {
+        const off = offsets.get(date);
+        if (off == null) {
+          el.style.display = "none";
+          continue;
+        }
+        el.style.display = "";
+        el.style.transform = `translateY(${off - top0 - st}px)`;
+      }
+    };
+    measure();
+    apply();
+    scroller.addEventListener("scroll", apply, { passive: true });
+    const table = scroller.querySelector("table");
+    const ro = new ResizeObserver(() => { measure(); apply(); });
+    if (table) ro.observe(table);
+    return () => {
+      scroller.removeEventListener("scroll", apply);
+      ro.disconnect();
+    };
+  }, [alertGroups, dates, showPPRows, providers.length, viewMonth, viewYear]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -1778,30 +1832,48 @@ export function ScheduleGrid({
             document.addEventListener("mouseup", onUp);
           }}
         />
-        <div data-print-hide className="shrink-0 bg-slate-900/50 overflow-y-auto flex flex-col" style={{ width: alertWidth }}>
-          <div className="sticky top-0 bg-slate-900 px-3 py-2 border-b border-slate-700">
+        <div data-print-hide className="shrink-0 bg-slate-900/50 flex flex-col overflow-hidden" style={{ width: alertWidth }}>
+          <div
+            className="shrink-0 flex items-center bg-slate-900 px-3 border-b border-slate-700"
+            style={alertHeaderH ? { height: alertHeaderH } : undefined}
+          >
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
               Alerts
             </span>
             <span className="ml-1.5 text-[11px] text-slate-500">{alerts.length}</span>
           </div>
-          <div className="px-2 py-1 overflow-y-auto">
-            {alerts.map((a, i) => (
+          {/* Alert blocks are absolutely positioned to line up with the row they refer to. */}
+          <div className="relative flex-1 overflow-hidden">
+            {alertGroups.map((g) => (
               <div
-                key={i}
-                className="flex items-start gap-1.5 px-1.5 py-1 rounded hover:bg-slate-800/50 cursor-pointer transition-colors"
-                onClick={() => {
-                  const row = scrollRef.current?.querySelector(`tr[data-date="${a.date}"]`);
-                  if (row) {
-                    const thead = scrollRef.current?.querySelector("thead");
-                    if (scrollRef.current && thead) {
-                      scrollRef.current.scrollTop = (row as HTMLElement).offsetTop - thead.clientHeight;
-                    }
-                  }
+                key={g.date}
+                ref={(el) => {
+                  const m = alertGroupRefs.current;
+                  if (el) m.set(g.date, el);
+                  else m.delete(g.date);
                 }}
+                className="absolute left-0 right-0 px-2 will-change-transform"
+                style={{ top: 0 }}
               >
-                <span className={`mt-0.5 w-1.5 h-1.5 rounded-full shrink-0 ${a.type === "error" ? "bg-red-500" : "bg-amber-500"}`} />
-                <span className="text-[11px] text-slate-400 leading-tight">{a.label}</span>
+                <div
+                  className="flex flex-col gap-0.5 px-1.5 py-0.5 rounded hover:bg-slate-800/50 cursor-pointer transition-colors"
+                  onClick={() => {
+                    const row = scrollRef.current?.querySelector(`tr[data-date="${g.date}"]`);
+                    if (row) {
+                      const thead = scrollRef.current?.querySelector("thead");
+                      if (scrollRef.current && thead) {
+                        scrollRef.current.scrollTop = (row as HTMLElement).offsetTop - thead.clientHeight;
+                      }
+                    }
+                  }}
+                >
+                  {g.items.map((it, i) => (
+                    <div key={i} className="flex items-start gap-1.5">
+                      <span className={`mt-0.5 w-1.5 h-1.5 rounded-full shrink-0 ${it.type === "error" ? "bg-red-500" : "bg-amber-500"}`} />
+                      <span className="text-[11px] text-slate-400 leading-tight">{it.message}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
