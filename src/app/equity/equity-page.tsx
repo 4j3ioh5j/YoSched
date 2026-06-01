@@ -522,6 +522,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: P
               initials: p.initials,
               name: p.name,
               employmentTypeName: p.employmentTypeName,
+              ftePercentage: p.ftePercentage ?? 1.0,
             }))}
             onChange={(staff) => setSpec((s) => ({ ...s, staff }))}
           />

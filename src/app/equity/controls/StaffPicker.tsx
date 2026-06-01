@@ -8,6 +8,7 @@ export type StaffPickerProvider = {
   initials: string;
   name: string;
   employmentTypeName: string;
+  ftePercentage: number;
 };
 
 export function StaffPicker({
@@ -24,8 +25,40 @@ export function StaffPicker({
   const employmentTypes = [...new Set(providers.map((p) => p.employmentTypeName))].sort();
   const selectedNames = new Set(value.names ?? []);
 
+  // A provider is offerable when it satisfies the other active staff filters
+  // (employment type + min FTE). The "By name" chips only show offerable
+  // providers, so the filters can't be combined into a contradictory (empty)
+  // selection.
+  function matches(p: StaffPickerProvider, employmentType: string | null, minFtePct: number | null): boolean {
+    if (employmentType && p.employmentTypeName !== employmentType) return false;
+    if (minFtePct && minFtePct > 0 && p.ftePercentage < minFtePct) return false;
+    return true;
+  }
+
+  const visibleProviders = providers.filter((p) => matches(p, value.employmentType ?? null, value.minFtePct ?? null));
+
+  // Drop already-picked names that no longer satisfy the filters, so the chip
+  // count and the narrowed list stay consistent.
+  function prunedNames(employmentType: string | null, minFtePct: number | null): string[] | undefined {
+    if (!value.names) return value.names;
+    return value.names.filter((id) => {
+      const p = providers.find((pp) => pp.id === id);
+      return p ? matches(p, employmentType, minFtePct) : false;
+    });
+  }
+
   function patch(next: Partial<GraphStaffFilter>) {
     onChange({ ...value, ...next });
+  }
+
+  function selectType(type: string) {
+    const employmentType = type || null;
+    onChange({ ...value, employmentType, names: prunedNames(employmentType, value.minFtePct ?? null) });
+  }
+
+  function setMinFte(raw: string) {
+    const minFtePct = parseFloat(raw) || null;
+    onChange({ ...value, minFtePct, names: prunedNames(value.employmentType ?? null, minFtePct) });
   }
 
   function toggleName(id: string) {
@@ -42,7 +75,7 @@ export function StaffPicker({
 
         <select
           value={value.employmentType ?? ""}
-          onChange={(e) => patch({ employmentType: e.target.value || null })}
+          onChange={(e) => selectType(e.target.value)}
           className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300"
         >
           <option value="">All types</option>
@@ -59,7 +92,7 @@ export function StaffPicker({
           max="9.999"
           className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-slate-300"
           value={value.minFtePct || ""}
-          onChange={(e) => patch({ minFtePct: parseFloat(e.target.value) || null })}
+          onChange={(e) => setMinFte(e.target.value)}
           placeholder="0"
         />
 
@@ -81,7 +114,7 @@ export function StaffPicker({
 
       {showNames && (
         <div className="flex flex-wrap gap-1.5 pl-[72px]">
-          {providers.map((p) => {
+          {visibleProviders.map((p) => {
             const active = selectedNames.has(p.id);
             return (
               <button
