@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assembleEquityModel, type AssembleShiftType } from "../model";
+import { assembleEquityModel, computeStatsModel, type AssembleShiftType, type RawStatsData } from "../model";
 import type { FairnessSummary, FairnessMetrics, FairnessDeviation } from "../../fairness";
 
 const metric = (
@@ -131,6 +131,51 @@ describe("assembleEquityModel — provider mapping", () => {
     expect(row.ftePercentage).toBe(1.0); // null defaults to 1.0
     expect(row.deviation).toEqual({ desirability: 0.7, holidayWork: -0.2, overall: 0.5, perShift: { CALL: 0.3 } });
     expect(row.displayDeviation).toEqual({ desirability: 0.1, holidayWork: 0.2, overall: 0.9, perShift: { CALL: -0.4 } });
+  });
+});
+
+describe("computeStatsModel — full engine wiring", () => {
+  it("runs computeFairness + assembleEquityModel from the raw payload", () => {
+    const raw: RawStatsData = {
+      providers: [
+        { id: "p1", initials: "AA", name: "Alice", ftePercentage: 1.0, isActive: true, isAutoScheduled: true, employmentTypeName: "FTE", eligibleShiftTypeIds: [] },
+      ],
+      assignments: [
+        {
+          providerId: "p1",
+          shiftTypeId: "call",
+          date: "2026-06-03",
+          shiftType: { id: "call", code: "CALL", defaultHours: 24, countsTowardFte: true, isLeave: false, isOffShift: false },
+        },
+      ],
+      shiftTypes: [{ id: "call", countsTowardFte: true, countsOnWeekend: true, defaultHours: 24 }],
+      desirabilityWeights: [],
+      holidays: [],
+      equityFactors: [],
+      overrides: [],
+    };
+    const model = computeStatsModel(raw);
+    expect(model.data).toHaveLength(1);
+    expect(model.data[0].providerId).toBe("p1");
+    expect(model.data[0].totalHours).toBe(24);
+    expect(model.data[0].shiftTally).toEqual({ CALL: 1 });
+    expect(model.dateRange).toEqual({ min: "2026-06-03", max: "2026-06-03" });
+    expect(model.shiftCodes).toEqual(["CALL"]);
+  });
+
+  it("excludes inactive / non-auto-scheduled providers (computeFairness gate)", () => {
+    const raw: RawStatsData = {
+      providers: [
+        { id: "p1", initials: "AA", name: "Alice", ftePercentage: 1.0, isActive: false, isAutoScheduled: true, employmentTypeName: "FTE", eligibleShiftTypeIds: [] },
+      ],
+      assignments: [],
+      shiftTypes: [],
+      desirabilityWeights: [],
+      holidays: [],
+      equityFactors: [],
+      overrides: [],
+    };
+    expect(computeStatsModel(raw).data).toHaveLength(0);
   });
 });
 

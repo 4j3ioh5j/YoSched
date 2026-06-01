@@ -4,6 +4,7 @@ import React, { useState, useMemo } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { filterByMinFte } from "@/lib/graph/filter";
 import { shapeBarSeries } from "@/lib/graph/series";
+import { computeStatsModel, type RawStatsData } from "@/lib/graph/model";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
@@ -48,20 +49,9 @@ type Averages = {
   totalLeaveDays: number;
 };
 
-type ActiveFactor = {
-  factorType: string;
-  shiftCode: string | null;
-  enabled: boolean;
-};
-
 type Props = {
-  data: EquityRow[];
-  averages: Averages;
-  trackedShiftCodes: string[];
-  dateRange: { min: string; max: string };
-  shiftCodes: string[];
+  raw: RawStatsData;
   equityThresholds: EquityThresholds;
-  activeFactors: ActiveFactor[];
 };
 
 type SortKey = "initials" | "desirability" | "oppAdj" | "holiday" | "hours" | "workDays" | "leaveDays" | string;
@@ -404,8 +394,19 @@ const COLUMN_FORMULAS: Record<string, string> = {
   leaveDays: "Total leave days",
 };
 
-export function EquityPage({ data, averages, trackedShiftCodes, dateRange, shiftCodes, equityThresholds, activeFactors }: Props) {
+export function EquityPage({ raw, equityThresholds }: Props) {
   const [tip, setTip] = useState<TipState>(null);
+
+  // Whole Statistics computation runs in-browser from the raw payload.
+  const { data, averages, trackedShiftCodes, dateRange, shiftCodes } = useMemo(
+    () => computeStatsModel(raw),
+    [raw],
+  );
+  const activeFactors = useMemo(
+    () => raw.equityFactors.map((f) => ({ factorType: f.factorType, shiftCode: f.shiftCode, enabled: f.enabled })),
+    [raw.equityFactors],
+  );
+
   const showDesirability = activeFactors.some((f) => f.factorType === "desirability" && f.enabled);
   const showHoliday = activeFactors.some((f) => f.factorType === "holiday" && f.enabled);
   const activeShiftCodes = activeFactors

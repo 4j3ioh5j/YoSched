@@ -245,10 +245,13 @@ just seeds the spec). Low effort; include in slice 2.
    - **1b‑i (DONE):** extracted `assembleEquityModel` (pure, isomorphic, 7 parity tests),
      server still calls it — byte‑identical output. Commit `7b7e46c`, CR #317 APPROVED,
      deployed. Satisfies the override/hours parity gate.
-   - **1b‑ii (PENDING):** move the `assembleEquityModel` call to the client and pass the raw
-     arrays (incl `providerShiftOverride`) as props instead of pre‑computed rows. Small
-     mechanical follow‑up now that the function is proven; unblocks slice 2 date‑range
-     filtering (which needs client recompute over a subset).
+   - **1b‑ii (DONE, after RBAC fix):** moved the compute to the client via `computeStatsModel`;
+     server ships the raw arrays. **RBAC:** because the raw per‑date assignment list (= the
+     schedule) now reaches the browser, `/equity` requires **both** `statistics:view` AND
+     `schedule:view` (CR #319 CRITICAL). All default groups with `statistics:view` already
+     have `schedule:view`, so no current user is affected; a stats‑only‑without‑schedule role
+     is intentionally no longer possible. **Do not drop `schedule:view` from the `/equity`
+     gate** without moving raw‑data compute back to the server.
 2. **Filters + URL** — date‑range (pay periods + custom) and staff picker; URL encode/decode.
    Already more capable than today.
 3. **Transforms** — global normalize/weighting toggles across charts.

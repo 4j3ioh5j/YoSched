@@ -9,7 +9,8 @@
  * unit — the parity gate required by the revamp plan (slice 1b). Isomorphic:
  * no Prisma/Date-object dependency, so a later slice can run it client-side.
  */
-import type { FairnessSummary } from "../fairness";
+import { computeFairness } from "../fairness";
+import type { FairnessSummary, EquityFactor } from "../fairness";
 
 export type Deviation = {
   desirability: number;
@@ -170,4 +171,101 @@ export function assembleEquityModel(input: {
   };
 
   return { data, averages, trackedShiftCodes: fairness.trackedShiftCodes, dateRange, shiftCodes };
+}
+
+/* ------------------------------------------------------------------ *
+ * Raw payload + full engine entry point.
+ *
+ * computeStatsModel runs the whole Statistics computation — computeFairness
+ * then assembleEquityModel — from the raw arrays. It is pure and isomorphic so
+ * it can run on the client; a later slice filters `raw.assignments` by date
+ * range before calling it to recompute over a subset.
+ * ------------------------------------------------------------------ */
+
+export type RawShiftTypeRef = {
+  id: string;
+  code: string;
+  defaultHours: number;
+  countsTowardFte: boolean;
+  isLeave: boolean;
+  isOffShift: boolean;
+};
+
+export type RawProvider = {
+  id: string;
+  initials: string;
+  name: string;
+  ftePercentage: number | null;
+  isActive: boolean;
+  isAutoScheduled: boolean;
+  employmentTypeName: string;
+  eligibleShiftTypeIds: string[];
+};
+
+export type RawAssignment = {
+  providerId: string;
+  shiftTypeId: string;
+  /** ISO date, YYYY-MM-DD */
+  date: string;
+  shiftType: RawShiftTypeRef;
+};
+
+export type RawDesirabilityWeight = { shiftTypeId: string; dayOfWeek: number; weight: number };
+
+export type RawStatsData = {
+  providers: RawProvider[];
+  assignments: RawAssignment[];
+  shiftTypes: AssembleShiftType[];
+  desirabilityWeights: RawDesirabilityWeight[];
+  holidays: Array<{ date: string }>;
+  equityFactors: EquityFactor[];
+  overrides: AssembleOverride[];
+};
+
+export function computeStatsModel(raw: RawStatsData): EquityModel {
+  const fairness = computeFairness({
+    assignments: raw.assignments.map((a) => ({
+      providerId: a.providerId,
+      date: a.date,
+      shiftType: {
+        id: a.shiftType.id,
+        code: a.shiftType.code,
+        defaultHours: a.shiftType.defaultHours,
+        countsTowardFte: a.shiftType.countsTowardFte,
+        isLeave: a.shiftType.isLeave,
+        isOffShift: a.shiftType.isOffShift,
+      },
+    })),
+    providers: raw.providers.map((p) => ({
+      id: p.id,
+      initials: p.initials,
+      ftePercentage: p.ftePercentage ?? 1.0,
+      isActive: p.isActive,
+      isAutoScheduled: p.isAutoScheduled,
+      eligibleShiftTypeIds: p.eligibleShiftTypeIds,
+    })),
+    desirabilityWeights: raw.desirabilityWeights,
+    holidays: raw.holidays,
+    equityFactors: raw.equityFactors,
+  });
+
+  return assembleEquityModel({
+    fairness,
+    providers: raw.providers.map((p) => ({
+      id: p.id,
+      name: p.name,
+      isAutoScheduled: p.isAutoScheduled,
+      ftePercentage: p.ftePercentage,
+      employmentTypeName: p.employmentTypeName,
+    })),
+    assignments: raw.assignments.map((a) => ({
+      providerId: a.providerId,
+      shiftTypeId: a.shiftTypeId,
+      date: a.date,
+      code: a.shiftType.code,
+      isOffShift: a.shiftType.isOffShift,
+    })),
+    shiftTypes: raw.shiftTypes,
+    overrides: raw.overrides,
+  });
 }
