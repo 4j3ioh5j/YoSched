@@ -1346,25 +1346,29 @@ export function ScheduleGrid({
     const headerH = thead?.offsetHeight ?? 0;
     setAlertHeaderH(headerH);
 
-    const offsets = new Map<string, number>();
+    // Per alert date: the matching row's top offset and height, so each block
+    // can be centered on its row's vertical midpoint.
+    const rows = new Map<string, { top: number; height: number }>();
     const measure = () => {
-      offsets.clear();
+      rows.clear();
       for (const date of alertGroupRefs.current.keys()) {
         const row = scroller.querySelector(`tr[data-date="${date}"]`) as HTMLElement | null;
-        if (row) offsets.set(date, row.offsetTop);
+        if (row) rows.set(date, { top: row.offsetTop, height: row.offsetHeight });
       }
     };
     const apply = () => {
       const top0 = thead?.offsetHeight ?? headerH;
       const st = scroller.scrollTop;
       for (const [date, el] of alertGroupRefs.current) {
-        const off = offsets.get(date);
-        if (off == null) {
+        const r = rows.get(date);
+        if (!r) {
           el.style.display = "none";
           continue;
         }
         el.style.display = "";
-        el.style.transform = `translateY(${off - top0 - st}px)`;
+        // Center the block on the row: row midpoint minus half the block height.
+        const rowCenter = r.top + r.height / 2 - top0 - st;
+        el.style.transform = `translateY(${rowCenter - el.offsetHeight / 2}px)`;
       }
     };
     measure();
