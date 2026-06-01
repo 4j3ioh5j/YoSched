@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { filterByMinFte } from "../filter";
+import { filterByMinFte, filterAssignmentsByDate, filterStaff, type PayPeriodRef } from "../filter";
+import type { GraphDateRange, GraphStaffFilter } from "../spec";
 
 const p = (initials: string, ftePercentage: number) => ({ initials, ftePercentage });
 
@@ -25,5 +26,89 @@ describe("filterByMinFte", () => {
   it("does not mutate the input", () => {
     filterByMinFte(rows, 0.5);
     expect(rows.map((r) => r.initials)).toEqual(["AA", "BB", "CC"]);
+  });
+});
+
+describe("filterAssignmentsByDate", () => {
+  const a = (date: string) => ({ date });
+  const rows = [a("2026-01-05"), a("2026-01-20"), a("2026-02-10"), a("2026-03-01")];
+  const payPeriods: PayPeriodRef[] = [
+    { id: "pp1", startDate: "2026-01-01", endDate: "2026-01-14" },
+    { id: "pp2", startDate: "2026-01-15", endDate: "2026-01-31" },
+    { id: "pp3", startDate: "2026-02-01", endDate: "2026-02-28" },
+  ];
+
+  it("returns all rows (same ref) for the empty custom range", () => {
+    const range: GraphDateRange = { kind: "custom", start: "", end: "" };
+    expect(filterAssignmentsByDate(rows, range, payPeriods)).toBe(rows);
+  });
+
+  it("applies an inclusive custom [start, end]", () => {
+    const range: GraphDateRange = { kind: "custom", start: "2026-01-05", end: "2026-02-10" };
+    expect(filterAssignmentsByDate(rows, range, payPeriods).map((r) => r.date)).toEqual([
+      "2026-01-05", "2026-01-20", "2026-02-10",
+    ]);
+  });
+
+  it("honors an open-ended custom range (only start)", () => {
+    const range: GraphDateRange = { kind: "custom", start: "2026-02-01", end: "" };
+    expect(filterAssignmentsByDate(rows, range, payPeriods).map((r) => r.date)).toEqual([
+      "2026-02-10", "2026-03-01",
+    ]);
+  });
+
+  it("keeps rows inside any selected pay period (non-contiguous)", () => {
+    const range: GraphDateRange = { kind: "payPeriods", payPeriodIds: ["pp1", "pp3"] };
+    expect(filterAssignmentsByDate(rows, range, payPeriods).map((r) => r.date)).toEqual([
+      "2026-01-05", "2026-02-10",
+    ]);
+  });
+
+  it("treats an empty pay-period selection as a no-op (all rows)", () => {
+    const range: GraphDateRange = { kind: "payPeriods", payPeriodIds: [] };
+    expect(filterAssignmentsByDate(rows, range, payPeriods)).toBe(rows);
+  });
+
+  it("treats unknown pay-period ids as a no-op (all rows)", () => {
+    const range: GraphDateRange = { kind: "payPeriods", payPeriodIds: ["nope"] };
+    expect(filterAssignmentsByDate(rows, range, payPeriods)).toBe(rows);
+  });
+});
+
+describe("filterStaff", () => {
+  const s = (providerId: string, employmentTypeName: string, ftePercentage: number) =>
+    ({ providerId, employmentTypeName, ftePercentage });
+  const rows = [
+    s("a", "FTE", 1.0),
+    s("b", "FTE", 0.5),
+    s("c", "Fee Basis", 0.25),
+    s("d", "Fee Basis", 1.0),
+  ];
+
+  it("is a no-op (same ref) for an empty filter", () => {
+    expect(filterStaff(rows, {})).toBe(rows);
+    expect(filterStaff(rows, { all: true })).toBe(rows);
+  });
+
+  it("filters by explicit provider names", () => {
+    expect(filterStaff(rows, { names: ["a", "c"] }).map((r) => r.providerId)).toEqual(["a", "c"]);
+  });
+
+  it("ignores an empty names array", () => {
+    expect(filterStaff(rows, { names: [] })).toBe(rows);
+  });
+
+  it("filters by employment type", () => {
+    expect(filterStaff(rows, { employmentType: "Fee Basis" }).map((r) => r.providerId)).toEqual(["c", "d"]);
+  });
+
+  it("composes type AND minFte (the plan's example)", () => {
+    const f: GraphStaffFilter = { employmentType: "Fee Basis", minFtePct: 0.5 };
+    expect(filterStaff(rows, f).map((r) => r.providerId)).toEqual(["d"]);
+  });
+
+  it("composes names AND type AND minFte", () => {
+    const f: GraphStaffFilter = { names: ["a", "b", "c"], employmentType: "FTE", minFtePct: 0.6 };
+    expect(filterStaff(rows, f).map((r) => r.providerId)).toEqual(["a"]);
   });
 });

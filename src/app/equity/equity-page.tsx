@@ -1,9 +1,12 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useEscape } from "@/lib/use-escape";
-import { filterByMinFte } from "@/lib/graph/filter";
+import { filterStaff, filterAssignmentsByDate, type PayPeriodRef } from "@/lib/graph/filter";
 import { shapeBarSeries } from "@/lib/graph/series";
+import { encodeSpec, type GraphSpec } from "@/lib/graph/spec";
+import { DateRangePicker } from "./controls/DateRangePicker";
+import { StaffPicker } from "./controls/StaffPicker";
 import { computeStatsModel, type RawStatsData } from "@/lib/graph/model";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -52,6 +55,8 @@ type Averages = {
 type Props = {
   raw: RawStatsData;
   equityThresholds: EquityThresholds;
+  payPeriods: PayPeriodRef[];
+  initialSpec: GraphSpec;
 };
 
 type SortKey = "initials" | "desirability" | "oppAdj" | "holiday" | "hours" | "workDays" | "leaveDays" | string;
@@ -394,13 +399,37 @@ const COLUMN_FORMULAS: Record<string, string> = {
   leaveDays: "Total leave days",
 };
 
-export function EquityPage({ raw, equityThresholds }: Props) {
+export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: Props) {
   const [tip, setTip] = useState<TipState>(null);
 
-  // Whole Statistics computation runs in-browser from the raw payload.
+  // The active GraphSpec drives the whole pipeline. It is decoded from ?g= on
+  // the server (initialSpec) so the first render is the requested view, and we
+  // mirror every later change back into the URL for shareable/bookmarkable
+  // links. The first render is skipped so an untouched page keeps a clean URL.
+  const [spec, setSpec] = useState<GraphSpec>(initialSpec);
+  const firstRender = useRef(true);
+
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    params.set("g", encodeSpec(spec));
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }, [spec]);
+
+  // Date range scopes the raw assignments BEFORE compute, so metrics genuinely
+  // recompute over the chosen time subset.
+  const scopedRaw = useMemo<RawStatsData>(() => {
+    const assignments = filterAssignmentsByDate(raw.assignments, spec.dateRange, payPeriods);
+    return assignments === raw.assignments ? raw : { ...raw, assignments };
+  }, [raw, spec.dateRange, payPeriods]);
+
+  // Whole Statistics computation runs in-browser from the (scoped) raw payload.
   const { data, averages, trackedShiftCodes, dateRange, shiftCodes } = useMemo(
-    () => computeStatsModel(raw),
-    [raw],
+    () => computeStatsModel(scopedRaw),
+    [scopedRaw],
   );
   const activeFactors = useMemo(
     () => raw.equityFactors.map((f) => ({ factorType: f.factorType, shiftCode: f.shiftCode, enabled: f.enabled })),
@@ -418,9 +447,9 @@ export function EquityPage({ raw, equityThresholds }: Props) {
   const [showTallies, setShowTallies] = useState(false);
   const [showCharts, setShowCharts] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
-  const [minFte, setMinFte] = useState(0);
 
-  const filteredData = useMemo(() => filterByMinFte(data, minFte), [data, minFte]);
+  const filteredData = useMemo(() => filterStaff(data, spec.staff), [data, spec.staff]);
+  const isFiltered = filteredData.length !== data.length;
 
   const selectedRow = selectedProvider ? filteredData.find((d) => d.providerId === selectedProvider) : null;
 
@@ -461,7 +490,7 @@ export function EquityPage({ raw, equityThresholds }: Props) {
           <div>
             <h2 className="text-lg font-semibold text-slate-100">Statistics</h2>
             <p className="text-sm text-slate-400 mt-1">
-              {dateRange.min} to {dateRange.max} — {minFte > 0 ? `${filteredData.length} of ${data.length}` : data.length} providers
+              {dateRange.min || "—"} to {dateRange.max || "—"} — {isFiltered ? `${filteredData.length} of ${data.length}` : data.length} providers
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -480,20 +509,24 @@ export function EquityPage({ raw, equityThresholds }: Props) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 mb-5">
-          <label className="text-xs text-slate-500">Min FTE</label>
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            max="9.999"
-            className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-slate-300"
-            value={minFte || ""}
-            onChange={(e) => setMinFte(parseFloat(e.target.value) || 0)}
-            placeholder="0"
+        <div className="flex flex-col gap-3 mb-5 bg-slate-800/30 border border-slate-700/50 rounded-lg px-4 py-3">
+          <DateRangePicker
+            value={spec.dateRange}
+            payPeriods={payPeriods}
+            onChange={(dateRange) => setSpec((s) => ({ ...s, dateRange }))}
           />
-          {minFte > 0 && (
-            <span className="text-xs text-slate-500">{filteredData.length} of {data.length} providers</span>
+          <StaffPicker
+            value={spec.staff}
+            providers={raw.providers.map((p) => ({
+              id: p.id,
+              initials: p.initials,
+              name: p.name,
+              employmentTypeName: p.employmentTypeName,
+            }))}
+            onChange={(staff) => setSpec((s) => ({ ...s, staff }))}
+          />
+          {isFiltered && (
+            <span className="text-xs text-slate-500 pl-[72px]">{filteredData.length} of {data.length} providers shown</span>
           )}
         </div>
 
