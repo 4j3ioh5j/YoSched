@@ -238,10 +238,17 @@ just seeds the spec). Low effort; include in slice 2.
      introduced. **Carried‑forward requirement (CR #313 + #315):** that next slice MUST add
      `providerShiftOverride` to the client payload and cover the hours + `countsOnWeekend`
      path in tests — non‑negotiable parity check.
-1b. **Client recompute** — move `computeFairness` to the browser; ship the raw payload
+1b. **Client recompute** — move the compute to the browser; ship the raw payload
    (assignments, providers, weights, holidays, equityFactors, payPeriods, **and
    `providerShiftOverride`**); reproduce today's full Statistics view (table + hours +
    charts) from client‑side compute. Hours/`countsOnWeekend`/override parity tests required.
+   - **1b‑i (DONE):** extracted `assembleEquityModel` (pure, isomorphic, 7 parity tests),
+     server still calls it — byte‑identical output. Commit `7b7e46c`, CR #317 APPROVED,
+     deployed. Satisfies the override/hours parity gate.
+   - **1b‑ii (PENDING):** move the `assembleEquityModel` call to the client and pass the raw
+     arrays (incl `providerShiftOverride`) as props instead of pre‑computed rows. Small
+     mechanical follow‑up now that the function is proven; unblocks slice 2 date‑range
+     filtering (which needs client recompute over a subset).
 2. **Filters + URL** — date‑range (pay periods + custom) and staff picker; URL encode/decode.
    Already more capable than today.
 3. **Transforms** — global normalize/weighting toggles across charts.
