@@ -1832,38 +1832,46 @@ export function ScheduleGrid({
           </div>
           {/* Alert blocks are absolutely positioned to line up with the row they refer to. */}
           <div className="relative flex-1 overflow-hidden">
-            {alertGroups.map((g) => (
-              <div
-                key={g.date}
-                ref={(el) => {
-                  const m = alertGroupRefs.current;
-                  if (el) m.set(g.date, el);
-                  else m.delete(g.date);
-                }}
-                className="absolute left-0 right-0 px-2 will-change-transform"
-                style={{ top: 0 }}
-              >
+            {alertGroups.map((g) => {
+              // Keep each day's alerts on a single line that ellipsizes when it
+              // doesn't fit (widening the panel reveals more). The full set is
+              // stacked vertically in the hover tooltip.
+              const hasError = g.items.some((it) => it.type === "error");
+              const line = g.items.map((it) => it.message).join("  •  ");
+              const tip = g.items.map((it) => it.message).join("\n");
+              return (
                 <div
-                  className="flex flex-col gap-0.5 px-1.5 py-0.5 rounded hover:bg-slate-800/50 cursor-pointer transition-colors"
-                  onClick={() => {
-                    const row = scrollRef.current?.querySelector(`tr[data-date="${g.date}"]`);
-                    if (row) {
-                      const thead = scrollRef.current?.querySelector("thead");
-                      if (scrollRef.current && thead) {
-                        scrollRef.current.scrollTop = (row as HTMLElement).offsetTop - thead.clientHeight;
-                      }
-                    }
+                  key={g.date}
+                  ref={(el) => {
+                    const m = alertGroupRefs.current;
+                    if (el) m.set(g.date, el);
+                    else m.delete(g.date);
                   }}
+                  className="absolute left-0 right-0 px-2 will-change-transform"
+                  style={{ top: 0 }}
                 >
-                  {g.items.map((it, i) => (
-                    <div key={i} className="flex items-start gap-1.5">
-                      <span className={`mt-0.5 w-1.5 h-1.5 rounded-full shrink-0 ${it.type === "error" ? "bg-red-500" : "bg-amber-500"}`} />
-                      <span className="text-[11px] text-slate-400 leading-tight">{it.message}</span>
-                    </div>
-                  ))}
+                  <div
+                    className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-slate-800/50 cursor-pointer transition-colors overflow-hidden"
+                    onMouseEnter={(e) => showTip(setTooltip, tip, e)}
+                    onMouseLeave={() => setTooltip(null)}
+                    onClick={() => {
+                      const row = scrollRef.current?.querySelector(`tr[data-date="${g.date}"]`);
+                      if (row) {
+                        const thead = scrollRef.current?.querySelector("thead");
+                        if (scrollRef.current && thead) {
+                          scrollRef.current.scrollTop = (row as HTMLElement).offsetTop - thead.clientHeight;
+                        }
+                      }
+                    }}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${hasError ? "bg-red-500" : "bg-amber-500"}`} />
+                    <span className="flex-1 min-w-0 text-[11px] text-slate-400 leading-tight whitespace-nowrap overflow-hidden text-ellipsis">
+                      {line}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
         </>
