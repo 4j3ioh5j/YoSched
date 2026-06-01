@@ -1,6 +1,6 @@
 # Statistics Graphing Revamp — Implementation Plan
 
-Status: **PLANNING** (no code written yet)
+Status: **COMPLETE** — all slices 1–6 shipped & deployed (2026-06-01)
 Owner: yosched
 Last updated: 2026-06-01
 
@@ -304,7 +304,19 @@ just seeds the spec). Low effort; include in slice 2.
    dropdown. `coerceSpec` extracted from `decodeSpec` as the shared trust boundary (URL + API).
    Owner-deletion deletes the owner's PRIVATE views (CR #313); shared views survive as
    department-owned (`ownerId = null`). Ownership rules pure-tested in `view-access.ts`.
-6. **Export + polish** — PNG/CSV, compat greying, empty/error states.
+6. **Export + polish (DONE)** — shipped in two sub-slices:
+   - **6a (DONE)** — CSV export of the data table. Pure `export-csv.ts` (`toCsvText` +
+     `buildEquityCsvRows`, mirrors visible columns) + tests; "Export CSV" button. Commit
+     `432e047`, CR #350 APPROVED, deployed.
+   - **6b (DONE)** — PNG chart export (`html-to-image`; covers all 4 chart types incl. the
+     div-grid heatmap, per §15 fallback) + chart empty-state. Commit `b59808b`, CR #354
+     APPROVED, deployed.
+   - Deferred (optional, not blocking): `compat`-driven metric grey-out in the picker; surfacing
+     the signed z-score metrics as their own chart axes.
+
+**Revamp complete:** `/equity` is the configurable graphing tool described in §1 —
+date/staff filters, metric × chart × transform matrix, shareable `?g=` links, per-user saved
+views (`statistics:manage`), and CSV + PNG export.
 
 Saved views land in slice 5 but the spec is designed for them from slice 1, so nothing needs
 reworking.
@@ -328,6 +340,12 @@ reworking.
 - Exact metric list final naming and which become chart axes on radar.
 
 ## 16. Review history
+
+- **Slice 6a — CR #350 APPROVED (2026‑06‑01).** CSV export of the data table; pure
+  `export-csv.ts` + 8 tests. Deployed `432e047`.
+- **Slice 6b — CR #354 APPROVED (2026‑06‑01).** PNG chart export (`html-to-image`, covers the
+  div-grid heatmap) + chart empty-state. (First submission #352 timed out at the review infra —
+  no verdict — and was resubmitted unchanged.) Deployed `b59808b`. **Revamp complete.**
 
 - **Slice 5 PLAN — CR #344 APPROVED (2026‑06‑01).** Saved-views approach (DB migration + new
   `statistics:manage` permission) approved before coding, per the higher-risk gate. Implemented:
