@@ -229,9 +229,19 @@ just seeds the spec). Low effort; include in slice 2.
 
 ## 13. Delivery slices (each: write tests → `PLAN:`/`REVIEW:` gate → deploy)
 
-1. **Plumbing** — `GraphSpec` + `DEFAULT_SPEC`; ship raw data client‑side; reproduce today's
-   bar chart through the pipeline (no visible change; proves the architecture). Tests for
-   `filter`/`series`.
+1. **Plumbing** — `GraphSpec` + `DEFAULT_SPEC`; reproduce today's bar chart + min‑FTE filter
+   through pure `series`/`filter` helpers (no visible change; proves the spec→series→render
+   shape). Tests for `filter`/`series`.
+   - **Status: DONE** — commit `fa90982`, Code‑Review #315 APPROVED, deployed.
+   - **Split:** "ship raw data client‑side" was descoped from this slice (server compute left
+     untouched) and folded into slice 1b/2 below, where client recompute is actually
+     introduced. **Carried‑forward requirement (CR #313 + #315):** that next slice MUST add
+     `providerShiftOverride` to the client payload and cover the hours + `countsOnWeekend`
+     path in tests — non‑negotiable parity check.
+1b. **Client recompute** — move `computeFairness` to the browser; ship the raw payload
+   (assignments, providers, weights, holidays, equityFactors, payPeriods, **and
+   `providerShiftOverride`**); reproduce today's full Statistics view (table + hours +
+   charts) from client‑side compute. Hours/`countsOnWeekend`/override parity tests required.
 2. **Filters + URL** — date‑range (pay periods + custom) and staff picker; URL encode/decode.
    Already more capable than today.
 3. **Transforms** — global normalize/weighting toggles across charts.
@@ -270,4 +280,8 @@ reworking.
   tests (§6); (2) `src/app/api/settings/groups/route.ts` added to the RBAC touch points so
   custom groups can be granted `statistics:manage` (§9.3); (3) `User.savedGraphViews` inverse
   relation + owner‑deletion handling for orphaned private views (§9.1).
+- **Slice 1 — Code‑Review #315 (2026‑06‑01): APPROVED.** Pure extraction (`shapeBarSeries`,
+  `filterByMinFte`) + GraphSpec contract; zero behavior change; 224/224 tests. Descope of the
+  client‑payload move accepted, with the `providerShiftOverride` parity check explicitly
+  carried forward as a **required** gate for the recompute slice (1b).
 ```
