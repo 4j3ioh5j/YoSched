@@ -1374,9 +1374,13 @@ export function ScheduleGrid({
     measure();
     apply();
     scroller.addEventListener("scroll", apply, { passive: true });
-    const table = scroller.querySelector("table");
+    // Re-measure on table layout changes (rows added, PP rows toggled) and
+    // re-apply when an alert block's own height changes — e.g. resizing the
+    // alerts panel rewraps the text, which would otherwise leave it off-center.
     const ro = new ResizeObserver(() => { measure(); apply(); });
+    const table = scroller.querySelector("table");
     if (table) ro.observe(table);
+    for (const el of alertGroupRefs.current.values()) ro.observe(el);
     return () => {
       scroller.removeEventListener("scroll", apply);
       ro.disconnect();
