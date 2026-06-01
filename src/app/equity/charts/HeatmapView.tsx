@@ -29,7 +29,7 @@ export function HeatmapView({
 
   if (codes.length === 0 || rows.length === 0) return null;
 
-  const gridTemplateColumns = `2.75rem repeat(${codes.length}, minmax(2rem, 1fr))`;
+  const gridTemplateColumns = `3rem repeat(${codes.length}, 2.5rem)`;
 
   return (
     <div className="mb-6">
@@ -39,11 +39,11 @@ export function HeatmapView({
         </h3>
 
         <div className="overflow-x-auto">
-          <div className="inline-grid gap-px min-w-full" style={{ gridTemplateColumns }}>
+          <div className="inline-grid gap-px" style={{ gridTemplateColumns }}>
             {/* header row */}
-            <div />
+            <div className="h-6" />
             {codes.map((code) => (
-              <div key={code} className="text-[10px] font-mono text-slate-400 text-center pb-1 truncate">
+              <div key={code} className="h-6 text-[10px] font-mono text-slate-400 flex items-end justify-center pb-1 truncate">
                 {code}
               </div>
             ))}
@@ -52,7 +52,7 @@ export function HeatmapView({
             {rows.map((r) => (
               <div key={r.initials} className="contents">
                 <div
-                  className="text-[11px] font-mono font-bold text-slate-300 flex items-center pr-1.5 cursor-pointer hover:text-slate-100"
+                  className="h-9 text-[11px] font-mono font-bold text-slate-300 flex items-center pr-1.5 cursor-pointer hover:text-slate-100"
                   onClick={() => onSelect?.(r.initials)}
                 >
                   {r.initials}
@@ -62,7 +62,7 @@ export function HeatmapView({
                   return (
                     <div
                       key={cell.code}
-                      className="aspect-square min-h-[1.75rem] flex items-center justify-center text-[11px] tabular-nums rounded-sm cursor-default"
+                      className="h-9 w-10 flex items-center justify-center text-[11px] tabular-nums rounded-sm cursor-default"
                       style={{ backgroundColor: color + "33", color }}
                       onMouseEnter={
                         setTip
