@@ -37,4 +37,11 @@ describe("chart × metric compatibility", () => {
     expect(coerceChart("hours", "heatmap")).toBe("bar"); // heatmap invalid for hours
     expect(coerceChart("desirability", "pie")).toBe("bar");
   });
+
+  it("treats a specific shift code like shiftCount", () => {
+    expect(isCompatible("shift:CALL", "heatmap")).toBe(true);
+    expect(isCompatible("shift:CALL", "pie")).toBe(true);
+    expect(isCompatible("shift:CALL", "bar")).toBe(true);
+    expect(validChartsForMetric("shift:ORC")).toEqual(["bar", "pie", "heatmap", "line"]);
+  });
 });

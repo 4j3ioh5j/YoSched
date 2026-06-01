@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
-import { shapePie, type PieInput, type PieMetric } from "@/lib/graph/series";
+import { shapePie, type PieInput } from "@/lib/graph/series";
 
 const PIE_COLORS = [
   "#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#22c55e", "#06b6d4",
@@ -10,11 +10,12 @@ const PIE_COLORS = [
   "#0ea5e9", "#d946ef", "#fb923c", "#10b981",
 ];
 
-const TITLE: Record<PieMetric, string> = {
-  shiftCount: "Shift Share",
-  hours: "Hours Share",
-  holidays: "Holiday Share",
-};
+function titleFor(metric: string): string {
+  if (metric.startsWith("shift:")) return `${metric.slice(6)} Share`;
+  if (metric === "hours") return "Hours Share";
+  if (metric === "holidays") return "Holiday Share";
+  return "Shift Share";
+}
 
 /**
  * Department-share donut: one slice per provider sized by their value of the
@@ -28,7 +29,7 @@ export function PieView({
   perFte,
 }: {
   data: PieInput[];
-  metric: PieMetric;
+  metric: string;
   codes: string[];
   perFte: boolean;
 }) {
@@ -41,7 +42,7 @@ export function PieView({
     <div className="mb-6">
       <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">
-          {TITLE[metric]}{perFte ? " — per 1.0 FTE" : ""}
+          {titleFor(metric)}{perFte ? " — per 1.0 FTE" : ""}
         </h3>
         <ResponsiveContainer width="100%" height={340}>
           <PieChart>

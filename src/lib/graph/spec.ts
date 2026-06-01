@@ -14,7 +14,9 @@ export type GraphMetric =
   | "hours"
   | "holidays"
   | "desirability"
-  | "equityDeviation";
+  | "equityDeviation"
+  /** a specific tracked shift code, e.g. "shift:CALL" */
+  | `shift:${string}`;
 
 export type GraphChart = "bar" | "pie" | "radar" | "heatmap" | "line";
 
@@ -72,6 +74,10 @@ export const DEFAULT_SPEC: GraphSpec = {
 const METRICS: GraphMetric[] = ["shiftCount", "hours", "holidays", "desirability", "equityDeviation"];
 const CHARTS: GraphChart[] = ["bar", "pie", "radar", "heatmap", "line"];
 
+function isMetric(v: unknown): v is GraphMetric {
+  return typeof v === "string" && (METRICS.includes(v as GraphMetric) || v.startsWith("shift:"));
+}
+
 export function encodeSpec(spec: GraphSpec): string {
   return encodeURIComponent(JSON.stringify(spec));
 }
@@ -116,7 +122,7 @@ export function decodeSpec(raw: string): GraphSpec | null {
     version: 1,
     dateRange: coerceDateRange(o.dateRange),
     staff: coerceStaff(o.staff),
-    metric: METRICS.includes(o.metric as GraphMetric) ? (o.metric as GraphMetric) : DEFAULT_SPEC.metric,
+    metric: isMetric(o.metric) ? o.metric : DEFAULT_SPEC.metric,
     chart: CHARTS.includes(o.chart as GraphChart) ? (o.chart as GraphChart) : DEFAULT_SPEC.chart,
     normalize: o.normalize === "fte" ? "fte" : "raw",
     weighting: o.weighting === "opportunity" ? "opportunity" : "none",

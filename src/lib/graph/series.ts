@@ -60,8 +60,6 @@ export function shapeBarSeries(
  * them is meaningless) and the rest are sorted largest-first.
  * ------------------------------------------------------------------ */
 
-export type PieMetric = "shiftCount" | "hours" | "holidays";
-
 export type PieInput = {
   initials: string;
   totalHours: number;
@@ -72,19 +70,23 @@ export type PieInput = {
 
 export type PieSlice = { initials: string; value: number };
 
+/**
+ * `metric` is "shiftCount" (sum of `codes`), "shift:CODE" (one code),
+ * "hours", or "holidays". `codes` is only used by "shiftCount".
+ */
 export function shapePie(
   rows: PieInput[],
-  metric: PieMetric,
+  metric: string,
   codes: string[],
   perFte = false,
 ): PieSlice[] {
   const valueOf = (r: PieInput): number => {
-    const raw =
-      metric === "hours"
-        ? r.totalHours
-        : metric === "holidays"
-          ? r.holidayWorkCount
-          : codes.reduce((s, c) => s + (r.shiftCounts[c] ?? 0), 0);
+    let raw: number;
+    if (metric === "shiftCount") raw = codes.reduce((s, c) => s + (r.shiftCounts[c] ?? 0), 0);
+    else if (metric.startsWith("shift:")) raw = r.shiftCounts[metric.slice(6)] ?? 0;
+    else if (metric === "hours") raw = r.totalHours;
+    else if (metric === "holidays") raw = r.holidayWorkCount;
+    else raw = 0;
     return perFte ? raw / (r.ftePercentage || 1) : raw;
   };
   return rows
@@ -115,35 +117,53 @@ export type HeatmapCell = { code: string; count: number; deviation: number };
 export type HeatmapRow = { initials: string; cells: HeatmapCell[] };
 
 /* ------------------------------------------------------------------ *
- * Single-metric bar — one value per provider for a scalar count metric
- * (hours / holidays). `perFte` divides by FTE for a per-1.0-FTE rate (same
- * rule as shapeBarSeries; 0-FTE treated as 1.0). shiftCount keeps its own
- * stacked-by-code series (shapeBarSeries); the signed z-score metrics are not
- * handled here.
+ * Single-value metric — one value per provider. Covers a specific shift code
+ * ("shift:CALL" -> that code's count), holidays/hours (scalar counts), and
+ * desirability (the FTE-normalized z-score, sign-flipped to match the table so
+ * higher = fewer undesirable shifts). `perFte` divides count metrics by FTE
+ * (0-FTE -> 1.0); it does not apply to the z-score, which is already
+ * FTE-normalized. shiftCount stays the stacked-by-code series (shapeBarSeries).
  * ------------------------------------------------------------------ */
 
-export type ScalarMetric = "hours" | "holidays";
-
-export type MetricBarInput = {
+export type MetricRow = {
   initials: string;
-  totalHours: number;
+  shiftCounts: Record<string, number>;
   holidayWorkCount: number;
+  totalHours: number;
   ftePercentage: number;
+  deviation: { desirability: number };
+  displayDeviation: { desirability: number };
 };
+
+export type MetricOpts = { perFte?: boolean; opportunityAdjusted?: boolean };
 
 export type MetricBarRow = { initials: string; value: number };
 
-export function shapeMetricBar(
-  rows: MetricBarInput[],
-  metric: ScalarMetric,
-  perFte = false,
-): MetricBarRow[] {
+/** True for metrics measured as additive counts (divisible by FTE); false for
+ *  the signed z-score metrics. */
+export function isCountMetric(metric: string): boolean {
+  return metric.startsWith("shift:") || metric === "hours" || metric === "holidays" || metric === "shiftCount";
+}
+
+export function scalarMetricValue(row: MetricRow, metric: string, opts: MetricOpts = {}): number {
+  const div = (n: number) => (opts.perFte ? n / (row.ftePercentage || 1) : n);
+  if (metric.startsWith("shift:")) return div(row.shiftCounts[metric.slice(6)] ?? 0);
+  switch (metric) {
+    case "hours":
+      return div(row.totalHours);
+    case "holidays":
+      return div(row.holidayWorkCount);
+    case "desirability":
+      return -(opts.opportunityAdjusted ? row.deviation : row.displayDeviation).desirability;
+    default:
+      return 0;
+  }
+}
+
+export function shapeMetricBar(rows: MetricRow[], metric: string, opts: MetricOpts = {}): MetricBarRow[] {
   return [...rows]
     .sort((a, b) => a.initials.localeCompare(b.initials))
-    .map((r) => {
-      const raw = metric === "hours" ? r.totalHours : r.holidayWorkCount;
-      return { initials: r.initials, value: perFte ? raw / (r.ftePercentage || 1) : raw };
-    });
+    .map((r) => ({ initials: r.initials, value: scalarMetricValue(r, metric, opts) }));
 }
 
 export function shapeHeatmap(

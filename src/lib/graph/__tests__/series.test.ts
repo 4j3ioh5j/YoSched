@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shapeBarSeries, shapeHeatmap, shapeMetricBar, shapePie, type BarSeriesInput, type HeatmapInput, type MetricBarInput, type PieInput } from "../series";
+import { shapeBarSeries, shapeHeatmap, shapeMetricBar, scalarMetricValue, shapePie, type BarSeriesInput, type HeatmapInput, type MetricRow, type PieInput } from "../series";
 
 const row = (
   initials: string,
@@ -115,13 +115,50 @@ describe("shapeHeatmap", () => {
 
 const mRow = (
   initials: string,
-  totalHours: number,
-  holidayWorkCount: number,
-  ftePercentage = 1,
-): MetricBarInput => ({ initials, totalHours, holidayWorkCount, ftePercentage });
+  opts: Partial<MetricRow> = {},
+): MetricRow => ({
+  initials,
+  shiftCounts: {},
+  holidayWorkCount: 0,
+  totalHours: 0,
+  ftePercentage: 1,
+  deviation: { desirability: 0 },
+  displayDeviation: { desirability: 0 },
+  ...opts,
+});
+
+describe("scalarMetricValue", () => {
+  const r = mRow("AB", {
+    shiftCounts: { CALL: 4 },
+    holidayWorkCount: 2,
+    totalHours: 100,
+    ftePercentage: 0.5,
+    deviation: { desirability: 0.8 },
+    displayDeviation: { desirability: 0.3 },
+  });
+
+  it("reads a specific shift code", () => {
+    expect(scalarMetricValue(r, "shift:CALL")).toBe(4);
+    expect(scalarMetricValue(r, "shift:ORC")).toBe(0);
+  });
+
+  it("divides count metrics by FTE under perFte", () => {
+    expect(scalarMetricValue(r, "shift:CALL", { perFte: true })).toBe(8);
+    expect(scalarMetricValue(r, "hours", { perFte: true })).toBe(200);
+  });
+
+  it("negates the desirability z-score and ignores perFte for it", () => {
+    expect(scalarMetricValue(r, "desirability")).toBe(-0.3);
+    expect(scalarMetricValue(r, "desirability", { perFte: true })).toBe(-0.3);
+    expect(scalarMetricValue(r, "desirability", { opportunityAdjusted: true })).toBe(-0.8);
+  });
+});
 
 describe("shapeMetricBar", () => {
-  const rows = [mRow("ZZ", 100, 2, 0.5), mRow("AA", 200, 4, 1)];
+  const rows = [
+    mRow("ZZ", { totalHours: 100, holidayWorkCount: 2, shiftCounts: { CALL: 1 }, ftePercentage: 0.5 }),
+    mRow("AA", { totalHours: 200, holidayWorkCount: 4, shiftCounts: { CALL: 3 }, ftePercentage: 1 }),
+  ];
 
   it("emits {initials, value} per provider, sorted by initials, for hours", () => {
     expect(shapeMetricBar(rows, "hours")).toEqual([
@@ -130,16 +167,19 @@ describe("shapeMetricBar", () => {
     ]);
   });
 
-  it("reads the holiday count for the holidays metric", () => {
-    expect(shapeMetricBar(rows, "holidays")).toEqual([
-      { initials: "AA", value: 4 },
-      { initials: "ZZ", value: 2 },
+  it("reads a specific shift code", () => {
+    expect(shapeMetricBar(rows, "shift:CALL")).toEqual([
+      { initials: "AA", value: 3 },
+      { initials: "ZZ", value: 1 },
     ]);
   });
 
   it("divides by FTE under perFte (0-FTE treated as 1.0)", () => {
-    const data = [mRow("AB", 100, 0, 0.5), mRow("CD", 90, 0, 0)];
-    expect(shapeMetricBar(data, "hours", true)).toEqual([
+    const data = [
+      mRow("AB", { totalHours: 100, ftePercentage: 0.5 }),
+      mRow("CD", { totalHours: 90, ftePercentage: 0 }),
+    ];
+    expect(shapeMetricBar(data, "hours", { perFte: true })).toEqual([
       { initials: "AB", value: 200 },
       { initials: "CD", value: 90 },
     ]);
@@ -173,6 +213,10 @@ describe("shapePie", () => {
       { initials: "BB", value: 5 },
       { initials: "AA", value: 2 },
     ]);
+  });
+
+  it("uses a single code's count for a shift:CODE metric (ignores `codes`)", () => {
+    expect(shapePie(rows, "shift:ORC", [])).toEqual([{ initials: "AA", value: 1 }]);
   });
 
   it("uses the scalar total for hours and drops zero slices (CC)", () => {

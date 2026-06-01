@@ -14,6 +14,7 @@ import { coerceChart } from "@/lib/graph/compat";
 import { HeatmapView } from "./charts/HeatmapView";
 import { MetricBarView } from "./charts/MetricBarView";
 import { PieView } from "./charts/PieView";
+import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { computeStatsModel, type RawStatsData } from "@/lib/graph/model";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -64,7 +65,15 @@ type Props = {
   equityThresholds: EquityThresholds;
   payPeriods: PayPeriodRef[];
   initialSpec: GraphSpec;
+  dateFormat: string;
 };
+
+/** Format an ISO YYYY-MM-DD string with the user's configured date format.
+ *  Parses at local noon so the calendar date is never shifted by timezone. */
+function formatIsoDate(iso: string, fmt: DateFormatKey): string {
+  if (!iso) return "—";
+  return formatDate(new Date(`${iso}T12:00:00`), fmt);
+}
 
 type SortKey = "initials" | "desirability" | "oppAdj" | "holiday" | "hours" | "workDays" | "leaveDays" | string;
 
@@ -414,8 +423,9 @@ const COLUMN_FORMULAS: Record<string, string> = {
   leaveDays: "Total leave days",
 };
 
-export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: Props) {
+export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dateFormat }: Props) {
   const [tip, setTip] = useState<TipState>(null);
+  const dateFmt = (dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey;
 
   // The active GraphSpec drives the whole pipeline. It is decoded from ?g= on
   // the server (initialSpec) so the first render is the requested view, and we
@@ -505,7 +515,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: P
           <div>
             <h2 className="text-lg font-semibold text-slate-100">Statistics</h2>
             <p className="text-sm text-slate-400 mt-1">
-              {dateRange.min || "—"} to {dateRange.max || "—"} — {isFiltered ? `${filteredData.length} of ${data.length}` : data.length} providers
+              {formatIsoDate(dateRange.min, dateFmt)} to {formatIsoDate(dateRange.max, dateFmt)} — {isFiltered ? `${filteredData.length} of ${data.length}` : data.length} providers
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -544,6 +554,9 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: P
           <TransformToggles spec={spec} onChange={(patch) => setSpec((s) => ({ ...s, ...patch }))} />
           <MetricPicker
             value={spec.metric}
+            shiftCodes={activeShiftCodes.filter((c) => trackedShiftCodes.includes(c))}
+            showHoliday={showHoliday}
+            showDesirability={showDesirability}
             onChange={(metric) => setSpec((s) => ({ ...s, metric, chart: coerceChart(metric, s.chart) }))}
           />
           <ChartTypePicker value={spec.chart} metric={spec.metric} onChange={(chart) => setSpec((s) => ({ ...s, chart }))} />
@@ -577,23 +590,20 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: P
 
         {showCharts && (() => {
           const perFte = spec.normalize === "fte";
+          const oppAdj = spec.weighting === "opportunity";
           const codes = activeShiftCodes.filter((c) => trackedShiftCodes.includes(c));
-          // Pie = department share by provider; valid for the count metrics.
-          if (spec.chart === "pie" && (spec.metric === "shiftCount" || spec.metric === "hours" || spec.metric === "holidays")) {
-            return <PieView data={filteredData} metric={spec.metric} codes={codes} perFte={perFte} />;
-          }
-          // Scalar metrics (hours/holidays) always have data; the shiftCount
-          // distribution / heatmap need at least one active code or holidays.
-          if (spec.metric === "hours" || spec.metric === "holidays") {
-            return <MetricBarView data={filteredData} metric={spec.metric} perFte={perFte} />;
-          }
-          if (!(codes.length > 0 || showHoliday)) return null;
-          if (spec.chart === "heatmap") {
+          const metric = spec.metric;
+          const isCode = metric.startsWith("shift:");
+
+          // Heatmap — the all-codes equity grid; valid for "all shifts" or a
+          // specific code (it shows the chosen code in context of the others).
+          if (spec.chart === "heatmap" && (metric === "shiftCount" || isCode)) {
+            if (codes.length === 0) return null;
             return (
               <HeatmapView
                 data={filteredData}
                 codes={codes}
-                opportunityAdjusted={spec.weighting === "opportunity"}
+                opportunityAdjusted={oppAdj}
                 thresholds={equityThresholds}
                 onSelect={(initials) => {
                   const match = filteredData.find((d) => d.initials === initials);
@@ -603,15 +613,27 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec }: P
               />
             );
           }
-          return (
-            <OverviewCharts
-              data={filteredData}
-              trackedShiftCodes={codes}
-              allShiftCodes={trackedShiftCodes}
-              showHoliday={showHoliday}
-              perFte={perFte}
-            />
-          );
+
+          // Pie — department share by provider; valid for the count metrics.
+          if (spec.chart === "pie" && (metric === "shiftCount" || isCode || metric === "holidays" || metric === "hours")) {
+            return <PieView data={filteredData} metric={metric} codes={codes} perFte={perFte} />;
+          }
+
+          // Bar / fallback. "All shifts" keeps the stacked-by-code distribution;
+          // every other metric is one value per provider.
+          if (metric === "shiftCount") {
+            if (!(codes.length > 0 || showHoliday)) return null;
+            return (
+              <OverviewCharts
+                data={filteredData}
+                trackedShiftCodes={codes}
+                allShiftCodes={trackedShiftCodes}
+                showHoliday={showHoliday}
+                perFte={perFte}
+              />
+            );
+          }
+          return <MetricBarView data={filteredData} metric={metric} perFte={perFte} opportunityAdjusted={oppAdj} />;
         })()}
 
         <div className="bg-slate-800/30 border border-slate-700 rounded-lg overflow-hidden">

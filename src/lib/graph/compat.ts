@@ -16,7 +16,7 @@
  */
 import type { GraphChart, GraphMetric } from "./spec";
 
-const COMPAT: Record<GraphMetric, GraphChart[]> = {
+const COMPAT: Record<string, GraphChart[]> = {
   shiftCount: ["bar", "pie", "heatmap", "line"],
   hours: ["bar", "pie", "line"],
   holidays: ["bar", "pie", "line"],
@@ -24,12 +24,18 @@ const COMPAT: Record<GraphMetric, GraphChart[]> = {
   equityDeviation: ["bar", "line"],
 };
 
+// A specific shift code ("shift:CALL") has the same chart options as shiftCount
+// (it is a per-code count, and the heatmap shows it in context of the others).
+function compatKey(metric: GraphMetric): string {
+  return metric.startsWith("shift:") ? "shiftCount" : metric;
+}
+
 export function isCompatible(metric: GraphMetric, chart: GraphChart): boolean {
-  return COMPAT[metric].includes(chart);
+  return (COMPAT[compatKey(metric)] ?? ["bar"]).includes(chart);
 }
 
 export function validChartsForMetric(metric: GraphMetric): GraphChart[] {
-  return COMPAT[metric];
+  return COMPAT[compatKey(metric)] ?? ["bar"];
 }
 
 /**

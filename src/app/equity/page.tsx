@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { RawStatsData } from "@/lib/graph/model";
 import { DEFAULT_SPEC, decodeSpec } from "@/lib/graph/spec";
+import { DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { EquityPage } from "./equity-page";
 import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
@@ -107,7 +108,7 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
   return (
     <main className="flex flex-col h-screen">
       <NavHeader />
-      <EquityPage raw={raw} equityThresholds={equityThresholds} payPeriods={payPeriodRefs} initialSpec={initialSpec} />
+      <EquityPage raw={raw} equityThresholds={equityThresholds} payPeriods={payPeriodRefs} initialSpec={initialSpec} dateFormat={schedPrefs?.dateFormat ?? DEFAULT_DATE_FORMAT} />
     </main>
   );
 }
