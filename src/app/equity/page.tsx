@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { computeFairness } from "@/lib/fairness";
+import { assembleEquityModel } from "@/lib/graph/model";
 import { EquityPage } from "./equity-page";
 import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
@@ -66,92 +67,46 @@ export default async function Equity() {
     high: schedPrefs?.equityThresholdHigh ?? 1.5,
   };
 
-  // Build per-provider shift-code tallies
-  const shiftTallies: Record<string, Record<string, number>> = {};
-  for (const a of assignments) {
-    const pid = a.providerId;
-    if (!shiftTallies[pid]) shiftTallies[pid] = {};
-    const code = a.shiftType.code;
-    if (a.shiftType.isOffShift) continue;
-    shiftTallies[pid][code] = (shiftTallies[pid][code] || 0) + 1;
-  }
-
-  // Compute total hours per provider
-  const providerHours: Record<string, number> = {};
   const overrides = await prisma.providerShiftOverride.findMany();
-  const overrideMap = new Map<string, number>();
-  for (const o of overrides) overrideMap.set(`${o.providerId}:${o.shiftTypeId}`, o.durationHrs);
 
-  const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
-
-  for (const a of assignments) {
-    const st = stMap.get(a.shiftTypeId);
-    if (!st || !st.countsTowardFte) continue;
-    const dateStr = a.date.toISOString().split("T")[0];
-    const dow = new Date(dateStr + "T12:00:00").getDay();
-    const isWknd = dow === 0 || dow === 6;
-    if (isWknd && !st.countsOnWeekend) continue;
-    const hrs = overrideMap.get(`${a.providerId}:${a.shiftTypeId}`) ?? st.defaultHours;
-    providerHours[a.providerId] = (providerHours[a.providerId] || 0) + hrs;
-  }
-
-  const dateRange = {
-    min: assignments.length > 0
-      ? assignments.reduce((min, a) => a.date < min ? a.date : min, assignments[0].date).toISOString().split("T")[0]
-      : "",
-    max: assignments.length > 0
-      ? assignments.reduce((max, a) => a.date > max ? a.date : max, assignments[0].date).toISOString().split("T")[0]
-      : "",
-  };
-
-  const equityData = equity.metrics.map((m) => {
-    const dev = equity.deviations.get(m.providerId)!;
-    const disp = equity.displayDeviations.get(m.providerId)!;
-    const p = providers.find((p) => p.id === m.providerId)!;
-    return {
-      ...m,
-      deviation: {
-        desirability: dev.desirability,
-        holidayWork: dev.holidayWork,
-        overall: dev.overall,
-        perShift: dev.perShift,
-      },
-      displayDeviation: {
-        desirability: disp.desirability,
-        holidayWork: disp.holidayWork,
-        overall: disp.overall,
-        perShift: disp.perShift,
-      },
+  const model = assembleEquityModel({
+    fairness: equity,
+    providers: providers.map((p) => ({
+      id: p.id,
       name: p.name,
       isAutoScheduled: p.isAutoScheduled,
-      ftePercentage: p.ftePercentage ?? 1.0,
+      ftePercentage: p.ftePercentage,
       employmentTypeName: p.employmentType.name,
-      totalHours: providerHours[m.providerId] || 0,
-      shiftTally: shiftTallies[m.providerId] || {},
-    };
+    })),
+    assignments: assignments.map((a) => ({
+      providerId: a.providerId,
+      shiftTypeId: a.shiftTypeId,
+      date: a.date.toISOString().split("T")[0],
+      code: a.shiftType.code,
+      isOffShift: a.shiftType.isOffShift,
+    })),
+    shiftTypes: shiftTypes.map((st) => ({
+      id: st.id,
+      countsTowardFte: st.countsTowardFte,
+      countsOnWeekend: st.countsOnWeekend,
+      defaultHours: st.defaultHours,
+    })),
+    overrides: overrides.map((o) => ({
+      providerId: o.providerId,
+      shiftTypeId: o.shiftTypeId,
+      durationHrs: o.durationHrs,
+    })),
   });
-
-  const shiftCodes = [...new Set(
-    Object.values(shiftTallies).flatMap((t) => Object.keys(t))
-  )].sort();
-
-  const n = equityData.length || 1;
-  const deptAverages = {
-    ...equity.averages,
-    totalHours: equityData.reduce((s, d) => s + d.totalHours / (d.ftePercentage || 1), 0) / n,
-    totalWorkDays: equityData.reduce((s, d) => s + d.totalWorkDays / (d.ftePercentage || 1), 0) / n,
-    totalLeaveDays: equityData.reduce((s, d) => s + d.totalLeaveDays / (d.ftePercentage || 1), 0) / n,
-  };
 
   return (
     <main className="flex flex-col h-screen">
       <NavHeader />
       <EquityPage
-        data={equityData}
-        averages={deptAverages}
-        trackedShiftCodes={equity.trackedShiftCodes}
-        dateRange={dateRange}
-        shiftCodes={shiftCodes}
+        data={model.data}
+        averages={model.averages}
+        trackedShiftCodes={model.trackedShiftCodes}
+        dateRange={model.dateRange}
+        shiftCodes={model.shiftCodes}
         equityThresholds={equityThresholds}
         activeFactors={equityFactors.map((f) => ({
           factorType: f.factorType,
