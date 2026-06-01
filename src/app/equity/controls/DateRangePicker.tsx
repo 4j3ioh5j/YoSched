@@ -1,10 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import type { GraphDateRange } from "@/lib/graph/spec";
 import type { PayPeriodRef } from "@/lib/graph/filter";
 
 type Mode = "all" | "periods" | "custom";
 
+/**
+ * Initial display mode from the value. Note "all" and an empty custom range
+ * encode identically (`{kind:"custom", start:"", end:""}`), so once mounted the
+ * segmented mode is tracked as local UI state — otherwise selecting "Custom"
+ * (which starts empty) would be indistinguishable from "All dates" and the
+ * date inputs would never appear.
+ */
 function modeOf(range: GraphDateRange): Mode {
   if (range.kind === "payPeriods") return "periods";
   if (!range.start && !range.end) return "all";
@@ -35,13 +43,16 @@ export function DateRangePicker({
   payPeriods: PayPeriodRef[];
   onChange: (r: GraphDateRange) => void;
 }) {
-  const mode = modeOf(value);
+  const [mode, setMode] = useState<Mode>(() => modeOf(value));
 
   function selectMode(next: Mode) {
     if (next === mode) return;
+    setMode(next);
     if (next === "all") onChange({ kind: "custom", start: "", end: "" });
     else if (next === "periods") onChange({ kind: "payPeriods", payPeriodIds: [] });
-    else onChange({ kind: "custom", start: "", end: "" }); // custom: user fills the inputs
+    // "custom": start an empty custom range for the user to fill (only needed
+    // when coming from "periods"; an existing custom value is left intact).
+    else if (value.kind !== "custom") onChange({ kind: "custom", start: "", end: "" });
   }
 
   function togglePeriod(id: string) {
