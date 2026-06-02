@@ -18,7 +18,7 @@ export type GraphMetric =
   /** a specific tracked shift code, e.g. "shift:CALL" */
   | `shift:${string}`;
 
-export type GraphChart = "bar" | "pie" | "radar" | "heatmap" | "line";
+export type GraphChart = "bar" | "pie" | "radar" | "heatmap";
 
 export type GraphDateRange =
   | { kind: "payPeriods"; payPeriodIds: string[] }
@@ -43,8 +43,6 @@ export type GraphSpec = {
   chart: GraphChart;
   normalize: "raw" | "fte";
   weighting: "none" | "opportunity";
-  /** only used by the line/trend chart */
-  timeBucket?: "payPeriod" | "month";
 };
 
 /**
@@ -72,7 +70,7 @@ export const DEFAULT_SPEC: GraphSpec = {
  * ------------------------------------------------------------------ */
 
 const METRICS: GraphMetric[] = ["shiftCount", "hours", "holidays", "desirability", "equityDeviation"];
-const CHARTS: GraphChart[] = ["bar", "pie", "radar", "heatmap", "line"];
+const CHARTS: GraphChart[] = ["bar", "pie", "radar", "heatmap"];
 
 function isMetric(v: unknown): v is GraphMetric {
   return typeof v === "string" && (METRICS.includes(v as GraphMetric) || v.startsWith("shift:"));
@@ -132,7 +130,6 @@ export function coerceSpec(parsed: unknown): GraphSpec {
   };
   spec.groupByShiftCode =
     typeof o.groupByShiftCode === "boolean" ? o.groupByShiftCode : DEFAULT_SPEC.groupByShiftCode;
-  if (o.timeBucket === "payPeriod" || o.timeBucket === "month") spec.timeBucket = o.timeBucket;
   return spec;
 }
 

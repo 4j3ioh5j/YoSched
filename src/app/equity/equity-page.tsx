@@ -7,20 +7,15 @@ import { shapeBarSeries } from "@/lib/graph/series";
 import { encodeSpec, type GraphSpec } from "@/lib/graph/spec";
 import { DateRangePicker } from "./controls/DateRangePicker";
 import { StaffPicker } from "./controls/StaffPicker";
-import { TransformToggles } from "./controls/TransformToggles";
 import { ChartTypePicker } from "./controls/ChartTypePicker";
 import { MetricPicker } from "./controls/MetricPicker";
-import { TimeBucketPicker } from "./controls/TimeBucketPicker";
 import { SavedViews } from "./saved/SavedViews";
 import { toCsvText, buildEquityCsvRows } from "@/lib/graph/export-csv";
 import { toPng } from "html-to-image";
 import { coerceChart } from "@/lib/graph/compat";
-import { buildBuckets } from "@/lib/graph/buckets";
-import { computeTrend } from "@/lib/graph/trend";
 import { HeatmapView } from "./charts/HeatmapView";
 import { MetricBarView } from "./charts/MetricBarView";
 import { PieView } from "./charts/PieView";
-import { LineView } from "./charts/LineView";
 import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { computeStatsModel, type RawStatsData } from "@/lib/graph/model";
 import {
@@ -489,21 +484,6 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
     [activeShiftCodes, trackedShiftCodes],
   );
 
-  // Line chart only: re-run the engine per time bucket for the filtered staff.
-  const timeBucket = spec.timeBucket ?? "payPeriod";
-  const trend = useMemo(() => {
-    if (spec.chart !== "line") return null;
-    const buckets = buildBuckets(scopedRaw.assignments.map((a) => a.date), timeBucket, payPeriods);
-    return computeTrend(
-      scopedRaw,
-      buckets,
-      spec.metric,
-      { perFte: spec.normalize === "fte", opportunityAdjusted: spec.weighting === "opportunity" },
-      filteredData.map((d) => d.providerId),
-      chartCodes,
-    );
-  }, [spec.chart, spec.metric, spec.normalize, spec.weighting, timeBucket, scopedRaw, payPeriods, filteredData, chartCodes]);
-
   const selectedRow = selectedProvider ? filteredData.find((d) => d.providerId === selectedProvider) : null;
 
   const globalMaxDev = useMemo(() => {
@@ -564,13 +544,6 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
     const codes = chartCodes;
     const metric = spec.metric;
     const isCode = metric.startsWith("shift:");
-
-    // Line — trend over time buckets, one line per filtered provider.
-    if (spec.chart === "line") {
-      if (!trend || trend.points.length === 0) return null;
-      const label = metric === "shiftCount" ? "All shifts" : isCode ? metric.slice(6) : metric === "holidays" ? "Holidays" : metric === "desirability" ? "Desirability" : "Hours";
-      return <LineView trend={trend} title={`${label} over time${perFte && metric !== "desirability" ? " — per 1.0 FTE" : ""}`} />;
-    }
 
     // Heatmap — the all-codes equity grid; valid for "all shifts" or a
     // specific code (it shows the chosen code in context of the others).
@@ -684,7 +657,6 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
             }))}
             onChange={(staff) => setSpec((s) => ({ ...s, staff }))}
           />
-          <TransformToggles spec={spec} onChange={(patch) => setSpec((s) => ({ ...s, ...patch }))} />
           <MetricPicker
             value={spec.metric}
             shiftCodes={activeShiftCodes.filter((c) => trackedShiftCodes.includes(c))}
@@ -693,9 +665,6 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
             onChange={(metric) => setSpec((s) => ({ ...s, metric, chart: coerceChart(metric, s.chart) }))}
           />
           <ChartTypePicker value={spec.chart} metric={spec.metric} onChange={(chart) => setSpec((s) => ({ ...s, chart }))} />
-          {spec.chart === "line" && (
-            <TimeBucketPicker value={timeBucket} onChange={(timeBucket) => setSpec((s) => ({ ...s, timeBucket }))} />
-          )}
           {isFiltered && (
             <span className="text-xs text-slate-500 pl-[72px]">{filteredData.length} of {data.length} providers shown</span>
           )}

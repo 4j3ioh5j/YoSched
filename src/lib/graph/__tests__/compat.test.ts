@@ -2,11 +2,10 @@ import { describe, it, expect } from "vitest";
 import { isCompatible, validChartsForMetric, coerceChart } from "../compat";
 
 describe("chart × metric compatibility", () => {
-  it("allows the additive counts on bar/pie/line", () => {
+  it("allows the additive counts on bar/pie", () => {
     for (const m of ["shiftCount", "hours", "holidays"] as const) {
       expect(isCompatible(m, "bar")).toBe(true);
       expect(isCompatible(m, "pie")).toBe(true);
-      expect(isCompatible(m, "line")).toBe(true);
     }
   });
 
@@ -18,18 +17,17 @@ describe("chart × metric compatibility", () => {
     expect(isCompatible("equityDeviation", "heatmap")).toBe(false);
   });
 
-  it("limits z-score metrics to bar and line (no pie/heatmap)", () => {
+  it("limits z-score metrics to bar (no pie/heatmap)", () => {
     for (const m of ["desirability", "equityDeviation"] as const) {
       expect(isCompatible(m, "bar")).toBe(true);
-      expect(isCompatible(m, "line")).toBe(true);
       expect(isCompatible(m, "pie")).toBe(false);
       expect(isCompatible(m, "heatmap")).toBe(false);
     }
   });
 
   it("validChartsForMetric returns the allowed set", () => {
-    expect(validChartsForMetric("hours")).toEqual(["bar", "pie", "line"]);
-    expect(validChartsForMetric("equityDeviation")).toEqual(["bar", "line"]);
+    expect(validChartsForMetric("hours")).toEqual(["bar", "pie"]);
+    expect(validChartsForMetric("equityDeviation")).toEqual(["bar"]);
   });
 
   it("coerceChart keeps a compatible chart and falls back to bar otherwise", () => {
@@ -42,6 +40,6 @@ describe("chart × metric compatibility", () => {
     expect(isCompatible("shift:CALL", "heatmap")).toBe(true);
     expect(isCompatible("shift:CALL", "pie")).toBe(true);
     expect(isCompatible("shift:CALL", "bar")).toBe(true);
-    expect(validChartsForMetric("shift:ORC")).toEqual(["bar", "pie", "heatmap", "line"]);
+    expect(validChartsForMetric("shift:ORC")).toEqual(["bar", "pie", "heatmap"]);
   });
 });

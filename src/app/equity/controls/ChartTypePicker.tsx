@@ -4,12 +4,11 @@ import type { GraphChart, GraphMetric } from "@/lib/graph/spec";
 import { isCompatible } from "@/lib/graph/compat";
 
 // Chart types selectable for the overview panel. Radar is the per-provider
-// drill-down (not a panel chart); pie + line arrive in later slices.
+// drill-down (not a panel chart).
 const CHARTS: { chart: GraphChart; label: string }[] = [
   { chart: "bar", label: "Bar" },
   { chart: "pie", label: "Pie" },
   { chart: "heatmap", label: "Heatmap" },
-  { chart: "line", label: "Line" },
 ];
 
 export function ChartTypePicker({

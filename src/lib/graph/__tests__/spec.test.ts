@@ -16,7 +16,6 @@ describe("encodeSpec / decodeSpec", () => {
       chart: "heatmap",
       normalize: "fte",
       weighting: "opportunity",
-      timeBucket: "month",
     };
     expect(decodeSpec(encodeSpec(spec))).toEqual(spec);
   });
@@ -91,14 +90,13 @@ describe("coerceSpec (API trust boundary)", () => {
   });
 
   it("never throws on hostile blobs and still returns a valid spec", () => {
-    const blob = { metric: { nested: true }, chart: 99, staff: "x", dateRange: [], timeBucket: "decade" };
+    const blob = { metric: { nested: true }, chart: 99, staff: "x", dateRange: [] };
     const spec = coerceSpec(blob);
     expect(spec.version).toBe(1);
     expect(spec.metric).toBe(DEFAULT_SPEC.metric);
     expect(spec.chart).toBe(DEFAULT_SPEC.chart);
     expect(spec.staff).toEqual(DEFAULT_SPEC.staff);
     expect(spec.dateRange).toEqual(DEFAULT_SPEC.dateRange);
-    expect(spec.timeBucket).toBeUndefined();
   });
 
   it("accepts an already-decoded object (round-trips through coerce)", () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { coerceSpec, type GraphSpec } from "@/lib/graph/spec";
+import { coerceSpec, DEFAULT_SPEC, type GraphSpec } from "@/lib/graph/spec";
 
 type SavedView = {
   id: string;
@@ -55,6 +55,19 @@ export function SavedViews({ currentSpec, onSelect, canManage }: Props) {
     setErr(null);
     const view = views.find((v) => v.id === id);
     if (view) onSelect(coerceSpec(view.spec));
+  }
+
+  /** Reset every control back to the default configuration and clear the
+   *  currently-selected saved view. */
+  function handleReset() {
+    setSelectedId("");
+    setMode("idle");
+    setErr(null);
+    onSelect({
+      ...DEFAULT_SPEC,
+      dateRange: { ...DEFAULT_SPEC.dateRange },
+      staff: { ...DEFAULT_SPEC.staff },
+    });
   }
 
   async function mutate(method: string, url: string, body?: object): Promise<SavedView | null> {
@@ -165,6 +178,15 @@ export function SavedViews({ currentSpec, onSelect, canManage }: Props) {
             </option>
           ))}
         </select>
+
+        <button
+          className={btn}
+          onClick={handleReset}
+          disabled={busy}
+          title="Reset all controls to their default configuration"
+        >
+          Reset
+        </button>
 
         {canManage && (
           <>

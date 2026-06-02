@@ -4,24 +4,24 @@
  * auto-correction when a selection would otherwise leave an invalid combo.
  *
  * Rationale:
- * - Counts (shiftCount/hours/holidays) are additive, non-negative → bar, pie,
- *   line all work.
+ * - Counts (shiftCount/hours/holidays) are additive, non-negative → bar, pie
+ *   both work.
  * - shiftCount additionally has a per-shift-code breakdown → heatmap (the
  *   providers × codes equity grid) only makes sense for it.
  * - The equity z-scores (desirability/equityDeviation) are signed and not
- *   additive → bar/line only (no pie share, no per-code heatmap).
+ *   additive → bar only (no pie share, no per-code heatmap).
  *
  * `radar` is the per-provider drill-down, not a panel chart, so it is not part
- * of this matrix. `pie`/`line` appear here now but are wired in 4b-ii / 4c.
+ * of this matrix.
  */
 import type { GraphChart, GraphMetric } from "./spec";
 
 const COMPAT: Record<string, GraphChart[]> = {
-  shiftCount: ["bar", "pie", "heatmap", "line"],
-  hours: ["bar", "pie", "line"],
-  holidays: ["bar", "pie", "line"],
-  desirability: ["bar", "line"],
-  equityDeviation: ["bar", "line"],
+  shiftCount: ["bar", "pie", "heatmap"],
+  hours: ["bar", "pie"],
+  holidays: ["bar", "pie"],
+  desirability: ["bar"],
+  equityDeviation: ["bar"],
 };
 
 // A specific shift code ("shift:CALL") has the same chart options as shiftCount
