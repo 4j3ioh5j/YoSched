@@ -164,7 +164,7 @@ export function SavedViews({ currentSpec, onSelect, canManage }: Props) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-slate-400 w-20 shrink-0">Saved view</span>
+        <span className="text-xs text-slate-400 w-20 shrink-0">View</span>
         <select
           value={selectedId}
           onChange={(e) => handleSelect(e.target.value)}
@@ -178,15 +178,6 @@ export function SavedViews({ currentSpec, onSelect, canManage }: Props) {
             </option>
           ))}
         </select>
-
-        <button
-          className={btn}
-          onClick={handleReset}
-          disabled={busy}
-          title="Reset all controls to their default configuration"
-        >
-          Reset
-        </button>
 
         {canManage && (
           <>
@@ -211,6 +202,15 @@ export function SavedViews({ currentSpec, onSelect, canManage }: Props) {
             </button>
           </>
         )}
+
+        <button
+          className="ml-auto px-2.5 py-1.5 text-xs rounded border border-slate-500 text-slate-300 hover:bg-slate-600 hover:text-white hover:border-slate-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={handleReset}
+          disabled={busy}
+          title="Reset all controls to their default configuration"
+        >
+          ↺ Reset
+        </button>
       </div>
 
       {canManage && mode === "saveAs" && (

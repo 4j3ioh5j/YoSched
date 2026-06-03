@@ -53,15 +53,6 @@ type EquityRow = {
 
 type EquityThresholds = { low: number; med: number; high: number };
 
-type Averages = {
-  desirabilityScore: number;
-  holidayWorkCount: number;
-  perShift: Record<string, number>;
-  totalHours: number;
-  totalWorkDays: number;
-  totalLeaveDays: number;
-};
-
 type Props = {
   raw: RawStatsData;
   equityThresholds: EquityThresholds;
@@ -98,11 +89,27 @@ function ChartTooltipContent({ active, payload, label }: { active?: boolean; pay
   );
 }
 
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const s = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+/** Radar hover tooltip — shows the real z-score for the hovered axis (the
+ *  radar plots a baseline-offset value for layout, so we read the stored `z`
+ *  off the data row rather than the rendered radius). */
+function RadarTooltipContent({ active, payload, initials }: { active?: boolean; payload?: Array<{ payload: { label: string; z: number } }>; initials?: string }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div className="bg-slate-800 border border-slate-600 rounded px-3 py-2 text-xs shadow-lg">
+      <div className="text-slate-300 font-medium mb-1">{d.label}</div>
+      <div className="flex items-center gap-2">
+        <div className="w-2 h-2 rounded-full bg-blue-500" />
+        <span className="text-slate-400">{initials}:</span>
+        <span className="text-slate-200 font-mono">{d.z > 0 ? "+" : ""}{d.z.toFixed(2)}σ</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="w-2 h-2 rounded-full bg-slate-500" />
+        <span className="text-slate-400">Dept avg:</span>
+        <span className="text-slate-200 font-mono">0.00σ</span>
+      </div>
+    </div>
+  );
 }
 
 function shiftColor(code: string, allCodes: string[]): string {
@@ -190,76 +197,37 @@ function radarParamTip(label: string): string {
   return RADAR_PARAM_TIPS[label] ?? `Count of ${label} shifts assigned. Tracked as an equity factor for fair distribution.`;
 }
 
-const RADAR_INFO = "This radar chart compares one staff member (blue) against the department median (dashed gray) across all tracked equity factors.\n\nFTE-Normalized mode: Values are z-scores (standard deviations from the mean), adjusted for each person's FTE percentage. Outward from the dashed line = more burden than average.\n\nActual Counts mode: Raw shift counts with department median overlay.\n\nOpp-Adjusted mode: Desirability is adjusted so providers are only compared against shifts they're eligible to work.";
+const RADAR_INFO = "This radar chart compares one staff member (blue) against the department average (dashed gray) across all tracked equity factors.\n\nValues are FTE-normalized z-scores: standard deviations from the department mean, adjusted for each person's FTE percentage. The dashed ring is 0σ (the department average); points outward from it = more burden than average. Hover any axis to read the exact z-score.";
 
-function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThresholds, globalMaxDev, normalize, weighting, onTransformChange, onClose, setTip }: {
+function StaffDetailPanel({ row, globalMaxDev, onClose, setTip }: {
   row: EquityRow;
-  allRows: EquityRow[];
-  averages: Averages;
-  trackedShiftCodes: string[];
-  equityThresholds: EquityThresholds;
   globalMaxDev: number;
-  normalize: "raw" | "fte";
-  weighting: "none" | "opportunity";
-  onTransformChange: (patch: Partial<GraphSpec>) => void;
   onClose: () => void;
   setTip: SetTip;
 }) {
   useEscape(onClose);
-  const fte = row.ftePercentage;
-  // The radar's transform is the global spec transform — the panel buttons just
-  // write it, so the chart-bar and radar always agree.
-  const radarFteNorm = normalize === "fte";
-  const radarOppAdj = weighting === "opportunity";
 
-  const globalMaxDevAdj = useMemo(() => {
-    let max = 0.5;
-    for (const d of allRows) {
-      max = Math.max(max, Math.abs(d.deviation.desirability), Math.abs(d.deviation.holidayWork));
-      for (const v of Object.values(d.deviation.perShift)) max = Math.max(max, Math.abs(v));
-    }
-    return max;
-  }, [allRows]);
-
+  // The radar always shows plain FTE-normalized z-scores (displayDeviation):
+  // each axis is the provider's deviation from the department average, in SDs.
+  // We plot a baseline-offset value so the whole chart stays positive for the
+  // radial axis, and stash the real z-score (`z`) for the hover tooltip.
+  const baseline = globalMaxDev + 0.5;
   const radarData = useMemo(() => {
-    if (!radarFteNorm) {
-      const items = [
-        { label: "Undesirable", provider: row.desirabilityScore, average: median(allRows.map((d) => d.desirabilityScore)) },
-        { label: "Holidays", provider: row.holidayWorkCount, average: median(allRows.map((d) => d.holidayWorkCount)) },
-        ...trackedShiftCodes.map((code) => ({
-          label: code,
-          provider: row.shiftCounts[code] || 0,
-          average: median(allRows.map((d) => d.shiftCounts[code] || 0)),
-        })),
-      ];
-      return items;
-    }
-    const src = radarOppAdj ? row.deviation : row.displayDeviation;
-    const maxDev = radarOppAdj ? globalMaxDevAdj : globalMaxDev;
-    const baseline = maxDev + 0.5;
+    const src = row.displayDeviation;
     const items = [
-      { label: "Undesirable", value: src.desirability },
-      { label: "Holidays", value: src.holidayWork },
-      ...Object.entries(src.perShift).map(([code, dev]) => ({
-        label: code,
-        value: dev,
-      })),
+      { label: "Undesirable", z: src.desirability },
+      { label: "Holidays", z: src.holidayWork },
+      ...Object.entries(src.perShift).map(([code, dev]) => ({ label: code, z: dev })),
     ];
     return items.map((d) => ({
       label: d.label,
-      provider: parseFloat((baseline + d.value).toFixed(2)),
+      z: parseFloat(d.z.toFixed(2)),
+      provider: parseFloat((baseline + d.z).toFixed(2)),
       average: parseFloat(baseline.toFixed(2)),
     }));
-  }, [row, allRows, trackedShiftCodes, globalMaxDev, globalMaxDevAdj, radarOppAdj, radarFteNorm]);
+  }, [row, baseline]);
 
-  const radarDomain = useMemo((): [number, number] => {
-    if (!radarFteNorm) {
-      const maxVal = Math.max(...radarData.map((d) => Math.max(d.provider, d.average)), 1);
-      return [0, Math.ceil(maxVal * 1.15)];
-    }
-    const maxDev = radarOppAdj ? globalMaxDevAdj : globalMaxDev;
-    return [0, (maxDev + 0.5) * 2];
-  }, [radarData, radarFteNorm, radarOppAdj, globalMaxDev, globalMaxDevAdj]);
+  const radarDomain: [number, number] = [0, baseline * 2];
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
@@ -286,22 +254,6 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
                 Profile vs Department Average
                 <InfoTip text={RADAR_INFO} setTip={setTip} />
               </h3>
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => onTransformChange({ normalize: radarFteNorm ? "raw" : "fte" })}
-                  className={`px-2.5 py-1 text-[10px] rounded transition-colors ${!radarFteNorm ? "bg-amber-600/20 text-amber-400 border border-amber-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
-                >
-                  {radarFteNorm ? "FTE-Normalized" : "Actual Counts"}
-                </button>
-                {radarFteNorm && (
-                  <button
-                    onClick={() => onTransformChange({ weighting: radarOppAdj ? "none" : "opportunity" })}
-                    className={`px-2.5 py-1 text-[10px] rounded transition-colors ${radarOppAdj ? "bg-purple-600/20 text-purple-400 border border-purple-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"}`}
-                  >
-                    {radarOppAdj ? "Opp-Adjusted" : "Raw Z-Scores"}
-                  </button>
-                )}
-              </div>
             </div>
             <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4 flex flex-col" style={{ height: "calc(100vh - 240px)", minHeight: 500 }}>
               <ResponsiveContainer width="100%" className="flex-1 min-h-0">
@@ -331,24 +283,15 @@ function StaffDetailPanel({ row, allRows, averages, trackedShiftCodes, equityThr
                     }}
                   />
                   <PolarRadiusAxis tick={false} axisLine={false} domain={radarDomain} />
-                  <Radar name="Dept Median" dataKey="average" stroke="#475569" fill="#475569" fillOpacity={0.1} strokeWidth={1.5} strokeDasharray="4 4" />
+                  <Tooltip content={<RadarTooltipContent initials={row.initials} />} />
+                  <Radar name="Dept Avg (0σ)" dataKey="average" stroke="#475569" fill="#475569" fillOpacity={0.1} strokeWidth={1.5} strokeDasharray="4 4" />
                   <Radar name={row.initials} dataKey="provider" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} />
                   <Legend wrapperStyle={{ fontSize: 14 }} iconType="circle" iconSize={10} />
                 </RadarChart>
               </ResponsiveContainer>
               <div className="flex items-center justify-between mt-3">
-                <span className="text-sm font-medium text-slate-300">
-                  {radarFteNorm
-                    ? (radarOppAdj ? "Opportunity-Adjusted Z-Scores" : "Raw Z-Scores")
-                    : "Actual Counts"
-                  }
-                </span>
-                <span className="text-xs text-slate-500">
-                  {radarFteNorm
-                    ? "FTE-normalized. Dashed = median. Outward = more burden."
-                    : "Raw shift counts. Dashed = dept median."
-                  }
-                </span>
+                <span className="text-sm font-medium text-slate-300">Raw Z-Scores (FTE-normalized)</span>
+                <span className="text-xs text-slate-500">Dashed = dept average (0σ). Outward = more burden.</span>
               </div>
             </div>
           </div>
@@ -801,14 +744,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
       {selectedRow && (
         <StaffDetailPanel
           row={selectedRow}
-          allRows={filteredData}
-          averages={averages}
-          trackedShiftCodes={trackedShiftCodes}
-          equityThresholds={equityThresholds}
           globalMaxDev={globalMaxDev}
-          normalize={spec.normalize}
-          weighting={spec.weighting}
-          onTransformChange={(patch) => setSpec((s) => ({ ...s, ...patch }))}
           onClose={() => setSelectedProvider(null)}
           setTip={setTip}
         />
