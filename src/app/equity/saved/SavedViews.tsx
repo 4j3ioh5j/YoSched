@@ -164,7 +164,7 @@ export function SavedViews({ currentSpec, onSelect, canManage }: Props) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-slate-400 w-20 shrink-0">View</span>
+        <span className="text-xs text-slate-400 w-16 shrink-0">View</span>
         <select
           value={selectedId}
           onChange={(e) => handleSelect(e.target.value)}
@@ -214,7 +214,7 @@ export function SavedViews({ currentSpec, onSelect, canManage }: Props) {
       </div>
 
       {canManage && mode === "saveAs" && (
-        <div className="flex items-center gap-2 flex-wrap pl-20">
+        <div className="flex items-center gap-2 flex-wrap pl-[72px]">
           <input
             autoFocus
             value={draftName}
@@ -237,7 +237,7 @@ export function SavedViews({ currentSpec, onSelect, canManage }: Props) {
       )}
 
       {canManage && mode === "rename" && (
-        <div className="flex items-center gap-2 flex-wrap pl-20">
+        <div className="flex items-center gap-2 flex-wrap pl-[72px]">
           <input
             autoFocus
             value={draftName}
@@ -255,7 +255,7 @@ export function SavedViews({ currentSpec, onSelect, canManage }: Props) {
         </div>
       )}
 
-      {err && <p className="text-xs text-red-400 pl-20">{err}</p>}
+      {err && <p className="text-xs text-red-400 pl-[72px]">{err}</p>}
     </div>
   );
 }
