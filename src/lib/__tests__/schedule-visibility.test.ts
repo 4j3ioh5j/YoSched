@@ -72,9 +72,25 @@ describe("visibleProvidersForMonth", () => {
     expect(res).toEqual([]);
   });
 
-  it("past month + showAll → full set regardless of assignments", () => {
+  it("past month + showAll → active roster, NOT inactive staff with no assignment that month", () => {
+    // showAll reveals active staff who had no shifts, but must not resurrect a
+    // departed/inactive provider who never worked the viewed month.
     const res = visibleProvidersForMonth(providers, [], first, last, true, /*showAll*/ true, off);
-    expect(res.map((p) => p.id)).toEqual(["active1", "active2", "sts"]);
+    expect(res.map((p) => p.id)).toEqual(["active1", "active2"]);
+    expect(res.map((p) => p.id)).not.toContain("sts");
+  });
+
+  it("past month + showAll → inactive provider WITH a real assignment that month is still shown", () => {
+    const asn: VisAssignment[] = [{ providerId: "sts", date: "2023-03-12", shiftTypeId: "OR" }];
+    const res = visibleProvidersForMonth(providers, asn, first, last, true, /*showAll*/ true, off);
+    expect(res.map((p) => p.id).sort()).toEqual(["active1", "active2", "sts"]);
+  });
+
+  it("past month + showAll → inactive provider with only an off-shift (X) stays hidden", () => {
+    const asn: VisAssignment[] = [{ providerId: "sts", date: "2023-03-12", shiftTypeId: "off" }];
+    const res = visibleProvidersForMonth(providers, asn, first, last, true, /*showAll*/ true, off);
+    expect(res.map((p) => p.id)).toEqual(["active1", "active2"]);
+    expect(res.map((p) => p.id)).not.toContain("sts");
   });
 
   it("showAll must NOT leak inactive providers into a current/future month", () => {

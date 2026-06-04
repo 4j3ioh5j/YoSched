@@ -20,7 +20,10 @@ export function isPastMonth(viewYear: number, viewMonth: number, now: Date): boo
  *    show even with no assignments, so there are columns to schedule into). The
  *    `showAll` override does NOT apply here — it must never leak inactive
  *    providers into a current/future view.
- *  - past month, showAll: the full set (the "Show all staff" override).
+ *  - past month, showAll: the active roster PLUS any provider (active or not) with
+ *    a REAL assignment that month. The override reveals active staff who had no
+ *    shifts that month — it must NOT resurrect inactive/departed staff who never
+ *    worked the viewed month.
  *  - past month, default: only providers with >=1 REAL (non-off-shift) assignment
  *    in the month proper [firstOfMonth, lastOfMonth]. Off-shift "X" placeholders
  *    never make a provider visible; leave shifts (on the roster) do.
@@ -36,12 +39,14 @@ export function visibleProvidersForMonth<P extends VisProvider>(
 ): P[] {
   // Current/future: always the active roster — showAll only applies to past months.
   if (!past) return providers.filter((p) => p.isActive);
-  if (showAll) return providers;
   const scheduled = new Set<string>();
   for (const a of assignments) {
     if (a.date >= firstOfMonth && a.date <= lastOfMonth && !offShiftTypeIds.has(a.shiftTypeId)) {
       scheduled.add(a.providerId);
     }
   }
+  // showAll reveals active staff who had no shifts that month, but never inactive
+  // staff who didn't actually work it — they only appear via a real assignment.
+  if (showAll) return providers.filter((p) => p.isActive || scheduled.has(p.id));
   return providers.filter((p) => scheduled.has(p.id));
 }
