@@ -1676,7 +1676,7 @@ export function ScheduleGrid({
                 <th
                   key={`ded-h-${st.id}`}
                   title={st.name}
-                  className="px-2 py-2 text-center text-xs font-medium border-b border-l border-slate-700 min-w-[44px]"
+                  className="px-1 py-1 text-center text-xs font-medium border-b border-l border-slate-700 w-[44px] min-w-[44px]"
                   style={{ color: st.color }}
                 >
                   {st.code}
@@ -1873,7 +1873,7 @@ export function ScheduleGrid({
                       <td
                         key={`ded-${st.id}`}
                         className={[
-                          "px-2 py-1 text-center text-[11px] font-mono font-semibold border-l border-slate-700 whitespace-nowrap",
+                          "px-0.5 py-0.5 text-center text-[11px] font-mono font-semibold leading-tight break-words border-l border-slate-700",
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
                         ].join(" ")}
                         style={{ color: st.color }}
