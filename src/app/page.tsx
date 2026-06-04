@@ -11,7 +11,7 @@ export default async function Home() {
   const { error, permissions } = await getSession("schedule:view");
   if (error) redirect("/login");
   const canEdit = permissions!.includes("schedule:edit");
-  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns] =
+  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, currentVersions] =
     await Promise.all([
       prisma.provider.findMany({
         // Active roster + any inactive provider that has assignments, so the grid
@@ -36,6 +36,12 @@ export default async function Home() {
       prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.shiftFollowRule.findMany(),
       prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } }),
+      // Current saved version per month (metadata only) so the grid footer can
+      // show the version number and detect live drift via snapshotHash.
+      prisma.scheduleVersion.findMany({
+        where: { isCurrent: true },
+        select: { year: true, month: true, versionNumber: true, comment: true, snapshotHash: true, createdAt: true },
+      }),
     ]);
 
   const fairness = computeFairness({
@@ -170,6 +176,14 @@ export default async function Home() {
           shiftCodes: c.shiftCodes,
         }))}
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
+        currentVersions={currentVersions.map((v) => ({
+          year: v.year,
+          month: v.month,
+          versionNumber: v.versionNumber,
+          comment: v.comment,
+          snapshotHash: v.snapshotHash,
+          savedAt: v.createdAt.toISOString(),
+        }))}
       />
     </main>
   );

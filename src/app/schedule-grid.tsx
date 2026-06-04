@@ -9,6 +9,8 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleProvidersForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
+import { hashSnapshot, dateInMonth } from "@/lib/versions";
+import { useEscape } from "@/lib/use-escape";
 
 type AvailabilityRuleData = {
   dayOfWeek: number;
@@ -127,6 +129,31 @@ type Props = {
   followRules?: FollowRuleRow[];
   countColumns?: { label: string; shiftCodes: string[] }[];
   dateFormat?: string;
+  currentVersions?: CurrentVersionMeta[];
+};
+
+// The current (last saved/restored) version for a calendar month. snapshotHash
+// lets the grid detect whether the live month has drifted since that save.
+type CurrentVersionMeta = {
+  year: number;
+  month: number;
+  versionNumber: number;
+  comment: string | null;
+  snapshotHash: string;
+  savedAt: string; // ISO
+};
+
+// A version row as returned by GET /api/versions (metadata only).
+type VersionRow = {
+  id: string;
+  year: number;
+  month: number;
+  versionNumber: number;
+  comment: string | null;
+  isCurrent: boolean;
+  isAutoBackup: boolean;
+  snapshotHash: string;
+  createdAt: string;
 };
 
 type PickerState = {
@@ -271,6 +298,7 @@ export function ScheduleGrid({
   followRules,
   countColumns = [],
   dateFormat: dateFormatProp,
+  currentVersions = [],
 }: Props) {
   const dateFormat = (dateFormatProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
   const today = new Date();
@@ -324,6 +352,102 @@ export function ScheduleGrid({
     return saved !== null ? saved === "true" : false;
   });
   const monthPickerRef = useRef<HTMLDivElement>(null);
+
+  // --- Versioning ---
+  // Current (last saved/restored) version per "year-month". Seeded from the
+  // server and updated optimistically when the user saves a new version.
+  const [currentVersionMap, setCurrentVersionMap] = useState<Map<string, CurrentVersionMeta>>(
+    () => new Map(currentVersions.map((v) => [`${v.year}-${v.month}`, v])),
+  );
+  const [showVersions, setShowVersions] = useState(false);
+  const [versionList, setVersionList] = useState<VersionRow[] | null>(null);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [versionComment, setVersionComment] = useState("");
+  const [versionBusy, setVersionBusy] = useState(false);
+  const versionsPanelRef = useRef<HTMLDivElement>(null);
+
+  const focalVersion = currentVersionMap.get(`${viewYear}-${viewMonth}`) ?? null;
+
+  // Hash of the live focal month — compared against the saved version's hash to
+  // tell whether the schedule has drifted since it was last saved/restored.
+  const liveMonthHash = useMemo(
+    () =>
+      hashSnapshot(
+        localAssignments
+          .filter((a) => dateInMonth(a.date, viewYear, viewMonth))
+          .map((a) => ({ providerId: a.providerId, date: a.date, shiftTypeId: a.shiftTypeId, isLocked: a.isLocked })),
+      ),
+    [localAssignments, viewYear, viewMonth],
+  );
+  const monthModified = focalVersion ? focalVersion.snapshotHash !== liveMonthHash : false;
+
+  // Load the version list whenever the panel is open and the focal month changes.
+  useEffect(() => {
+    if (!showVersions) return;
+    let cancelled = false;
+    setVersionsLoading(true);
+    setVersionList(null);
+    fetch(`/api/versions?year=${viewYear}&month=${viewMonth}`)
+      .then((r) => (r.ok ? r.json() : { versions: [] }))
+      .then((d) => { if (!cancelled) setVersionList(d.versions); })
+      .catch(() => { if (!cancelled) setVersionList([]); })
+      .finally(() => { if (!cancelled) setVersionsLoading(false); });
+    return () => { cancelled = true; };
+  }, [showVersions, viewYear, viewMonth]);
+
+  const saveVersion = useCallback(async () => {
+    setVersionBusy(true);
+    try {
+      const res = await fetch("/api/versions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year: viewYear, month: viewMonth, comment: versionComment.trim() || undefined }),
+      });
+      if (!res.ok) { alert("Could not save version"); return; }
+      const { version } = (await res.json()) as { version: VersionRow };
+      setCurrentVersionMap((m) => {
+        const next = new Map(m);
+        next.set(`${viewYear}-${viewMonth}`, {
+          year: viewYear,
+          month: viewMonth,
+          versionNumber: version.versionNumber,
+          comment: version.comment,
+          snapshotHash: version.snapshotHash,
+          savedAt: version.createdAt,
+        });
+        return next;
+      });
+      setVersionList((list) => [version, ...(list ?? []).map((x) => ({ ...x, isCurrent: false }))]);
+      setVersionComment("");
+    } finally {
+      setVersionBusy(false);
+    }
+  }, [viewYear, viewMonth, versionComment]);
+
+  const restoreVersion = useCallback(async (v: VersionRow) => {
+    const label = v.comment ? `v${v.versionNumber} — “${v.comment}”` : `v${v.versionNumber}`;
+    if (!window.confirm(
+      `Restore ${MONTH_NAMES[viewMonth]} ${viewYear} to ${label}?\n\n` +
+      `The current state of this month will be auto-saved as a new version first, then replaced.`,
+    )) return;
+    setVersionBusy(true);
+    try {
+      const res = await fetch(`/api/versions/${v.id}/restore`, { method: "POST" });
+      if (res.ok) {
+        // The month's assignments were rewritten server-side; reload to resync.
+        window.location.reload();
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      alert(data?.error ?? "Restore failed");
+    } catch {
+      alert("Restore failed");
+    } finally {
+      setVersionBusy(false);
+    }
+  }, [viewYear, viewMonth]);
+
+  useEscape(() => setShowVersions(false));
 
   // Resizable alerts panel width (pixels)
   const [alertWidth, setAlertWidth] = useState(() => {
@@ -1543,6 +1667,19 @@ export function ScheduleGrid({
         >
           Print
         </button>
+        <button
+          onClick={() => setShowVersions(true)}
+          className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300 flex items-center gap-1.5"
+          title="Save or restore versions of this month's schedule"
+        >
+          Versions
+          {focalVersion && (
+            <span className="text-xs text-slate-400">
+              · v{focalVersion.versionNumber}
+              {monthModified && <span className="ml-0.5 text-amber-400" title="Unsaved edits since this version">*</span>}
+            </span>
+          )}
+        </button>
         {canEdit && (
         <div className="ml-auto flex items-center gap-2">
           {selection.size > 0 && (
@@ -1989,6 +2126,33 @@ export function ScheduleGrid({
       )}
       </div>
 
+      {/* Version footer — visible on screen AND in print (shows at the bottom of
+          the printed schedule). Reflects the focal month's last saved/restored version. */}
+      <div
+        data-version-footer
+        className="shrink-0 border-t border-slate-700 bg-slate-800/60 px-6 py-1.5 text-xs text-slate-400 flex items-center gap-2 flex-wrap"
+      >
+        {focalVersion ? (
+          <>
+            <span className="font-semibold text-slate-200">Version {focalVersion.versionNumber}</span>
+            <span className="text-slate-500">·</span>
+            <span>saved {formatDate(parseDate(focalVersion.savedAt.slice(0, 10)), dateFormat)}</span>
+            {focalVersion.comment && (
+              <span className="text-slate-500 italic truncate max-w-md" title={focalVersion.comment}>
+                — {focalVersion.comment}
+              </span>
+            )}
+            {monthModified && (
+              <span data-version-modified className="text-amber-500 font-semibold">
+                · includes unsaved edits not in this version
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="text-slate-500">No saved version for {MONTH_NAMES[viewMonth]} {viewYear}</span>
+        )}
+      </div>
+
       {/* Shift picker popover */}
       {canEdit && picker && (
         <div data-print-hide>
@@ -2010,6 +2174,100 @@ export function ScheduleGrid({
           />
         </div>
       )}
+
+      {/* Versions panel */}
+      {showVersions && (
+        <div
+          data-print-hide
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setShowVersions(false)}
+        >
+          <div
+            ref={versionsPanelRef}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-[520px] max-h-[80vh] flex flex-col"
+          >
+            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700">
+              <h2 className="text-sm font-semibold text-slate-200">
+                Versions — {MONTH_NAMES[viewMonth]} {viewYear}
+              </h2>
+              <button
+                onClick={() => setShowVersions(false)}
+                className="text-slate-400 hover:text-white text-xl leading-none px-1"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            {canEdit && (
+              <div className="px-5 py-3 border-b border-slate-700 flex items-center gap-2">
+                <input
+                  value={versionComment}
+                  onChange={(e) => setVersionComment(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !versionBusy) saveVersion(); }}
+                  placeholder="Optional comment…"
+                  maxLength={200}
+                  className="flex-1 px-2.5 py-1.5 text-sm bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+                <button
+                  onClick={saveVersion}
+                  disabled={versionBusy}
+                  className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-white font-medium whitespace-nowrap"
+                >
+                  Save version
+                </button>
+              </div>
+            )}
+
+            <div className="overflow-y-auto flex-1">
+              {versionsLoading && (
+                <div className="px-5 py-6 text-sm text-slate-500 text-center">Loading…</div>
+              )}
+              {!versionsLoading && versionList && versionList.length === 0 && (
+                <div className="px-5 py-6 text-sm text-slate-500 text-center">
+                  No versions saved for this month yet.
+                </div>
+              )}
+              {!versionsLoading && versionList?.map((v) => (
+                <div
+                  key={v.id}
+                  className="px-5 py-2.5 border-b border-slate-700/50 flex items-center gap-3 hover:bg-slate-700/30"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-slate-200">v{v.versionNumber}</span>
+                      {v.isCurrent && (
+                        <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-700/50 text-emerald-300">current</span>
+                      )}
+                      {v.isAutoBackup && (
+                        <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-600/50 text-slate-400">auto-backup</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5">
+                      {formatDate(parseDate(v.createdAt.slice(0, 10)), dateFormat)} · {new Date(v.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </div>
+                    {v.comment && (
+                      <div className="text-xs text-slate-400 italic mt-0.5 truncate" title={v.comment}>{v.comment}</div>
+                    )}
+                  </div>
+                  {canEdit && (
+                    <button
+                      onClick={() => restoreVersion(v)}
+                      disabled={versionBusy || (v.isCurrent && !monthModified)}
+                      className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-200 whitespace-nowrap"
+                      title={v.isCurrent && !monthModified ? "This is the current state" : "Restore this version"}
+                    >
+                      Restore
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {tooltip && (
         <div
           ref={(el) => {

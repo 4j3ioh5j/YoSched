@@ -447,3 +447,24 @@ model CountColumn {
 
   @@map("count_columns")
 }
+
+// A saved snapshot of one calendar month's assignments. Versions are scoped per
+// (year, month) — `month` is 0-based to match the grid's viewMonth (0=Jan..11=Dec).
+// versionNumber auto-increments within each (year, month). At most one version per
+// month is marked isCurrent (the last saved/restored point shown in the footer).
+model ScheduleVersion {
+  id            String   @id @default(cuid())
+  year          Int
+  month         Int // 0-based (0=Jan..11=Dec), matches the grid's viewMonth
+  versionNumber Int // per-(year,month), increments
+  comment       String?
+  snapshot      Json // AssignmentSnapshot[] — the month's assignments
+  snapshotHash  String // stable hash of snapshot content; lets the footer detect live drift
+  isCurrent     Boolean  @default(false) // the active version for this (year, month)
+  isAutoBackup  Boolean  @default(false) // auto-created to preserve state before a restore
+  createdAt     DateTime @default(now())
+
+  @@unique([year, month, versionNumber])
+  @@index([year, month])
+  @@map("schedule_versions")
+}
