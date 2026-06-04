@@ -30,6 +30,7 @@ export async function PUT(req: NextRequest) {
       maxPerDay: data.maxPerDay ?? null,
       autoSchedulable: data.autoSchedulable ?? false,
       hotkey: data.hotkey ?? null,
+      dedicatedColumn: data.dedicatedColumn ?? false,
     },
   });
   return NextResponse.json(updated);
@@ -65,6 +66,7 @@ export async function POST(req: NextRequest) {
       maxPerDay: data.maxPerDay ?? null,
       autoSchedulable: data.autoSchedulable ?? false,
       hotkey: data.hotkey ?? null,
+      dedicatedColumn: data.dedicatedColumn ?? false,
     },
   });
 

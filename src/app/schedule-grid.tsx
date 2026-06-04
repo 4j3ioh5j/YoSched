@@ -8,6 +8,7 @@ import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleProvidersForMonth } from "@/lib/schedule-visibility";
+import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 
 type AvailabilityRuleData = {
   dayOfWeek: number;
@@ -51,6 +52,7 @@ type ShiftType = {
   countsTowardFte: boolean;
   countsOnWeekend: boolean;
   hotkey?: string | null;
+  dedicatedColumn?: boolean;
 };
 
 type PayPeriod = {
@@ -591,6 +593,28 @@ export function ScheduleGrid({
       return counts;
     });
   }, [dates, providers, assignmentMap, suggestionMap, countColumns]);
+
+  // Shift types flagged for a dedicated column, in sort order. Each gets its own
+  // column (left of the count columns) listing the initials of whoever covers
+  // that shift on a given day — additive to the normal in-cell shift display.
+  const dedicatedColumns = useMemo(
+    () => shiftTypes.filter((st) => st.dedicatedColumn),
+    [shiftTypes],
+  );
+
+  // Per dedicated column: date -> initials of providers covering that shift that
+  // day. Mirrors columnCounts (includes suggestions, scans all providers so
+  // coverage shows even when a provider's own column is hidden).
+  const dedicatedColumnInitialsData = useMemo(() => {
+    return dedicatedColumns.map((st) =>
+      dedicatedColumnInitials(providers, dates, st.code, (pid, date) => {
+        const key = `${pid}:${date}`;
+        const a = assignmentMap.get(key);
+        const sug = !a ? suggestionMap.get(key) : null;
+        return a?.code ?? sug?.code;
+      }),
+    );
+  }, [dedicatedColumns, dates, providers, assignmentMap, suggestionMap]);
 
   // Drop column focus + selection when the visible column set may change (month
   // change / Show-all toggle), so focus and selection rectangles never point at
@@ -1648,6 +1672,16 @@ export function ScheduleGrid({
                   </th>
                 );
               })}
+              {dedicatedColumns.map((st) => (
+                <th
+                  key={`ded-h-${st.id}`}
+                  title={st.name}
+                  className="px-2 py-2 text-center text-xs font-medium border-b border-l border-slate-700 min-w-[44px]"
+                  style={{ color: st.color }}
+                >
+                  {st.code}
+                </th>
+              ))}
               {countColumns.map((col, ci) => (
                 <th key={ci} className="px-2 py-2 text-center text-xs font-medium text-slate-400 border-b border-l border-slate-700 w-[32px] min-w-[32px]">
                   {col.label || "#"}
@@ -1699,11 +1733,14 @@ export function ScheduleGrid({
                         </td>
                       );
                     })}
+                    {dedicatedColumns.length > 0 && (
+                      <td colSpan={dedicatedColumns.length} className="border-l border-slate-600 border-y border-y-indigo-500/60" />
+                    )}
                     {countColumns.length > 0 ? (
                       <td colSpan={countColumns.length} className="px-2 py-1 text-center text-[10px] font-mono border-l border-slate-600 text-indigo-400/60 border-y border-y-indigo-500/60" />
-                    ) : (
+                    ) : dedicatedColumns.length === 0 ? (
                       <td className="border-y border-y-indigo-500/60" />
-                    )}
+                    ) : null}
                   </tr>
                 );
               }
@@ -1827,6 +1864,23 @@ export function ScheduleGrid({
                           <div className="text-[11px] text-slate-600">...</div>
                         ) : null}
                         {cw && <WarningDot warnings={cw} setTooltip={setTooltip} />}
+                      </td>
+                    );
+                  })}
+                  {dedicatedColumns.map((st, di) => {
+                    const inits = dedicatedColumnInitialsData[di]?.[date] ?? [];
+                    return (
+                      <td
+                        key={`ded-${st.id}`}
+                        className={[
+                          "px-2 py-1 text-center text-[11px] font-mono font-semibold border-l border-slate-700 whitespace-nowrap",
+                          isNewPP ? "border-t-2 border-t-indigo-500" : "",
+                        ].join(" ")}
+                        style={{ color: st.color }}
+                        onMouseEnter={inits.length ? (e) => showTip(setTooltip, `${st.code}: ${inits.join(", ")}`, e) : undefined}
+                        onMouseLeave={inits.length ? () => setTooltip(null) : undefined}
+                      >
+                        {inits.join(", ")}
                       </td>
                     );
                   })}

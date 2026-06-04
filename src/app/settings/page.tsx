@@ -58,6 +58,7 @@ export default async function Settings() {
           maxPerDay: st.maxPerDay,
           autoSchedulable: st.autoSchedulable,
           hotkey: st.hotkey,
+          dedicatedColumn: st.dedicatedColumn,
         }))}
         staffingReqs={staffingReqs.map((r) => ({
           id: r.id,

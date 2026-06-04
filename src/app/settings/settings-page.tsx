@@ -28,6 +28,7 @@ type ShiftType = {
   maxPerDay: number | null;
   autoSchedulable: boolean;
   hotkey: string | null;
+  dedicatedColumn: boolean;
 };
 
 type StaffingReq = {
@@ -494,6 +495,7 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
         maxPerDay: created.maxPerDay ?? null,
         autoSchedulable: created.autoSchedulable ?? false,
         hotkey: created.hotkey ?? null,
+        dedicatedColumn: created.dedicatedColumn ?? false,
       };
       setShifts((prev) => [...prev, newShift]);
       setEditingId(created.id);
@@ -678,6 +680,9 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
               </FieldRow>
               <FieldRow label="Represents a day off" description="This shift means the provider is not working (used for post-shift recovery days)">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.isOffShift} onChange={(e) => updateField(editingShift.id, "isOffShift", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
+              </FieldRow>
+              <FieldRow label="Dedicated column" description="Add a column on the schedule (left of the count columns) showing the initials of whoever is covering this shift each day. This is in addition to the normal shift display in the grid.">
+                <input disabled={!canEdit} type="checkbox" checked={editingShift.dedicatedColumn} onChange={(e) => updateField(editingShift.id, "dedicatedColumn", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
 <FieldRow label="Maximum per day" description="Limit how many providers can be assigned this shift on the same day. Set to 1 if only one person should do this shift per day. Leave blank for no limit.">
                 <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.maxPerDay ?? ""} placeholder="No limit" onChange={(e) => updateField(editingShift.id, "maxPerDay", e.target.value ? parseInt(e.target.value) : null)} />
