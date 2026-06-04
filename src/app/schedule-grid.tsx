@@ -7,6 +7,7 @@ import { buildAlerts, groupAlertsByDate } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
+import { isPastMonth, visibleProvidersForMonth } from "@/lib/schedule-visibility";
 
 type AvailabilityRuleData = {
   dayOfWeek: number;
@@ -24,6 +25,7 @@ type Provider = {
   employmentTypeName: string;
   availabilityRules: AvailabilityRuleData[];
   isAutoScheduled: boolean;
+  isActive: boolean;
 };
 
 type AssignmentData = {
@@ -312,6 +314,8 @@ export function ScheduleGrid({
   const [selectionAnchor, setSelectionAnchor] = useState<{ providerId: string; date: string } | null>(null);
 
   const [showMonthPicker, setShowMonthPicker] = useState(false);
+  // "Show all staff" override (past months only) — not persisted, default off.
+  const [showAllStaff, setShowAllStaff] = useState(false);
   const [showPPRows, setShowPPRows] = useState(() => {
     if (typeof window === "undefined") return true;
     const saved = localStorage.getItem("yosched:showPPRows");
@@ -348,6 +352,30 @@ export function ScheduleGrid({
   const firstOfMonth = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-01`;
   const lastOfMonth = toDateStr(new Date(viewYear, viewMonth + 1, 0));
 
+  const pastMonth = isPastMonth(viewYear, viewMonth, today);
+
+  const offShiftTypeIds = useMemo(
+    () => new Set(shiftTypes.filter((st) => st.isOffShift).map((st) => st.id)),
+    [shiftTypes],
+  );
+
+  // The columns actually rendered for the displayed month. Past months show only
+  // providers who were scheduled (real, non-off-shift assignment); current/future
+  // show the active roster. `showAllStaff` overrides suppression on past months.
+  const visibleProviders = useMemo(
+    () =>
+      visibleProvidersForMonth(
+        providers,
+        localAssignments,
+        firstOfMonth,
+        lastOfMonth,
+        pastMonth,
+        showAllStaff,
+        offShiftTypeIds,
+      ),
+    [providers, localAssignments, firstOfMonth, lastOfMonth, pastMonth, showAllStaff, offShiftTypeIds],
+  );
+
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -363,9 +391,16 @@ export function ScheduleGrid({
   useEffect(() => {
     const key = `${viewYear}-${viewMonth}`;
     if (prefillRan.current === key || !canEdit) return;
+    // Never prefill off-days into a past month — viewing history must not mutate
+    // it, and stray X rows must not surface inactive/unscheduled providers.
+    if (pastMonth) return;
     prefillRan.current = key;
     const offShift = shiftTypes.find((st) => st.isOffShift);
-    if (!offShift || providers.length === 0) return;
+    // Prefill only the active roster, matching the server route (which filters
+    // isActive). The providers prop also carries inactive-with-assignments
+    // providers (for historical columns) — they must not get optimistic X rows.
+    const activeProviders = providers.filter((p) => p.isActive);
+    if (!offShift || activeProviders.length === 0) return;
     fetch("/api/assignments/prefill", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -376,7 +411,7 @@ export function ScheduleGrid({
           const existing = new Set(prev.map((a) => `${a.providerId}:${a.date}`));
           const newAssignments: AssignmentData[] = [];
           for (const d of dates) {
-            for (const p of providers) {
+            for (const p of activeProviders) {
               if (!existing.has(`${p.id}:${d}`)) {
                 newAssignments.push({
                   id: `prefill-${p.id}:${d}`,
@@ -463,7 +498,7 @@ export function ScheduleGrid({
     const result = new Map<string, Map<string, number>>();
     for (const pp of sortedPPs) {
       const providerHours = new Map<string, number>();
-      for (const p of providers) {
+      for (const p of visibleProviders) {
         let hours = 0;
         const cursor = new Date(parseDate(pp.startDate));
         const end = parseDate(pp.endDate);
@@ -488,7 +523,7 @@ export function ScheduleGrid({
       result.set(pp.startDate, providerHours);
     }
     return result;
-  }, [sortedPPs, providers, assignmentMap, suggestionMap, overrideMap, shiftTypeMap]);
+  }, [sortedPPs, visibleProviders, assignmentMap, suggestionMap, overrideMap, shiftTypeMap]);
 
   const followRuleMap = useMemo(() => buildFollowRuleMap(followRules ?? []), [followRules]);
 
@@ -557,7 +592,18 @@ export function ScheduleGrid({
     });
   }, [dates, providers, assignmentMap, suggestionMap, countColumns]);
 
+  // Drop column focus + selection when the visible column set may change (month
+  // change / Show-all toggle), so focus and selection rectangles never point at
+  // a column that gets suppressed. Done in the event handlers (not an effect) to
+  // avoid setState-in-effect cascades.
+  function clearColFocus() {
+    setActiveCol(null);
+    setSelection(new Set());
+    setSelectionAnchor(null);
+  }
+
   function prevMonth() {
+    clearColFocus();
     if (viewMonth === 0) {
       setViewYear((y) => y - 1);
       setViewMonth(11);
@@ -567,6 +613,7 @@ export function ScheduleGrid({
   }
 
   function nextMonth() {
+    clearColFocus();
     if (viewMonth === 11) {
       setViewYear((y) => y + 1);
       setViewMonth(0);
@@ -576,6 +623,7 @@ export function ScheduleGrid({
   }
 
   function goToday() {
+    clearColFocus();
     setViewYear(today.getFullYear());
     setViewMonth(today.getMonth());
   }
@@ -664,8 +712,8 @@ export function ScheduleGrid({
   function computeRectSelection(anchor: { providerId: string; date: string }, target: { providerId: string; date: string }): Set<string> {
     const aDateIdx = dates.indexOf(anchor.date);
     const tDateIdx = dates.indexOf(target.date);
-    const aProvIdx = providers.findIndex((p) => p.id === anchor.providerId);
-    const tProvIdx = providers.findIndex((p) => p.id === target.providerId);
+    const aProvIdx = visibleProviders.findIndex((p) => p.id === anchor.providerId);
+    const tProvIdx = visibleProviders.findIndex((p) => p.id === target.providerId);
     if (aDateIdx === -1 || tDateIdx === -1 || aProvIdx === -1 || tProvIdx === -1) return new Set();
     const dStart = Math.min(aDateIdx, tDateIdx);
     const dEnd = Math.max(aDateIdx, tDateIdx);
@@ -674,7 +722,7 @@ export function ScheduleGrid({
     const sel = new Set<string>();
     for (let di = dStart; di <= dEnd; di++) {
       for (let pi = pStart; pi <= pEnd; pi++) {
-        const k = `${providers[pi].id}:${dates[di]}`;
+        const k = `${visibleProviders[pi].id}:${dates[di]}`;
         if (!assignmentMap.get(k)?.isLocked) sel.add(k);
       }
     }
@@ -823,16 +871,16 @@ export function ScheduleGrid({
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) && !picker && activeRow && activeCol) {
         e.preventDefault();
         const dateIdx = dates.indexOf(activeRow);
-        const provIdx = providers.findIndex((p) => p.id === activeCol);
+        const provIdx = visibleProviders.findIndex((p) => p.id === activeCol);
         if (dateIdx === -1 || provIdx === -1) return;
         let newDateIdx = dateIdx;
         let newProvIdx = provIdx;
         if (e.key === "ArrowUp") newDateIdx = Math.max(0, dateIdx - 1);
         if (e.key === "ArrowDown") newDateIdx = Math.min(dates.length - 1, dateIdx + 1);
         if (e.key === "ArrowLeft") newProvIdx = Math.max(0, provIdx - 1);
-        if (e.key === "ArrowRight") newProvIdx = Math.min(providers.length - 1, provIdx + 1);
+        if (e.key === "ArrowRight") newProvIdx = Math.min(visibleProviders.length - 1, provIdx + 1);
         const newDate = dates[newDateIdx];
-        const newProv = providers[newProvIdx];
+        const newProv = visibleProviders[newProvIdx];
         setActiveRow(newDate);
         setActiveCol(newProv.id);
         const el = document.querySelector(`[data-cell="${newProv.id}:${newDate}"]`);
@@ -848,7 +896,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, providers, hotkeyMap, selection, showMonthPicker]);
+  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleProviders, hotkeyMap, selection, showMonthPicker]);
 
   const hotkeyAssign = useCallback(async (st: ShiftType) => {
     const cells: { providerId: string; date: string }[] = [];
@@ -1385,7 +1433,7 @@ export function ScheduleGrid({
       scroller.removeEventListener("scroll", apply);
       ro.disconnect();
     };
-  }, [alertGroups, dates, showPPRows, providers.length, viewMonth, viewYear]);
+  }, [alertGroups, dates, showPPRows, visibleProviders.length, viewMonth, viewYear]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -1424,15 +1472,15 @@ export function ScheduleGrid({
           {showMonthPicker && (
             <div className="absolute top-full left-0 mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-3 w-[240px]">
               <div className="flex items-center justify-between mb-2">
-                <button onClick={() => setViewYear((y) => y - 1)} className="px-2 py-0.5 text-sm text-slate-400 hover:text-white hover:bg-slate-700 rounded">←</button>
+                <button onClick={() => { clearColFocus(); setViewYear((y) => y - 1); }} className="px-2 py-0.5 text-sm text-slate-400 hover:text-white hover:bg-slate-700 rounded">←</button>
                 <span className="text-sm font-semibold text-slate-200">{viewYear}</span>
-                <button onClick={() => setViewYear((y) => y + 1)} className="px-2 py-0.5 text-sm text-slate-400 hover:text-white hover:bg-slate-700 rounded">→</button>
+                <button onClick={() => { clearColFocus(); setViewYear((y) => y + 1); }} className="px-2 py-0.5 text-sm text-slate-400 hover:text-white hover:bg-slate-700 rounded">→</button>
               </div>
               <div className="grid grid-cols-3 gap-1">
                 {MONTH_NAMES.map((name, i) => (
                   <button
                     key={i}
-                    onClick={() => { setViewMonth(i); setShowMonthPicker(false); }}
+                    onClick={() => { clearColFocus(); setViewMonth(i); setShowMonthPicker(false); }}
                     className={[
                       "px-2 py-1.5 text-xs rounded transition-colors",
                       i === viewMonth ? "bg-blue-600 text-white font-semibold" : "text-slate-300 hover:bg-slate-700",
@@ -1455,6 +1503,15 @@ export function ScheduleGrid({
         >
           PP Totals
         </button>
+        {pastMonth && (
+          <button
+            onClick={() => { clearColFocus(); setShowAllStaff((v) => !v); }}
+            className={["px-3 py-1 text-sm rounded transition-colors", showAllStaff ? "bg-indigo-700 hover:bg-indigo-600 text-indigo-100" : "bg-slate-700 hover:bg-slate-600 text-slate-400"].join(" ")}
+            title="Show all staff, including those with no assignments this month"
+          >
+            Show all staff
+          </button>
+        )}
         <button
           onClick={() => window.print()}
           className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
@@ -1550,7 +1607,7 @@ export function ScheduleGrid({
               <th className="sticky left-0 z-20 bg-slate-800 px-3 py-2 text-left text-xs font-medium text-slate-400 border-b border-r border-slate-700 w-[88px] min-w-[88px]">
                 Date
               </th>
-              {providers.map((p) => {
+              {visibleProviders.map((p) => {
                 const isActiveCol = activeCol === p.id;
                 const fe = fairnessData?.[p.id];
                 const fColor = fe ? fairnessColor(fe.deviation.overall) : undefined;
@@ -1613,7 +1670,7 @@ export function ScheduleGrid({
                       <span className="text-indigo-400">PP {ppIndex + 1}</span>
                       <span className="text-slate-500 ml-1">+/–</span>
                     </td>
-                    {providers.map((p) => {
+                    {visibleProviders.map((p) => {
                       const hours = provHours?.get(p.id) ?? 0;
                       const target = pp.targetHours * p.ftePercentage;
                       const diff = hours - target;
@@ -1703,7 +1760,7 @@ export function ScheduleGrid({
                       </span>
                     )}
                   </td>
-                  {providers.map((p) => {
+                  {visibleProviders.map((p) => {
                     const a = assignmentMap.get(`${p.id}:${date}`);
                     const cellKey = `${p.id}:${date}`;
                     const isSaving = saving === cellKey;

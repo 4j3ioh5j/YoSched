@@ -14,7 +14,11 @@ export default async function Home() {
   const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns] =
     await Promise.all([
       prisma.provider.findMany({
-        where: { isActive: true },
+        // Active roster + any inactive provider that has assignments, so the grid
+        // can show historical providers as columns on the months they worked.
+        // computeFairness still gates on isActive && isAutoScheduled, so this does
+        // not change the schedule's fairness badges.
+        where: { OR: [{ isActive: true }, { assignments: { some: {} } }] },
         orderBy: { sortOrder: "asc" },
         include: { availabilityRules: true, eligibleShifts: true, employmentType: true },
       }),
@@ -103,6 +107,7 @@ export default async function Home() {
             conditionProviderId: ar.conditionProviderId,
           })),
           isAutoScheduled: p.isAutoScheduled,
+          isActive: p.isActive,
         }))}
         assignments={assignments.map((a) => ({
           id: a.id,
