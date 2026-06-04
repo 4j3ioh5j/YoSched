@@ -6,6 +6,8 @@ import {
   canonicalizeSnapshot,
   hashSnapshot,
   nextVersionNumber,
+  diffSnapshots,
+  summarizeChanges,
 } from "../versions";
 
 function snap(partial: Partial<AssignmentSnapshot> & { providerId: string; date: string; shiftTypeId: string }): AssignmentSnapshot {
@@ -93,6 +95,92 @@ describe("hashSnapshot", () => {
   it("an empty month has a stable hash", () => {
     expect(hashSnapshot([])).toBe(hashSnapshot([]));
     expect(hashSnapshot([])).not.toBe(hashSnapshot(base));
+  });
+});
+
+describe("diffSnapshots", () => {
+  const prev = [
+    snap({ providerId: "p1", date: "2026-06-01", shiftTypeId: "OR" }),
+    snap({ providerId: "p2", date: "2026-06-01", shiftTypeId: "ICU" }),
+    snap({ providerId: "p3", date: "2026-06-02", shiftTypeId: "OR" }),
+  ];
+
+  it("detects added / removed / changed cells", () => {
+    const next = [
+      // p1 unchanged
+      snap({ providerId: "p1", date: "2026-06-01", shiftTypeId: "OR" }),
+      // p2 changed ICU -> ADM
+      snap({ providerId: "p2", date: "2026-06-01", shiftTypeId: "ADM" }),
+      // p3 removed (absent)
+      // p4 added
+      snap({ providerId: "p4", date: "2026-06-03", shiftTypeId: "ORC" }),
+    ];
+    const changes = diffSnapshots(prev, next);
+    expect(changes).toEqual([
+      { kind: "changed", providerId: "p2", date: "2026-06-01", fromShiftTypeId: "ICU", toShiftTypeId: "ADM" },
+      { kind: "removed", providerId: "p3", date: "2026-06-02", shiftTypeId: "OR" },
+      { kind: "added", providerId: "p4", date: "2026-06-03", shiftTypeId: "ORC" },
+    ]);
+  });
+
+  it("reports a lock flip (same shift) as a 'locked' change", () => {
+    const next = [
+      snap({ providerId: "p1", date: "2026-06-01", shiftTypeId: "OR", isLocked: true }),
+      snap({ providerId: "p2", date: "2026-06-01", shiftTypeId: "ICU" }),
+      snap({ providerId: "p3", date: "2026-06-02", shiftTypeId: "OR" }),
+    ];
+    expect(diffSnapshots(prev, next)).toEqual([
+      { kind: "locked", providerId: "p1", date: "2026-06-01", shiftTypeId: "OR", isLocked: true },
+    ]);
+  });
+
+  it("prefers a shift change over a lock change on the same cell", () => {
+    const next = [
+      snap({ providerId: "p1", date: "2026-06-01", shiftTypeId: "ADM", isLocked: true }),
+      snap({ providerId: "p2", date: "2026-06-01", shiftTypeId: "ICU" }),
+      snap({ providerId: "p3", date: "2026-06-02", shiftTypeId: "OR" }),
+    ];
+    const changes = diffSnapshots(prev, next);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({ kind: "changed", providerId: "p1", toShiftTypeId: "ADM" });
+  });
+
+  it("ignores source/notes-only edits (consistent with the hash)", () => {
+    const next = prev.map((s) => snap({ ...s, source: "auto", notes: "x" }));
+    expect(diffSnapshots(prev, next)).toEqual([]);
+  });
+
+  it("treats an empty previous snapshot as all-added (first version)", () => {
+    const changes = diffSnapshots([], prev);
+    expect(changes.every((c) => c.kind === "added")).toBe(true);
+    expect(changes).toHaveLength(3);
+  });
+
+  it("is sorted by date then providerId", () => {
+    const next = [
+      snap({ providerId: "p9", date: "2026-06-05", shiftTypeId: "OR" }),
+      snap({ providerId: "p1", date: "2026-06-01", shiftTypeId: "OR" }),
+      snap({ providerId: "p2", date: "2026-06-01", shiftTypeId: "ICU" }),
+      snap({ providerId: "p3", date: "2026-06-02", shiftTypeId: "OR" }),
+      snap({ providerId: "p0", date: "2026-06-05", shiftTypeId: "OR" }),
+    ];
+    const order = diffSnapshots(prev, next).map((c) => `${c.date}:${c.providerId}`);
+    expect(order).toEqual([...order].sort());
+  });
+});
+
+describe("summarizeChanges", () => {
+  it("counts each kind and the total", () => {
+    const changes = diffSnapshots(
+      [snap({ providerId: "p1", date: "2026-06-01", shiftTypeId: "OR" }), snap({ providerId: "p3", date: "2026-06-02", shiftTypeId: "OR" })],
+      [snap({ providerId: "p1", date: "2026-06-01", shiftTypeId: "ADM" }), snap({ providerId: "p2", date: "2026-06-03", shiftTypeId: "OR" })],
+    );
+    // p1 changed, p3 removed, p2 added
+    expect(summarizeChanges(changes)).toEqual({ added: 1, removed: 1, changed: 1, locked: 0, total: 3 });
+  });
+
+  it("an empty diff summarizes to zeros", () => {
+    expect(summarizeChanges([])).toEqual({ added: 0, removed: 0, changed: 0, locked: 0, total: 0 });
   });
 });
 

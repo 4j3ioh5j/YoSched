@@ -9,7 +9,7 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleProvidersForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
-import { hashSnapshot, dateInMonth } from "@/lib/versions";
+import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
 import { useEscape } from "@/lib/use-escape";
 
 type AvailabilityRuleData = {
@@ -156,6 +156,13 @@ type VersionRow = {
   createdAt: string;
 };
 
+// Response of GET /api/versions/[id]/changes — the diff vs the previous version.
+type ChangesResponse = {
+  previousVersionNumber: number | null;
+  summary: ChangeSummary;
+  changes: SnapshotChange[];
+};
+
 type PickerState = {
   providerId: string;
   date: string;
@@ -283,6 +290,18 @@ function WarningDot({ warnings, setTooltip }: { warnings: Warning[]; setTooltip:
   );
 }
 
+// A small colored shift-code pill used in the version changes list.
+function ShiftChip({ st }: { st?: { code: string; color: string } }) {
+  return (
+    <span
+      style={{ backgroundColor: st?.color ?? "#6b7280" }}
+      className="inline-block px-1.5 py-0.5 rounded text-[11px] font-bold text-white leading-none"
+    >
+      {st?.code ?? "—"}
+    </span>
+  );
+}
+
 export function ScheduleGrid({
   canEdit = true,
   providers,
@@ -364,6 +383,8 @@ export function ScheduleGrid({
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionComment, setVersionComment] = useState("");
   const [versionBusy, setVersionBusy] = useState(false);
+  // When set, the panel shows the change list for a version instead of the list.
+  const [changesView, setChangesView] = useState<{ version: VersionRow; loading: boolean; data: ChangesResponse | null } | null>(null);
   const versionsPanelRef = useRef<HTMLDivElement>(null);
 
   const focalVersion = currentVersionMap.get(`${viewYear}-${viewMonth}`) ?? null;
@@ -396,6 +417,10 @@ export function ScheduleGrid({
   }, [showVersions, viewYear, viewMonth]);
 
   const saveVersion = useCallback(async () => {
+    // Nothing new since the current version — confirm before saving a duplicate.
+    if (focalVersion && !monthModified) {
+      if (!window.confirm(`No changes since version ${focalVersion.versionNumber}. Save an identical version anyway?`)) return;
+    }
     setVersionBusy(true);
     try {
       const res = await fetch("/api/versions", {
@@ -422,7 +447,7 @@ export function ScheduleGrid({
     } finally {
       setVersionBusy(false);
     }
-  }, [viewYear, viewMonth, versionComment]);
+  }, [viewYear, viewMonth, versionComment, focalVersion, monthModified]);
 
   const restoreVersion = useCallback(async (v: VersionRow) => {
     const label = v.comment ? `v${v.versionNumber} — “${v.comment}”` : `v${v.versionNumber}`;
@@ -447,7 +472,20 @@ export function ScheduleGrid({
     }
   }, [viewYear, viewMonth]);
 
-  useEscape(() => setShowVersions(false));
+  const openChanges = useCallback(async (v: VersionRow) => {
+    setChangesView({ version: v, loading: true, data: null });
+    const empty: ChangesResponse = { previousVersionNumber: null, summary: { added: 0, removed: 0, changed: 0, locked: 0, total: 0 }, changes: [] };
+    let data: ChangesResponse = empty;
+    try {
+      const res = await fetch(`/api/versions/${v.id}/changes`);
+      if (res.ok) data = await res.json();
+    } catch { /* keep empty */ }
+    // Ignore if the user navigated away to a different version meanwhile.
+    setChangesView((cur) => (cur && cur.version.id === v.id ? { version: v, loading: false, data } : cur));
+  }, []);
+
+  const closeVersions = useCallback(() => { setShowVersions(false); setChangesView(null); }, []);
+  useEscape(() => { if (changesView) setChangesView(null); else setShowVersions(false); });
 
   // Resizable alerts panel width (pixels)
   const [alertWidth, setAlertWidth] = useState(() => {
@@ -573,6 +611,12 @@ export function ScheduleGrid({
     for (const st of shiftTypes) map.set(st.id, st);
     return map;
   }, [shiftTypes]);
+
+  const providerInitialsMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of providers) map.set(p.id, p.initials);
+    return map;
+  }, [providers]);
 
   const hotkeyMap = useMemo(() => {
     const map = new Map<string, ShiftType>();
@@ -2180,90 +2224,178 @@ export function ScheduleGrid({
         <div
           data-print-hide
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setShowVersions(false)}
+          onClick={closeVersions}
         >
           <div
             ref={versionsPanelRef}
             onClick={(e) => e.stopPropagation()}
             className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-[520px] max-h-[80vh] flex flex-col"
           >
-            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700">
-              <h2 className="text-sm font-semibold text-slate-200">
-                Versions — {MONTH_NAMES[viewMonth]} {viewYear}
-              </h2>
-              <button
-                onClick={() => setShowVersions(false)}
-                className="text-slate-400 hover:text-white text-xl leading-none px-1"
-                aria-label="Close"
-              >
-                ×
-              </button>
-            </div>
-
-            {canEdit && (
-              <div className="px-5 py-3 border-b border-slate-700 flex items-center gap-2">
-                <input
-                  value={versionComment}
-                  onChange={(e) => setVersionComment(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !versionBusy) saveVersion(); }}
-                  placeholder="Optional comment…"
-                  maxLength={200}
-                  className="flex-1 px-2.5 py-1.5 text-sm bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                />
-                <button
-                  onClick={saveVersion}
-                  disabled={versionBusy}
-                  className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-white font-medium whitespace-nowrap"
-                >
-                  Save version
-                </button>
-              </div>
-            )}
-
-            <div className="overflow-y-auto flex-1">
-              {versionsLoading && (
-                <div className="px-5 py-6 text-sm text-slate-500 text-center">Loading…</div>
-              )}
-              {!versionsLoading && versionList && versionList.length === 0 && (
-                <div className="px-5 py-6 text-sm text-slate-500 text-center">
-                  No versions saved for this month yet.
-                </div>
-              )}
-              {!versionsLoading && versionList?.map((v) => (
-                <div
-                  key={v.id}
-                  className="px-5 py-2.5 border-b border-slate-700/50 flex items-center gap-3 hover:bg-slate-700/30"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-slate-200">v{v.versionNumber}</span>
-                      {v.isCurrent && (
-                        <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-700/50 text-emerald-300">current</span>
-                      )}
-                      {v.isAutoBackup && (
-                        <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-600/50 text-slate-400">auto-backup</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-0.5">
-                      {formatDate(parseDate(v.createdAt.slice(0, 10)), dateFormat)} · {new Date(v.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </div>
-                    {v.comment && (
-                      <div className="text-xs text-slate-400 italic mt-0.5 truncate" title={v.comment}>{v.comment}</div>
+            {changesView ? (
+              /* --- Changes view for a single version --- */
+              <>
+                <div className="flex items-center gap-2 px-5 py-3 border-b border-slate-700">
+                  <button
+                    onClick={() => setChangesView(null)}
+                    className="text-slate-400 hover:text-white text-base leading-none px-1"
+                    aria-label="Back to versions"
+                    title="Back"
+                  >
+                    ←
+                  </button>
+                  <h2 className="text-sm font-semibold text-slate-200 flex-1 min-w-0 truncate">
+                    Changes in v{changesView.version.versionNumber}
+                    {changesView.data && !changesView.loading && (
+                      <span className="ml-2 font-normal text-slate-500">
+                        {changesView.data.previousVersionNumber != null
+                          ? `since v${changesView.data.previousVersionNumber}`
+                          : "first version of this month"}
+                      </span>
                     )}
-                  </div>
-                  {canEdit && (
-                    <button
-                      onClick={() => restoreVersion(v)}
-                      disabled={versionBusy || (v.isCurrent && !monthModified)}
-                      className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-200 whitespace-nowrap"
-                      title={v.isCurrent && !monthModified ? "This is the current state" : "Restore this version"}
-                    >
-                      Restore
-                    </button>
-                  )}
+                  </h2>
+                  <button
+                    onClick={closeVersions}
+                    className="text-slate-400 hover:text-white text-xl leading-none px-1"
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
                 </div>
-              ))}
-            </div>
+
+                {changesView.data && !changesView.loading && changesView.data.summary.total > 0 && (
+                  <div className="px-5 py-2 border-b border-slate-700 text-xs flex items-center gap-3 flex-wrap">
+                    <span className="text-slate-300 font-medium">
+                      {changesView.data.summary.total} change{changesView.data.summary.total !== 1 ? "s" : ""}
+                    </span>
+                    {changesView.data.summary.added > 0 && <span className="text-emerald-400">{changesView.data.summary.added} added</span>}
+                    {changesView.data.summary.removed > 0 && <span className="text-red-400">{changesView.data.summary.removed} removed</span>}
+                    {changesView.data.summary.changed > 0 && <span className="text-amber-400">{changesView.data.summary.changed} changed</span>}
+                    {changesView.data.summary.locked > 0 && <span className="text-slate-400">{changesView.data.summary.locked} lock</span>}
+                  </div>
+                )}
+
+                <div className="overflow-y-auto flex-1">
+                  {changesView.loading && (
+                    <div className="px-5 py-6 text-sm text-slate-500 text-center">Loading…</div>
+                  )}
+                  {!changesView.loading && changesView.data?.changes.length === 0 && (
+                    <div className="px-5 py-6 text-sm text-slate-500 text-center">
+                      Identical to the previous version — no schedule changes.
+                    </div>
+                  )}
+                  {!changesView.loading && changesView.data?.changes.map((c, i) => (
+                    <div key={i} className="px-5 py-1.5 border-b border-slate-700/40 flex items-center gap-3 text-xs">
+                      <span className="w-10 shrink-0 text-slate-500 tabular-nums">{formatDateCompact(parseDate(c.date), dateFormat)}</span>
+                      <span className="w-9 shrink-0 font-semibold text-slate-300 truncate" title={c.providerId}>
+                        {providerInitialsMap.get(c.providerId) ?? "—"}
+                      </span>
+                      <span className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                        {c.kind === "added" && (
+                          <><span className="text-emerald-400 font-bold">+</span><ShiftChip st={shiftTypeMap.get(c.shiftTypeId)} /></>
+                        )}
+                        {c.kind === "removed" && (
+                          <><span className="text-red-400 font-bold">−</span><span className="opacity-50"><ShiftChip st={shiftTypeMap.get(c.shiftTypeId)} /></span></>
+                        )}
+                        {c.kind === "changed" && (
+                          <><ShiftChip st={shiftTypeMap.get(c.fromShiftTypeId)} /><span className="text-slate-500">→</span><ShiftChip st={shiftTypeMap.get(c.toShiftTypeId)} /></>
+                        )}
+                        {c.kind === "locked" && (
+                          <><ShiftChip st={shiftTypeMap.get(c.shiftTypeId)} /><span className="text-slate-400">{c.isLocked ? "🔒 locked" : "🔓 unlocked"}</span></>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              /* --- Version list --- */
+              <>
+                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700">
+                  <h2 className="text-sm font-semibold text-slate-200">
+                    Versions — {MONTH_NAMES[viewMonth]} {viewYear}
+                  </h2>
+                  <button
+                    onClick={closeVersions}
+                    className="text-slate-400 hover:text-white text-xl leading-none px-1"
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {canEdit && (
+                  <div className="px-5 py-3 border-b border-slate-700 flex items-center gap-2">
+                    <input
+                      value={versionComment}
+                      onChange={(e) => setVersionComment(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && !versionBusy) saveVersion(); }}
+                      placeholder="Optional comment…"
+                      maxLength={200}
+                      className="flex-1 px-2.5 py-1.5 text-sm bg-slate-900 border border-slate-600 rounded text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    />
+                    <button
+                      onClick={saveVersion}
+                      disabled={versionBusy}
+                      className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-white font-medium whitespace-nowrap"
+                    >
+                      Save version
+                    </button>
+                  </div>
+                )}
+
+                <div className="overflow-y-auto flex-1">
+                  {versionsLoading && (
+                    <div className="px-5 py-6 text-sm text-slate-500 text-center">Loading…</div>
+                  )}
+                  {!versionsLoading && versionList && versionList.length === 0 && (
+                    <div className="px-5 py-6 text-sm text-slate-500 text-center">
+                      No versions saved for this month yet.
+                    </div>
+                  )}
+                  {!versionsLoading && versionList?.map((v) => (
+                    <div
+                      key={v.id}
+                      className="px-5 py-2.5 border-b border-slate-700/50 flex items-center gap-3 hover:bg-slate-700/30"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-slate-200">v{v.versionNumber}</span>
+                          {v.isCurrent && (
+                            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-700/50 text-emerald-300">current</span>
+                          )}
+                          {v.isAutoBackup && (
+                            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-600/50 text-slate-400">auto-backup</span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          {formatDate(parseDate(v.createdAt.slice(0, 10)), dateFormat)} · {new Date(v.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </div>
+                        {v.comment && (
+                          <div className="text-xs text-slate-400 italic mt-0.5 truncate" title={v.comment}>{v.comment}</div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => openChanges(v)}
+                        className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded text-slate-200 whitespace-nowrap"
+                        title="Show what changed since the previous version"
+                      >
+                        Changes
+                      </button>
+                      {canEdit && (
+                        <button
+                          onClick={() => restoreVersion(v)}
+                          disabled={versionBusy || (v.isCurrent && !monthModified)}
+                          className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-200 whitespace-nowrap"
+                          title={v.isCurrent && !monthModified ? "This is the current state" : "Restore this version"}
+                        >
+                          Restore
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
