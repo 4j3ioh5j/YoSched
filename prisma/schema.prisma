@@ -102,6 +102,7 @@ model ShiftType {
   followRulesAsAllowed ShiftFollowRule[] @relation("followRuleAllowed")
   shiftEligibilityRules        ShiftEligibilityRule[]
   shiftMinimumTargets          ShiftMinimumTarget[]
+  requestLeaveShifts           ScheduleRequest[] @relation("requestLeaveShift")
 
   @@map("shift_types")
 }
@@ -162,6 +163,7 @@ model Provider {
   conditionedRules        AvailabilityRule[]     @relation("conditionProvider")
   shiftEligibilityRules   ShiftEligibilityRule[]
   shiftMinimumTargets     ShiftMinimumTarget[]
+  scheduleRequests        ScheduleRequest[]
 
   @@map("providers")
 }
@@ -467,4 +469,36 @@ model ScheduleVersion {
   @@unique([year, month, versionNumber])
   @@index([year, month])
   @@map("schedule_versions")
+}
+
+// A date-specific scheduling request for one provider (e.g. "off 7/4", "no ORC
+// or ORL next week", "AL 8/1–8/5"). Requests are the first dated, timestamped,
+// per-provider constraint with their own approval lifecycle. They feed BOTH the
+// manual scheduler (as cell warnings) and auto-schedule (as candidate gates),
+// but only once status="approved" — pending requests render in the grid yet
+// exert zero scheduling force. receivedAt is the "received-date stamp".
+model ScheduleRequest {
+  id           String    @id @default(cuid())
+  providerId   String
+  startDate    DateTime  @db.Date // inclusive; single-date request => startDate==endDate
+  endDate      DateTime  @db.Date // inclusive
+  kind         String // OFF | LEAVE | NEGATE_SHIFT | REQUEST_SHIFT
+  shiftTypeIds String[]  @default([]) // NEGATE_SHIFT: shifts to exclude; REQUEST_SHIFT: shifts wanted
+  leaveShiftTypeId String? // LEAVE: the leave shift type to pre-place (AL/SL/ILD…)
+  strength     String    @default("hard") // hard (forbid/force) | soft (avoid/prefer)
+  status       String    @default("pending") // pending | approved | declined | fulfilled | withdrawn
+  source       String    @default("scheduler") // scheduler | provider | email
+  receivedAt   DateTime  @default(now()) // when the request came in (the stamp)
+  approvedAt   DateTime?
+  approvedBy   String? // user id/initials of the approver
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  provider        Provider   @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  leaveShiftType  ShiftType? @relation("requestLeaveShift", fields: [leaveShiftTypeId], references: [id], onDelete: SetNull)
+
+  @@index([providerId, startDate, endDate])
+  @@index([status])
+  @@map("schedule_requests")
 }

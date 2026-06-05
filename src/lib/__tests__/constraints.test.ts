@@ -161,6 +161,33 @@ describe("checkCellWarnings", () => {
       expect(w.find((w) => w.type === "post-shift")).toBeUndefined();
     });
   });
+
+  describe("request-violation warnings", () => {
+    const offReq = {
+      id: "rq1", providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12",
+      kind: "OFF" as const, shiftTypeIds: [], leaveShiftTypeId: null,
+      strength: "hard" as const, status: "approved" as const,
+    };
+
+    it("flags a working shift placed on an approved hard OFF request", () => {
+      const w = checkCellWarnings({
+        providerId: "p1", date: "2025-05-12", shiftTypeId: "st-or",
+        provider, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
+        providers, holidaySet, staffingMins, scheduleRequests: [offReq],
+      });
+      const v = w.find((x) => x.type === "request-violation");
+      expect(v?.message).toContain("Requested OFF");
+    });
+
+    it("no request warning when scheduleRequests omitted (back-compat)", () => {
+      const w = checkCellWarnings({
+        providerId: "p1", date: "2025-05-12", shiftTypeId: "st-or",
+        provider, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
+        providers, holidaySet, staffingMins,
+      });
+      expect(w.find((x) => x.type === "request-violation")).toBeUndefined();
+    });
+  });
 });
 
 describe("checkDayStaffing", () => {

@@ -1,7 +1,14 @@
 import { FollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
+import { checkRequestConflict, type ScheduleRequestData } from "./schedule-requests";
 
 export type Warning = {
-  type: "understaffed" | "post-shift" | "non-working-day" | "over-hours" | "shift-count";
+  type:
+    | "understaffed"
+    | "post-shift"
+    | "non-working-day"
+    | "over-hours"
+    | "shift-count"
+    | "request-violation";
   message: string;
 };
 
@@ -87,6 +94,7 @@ export function checkCellWarnings({
   holidaySet,
   staffingMins,
   followRuleMap,
+  scheduleRequests,
 }: {
   providerId: string;
   date: string;
@@ -98,6 +106,7 @@ export function checkCellWarnings({
   holidaySet: Set<string>;
   staffingMins: StaffingMinimum[];
   followRuleMap?: FollowRuleMap;
+  scheduleRequests?: ScheduleRequestData[]; // approved requests for this provider (optional)
 }): Warning[] {
   const warnings: Warning[] = [];
   if (!shiftTypeId) return warnings;
@@ -143,6 +152,22 @@ export function checkCellWarnings({
           message: `${nextSt.code} cannot follow ${st.code} — ${provider.initials} has ${nextSt.code} tomorrow`,
         });
       }
+    }
+  }
+
+  // Schedule requests: flag where this assignment contradicts an approved hard
+  // request (off / leave / negated shift / wanted-a-different-shift).
+  if (scheduleRequests && scheduleRequests.length > 0) {
+    const conflicts = checkRequestConflict({
+      requests: scheduleRequests,
+      providerId,
+      date,
+      assignedShiftTypeId: shiftTypeId,
+      isOffShift: st.isOffShift,
+      codeOf: (id) => shiftTypeMap.get(id)?.code ?? id,
+    });
+    for (const c of conflicts) {
+      warnings.push({ type: "request-violation", message: c.message });
     }
   }
 
