@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
+import { RequestPicker } from "./request-picker";
 import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
 import { buildAlerts, groupAlertsByDate } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
@@ -9,7 +10,7 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleProvidersForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
-import { requestsForProviderDate, describeRequest, type ScheduleRequestData } from "@/lib/schedule-requests";
+import { requestsForProviderDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, type ScheduleRequestData, type PickerMarks } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
 
 // A schedule request as delivered to the grid (pure-module shape + display stamp).
@@ -330,6 +331,9 @@ export function ScheduleGrid({
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [localAssignments, setLocalAssignments] = useState(initialAssignments);
+  const [localRequests, setLocalRequests] = useState<GridRequest[]>(scheduleRequests);
+  const [requestMode, setRequestMode] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const [picker, setPicker] = useState<PickerState>(null);
   const [saving, setSaving] = useState<string | null>(null);
   const [dragSource, setDragSource] = useState<{ providerId: string; date: string } | null>(null);
@@ -622,15 +626,15 @@ export function ScheduleGrid({
   // pending (the grid renders them, distinct from approved). Empty cells omitted.
   const requestsByCell = useMemo(() => {
     const map = new Map<string, GridRequest[]>();
-    if (scheduleRequests.length === 0) return map;
+    if (localRequests.length === 0) return map;
     for (const date of dates) {
       for (const p of visibleProviders) {
-        const rs = requestsForProviderDate(scheduleRequests, p.id, date, { includePending: true });
+        const rs = requestsForProviderDate(localRequests, p.id, date, { includePending: true });
         if (rs.length > 0) map.set(`${p.id}:${date}`, rs);
       }
     }
     return map;
-  }, [scheduleRequests, dates, visibleProviders]);
+  }, [localRequests, dates, visibleProviders]);
 
   const requestTooltip = useCallback(
     (reqs: GridRequest[]): string =>
@@ -1111,7 +1115,7 @@ export function ScheduleGrid({
         const el = document.querySelector(`[data-cell="${newProv.id}:${newDate}"]`);
         el?.scrollIntoView({ block: "nearest", inline: "nearest" });
       }
-      if (!picker && canEdit && e.key.length === 1 && /^[a-zA-Z]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey && (activeRow || selection.size > 0)) {
+      if (!picker && canEdit && !requestMode && e.key.length === 1 && /^[a-zA-Z]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey && (activeRow || selection.size > 0)) {
         const st = hotkeyMap.get(e.key.toUpperCase());
         if (st) {
           e.preventDefault();
@@ -1121,7 +1125,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleProviders, hotkeyMap, selection, showMonthPicker]);
+  }, [picker, canEdit, requestMode, activeRow, activeCol, assignmentMap, dates, visibleProviders, hotkeyMap, selection, showMonthPicker]);
 
   const hotkeyAssign = useCallback(async (st: ShiftType) => {
     const cells: { providerId: string; date: string }[] = [];
@@ -1352,6 +1356,59 @@ export function ScheduleGrid({
   const closePicker = useCallback(() => {
     setPicker(null);
   }, []);
+
+  // Request mode: turn picker marks into pending requests for the selected cells.
+  const handleSaveRequests = useCallback(
+    async (marks: PickerMarks) => {
+      if (!picker) return;
+      const cells: { providerId: string; date: string }[] = [];
+      if (selection.size > 0) {
+        for (const key of selection) {
+          const [pid, d] = key.split(":");
+          cells.push({ providerId: pid, date: d });
+        }
+      } else {
+        cells.push({ providerId: picker.providerId, date: picker.date });
+      }
+      const payloads = buildRequestPayloads(marks, groupCellsIntoTargets(cells));
+
+      setPicker(null);
+      setSelection(new Set());
+      setSelectionAnchor(null);
+      if (payloads.length === 0) return;
+
+      setSaving("requests");
+      setRequestError(null);
+      const created: GridRequest[] = [];
+      let failed = 0;
+      try {
+        for (const p of payloads) {
+          try {
+            const res = await fetch("/api/requests", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(p),
+            });
+            if (res.ok) created.push(await res.json());
+            else failed++;
+          } catch {
+            failed++;
+          }
+        }
+      } finally {
+        // Show whatever did persist, then surface any failures so a partial
+        // save is never silent.
+        if (created.length > 0) setLocalRequests((prev) => [...created, ...prev]);
+        if (failed > 0) {
+          setRequestError(
+            `${failed} of ${payloads.length} request${payloads.length > 1 ? "s" : ""} failed to save${created.length > 0 ? ` (${created.length} saved)` : ""}.`,
+          );
+        }
+        setSaving(null);
+      }
+    },
+    [picker, selection],
+  );
 
   function handleDragStart(providerId: string, date: string, e: React.DragEvent) {
     if (!canEdit) { e.preventDefault(); return; }
@@ -1735,6 +1792,15 @@ export function ScheduleGrid({
             title="Show all staff, including those with no assignments this month"
           >
             Show all staff
+          </button>
+        )}
+        {canEdit && (
+          <button
+            onClick={() => { setPicker(null); setRequestMode((v) => !v); }}
+            className={["px-3 py-1 text-sm rounded transition-colors", requestMode ? "bg-violet-700 hover:bg-violet-600 text-violet-100" : "bg-slate-700 hover:bg-slate-600 text-slate-400"].join(" ")}
+            title="Request mode: select cells, then TAB / right-click to record off / no-shift / leave requests"
+          >
+            {requestMode ? "Request mode: ON" : "Request mode"}
           </button>
         )}
         <button
@@ -2247,8 +2313,37 @@ export function ScheduleGrid({
         )}
       </div>
 
-      {/* Shift picker popover */}
-      {canEdit && picker && (
+      {/* Request save error — partial/failed saves are surfaced, not silent */}
+      {requestError && (
+        <div
+          data-print-hide
+          role="alert"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-3 bg-red-900/90 border border-red-500/60 text-red-100 text-sm px-4 py-2 rounded-lg shadow-xl"
+        >
+          <span>{requestError}</span>
+          <button
+            onClick={() => setRequestError(null)}
+            className="text-red-300 hover:text-white text-base leading-none"
+            title="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* Picker popover — request mode shows the request picker, else assign */}
+      {canEdit && picker && requestMode && (
+        <div data-print-hide>
+          <RequestPicker
+            shiftTypes={shiftTypes}
+            position={{ x: picker.x, y: picker.y }}
+            targetCount={selectionCount > 1 ? groupCellsIntoTargets([...selection].map((k) => { const [providerId, date] = k.split(":"); return { providerId, date }; })).length : 1}
+            onSave={handleSaveRequests}
+            onClose={closePicker}
+          />
+        </div>
+      )}
+      {canEdit && picker && !requestMode && (
         <div data-print-hide>
           <ShiftPicker
             shiftTypes={shiftTypes}

@@ -8,6 +8,8 @@ import {
   describeRequest,
   isValidDateStr,
   validateRequestInput,
+  buildRequestPayloads,
+  groupCellsIntoTargets,
   type ScheduleRequestData,
 } from "../schedule-requests";
 
@@ -409,5 +411,110 @@ describe("validateRequestInput", () => {
     expect(validateRequestInput(null)).toHaveProperty("error");
     expect(validateRequestInput(undefined)).toHaveProperty("error");
     expect(validateRequestInput("string")).toHaveProperty("error");
+  });
+});
+
+describe("groupCellsIntoTargets", () => {
+  it("one target per provider spanning earliest→latest selected date", () => {
+    const targets = groupCellsIntoTargets([
+      { providerId: "P", date: "2026-07-06" },
+      { providerId: "P", date: "2026-07-04" },
+      { providerId: "P", date: "2026-07-08" },
+      { providerId: "Q", date: "2026-07-05" },
+    ]);
+    expect(targets).toEqual([
+      { providerId: "P", startDate: "2026-07-04", endDate: "2026-07-08" },
+      { providerId: "Q", startDate: "2026-07-05", endDate: "2026-07-05" },
+    ]);
+  });
+  it("single cell → single-date target", () => {
+    expect(groupCellsIntoTargets([{ providerId: "P", date: "2026-07-04" }])).toEqual([
+      { providerId: "P", startDate: "2026-07-04", endDate: "2026-07-04" },
+    ]);
+  });
+});
+
+describe("buildRequestPayloads", () => {
+  const target = [{ providerId: "P", startDate: "2026-07-04", endDate: "2026-07-04" }];
+
+  it("merges like-kind like-strength shift marks into one row", () => {
+    const out = buildRequestPayloads(
+      {
+        shiftMarks: [
+          { shiftTypeId: "orc", polarity: "negate", strength: "hard" },
+          { shiftTypeId: "orl", polarity: "negate", strength: "hard" },
+        ],
+        offStrength: null,
+        leaveShiftTypeIds: [],
+      },
+      target
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ kind: "NEGATE_SHIFT", strength: "hard", shiftTypeIds: ["orc", "orl"] });
+  });
+
+  it("splits by polarity and strength", () => {
+    const out = buildRequestPayloads(
+      {
+        shiftMarks: [
+          { shiftTypeId: "orc", polarity: "negate", strength: "hard" },
+          { shiftTypeId: "orl", polarity: "negate", strength: "soft" },
+          { shiftTypeId: "call", polarity: "accept", strength: "hard" },
+          { shiftTypeId: "icu", polarity: "accept", strength: "soft" },
+        ],
+        offStrength: null,
+        leaveShiftTypeIds: [],
+      },
+      target
+    );
+    const byKey = out.map((p) => `${p.kind}:${p.strength}:${p.shiftTypeIds.join(",")}`).sort();
+    expect(byKey).toEqual([
+      "NEGATE_SHIFT:hard:orc",
+      "NEGATE_SHIFT:soft:orl",
+      "REQUEST_SHIFT:hard:call",
+      "REQUEST_SHIFT:soft:icu",
+    ]);
+  });
+
+  it("emits OFF and one LEAVE per leave shift", () => {
+    const out = buildRequestPayloads(
+      { shiftMarks: [], offStrength: "hard", leaveShiftTypeIds: ["al", "sl"] },
+      target
+    );
+    expect(out.filter((p) => p.kind === "OFF")).toHaveLength(1);
+    const leaves = out.filter((p) => p.kind === "LEAVE");
+    expect(leaves.map((l) => l.leaveShiftTypeId).sort()).toEqual(["al", "sl"]);
+    expect(leaves.every((l) => l.strength === "hard")).toBe(true);
+  });
+
+  it("applies every mark to every target (multi-provider)", () => {
+    const out = buildRequestPayloads(
+      { shiftMarks: [{ shiftTypeId: "orc", polarity: "negate", strength: "hard" }], offStrength: null, leaveShiftTypeIds: [] },
+      [
+        { providerId: "P", startDate: "2026-07-04", endDate: "2026-07-04" },
+        { providerId: "Q", startDate: "2026-07-05", endDate: "2026-07-06" },
+      ]
+    );
+    expect(out).toHaveLength(2);
+    expect(out.map((p) => p.providerId).sort()).toEqual(["P", "Q"]);
+    expect(out.find((p) => p.providerId === "Q")).toMatchObject({ startDate: "2026-07-05", endDate: "2026-07-06" });
+  });
+
+  it("empty marks → no payloads", () => {
+    expect(buildRequestPayloads({ shiftMarks: [], offStrength: null, leaveShiftTypeIds: [] }, target)).toEqual([]);
+  });
+
+  it("payloads pass validateRequestInput", () => {
+    const out = buildRequestPayloads(
+      {
+        shiftMarks: [{ shiftTypeId: "orc", polarity: "negate", strength: "hard" }],
+        offStrength: "soft",
+        leaveShiftTypeIds: ["al"],
+      },
+      target
+    );
+    for (const p of out) {
+      expect(validateRequestInput(p)).toHaveProperty("value");
+    }
   });
 });

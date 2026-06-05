@@ -238,6 +238,94 @@ export function isValidDateStr(s: unknown): s is string {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
+// ---- Picker → request payloads -------------------------------------------
+// The manual picker records "marks" on work shifts (accept ○ / negate ✗, each
+// hard or soft) plus an optional OFF and any leave shifts. buildRequestPayloads
+// turns those marks, applied across the selected cells, into RequestInput rows.
+
+export type MarkPolarity = "accept" | "negate";
+export type ShiftMark = { shiftTypeId: string; polarity: MarkPolarity; strength: RequestStrength };
+
+// One provider over an (inclusive) date range — the picker groups the cell
+// selection into these before building payloads.
+export type RequestTarget = { providerId: string; startDate: string; endDate: string };
+
+export type PickerMarks = {
+  shiftMarks: ShiftMark[]; // marks on work shifts
+  offStrength: RequestStrength | null; // OFF requested (off-shift), or not
+  leaveShiftTypeIds: string[]; // leave shifts requested (each → its own LEAVE)
+};
+
+/** Collapse picker marks into request payloads for every target. Like-kind,
+ *  like-strength shift marks merge into one row (so "✗ORC ✗ORL" → one hard
+ *  NEGATE_SHIFT [ORC,ORL]); each leave and OFF become their own rows. Pure. */
+export function buildRequestPayloads(marks: PickerMarks, targets: RequestTarget[]): RequestInput[] {
+  // Bucket work-shift marks by (kind, strength).
+  const buckets = new Map<string, { kind: RequestKind; strength: RequestStrength; ids: string[] }>();
+  for (const m of marks.shiftMarks) {
+    const kind: RequestKind = m.polarity === "negate" ? "NEGATE_SHIFT" : "REQUEST_SHIFT";
+    const key = `${kind}:${m.strength}`;
+    let b = buckets.get(key);
+    if (!b) {
+      b = { kind, strength: m.strength, ids: [] };
+      buckets.set(key, b);
+    }
+    if (!b.ids.includes(m.shiftTypeId)) b.ids.push(m.shiftTypeId);
+  }
+
+  const payloads: RequestInput[] = [];
+  for (const t of targets) {
+    const baseFor = (
+      kind: RequestKind,
+      strength: RequestStrength,
+      shiftTypeIds: string[],
+      leaveShiftTypeId: string | null
+    ): RequestInput => ({
+      providerId: t.providerId,
+      startDate: t.startDate,
+      endDate: t.endDate,
+      kind,
+      shiftTypeIds,
+      leaveShiftTypeId,
+      strength,
+      source: "scheduler",
+      notes: null,
+    });
+
+    for (const b of buckets.values()) {
+      payloads.push(baseFor(b.kind, b.strength, [...b.ids], null));
+    }
+    if (marks.offStrength) {
+      payloads.push(baseFor("OFF", marks.offStrength, [], null));
+    }
+    for (const leaveId of marks.leaveShiftTypeIds) {
+      payloads.push(baseFor("LEAVE", "hard", [], leaveId));
+    }
+  }
+  return payloads;
+}
+
+/** Group a flat cell selection into one target per provider, spanning that
+ *  provider's earliest→latest selected date (drag-select a week ⇒ a range). */
+export function groupCellsIntoTargets(
+  cells: { providerId: string; date: string }[]
+): RequestTarget[] {
+  const byProvider = new Map<string, { min: string; max: string }>();
+  for (const c of cells) {
+    const cur = byProvider.get(c.providerId);
+    if (!cur) byProvider.set(c.providerId, { min: c.date, max: c.date });
+    else {
+      if (c.date < cur.min) cur.min = c.date;
+      if (c.date > cur.max) cur.max = c.date;
+    }
+  }
+  return [...byProvider.entries()].map(([providerId, r]) => ({
+    providerId,
+    startDate: r.min,
+    endDate: r.max,
+  }));
+}
+
 // Validated, normalized POST input for creating a request.
 export type RequestInput = {
   providerId: string;
