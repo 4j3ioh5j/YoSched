@@ -18,6 +18,11 @@
 export type RequestKind = "OFF" | "LEAVE" | "NEGATE_SHIFT" | "REQUEST_SHIFT";
 export type RequestStrength = "hard" | "soft";
 export type RequestStatus = "pending" | "approved" | "declined" | "fulfilled" | "withdrawn";
+export type RequestSource = "scheduler" | "provider" | "email";
+
+export const REQUEST_KINDS: readonly RequestKind[] = ["OFF", "LEAVE", "NEGATE_SHIFT", "REQUEST_SHIFT"];
+export const REQUEST_STRENGTHS: readonly RequestStrength[] = ["hard", "soft"];
+export const REQUEST_SOURCES: readonly RequestSource[] = ["scheduler", "provider", "email"];
 
 export type ScheduleRequestData = {
   id: string;
@@ -121,6 +126,25 @@ export function foldRequestsForDate(
   return folded;
 }
 
+/** Short human label for a request — grid badge tooltip / picker summary.
+ *  e.g. "Off", "No ORC, ORL", "Avoid CALL", "AL leave", "Wants ORC". */
+export function describeRequest(
+  r: Pick<ScheduleRequestData, "kind" | "shiftTypeIds" | "leaveShiftTypeId" | "strength">,
+  codeOf: (shiftTypeId: string) => string
+): string {
+  const soft = r.strength === "soft";
+  switch (r.kind) {
+    case "OFF":
+      return soft ? "Prefers off" : "Off";
+    case "LEAVE":
+      return r.leaveShiftTypeId ? `${codeOf(r.leaveShiftTypeId)} leave` : "Leave";
+    case "NEGATE_SHIFT":
+      return `${soft ? "Avoid" : "No"} ${r.shiftTypeIds.map(codeOf).join(", ")}`;
+    case "REQUEST_SHIFT":
+      return `${soft ? "Prefers" : "Wants"} ${r.shiftTypeIds.map(codeOf).join(", ")}`;
+  }
+}
+
 /** Does this provider have any approved request affecting `date`? (grid: show badge) */
 export function hasActiveRequest(
   requests: ScheduleRequestData[],
@@ -203,4 +227,86 @@ export function checkRequestConflict({
   }
 
   return conflicts;
+}
+
+/** Strict calendar-date check: must be literal "YYYY-MM-DD" AND a real date.
+ *  Rejects malformed ("2026-6-1", "nope") and impossible dates that JS would
+ *  silently roll over ("2026-02-31" → Mar 3, "2026-13-01"). */
+export function isValidDateStr(s: unknown): s is string {
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s + "T00:00:00Z");
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+// Validated, normalized POST input for creating a request.
+export type RequestInput = {
+  providerId: string;
+  startDate: string;
+  endDate: string;
+  kind: RequestKind;
+  shiftTypeIds: string[];
+  leaveShiftTypeId: string | null;
+  strength: RequestStrength;
+  source: RequestSource;
+  notes: string | null;
+};
+
+/** Pure validation for the create-request endpoint. Returns either an error
+ *  message or a normalized value carrying only the fields the kind uses.
+ *  Keeps the API route thin and lets the validation be unit-tested directly. */
+export function validateRequestInput(
+  body: unknown
+): { error: string } | { value: RequestInput } {
+  const b = (body ?? {}) as Record<string, unknown>;
+
+  const providerId = b.providerId;
+  if (typeof providerId !== "string" || !providerId) return { error: "providerId required" };
+
+  const startDate = b.startDate;
+  const endDate = b.endDate ?? b.startDate;
+  if (!isValidDateStr(startDate)) return { error: "startDate must be a valid YYYY-MM-DD date" };
+  if (!isValidDateStr(endDate)) return { error: "endDate must be a valid YYYY-MM-DD date" };
+  if (startDate > endDate) return { error: "startDate must be on or before endDate" };
+
+  const kind = b.kind;
+  if (!REQUEST_KINDS.includes(kind as RequestKind)) {
+    return { error: `kind must be one of ${REQUEST_KINDS.join(", ")}` };
+  }
+  const strength = b.strength ?? "hard";
+  if (!REQUEST_STRENGTHS.includes(strength as RequestStrength)) {
+    return { error: `strength must be one of ${REQUEST_STRENGTHS.join(", ")}` };
+  }
+  const source = b.source ?? "scheduler";
+  if (!REQUEST_SOURCES.includes(source as RequestSource)) {
+    return { error: `source must be one of ${REQUEST_SOURCES.join(", ")}` };
+  }
+
+  const shiftTypeIds = Array.isArray(b.shiftTypeIds)
+    ? b.shiftTypeIds.filter((x): x is string => typeof x === "string")
+    : [];
+  const leaveShiftTypeId = typeof b.leaveShiftTypeId === "string" ? b.leaveShiftTypeId : null;
+  const notes = typeof b.notes === "string" ? b.notes : null;
+
+  const k = kind as RequestKind;
+  if ((k === "NEGATE_SHIFT" || k === "REQUEST_SHIFT") && shiftTypeIds.length === 0) {
+    return { error: `${k} requires at least one shiftTypeId` };
+  }
+  if (k === "LEAVE" && !leaveShiftTypeId) {
+    return { error: "LEAVE requires leaveShiftTypeId" };
+  }
+
+  return {
+    value: {
+      providerId,
+      startDate: startDate as string,
+      endDate: endDate as string,
+      kind: k,
+      // Carry only the fields the kind actually uses.
+      shiftTypeIds: k === "NEGATE_SHIFT" || k === "REQUEST_SHIFT" ? shiftTypeIds : [],
+      leaveShiftTypeId: k === "LEAVE" ? leaveShiftTypeId : null,
+      strength: strength as RequestStrength,
+      source: source as RequestSource,
+      notes,
+    },
+  };
 }

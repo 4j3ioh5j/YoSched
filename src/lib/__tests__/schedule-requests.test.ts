@@ -5,6 +5,9 @@ import {
   foldRequestsForDate,
   hasActiveRequest,
   checkRequestConflict,
+  describeRequest,
+  isValidDateStr,
+  validateRequestInput,
   type ScheduleRequestData,
 } from "../schedule-requests";
 
@@ -164,6 +167,21 @@ describe("foldRequestsForDate", () => {
   });
 });
 
+describe("describeRequest", () => {
+  it("labels each kind, hard vs soft", () => {
+    expect(describeRequest(req({ kind: "OFF" }), codeOf)).toBe("Off");
+    expect(describeRequest(req({ kind: "OFF", strength: "soft" }), codeOf)).toBe("Prefers off");
+    expect(describeRequest(req({ kind: "LEAVE", leaveShiftTypeId: "al" }), codeOf)).toBe("AL leave");
+    expect(describeRequest(req({ kind: "NEGATE_SHIFT", shiftTypeIds: ["orc", "orl"] }), codeOf)).toBe("No ORC, ORL");
+    expect(describeRequest(req({ kind: "NEGATE_SHIFT", strength: "soft", shiftTypeIds: ["orc"] }), codeOf)).toBe("Avoid ORC");
+    expect(describeRequest(req({ kind: "REQUEST_SHIFT", shiftTypeIds: ["call"] }), codeOf)).toBe("Wants CALL");
+    expect(describeRequest(req({ kind: "REQUEST_SHIFT", strength: "soft", shiftTypeIds: ["call"] }), codeOf)).toBe("Prefers CALL");
+  });
+  it("falls back to 'Leave' when leaveShiftTypeId is null", () => {
+    expect(describeRequest(req({ kind: "LEAVE", leaveShiftTypeId: null }), codeOf)).toBe("Leave");
+  });
+});
+
 describe("hasActiveRequest", () => {
   it("true only when an approved request covers the date", () => {
     const reqs = [req({ kind: "OFF" })];
@@ -292,5 +310,104 @@ describe("checkRequestConflict", () => {
     ];
     const c = checkRequestConflict({ ...base, requests: reqs, assignedShiftTypeId: "orc" });
     expect(c.map((x) => x.requestId).sort()).toEqual(["a", "b"]);
+  });
+});
+
+describe("isValidDateStr", () => {
+  it("accepts real YYYY-MM-DD dates", () => {
+    expect(isValidDateStr("2026-07-04")).toBe(true);
+    expect(isValidDateStr("2026-02-28")).toBe(true);
+    expect(isValidDateStr("2024-02-29")).toBe(true); // leap year
+  });
+  it("rejects malformed strings", () => {
+    expect(isValidDateStr("2026-7-4")).toBe(false);
+    expect(isValidDateStr("07/04/2026")).toBe(false);
+    expect(isValidDateStr("nope")).toBe(false);
+    expect(isValidDateStr("")).toBe(false);
+    expect(isValidDateStr(20260704)).toBe(false);
+    expect(isValidDateStr(null)).toBe(false);
+    expect(isValidDateStr(undefined)).toBe(false);
+  });
+  it("rejects impossible dates JS would silently roll over", () => {
+    expect(isValidDateStr("2026-02-31")).toBe(false); // would become Mar 3
+    expect(isValidDateStr("2026-13-01")).toBe(false); // month 13
+    expect(isValidDateStr("2026-00-10")).toBe(false); // month 0
+    expect(isValidDateStr("2025-02-29")).toBe(false); // not a leap year
+  });
+});
+
+describe("validateRequestInput", () => {
+  const ok = {
+    providerId: "P",
+    startDate: "2026-07-04",
+    endDate: "2026-07-04",
+    kind: "OFF",
+  };
+
+  it("accepts a minimal valid OFF request and defaults strength/source", () => {
+    const r = validateRequestInput(ok);
+    expect("value" in r).toBe(true);
+    if ("value" in r) {
+      expect(r.value.strength).toBe("hard");
+      expect(r.value.source).toBe("scheduler");
+      expect(r.value.shiftTypeIds).toEqual([]);
+      expect(r.value.leaveShiftTypeId).toBeNull();
+    }
+  });
+
+  it("defaults endDate to startDate when omitted", () => {
+    const r = validateRequestInput({ ...ok, endDate: undefined });
+    expect("value" in r && r.value.endDate).toBe("2026-07-04");
+  });
+
+  it("rejects missing providerId", () => {
+    expect(validateRequestInput({ ...ok, providerId: "" })).toEqual({ error: "providerId required" });
+  });
+
+  it("rejects malformed/impossible dates (no 500 reaches prisma)", () => {
+    expect(validateRequestInput({ ...ok, startDate: "2026-02-31" })).toHaveProperty("error");
+    expect(validateRequestInput({ ...ok, startDate: "7/4/2026" })).toHaveProperty("error");
+    expect(validateRequestInput({ ...ok, endDate: "garbage" })).toHaveProperty("error");
+  });
+
+  it("rejects startDate after endDate", () => {
+    const r = validateRequestInput({ ...ok, startDate: "2026-07-10", endDate: "2026-07-04" });
+    expect(r).toHaveProperty("error");
+  });
+
+  it("rejects unknown kind/strength/source", () => {
+    expect(validateRequestInput({ ...ok, kind: "VACATION" })).toHaveProperty("error");
+    expect(validateRequestInput({ ...ok, strength: "kinda" })).toHaveProperty("error");
+    expect(validateRequestInput({ ...ok, source: "carrier-pigeon" })).toHaveProperty("error");
+  });
+
+  it("requires shiftTypeIds for NEGATE_SHIFT / REQUEST_SHIFT", () => {
+    expect(validateRequestInput({ ...ok, kind: "NEGATE_SHIFT", shiftTypeIds: [] })).toHaveProperty("error");
+    const r = validateRequestInput({ ...ok, kind: "REQUEST_SHIFT", shiftTypeIds: ["orc"] });
+    expect("value" in r && r.value.shiftTypeIds).toEqual(["orc"]);
+  });
+
+  it("requires leaveShiftTypeId for LEAVE and drops irrelevant fields", () => {
+    expect(validateRequestInput({ ...ok, kind: "LEAVE" })).toHaveProperty("error");
+    const r = validateRequestInput({ ...ok, kind: "LEAVE", leaveShiftTypeId: "al", shiftTypeIds: ["orc"] });
+    // shiftTypeIds not carried for LEAVE
+    expect("value" in r && r.value.shiftTypeIds).toEqual([]);
+    expect("value" in r && r.value.leaveShiftTypeId).toBe("al");
+  });
+
+  it("drops leaveShiftTypeId for non-LEAVE kinds", () => {
+    const r = validateRequestInput({ ...ok, kind: "NEGATE_SHIFT", shiftTypeIds: ["orc"], leaveShiftTypeId: "al" });
+    expect("value" in r && r.value.leaveShiftTypeId).toBeNull();
+  });
+
+  it("filters non-string entries out of shiftTypeIds", () => {
+    const r = validateRequestInput({ ...ok, kind: "NEGATE_SHIFT", shiftTypeIds: ["orc", 5, null, "orl"] });
+    expect("value" in r && r.value.shiftTypeIds).toEqual(["orc", "orl"]);
+  });
+
+  it("handles non-object body without throwing", () => {
+    expect(validateRequestInput(null)).toHaveProperty("error");
+    expect(validateRequestInput(undefined)).toHaveProperty("error");
+    expect(validateRequestInput("string")).toHaveProperty("error");
   });
 });

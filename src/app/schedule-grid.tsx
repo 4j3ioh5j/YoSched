@@ -9,7 +9,11 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleProvidersForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
+import { requestsForProviderDate, describeRequest, type ScheduleRequestData } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
+
+// A schedule request as delivered to the grid (pure-module shape + display stamp).
+type GridRequest = ScheduleRequestData & { receivedAt: string };
 import { useEscape } from "@/lib/use-escape";
 
 type AvailabilityRuleData = {
@@ -130,6 +134,7 @@ type Props = {
   countColumns?: { label: string; shiftCodes: string[] }[];
   dateFormat?: string;
   currentVersions?: CurrentVersionMeta[];
+  scheduleRequests?: GridRequest[];
 };
 
 // The current (last saved/restored) version for a calendar month. snapshotHash
@@ -318,6 +323,7 @@ export function ScheduleGrid({
   countColumns = [],
   dateFormat: dateFormatProp,
   currentVersions = [],
+  scheduleRequests = [],
 }: Props) {
   const dateFormat = (dateFormatProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
   const today = new Date();
@@ -611,6 +617,33 @@ export function ScheduleGrid({
     for (const st of shiftTypes) map.set(st.id, st);
     return map;
   }, [shiftTypes]);
+
+  // Requests affecting each visible cell, keyed `${providerId}:${date}`. Includes
+  // pending (the grid renders them, distinct from approved). Empty cells omitted.
+  const requestsByCell = useMemo(() => {
+    const map = new Map<string, GridRequest[]>();
+    if (scheduleRequests.length === 0) return map;
+    for (const date of dates) {
+      for (const p of visibleProviders) {
+        const rs = requestsForProviderDate(scheduleRequests, p.id, date, { includePending: true });
+        if (rs.length > 0) map.set(`${p.id}:${date}`, rs);
+      }
+    }
+    return map;
+  }, [scheduleRequests, dates, visibleProviders]);
+
+  const requestTooltip = useCallback(
+    (reqs: GridRequest[]): string =>
+      reqs
+        .map((r) => {
+          const desc = describeRequest(r, (id) => shiftTypeMap.get(id)?.code ?? id);
+          const status = r.status === "pending" ? " (pending)" : "";
+          const recv = formatDate(parseDate(r.receivedAt.split("T")[0]), dateFormat);
+          return `${desc}${status} · received ${recv}`;
+        })
+        .join("\n"),
+    [shiftTypeMap, dateFormat],
+  );
 
   const providerInitialsMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -1990,6 +2023,15 @@ export function ScheduleGrid({
                     const isActiveCell = activeCol === p.id && isActiveRow;
                     const suggestion = suggestionMap.get(cellKey);
                     const isSuggested = !!suggestion;
+                    const reqs = requestsByCell.get(cellKey);
+                    const hasApprovedReq = reqs?.some((r) => r.status === "approved") ?? false;
+                    // Distinctive look for request days; selection/active/drag states win.
+                    const reqTint =
+                      reqs && !isSelected && !isActiveCell && !isDragTarget
+                        ? hasApprovedReq
+                          ? "bg-violet-900/25 border-l-2 border-l-violet-400"
+                          : "bg-violet-900/10 border-l-2 border-l-violet-400/40"
+                        : "";
 
                     return (
                       <td
@@ -1999,6 +2041,7 @@ export function ScheduleGrid({
                           `px-0.5 py-0.5 text-center border-slate-700/30 border relative ${canEdit ? "cursor-pointer" : "cursor-default"}`,
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
                           !ppEven ? "bg-slate-800/20" : "",
+                          reqTint,
                           isPickerTarget ? "ring-1 ring-inset ring-blue-400" : "",
                           isSelected ? "ring-2 ring-inset ring-emerald-400 bg-emerald-900/20" : "",
                           isDragTarget ? "ring-2 ring-inset ring-cyan-400 bg-cyan-900/20" : "",
@@ -2045,6 +2088,13 @@ export function ScheduleGrid({
                           <div className="text-[11px] text-slate-600">...</div>
                         ) : null}
                         {cw && <WarningDot warnings={cw} setTooltip={setTooltip} />}
+                        {reqs && (
+                          <span
+                            className={`absolute top-0 left-0 w-0 h-0 border-t-[8px] border-l-[8px] border-l-transparent ${hasApprovedReq ? "border-t-violet-400" : "border-t-violet-400/50"}`}
+                            onMouseEnter={(e) => showTip(setTooltip, requestTooltip(reqs), e)}
+                            onMouseLeave={() => setTooltip(null)}
+                          />
+                        )}
                       </td>
                     );
                   })}

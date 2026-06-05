@@ -11,7 +11,7 @@ export default async function Home() {
   const { error, permissions } = await getSession("schedule:view");
   if (error) redirect("/login");
   const canEdit = permissions!.includes("schedule:edit");
-  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, currentVersions] =
+  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, currentVersions, scheduleRequests] =
     await Promise.all([
       prisma.provider.findMany({
         // Active roster + any inactive provider that has assignments, so the grid
@@ -42,6 +42,9 @@ export default async function Home() {
         where: { isCurrent: true },
         select: { year: true, month: true, versionNumber: true, comment: true, snapshotHash: true, createdAt: true },
       }),
+      // Schedule requests — the grid filters to the visible month client-side and
+      // renders approved (live) vs pending (proposed) differently.
+      prisma.scheduleRequest.findMany({ orderBy: { receivedAt: "desc" } }),
     ]);
 
   const fairness = computeFairness({
@@ -183,6 +186,18 @@ export default async function Home() {
           comment: v.comment,
           snapshotHash: v.snapshotHash,
           savedAt: v.createdAt.toISOString(),
+        }))}
+        scheduleRequests={scheduleRequests.map((r) => ({
+          id: r.id,
+          providerId: r.providerId,
+          startDate: r.startDate.toISOString().split("T")[0],
+          endDate: r.endDate.toISOString().split("T")[0],
+          kind: r.kind as "OFF" | "LEAVE" | "NEGATE_SHIFT" | "REQUEST_SHIFT",
+          shiftTypeIds: r.shiftTypeIds,
+          leaveShiftTypeId: r.leaveShiftTypeId,
+          strength: r.strength as "hard" | "soft",
+          status: r.status as "pending" | "approved" | "declined" | "withdrawn" | "fulfilled",
+          receivedAt: r.receivedAt.toISOString(),
         }))}
       />
     </main>
