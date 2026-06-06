@@ -14,6 +14,8 @@ import {
   summarizeCellRequests,
   buildSelfRequestInput,
   canWithdrawOwnRequest,
+  summarizeLeaveQueue,
+  type LeaveQueueRequest,
   type ScheduleRequestData,
 } from "../schedule-requests";
 
@@ -614,5 +616,81 @@ describe("canWithdrawOwnRequest", () => {
   });
   it("rejects a missing request", () => {
     expect(canWithdrawOwnRequest(null, "me")).toBe(false);
+  });
+});
+
+describe("summarizeLeaveQueue", () => {
+  function lr(o: Partial<LeaveQueueRequest> & { providerId: string; startDate: string; endDate: string }): LeaveQueueRequest {
+    return { kind: "LEAVE", status: "approved", receivedAt: "2026-06-01T00:00:00.000Z", ...o };
+  }
+
+  it("returns null when nobody else is away in the range", () => {
+    const out = summarizeLeaveQueue({
+      requests: [lr({ providerId: "me", startDate: "2026-07-03", endDate: "2026-07-03" })],
+      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
+    });
+    expect(out).toBeNull();
+  });
+
+  it("counts other providers' OFF and LEAVE, not the caller's own", () => {
+    const out = summarizeLeaveQueue({
+      requests: [
+        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03", kind: "OFF" }),
+        lr({ providerId: "b", startDate: "2026-07-03", endDate: "2026-07-03", kind: "LEAVE" }),
+        lr({ providerId: "me", startDate: "2026-07-03", endDate: "2026-07-03" }),
+      ],
+      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
+    });
+    expect(out?.othersOnPeak).toBe(2);
+  });
+
+  it("ignores non-leave kinds and inactive statuses", () => {
+    const out = summarizeLeaveQueue({
+      requests: [
+        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03", kind: "NEGATE_SHIFT" }),
+        lr({ providerId: "b", startDate: "2026-07-03", endDate: "2026-07-03", status: "declined" }),
+        lr({ providerId: "c", startDate: "2026-07-03", endDate: "2026-07-03", status: "withdrawn" }),
+      ],
+      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
+    });
+    expect(out).toBeNull();
+  });
+
+  it("a new request queues last (position = others + 1)", () => {
+    const out = summarizeLeaveQueue({
+      requests: [
+        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03" }),
+        lr({ providerId: "b", startDate: "2026-07-03", endDate: "2026-07-03" }),
+      ],
+      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
+    });
+    expect(out).toEqual({ peakDate: "2026-07-03", othersOnPeak: 2, positionOnPeak: 3 });
+  });
+
+  it("an existing request ranks first-come by receivedAt", () => {
+    const out = summarizeLeaveQueue({
+      requests: [
+        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-01T00:00:00.000Z" }),
+        lr({ providerId: "b", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-10T00:00:00.000Z" }),
+      ],
+      // mine arrived between a and b → I'm #2 of 3
+      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: "2026-06-05T00:00:00.000Z",
+    });
+    expect(out?.positionOnPeak).toBe(2);
+    expect(out?.othersOnPeak).toBe(2);
+  });
+
+  it("reports the most-contended date across a range", () => {
+    const out = summarizeLeaveQueue({
+      requests: [
+        lr({ providerId: "a", startDate: "2026-07-01", endDate: "2026-07-05" }), // covers whole range
+        lr({ providerId: "b", startDate: "2026-07-03", endDate: "2026-07-03" }), // adds to the 3rd
+        lr({ providerId: "c", startDate: "2026-07-03", endDate: "2026-07-04" }),
+      ],
+      providerId: "me", start: "2026-07-01", end: "2026-07-05", receivedAtIso: null,
+    });
+    // 07-03 has a, b, c = 3 others (the peak)
+    expect(out?.peakDate).toBe("2026-07-03");
+    expect(out?.othersOnPeak).toBe(3);
   });
 });

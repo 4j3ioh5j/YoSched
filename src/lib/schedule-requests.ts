@@ -482,3 +482,78 @@ export function canWithdrawOwnRequest(
 ): boolean {
   return !!request && request.providerId === providerId && request.status === "pending";
 }
+
+// ---- Leave queue feedback -------------------------------------------------
+// "How many people already requested leave on this date, and where do I stand?"
+// OFF and LEAVE both mean "away" for queueing. Only live requests count (pending
+// or approved — declined/withdrawn don't hold a slot). Ordering is first-come by
+// receivedAt. Everything here is COUNTS ONLY — never the other providers' names.
+
+const LEAVE_QUEUE_KINDS: ReadonlySet<RequestKind> = new Set<RequestKind>(["OFF", "LEAVE"]);
+const LEAVE_QUEUE_STATUSES: ReadonlySet<RequestStatus> = new Set<RequestStatus>(["pending", "approved"]);
+
+export type LeaveQueueRequest = {
+  providerId: string;
+  startDate: string;
+  endDate: string;
+  kind: RequestKind;
+  status: RequestStatus;
+  receivedAt: string; // ISO — first-come ordering
+};
+
+export type LeaveQueueSummary = {
+  peakDate: string; // the most-contended date in the requested range
+  othersOnPeak: number; // # of OTHER providers already away on peakDate
+  positionOnPeak: number; // this provider's 1-based queue position on peakDate (first-come)
+};
+
+function isLeaveQueueRow(r: LeaveQueueRequest): boolean {
+  return LEAVE_QUEUE_KINDS.has(r.kind) && LEAVE_QUEUE_STATUSES.has(r.status);
+}
+
+/** Summarize the leave queue a provider faces over an inclusive [start,end] range.
+ *  Reports the single most-contended date (most other providers away) and where
+ *  this provider stands on it, first-come by receivedAt.
+ *
+ *  `receivedAtIso = null` means an as-yet-unsubmitted request: they queue last on
+ *  every date (position = others + 1). For an existing request pass its receivedAt
+ *  so earlier submitters rank ahead. Returns null when no date in the range has any
+ *  other leave. Pure — counts only, never identities. */
+export function summarizeLeaveQueue({
+  requests,
+  providerId,
+  start,
+  end,
+  receivedAtIso,
+}: {
+  requests: LeaveQueueRequest[];
+  providerId: string;
+  start: string;
+  end: string;
+  receivedAtIso: string | null;
+}): LeaveQueueSummary | null {
+  if (start > end) return null;
+  const others = requests.filter((r) => r.providerId !== providerId && isLeaveQueueRow(r));
+
+  let best: LeaveQueueSummary | null = null;
+  // Walk each date in the inclusive range (ISO date strings, lexical-safe).
+  for (let d = start; d <= end; d = nextIsoDate(d)) {
+    const onDate = others.filter((r) => coversDate(r, d));
+    const othersOnPeak = onDate.length;
+    if (othersOnPeak === 0) continue;
+    // First-come: how many already-queued submitters rank ahead of this provider.
+    const ahead = receivedAtIso === null
+      ? othersOnPeak // a new request is last
+      : onDate.filter((r) => r.receivedAt < receivedAtIso).length;
+    const candidate: LeaveQueueSummary = { peakDate: d, othersOnPeak, positionOnPeak: ahead + 1 };
+    if (!best || candidate.othersOnPeak > best.othersOnPeak) best = candidate;
+  }
+  return best;
+}
+
+/** Next calendar date for a valid "YYYY-MM-DD" string (UTC-safe). */
+function nextIsoDate(d: string): string {
+  const dt = new Date(d + "T00:00:00Z");
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  return dt.toISOString().slice(0, 10);
+}

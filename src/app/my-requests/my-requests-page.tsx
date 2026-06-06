@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { describeRequest } from "@/lib/schedule-requests";
+import { useEffect, useMemo, useState } from "react";
+import { describeRequest, type LeaveQueueSummary } from "@/lib/schedule-requests";
 import { formatDate, type DateFormatKey } from "@/lib/date-format";
 
 type Kind = "OFF" | "LEAVE" | "NEGATE_SHIFT" | "REQUEST_SHIFT";
@@ -77,11 +77,37 @@ export function MyRequestsPage({
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [justSubmitted, setJustSubmitted] = useState<RequestRow | null>(null);
+  const [queue, setQueue] = useState<LeaveQueueSummary | null>(null);
 
   const needsShifts = kind === "NEGATE_SHIFT" || kind === "REQUEST_SHIFT";
   const needsLeave = kind === "LEAVE";
   // Leave is inherently firm; the flexible toggle only applies to the others.
   const showFlexible = kind !== "LEAVE";
+  // The queue feedback only makes sense for "away" requests (time off / leave).
+  const isLeaveKind = kind === "OFF" || kind === "LEAVE";
+
+  // Live leave-queue feedback: how many others are already away over the chosen
+  // range, and where this provider would stand. Debounced; counts only (the API
+  // never returns identities). Cleared whenever the inputs can't produce one.
+  useEffect(() => {
+    if (!isLeaveKind || !startDate) {
+      setQueue(null);
+      return;
+    }
+    const end = endDate && endDate >= startDate ? endDate : startDate;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/my-requests/leave-queue?start=${startDate}&end=${end}`);
+        if (!res.ok) { if (!cancelled) setQueue(null); return; }
+        const data = await res.json();
+        if (!cancelled) setQueue(data.summary ?? null);
+      } catch {
+        if (!cancelled) setQueue(null);
+      }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [isLeaveKind, startDate, endDate]);
 
   function resetForm() {
     setStartDate("");
@@ -226,6 +252,16 @@ export function MyRequestsPage({
               />
             </label>
           </div>
+
+          {isLeaveKind && queue && (
+            <div className="p-2.5 rounded border border-sky-700/50 bg-sky-900/20 text-xs text-sky-200">
+              <span className="font-medium">{queue.othersOnPeak}</span>{" "}
+              {queue.othersOnPeak === 1 ? "person has" : "people have"} already requested leave on{" "}
+              <span className="font-medium">{formatDate(parseDate(queue.peakDate), fmt)}</span>
+              {(endDate || startDate) !== startDate ? " (the busiest day in your range)" : ""}. You&apos;d be{" "}
+              <span className="font-medium">#{queue.positionOnPeak}</span> in the queue.
+            </div>
+          )}
 
           {needsLeave && (
             <label className="block text-sm">
