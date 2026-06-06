@@ -338,19 +338,17 @@ export function fairnessColor(deviation: number, t: EquityThresholds = DEFAULT_T
 }
 
 /**
- * Sequential "temperature" ramp for the equity heatmap: coldest (well below the
- * department average) → hottest (well above). Unlike `fairnessColor`'s diverging
- * palette, this is a single low→high gradient so the grid reads like a heat map.
- *   cyan → pale green → yellow → orange → red
- * Cut points are symmetric about 0 at ±low and ±high, giving a neutral yellow
- * band around the average. Positive deviation = more burden = hotter.
+ * Continuous "temperature" ramp for the equity heatmap: a smooth yellow→red
+ * gradient as burden rises. R and B are pinned (255, 0); green falls from 255 to
+ * 0, so (255,255,0) at the cold end → (255,0,0) at the hot end. The deviation is
+ * mapped linearly across [-high, +high] (clamped), making the department average
+ * (0) the gradient's midpoint. Returns a 6-digit hex so callers can still append
+ * an alpha suffix (e.g. + "33"). Positive deviation = more burden = redder.
  */
 export function heatmapTempColor(deviation: number, t: EquityThresholds = DEFAULT_THRESHOLDS): string {
-  if (deviation > t.high) return "#ef4444"; // red — hottest
-  if (deviation > t.low) return "#f97316"; // orange
-  if (deviation >= -t.low) return "#eab308"; // yellow — neutral
-  if (deviation >= -t.high) return "#86efac"; // pale green
-  return "#06b6d4"; // cyan — coldest
+  const frac = Math.min(1, Math.max(0, (deviation + t.high) / (2 * t.high)));
+  const g = Math.round(255 * (1 - frac));
+  return "#ff" + g.toString(16).padStart(2, "0") + "00";
 }
 
 export function fairnessLabel(burden: number, t: EquityThresholds = DEFAULT_THRESHOLDS): string {

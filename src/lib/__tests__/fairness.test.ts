@@ -273,19 +273,24 @@ describe("fairnessColor", () => {
 });
 
 describe("heatmapTempColor", () => {
-  it("ramps cyan → pale green → yellow → orange → red as burden rises", () => {
-    expect(heatmapTempColor(-2.0)).toBe("#06b6d4"); // coldest
-    expect(heatmapTempColor(-1.0)).toBe("#86efac"); // pale green
-    expect(heatmapTempColor(0.0)).toBe("#eab308"); // neutral yellow
-    expect(heatmapTempColor(1.0)).toBe("#f97316"); // orange
-    expect(heatmapTempColor(2.0)).toBe("#ef4444"); // hottest
+  it("ramps yellow (255,255,0) → red (255,0,0) as burden rises", () => {
+    // default thresholds: high = 1.5, so the ramp saturates at ±1.5
+    expect(heatmapTempColor(-1.5)).toBe("#ffff00"); // cold end — pure yellow
+    expect(heatmapTempColor(0.0)).toBe("#ff8000"); // midpoint — green at 128
+    expect(heatmapTempColor(1.5)).toBe("#ff0000"); // hot end — pure red
   });
 
-  it("is symmetric: the neutral yellow band spans ±low", () => {
-    expect(heatmapTempColor(0.25)).toBe("#eab308");
-    expect(heatmapTempColor(-0.25)).toBe("#eab308");
-    expect(heatmapTempColor(0.26)).toBe("#f97316");
-    expect(heatmapTempColor(-0.26)).toBe("#86efac");
+  it("clamps beyond ±high to the endpoints", () => {
+    expect(heatmapTempColor(-5.0)).toBe("#ffff00");
+    expect(heatmapTempColor(5.0)).toBe("#ff0000");
+  });
+
+  it("keeps R and B pinned at ff/00 across the range", () => {
+    for (const d of [-1.5, -0.5, 0, 0.5, 1.5]) {
+      const c = heatmapTempColor(d);
+      expect(c.slice(0, 3)).toBe("#ff"); // red channel
+      expect(c.slice(5)).toBe("00"); // blue channel
+    }
   });
 });
 

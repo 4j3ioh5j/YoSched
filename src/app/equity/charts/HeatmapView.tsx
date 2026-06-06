@@ -8,8 +8,8 @@ import { heatmapTempColor, type EquityThresholds } from "@/lib/fairness";
  * Shift-codes × providers equity heatmap. Rows (y-axis) are the tracked shift
  * codes plus an optional "Holidays" row; columns (x-axis) are the staff. Each
  * cell shows the raw count, tinted by the provider's FTE-normalized per-shift
- * z-score via `heatmapTempColor()` — a cyan→red temperature ramp (cool = below
- * average burden, warm = above). The shaping/selection logic is the pure
+ * z-score via `heatmapTempColor()` — a yellow→red temperature ramp (yellow =
+ * below average burden, red = above). The shaping/selection logic is the pure
  * `shapeHeatmap`; this component is the thin view + color mapping.
  */
 export function HeatmapView({
@@ -104,7 +104,7 @@ export function HeatmapView({
         </div>
 
         <p className="text-[10px] text-slate-600 mt-3">
-          Cell color = FTE-normalized z-score (cyan = well below average, red = well above). Number = raw count.
+          Cell color = FTE-normalized z-score (yellow = below average, red = well above). Number = raw count.
         </p>
       </div>
     </div>
