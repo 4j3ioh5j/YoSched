@@ -19,7 +19,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay } = body;
 
   const prefs = await prisma.schedulingPreferences.upsert({
     where: { id: "default" },
@@ -29,6 +29,7 @@ export async function PUT(req: NextRequest) {
       ...(typeof preferSequentialOff === "boolean" && { preferSequentialOff }),
       ...(typeof deviceTrustDays === "number" && deviceTrustDays >= 1 && deviceTrustDays <= 365 && { deviceTrustDays: Math.floor(deviceTrustDays) }),
       ...(typeof dateFormat === "string" && isValidDateFormat(dateFormat) && { dateFormat }),
+      ...(typeof maxLeavePerDay === "number" && maxLeavePerDay >= 0 && maxLeavePerDay <= 999 && { maxLeavePerDay: Math.floor(maxLeavePerDay) }),
     },
     create: {
       id: "default",

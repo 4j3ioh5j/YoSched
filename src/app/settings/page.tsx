@@ -31,6 +31,7 @@ export default async function Settings() {
     prefer4DayWeekends: schedulingPrefsRow?.prefer4DayWeekends ?? true,
     preferSequentialOff: schedulingPrefsRow?.preferSequentialOff ?? true,
     dateFormat: schedulingPrefsRow?.dateFormat ?? "MMMM D, YYYY",
+    maxLeavePerDay: schedulingPrefsRow?.maxLeavePerDay ?? 0,
   };
 
   return (

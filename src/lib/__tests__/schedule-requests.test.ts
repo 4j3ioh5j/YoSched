@@ -680,6 +680,34 @@ describe("summarizeLeaveQueue", () => {
     expect(out?.othersOnPeak).toBe(2);
   });
 
+  it("counts distinct providers, not rows (duplicate overlapping requests = one person)", () => {
+    const out = summarizeLeaveQueue({
+      requests: [
+        // provider a has TWO overlapping leave rows on the same date
+        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-02T00:00:00.000Z" }),
+        lr({ providerId: "a", startDate: "2026-07-01", endDate: "2026-07-05", kind: "OFF", receivedAt: "2026-06-08T00:00:00.000Z" }),
+        lr({ providerId: "b", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-04T00:00:00.000Z" }),
+      ],
+      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
+    });
+    // a (counted once) + b = 2 distinct others, so a new request is #3 — not #4.
+    expect(out?.othersOnPeak).toBe(2);
+    expect(out?.positionOnPeak).toBe(3);
+  });
+
+  it("ranks first-come by a provider's EARLIEST request when they have several", () => {
+    const out = summarizeLeaveQueue({
+      requests: [
+        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-10T00:00:00.000Z" }),
+        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-01T00:00:00.000Z" }),
+      ],
+      // a's earliest is 06-01 (before mine 06-05) → a is ahead → I'm #2
+      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: "2026-06-05T00:00:00.000Z",
+    });
+    expect(out?.othersOnPeak).toBe(1);
+    expect(out?.positionOnPeak).toBe(2);
+  });
+
   it("reports the most-contended date across a range", () => {
     const out = summarizeLeaveQueue({
       requests: [

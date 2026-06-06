@@ -538,13 +538,21 @@ export function summarizeLeaveQueue({
   let best: LeaveQueueSummary | null = null;
   // Walk each date in the inclusive range (ISO date strings, lexical-safe).
   for (let d = start; d <= end; d = nextIsoDate(d)) {
-    const onDate = others.filter((r) => coversDate(r, d));
-    const othersOnPeak = onDate.length;
+    // Count distinct PROVIDERS away, not rows — one person with two overlapping
+    // requests is still one person off. Track each provider's earliest covering
+    // request so first-come ordering uses when they first got in line.
+    const earliestByProvider = new Map<string, string>();
+    for (const r of others) {
+      if (!coversDate(r, d)) continue;
+      const prev = earliestByProvider.get(r.providerId);
+      if (prev === undefined || r.receivedAt < prev) earliestByProvider.set(r.providerId, r.receivedAt);
+    }
+    const othersOnPeak = earliestByProvider.size;
     if (othersOnPeak === 0) continue;
-    // First-come: how many already-queued submitters rank ahead of this provider.
+    // First-come: how many distinct providers got in line ahead of this one.
     const ahead = receivedAtIso === null
       ? othersOnPeak // a new request is last
-      : onDate.filter((r) => r.receivedAt < receivedAtIso).length;
+      : [...earliestByProvider.values()].filter((ra) => ra < receivedAtIso).length;
     const candidate: LeaveQueueSummary = { peakDate: d, othersOnPeak, positionOnPeak: ahead + 1 };
     if (!best || candidate.othersOnPeak > best.othersOnPeak) best = candidate;
   }

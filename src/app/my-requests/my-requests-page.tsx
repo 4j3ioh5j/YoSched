@@ -49,11 +49,13 @@ function parseDate(s: string): Date {
 export function MyRequestsPage({
   providerName,
   dateFormat,
+  maxLeavePerDay,
   shiftTypes,
   initialRequests,
 }: {
   providerName: string;
   dateFormat: string;
+  maxLeavePerDay: number;
   shiftTypes: ShiftType[];
   initialRequests: RequestRow[];
 }) {
@@ -253,15 +255,23 @@ export function MyRequestsPage({
             </label>
           </div>
 
-          {isLeaveKind && queue && (
-            <div className="p-2.5 rounded border border-sky-700/50 bg-sky-900/20 text-xs text-sky-200">
-              <span className="font-medium">{queue.othersOnPeak}</span>{" "}
-              {queue.othersOnPeak === 1 ? "person has" : "people have"} already requested leave on{" "}
-              <span className="font-medium">{formatDate(parseDate(queue.peakDate), fmt)}</span>
-              {(endDate || startDate) !== startDate ? " (the busiest day in your range)" : ""}. You&apos;d be{" "}
-              <span className="font-medium">#{queue.positionOnPeak}</span> in the queue.
-            </div>
-          )}
+          {isLeaveKind && queue && (() => {
+            // The new request queues last, so positionOnPeak is also the total off
+            // that day if it's granted. Over the soft cap → warn, never block.
+            const overCap = maxLeavePerDay > 0 && queue.positionOnPeak > maxLeavePerDay;
+            return (
+              <div className={`p-2.5 rounded border text-xs ${overCap ? "border-amber-700/50 bg-amber-900/20 text-amber-200" : "border-sky-700/50 bg-sky-900/20 text-sky-200"}`}>
+                <span className="font-medium">{queue.othersOnPeak}</span>{" "}
+                {queue.othersOnPeak === 1 ? "person has" : "people have"} already requested leave on{" "}
+                <span className="font-medium">{formatDate(parseDate(queue.peakDate), fmt)}</span>
+                {(endDate || startDate) !== startDate ? " (the busiest day in your range)" : ""}. You&apos;d be{" "}
+                <span className="font-medium">#{queue.positionOnPeak}</span> in the queue.
+                {overCap && (
+                  <> This is over the suggested limit of <span className="font-medium">{maxLeavePerDay}</span> off that day — you can still submit; the scheduler will decide.</>
+                )}
+              </div>
+            );
+          })()}
 
           {needsLeave && (
             <label className="block text-sm">

@@ -41,6 +41,7 @@ export default async function MyRequests() {
       <MyRequestsPage
         providerName={provider?.name ?? "You"}
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
+        maxLeavePerDay={schedPrefs?.maxLeavePerDay ?? 0}
         shiftTypes={shiftTypes}
         initialRequests={requests.map((r) => ({
           id: r.id,

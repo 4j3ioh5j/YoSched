@@ -291,6 +291,7 @@ model SchedulingPreferences {
   equityThresholdHigh   Float   @default(1.5)
   deviceTrustDays       Int     @default(30)
   dateFormat            String  @default("MMMM D, YYYY")
+  maxLeavePerDay        Int     @default(0) // soft cap on providers off per day; 0 = no cap
 
   @@map("scheduling_preferences")
 }

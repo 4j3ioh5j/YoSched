@@ -64,6 +64,7 @@ type SchedulingPrefs = {
   prefer4DayWeekends: boolean;
   preferSequentialOff: boolean;
   dateFormat: string;
+  maxLeavePerDay: number;
 };
 
 type DefaultAvailabilityRule = {
@@ -1837,6 +1838,26 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
     { key: "preferSequentialOff", label: "Prefer sequential days off", description: "Group days off together rather than scattering them through the week" },
   ];
 
+  const [leapStatus, setLeapStatus] = useState<SaveStatus>("idle");
+  async function saveMaxLeave(value: number) {
+    const prev = prefs.maxLeavePerDay;
+    setPrefs((p) => ({ ...p, maxLeavePerDay: value }));
+    setLeapStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxLeavePerDay: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setLeapStatus("saved");
+      setTimeout(() => setLeapStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, maxLeavePerDay: prev }));
+      setLeapStatus("error");
+    }
+  }
+
   return (
     <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
       <SectionHeader
@@ -1869,6 +1890,28 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
             </div>
           </label>
         ))}
+
+        <div className="flex items-start gap-3 pt-2 border-t border-slate-700/50">
+          <div className="flex-1">
+            <div className="text-sm font-medium text-slate-200">Soft leave limit per day</div>
+            <div className="text-xs text-slate-400">
+              Warn (don&apos;t block) when this many providers already have leave on a date. 0 = no limit.
+              {leapStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
+              {leapStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
+              {leapStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
+            </div>
+          </div>
+          <input
+            type="number"
+            min={0}
+            max={999}
+            value={prefs.maxLeavePerDay}
+            disabled={!canEdit}
+            onChange={(e) => setPrefs((p) => ({ ...p, maxLeavePerDay: Math.max(0, Math.min(999, parseInt(e.target.value) || 0)) }))}
+            onBlur={(e) => canEdit && saveMaxLeave(Math.max(0, Math.min(999, parseInt(e.target.value) || 0)))}
+            className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 text-center focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+          />
+        </div>
       </div>
     </section>
   );
