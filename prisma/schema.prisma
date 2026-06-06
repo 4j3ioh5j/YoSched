@@ -20,6 +20,7 @@ model User {
   passwordHash   String
   role           Role      @default(viewer)
   groupId        String?
+  providerId     String?   @unique // links this login to a Provider record (self-service requests)
   isActive       Boolean   @default(true)
   totpSecret     String?
   totpEnabled    Boolean   @default(false)
@@ -29,6 +30,7 @@ model User {
   updatedAt      DateTime  @updatedAt
 
   group Group? @relation(fields: [groupId], references: [id])
+  provider Provider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
 
   savedGraphViews SavedGraphView[]
 
@@ -164,6 +166,7 @@ model Provider {
   shiftEligibilityRules   ShiftEligibilityRule[]
   shiftMinimumTargets     ShiftMinimumTarget[]
   scheduleRequests        ScheduleRequest[]
+  loginUser               User?
 
   @@map("providers")
 }

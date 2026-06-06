@@ -1,16 +1,30 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { validatePassword } from "@/lib/password";
+import { normalizeProviderId, isProviderLinkConflict } from "@/lib/user-link";
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
+
+// Shape returned for every user row — includes the linked provider (if any).
+const USER_SELECT = {
+  id: true, email: true, name: true, role: true, groupId: true, providerId: true, isActive: true, totpEnabled: true, createdAt: true,
+  group: { select: { name: true, level: true } },
+  provider: { select: { id: true, name: true, initials: true } },
+} as const;
+
+// True if `wantedProviderId` is already linked to a user other than `editingUserId`.
+async function providerLinkConflict(wantedProviderId: string | null, editingUserId: string | null): Promise<boolean> {
+  if (!wantedProviderId) return false;
+  const owner = await prisma.user.findUnique({ where: { providerId: wantedProviderId }, select: { id: true } });
+  return isProviderLinkConflict({ wantedProviderId, currentOwnerUserId: owner?.id ?? null, editingUserId });
+}
 
 export async function GET() {
   const { error } = await getSession("users:view");
   if (error) return error;
 
   const users = await prisma.user.findMany({
-    select: { id: true, email: true, name: true, role: true, groupId: true, isActive: true, totpEnabled: true, createdAt: true,
-      group: { select: { name: true, level: true } } },
+    select: USER_SELECT,
     orderBy: { createdAt: "asc" },
   });
   return NextResponse.json(users);
@@ -20,9 +34,14 @@ export async function POST(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
-  const { email, name, password, role, groupId } = await req.json();
+  const { email, name, password, role, groupId, providerId } = await req.json();
   if (!email || !name || !password) {
     return NextResponse.json({ error: "Email, name, and password required" }, { status: 400 });
+  }
+
+  const linkProviderId = normalizeProviderId(providerId);
+  if (await providerLinkConflict(linkProviderId, null)) {
+    return NextResponse.json({ error: "That provider is already linked to another login" }, { status: 409 });
   }
 
   const { valid, errors } = validatePassword(password);
@@ -45,9 +64,8 @@ export async function POST(req: NextRequest) {
   const defaultGroup = groupId ? undefined : await prisma.group.findUnique({ where: { name: "Staff" }, select: { id: true } });
   const passwordHash = await hash(password, 12);
   const user = await prisma.user.create({
-    data: { email, name, passwordHash, role: role || "viewer", groupId: groupId || defaultGroup?.id },
-    select: { id: true, email: true, name: true, role: true, groupId: true, isActive: true, totpEnabled: true, createdAt: true,
-      group: { select: { name: true, level: true } } },
+    data: { email, name, passwordHash, role: role || "viewer", groupId: groupId || defaultGroup?.id, providerId: linkProviderId },
+    select: USER_SELECT,
   });
 
   return NextResponse.json(user);
@@ -57,7 +75,7 @@ export async function PUT(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
-  const { id, email, name, password, role, groupId, isActive } = await req.json();
+  const { id, email, name, password, role, groupId, isActive, providerId } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   const targetUser = await prisma.user.findUnique({
@@ -81,6 +99,15 @@ export async function PUT(req: NextRequest) {
   if (role) data.role = role;
   if (groupId) data.groupId = groupId;
   if (typeof isActive === "boolean") data.isActive = isActive;
+  // providerId is only touched when the key is present (so {id,isActive} toggles
+  // don't clear an existing link). An empty value unlinks; a real id links.
+  if (providerId !== undefined) {
+    const linkProviderId = normalizeProviderId(providerId);
+    if (await providerLinkConflict(linkProviderId, id)) {
+      return NextResponse.json({ error: "That provider is already linked to another login" }, { status: 409 });
+    }
+    data.providerId = linkProviderId;
+  }
   if (password) {
     const { valid, errors } = validatePassword(password);
     if (!valid) {
@@ -92,8 +119,7 @@ export async function PUT(req: NextRequest) {
   const user = await prisma.user.update({
     where: { id },
     data,
-    select: { id: true, email: true, name: true, role: true, groupId: true, isActive: true, totpEnabled: true, createdAt: true,
-      group: { select: { name: true, level: true } } },
+    select: USER_SELECT,
   });
 
   return NextResponse.json(user);

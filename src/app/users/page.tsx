@@ -10,16 +10,22 @@ export default async function Page() {
   const result = await getSession("users:view");
   if (result.error) redirect("/");
 
-  const [users, prefs, groups] = await Promise.all([
+  const [users, prefs, groups, providers] = await Promise.all([
     prisma.user.findMany({
-      select: { id: true, email: true, name: true, role: true, groupId: true, isActive: true, totpEnabled: true, createdAt: true,
-        group: { select: { name: true, level: true } } },
+      select: { id: true, email: true, name: true, role: true, groupId: true, providerId: true, isActive: true, totpEnabled: true, createdAt: true,
+        group: { select: { name: true, level: true } },
+        provider: { select: { id: true, name: true, initials: true } } },
       orderBy: { createdAt: "asc" },
     }),
     prisma.schedulingPreferences.findFirst(),
     prisma.group.findMany({
       orderBy: { level: "desc" },
       select: { id: true, name: true, level: true },
+    }),
+    prisma.provider.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: { id: true, name: true, initials: true },
     }),
   ]);
 
@@ -31,6 +37,7 @@ export default async function Page() {
         currentUserId={result.userId!}
         currentGroupLevel={result.groupLevel!}
         groups={groups}
+        providers={providers}
         canEditUsers={result.permissions!.includes("users:edit")}
         canViewGroups={result.permissions!.includes("groups:view")}
         canEditGroups={result.permissions!.includes("groups:edit")}
