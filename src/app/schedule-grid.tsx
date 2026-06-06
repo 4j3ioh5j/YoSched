@@ -10,11 +10,20 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleProvidersForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
-import { requestsForProviderDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, type ScheduleRequestData, type PickerMarks } from "@/lib/schedule-requests";
+import { requestsForProviderDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
 
 // A schedule request as delivered to the grid (pure-module shape + display stamp).
 type GridRequest = ScheduleRequestData & { receivedAt: string };
+
+// Box/letter colors per request category (static classes for Tailwind).
+const REQ_CAT_CLASSES: Record<RequestCategory | "mixed", { ring: string; ringFaint: string; text: string; bg: string }> = {
+  leave: { ring: "ring-amber-400", ringFaint: "ring-amber-400/40", text: "text-amber-300", bg: "bg-amber-900/15" },
+  restricted: { ring: "ring-rose-400", ringFaint: "ring-rose-400/40", text: "text-rose-300", bg: "bg-rose-900/15" },
+  want: { ring: "ring-emerald-400", ringFaint: "ring-emerald-400/40", text: "text-emerald-300", bg: "bg-emerald-900/15" },
+  off: { ring: "ring-sky-400", ringFaint: "ring-sky-400/40", text: "text-sky-300", bg: "bg-sky-900/15" },
+  mixed: { ring: "ring-violet-400", ringFaint: "ring-violet-400/40", text: "text-violet-300", bg: "bg-violet-900/15" },
+};
 import { useEscape } from "@/lib/use-escape";
 
 type AvailabilityRuleData = {
@@ -637,15 +646,16 @@ export function ScheduleGrid({
   }, [localRequests, dates, visibleProviders]);
 
   const requestTooltip = useCallback(
-    (reqs: GridRequest[]): string =>
-      reqs
-        .map((r) => {
-          const desc = describeRequest(r, (id) => shiftTypeMap.get(id)?.code ?? id);
-          const status = r.status === "pending" ? " (pending)" : "";
-          const recv = formatDate(parseDate(r.receivedAt.split("T")[0]), dateFormat);
-          return `${desc}${status} · received ${recv}`;
-        })
-        .join("\n"),
+    (reqs: GridRequest[], date: string): string => {
+      const header = `Requests · ${formatDate(parseDate(date), dateFormat)}`;
+      const lines = reqs.map((r) => {
+        const desc = describeRequest(r, (id) => shiftTypeMap.get(id)?.code ?? id);
+        const recv = formatDate(parseDate(r.receivedAt.split("T")[0]), dateFormat);
+        const status = r.status === "approved" ? "approved" : "pending";
+        return `• ${desc} — ${status}, rec'd ${recv}`;
+      });
+      return [header, ...lines].join("\n");
+    },
     [shiftTypeMap, dateFormat],
   );
 
@@ -2090,13 +2100,12 @@ export function ScheduleGrid({
                     const suggestion = suggestionMap.get(cellKey);
                     const isSuggested = !!suggestion;
                     const reqs = requestsByCell.get(cellKey);
-                    const hasApprovedReq = reqs?.some((r) => r.status === "approved") ?? false;
-                    // Distinctive look for request days; selection/active/drag states win.
-                    const reqTint =
-                      reqs && !isSelected && !isActiveCell && !isDragTarget
-                        ? hasApprovedReq
-                          ? "bg-violet-900/25 border-l-2 border-l-violet-400"
-                          : "bg-violet-900/10 border-l-2 border-l-violet-400/40"
+                    const reqSummary = reqs ? summarizeCellRequests(reqs, (id) => shiftTypeMap.get(id)?.code ?? id) : null;
+                    const reqCls = reqSummary ? REQ_CAT_CLASSES[reqSummary.category] : null;
+                    // Boxed, category-colored request cell; selection/active/drag win.
+                    const reqBox =
+                      reqSummary && !isSelected && !isActiveCell && !isDragTarget && !isPickerTarget
+                        ? `ring-2 ring-inset ${reqSummary.hasApproved ? reqCls!.ring : reqCls!.ringFaint} ${reqCls!.bg}`
                         : "";
 
                     return (
@@ -2107,7 +2116,7 @@ export function ScheduleGrid({
                           `px-0.5 py-0.5 text-center border-slate-700/30 border relative ${canEdit ? "cursor-pointer" : "cursor-default"}`,
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
                           !ppEven ? "bg-slate-800/20" : "",
-                          reqTint,
+                          reqBox,
                           isPickerTarget ? "ring-1 ring-inset ring-blue-400" : "",
                           isSelected ? "ring-2 ring-inset ring-emerald-400 bg-emerald-900/20" : "",
                           isDragTarget ? "ring-2 ring-inset ring-cyan-400 bg-cyan-900/20" : "",
@@ -2152,14 +2161,26 @@ export function ScheduleGrid({
                           renderSuggestion(suggestion!, shiftTypeMap)
                         ) : isSaving ? (
                           <div className="text-[11px] text-slate-600">...</div>
+                        ) : reqSummary ? (
+                          // Empty cell with request(s): show the letters in category color.
+                          <div
+                            className={`text-[10px] font-bold leading-tight ${reqCls!.text} ${reqSummary.hasApproved ? "" : "opacity-60"}`}
+                            onMouseEnter={(e) => showTip(setTooltip, requestTooltip(reqs!, date), e)}
+                            onMouseLeave={() => setTooltip(null)}
+                          >
+                            {reqSummary.label}
+                          </div>
                         ) : null}
                         {cw && <WarningDot warnings={cw} setTooltip={setTooltip} />}
-                        {reqs && (
+                        {reqSummary && a && (
+                          // Assigned cell with request(s): corner marker carries the tooltip.
                           <span
-                            className={`absolute top-0 left-0 w-0 h-0 border-t-[8px] border-l-[8px] border-l-transparent ${hasApprovedReq ? "border-t-violet-400" : "border-t-violet-400/50"}`}
-                            onMouseEnter={(e) => showTip(setTooltip, requestTooltip(reqs), e)}
+                            className={`absolute top-0 left-0 px-0.5 text-[8px] font-bold leading-none rounded-br bg-slate-900/80 ${reqCls!.text} ${reqSummary.hasApproved ? "" : "opacity-60"}`}
+                            onMouseEnter={(e) => showTip(setTooltip, requestTooltip(reqs!, date), e)}
                             onMouseLeave={() => setTooltip(null)}
-                          />
+                          >
+                            {reqSummary.single ? "•" : reqSummary.count}
+                          </span>
                         )}
                       </td>
                     );

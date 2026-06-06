@@ -10,6 +10,8 @@ import {
   validateRequestInput,
   buildRequestPayloads,
   groupCellsIntoTargets,
+  requestCategory,
+  summarizeCellRequests,
   type ScheduleRequestData,
 } from "../schedule-requests";
 
@@ -516,5 +518,59 @@ describe("buildRequestPayloads", () => {
     for (const p of out) {
       expect(validateRequestInput(p)).toHaveProperty("value");
     }
+  });
+});
+
+describe("requestCategory / summarizeCellRequests", () => {
+  it("maps kind → category", () => {
+    expect(requestCategory("LEAVE")).toBe("leave");
+    expect(requestCategory("NEGATE_SHIFT")).toBe("restricted");
+    expect(requestCategory("REQUEST_SHIFT")).toBe("want");
+    expect(requestCategory("OFF")).toBe("off");
+  });
+
+  it("returns null for no requests", () => {
+    expect(summarizeCellRequests([], codeOf)).toBeNull();
+  });
+
+  it("single LEAVE → leave color + leave code letters", () => {
+    const s = summarizeCellRequests([req({ kind: "LEAVE", leaveShiftTypeId: "al" })], codeOf);
+    expect(s).toMatchObject({ category: "leave", label: "AL", single: true, count: 1, hasApproved: true });
+  });
+
+  it("single OFF → off color + 'OFF'", () => {
+    const s = summarizeCellRequests([req({ kind: "OFF" })], codeOf);
+    expect(s).toMatchObject({ category: "off", label: "OFF" });
+  });
+
+  it("single NEGATE with multiple shifts → restricted color, joined codes", () => {
+    const s = summarizeCellRequests([req({ kind: "NEGATE_SHIFT", shiftTypeIds: ["orc", "orl"] })], codeOf);
+    expect(s).toMatchObject({ category: "restricted", label: "ORC,ORL" });
+  });
+
+  it("single REQUEST_SHIFT → want color, shift code", () => {
+    const s = summarizeCellRequests([req({ kind: "REQUEST_SHIFT", shiftTypeIds: ["call"] })], codeOf);
+    expect(s).toMatchObject({ category: "want", label: "CALL" });
+  });
+
+  it("multiple same-category requests → category kept, label is the count", () => {
+    const s = summarizeCellRequests(
+      [req({ kind: "NEGATE_SHIFT", shiftTypeIds: ["orc"] }), req({ kind: "NEGATE_SHIFT", shiftTypeIds: ["orl"] })],
+      codeOf
+    );
+    expect(s).toMatchObject({ category: "restricted", label: "2", single: false, count: 2 });
+  });
+
+  it("mixed categories → 'mixed' + count", () => {
+    const s = summarizeCellRequests(
+      [req({ kind: "LEAVE", leaveShiftTypeId: "al" }), req({ kind: "NEGATE_SHIFT", shiftTypeIds: ["orc"] })],
+      codeOf
+    );
+    expect(s).toMatchObject({ category: "mixed", label: "2" });
+  });
+
+  it("hasApproved false when all pending", () => {
+    const s = summarizeCellRequests([req({ kind: "OFF", status: "pending" })], codeOf);
+    expect(s?.hasApproved).toBe(false);
   });
 });

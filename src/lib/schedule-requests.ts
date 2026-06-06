@@ -145,6 +145,66 @@ export function describeRequest(
   }
 }
 
+// Visual category for a request cell — drives the grid's border/letter color.
+export type RequestCategory = "leave" | "restricted" | "want" | "off";
+
+export function requestCategory(kind: RequestKind): RequestCategory {
+  switch (kind) {
+    case "LEAVE":
+      return "leave";
+    case "NEGATE_SHIFT":
+      return "restricted";
+    case "REQUEST_SHIFT":
+      return "want";
+    case "OFF":
+      return "off";
+  }
+}
+
+export type CellRequestSummary = {
+  category: RequestCategory | "mixed"; // box/letter color; "mixed" when categories differ
+  label: string; // letters to show when there's a single request, else the count
+  single: boolean; // exactly one request on the cell
+  count: number;
+  hasApproved: boolean; // at least one approved → solid box; else faint (all pending)
+};
+
+/** Collapse a cell's requests into the grid's visual summary (box color + label).
+ *  A single request shows its letters (AL / OFF / ORC / ORC,ORL); multiple show a
+ *  count. Returns null when there are no requests. Pure. */
+export function summarizeCellRequests(
+  reqs: Array<Pick<ScheduleRequestData, "kind" | "shiftTypeIds" | "leaveShiftTypeId" | "status">>,
+  codeOf: (shiftTypeId: string) => string
+): CellRequestSummary | null {
+  if (reqs.length === 0) return null;
+
+  const cats = new Set(reqs.map((r) => requestCategory(r.kind)));
+  const category: RequestCategory | "mixed" = cats.size === 1 ? [...cats][0] : "mixed";
+  const single = reqs.length === 1;
+  const hasApproved = reqs.some((r) => r.status === "approved");
+
+  let label: string;
+  if (single) {
+    const r = reqs[0];
+    switch (r.kind) {
+      case "LEAVE":
+        label = r.leaveShiftTypeId ? codeOf(r.leaveShiftTypeId) : "LV";
+        break;
+      case "OFF":
+        label = "OFF";
+        break;
+      case "NEGATE_SHIFT":
+      case "REQUEST_SHIFT":
+        label = r.shiftTypeIds.map(codeOf).join(",");
+        break;
+    }
+  } else {
+    label = String(reqs.length);
+  }
+
+  return { category, label, single, count: reqs.length, hasApproved };
+}
+
 /** Does this provider have any approved request affecting `date`? (grid: show badge) */
 export function hasActiveRequest(
   requests: ScheduleRequestData[],
