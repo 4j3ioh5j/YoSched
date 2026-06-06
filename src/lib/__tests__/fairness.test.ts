@@ -273,23 +273,24 @@ describe("fairnessColor", () => {
 });
 
 describe("heatmapTempColor", () => {
-  it("ramps yellow (255,255,0) → red (255,0,0) as burden rises", () => {
+  it("ramps yellow (hue 60) → red (hue 0) at full saturation as burden rises", () => {
     // default thresholds: high = 1.5, so the ramp saturates at ±1.5
-    expect(heatmapTempColor(-1.5)).toBe("#ffff00"); // cold end — pure yellow
-    expect(heatmapTempColor(0.0)).toBe("#ff8000"); // midpoint — green at 128
-    expect(heatmapTempColor(1.5)).toBe("#ff0000"); // hot end — pure red
+    expect(heatmapTempColor(-1.5)).toBe("hsl(60 100% 50%)"); // cold end — yellow
+    expect(heatmapTempColor(0.0)).toBe("hsl(30 100% 50%)"); // midpoint — orange
+    expect(heatmapTempColor(1.5)).toBe("hsl(0 100% 50%)"); // hot end — red
   });
 
   it("clamps beyond ±high to the endpoints", () => {
-    expect(heatmapTempColor(-5.0)).toBe("#ffff00");
-    expect(heatmapTempColor(5.0)).toBe("#ff0000");
+    expect(heatmapTempColor(-5.0)).toBe("hsl(60 100% 50%)");
+    expect(heatmapTempColor(5.0)).toBe("hsl(0 100% 50%)");
   });
 
-  it("keeps R and B pinned at ff/00 across the range", () => {
+  it("stays full-saturation/50%-lightness with hue in [0, 60] across the range", () => {
     for (const d of [-1.5, -0.5, 0, 0.5, 1.5]) {
       const c = heatmapTempColor(d);
-      expect(c.slice(0, 3)).toBe("#ff"); // red channel
-      expect(c.slice(5)).toBe("00"); // blue channel
+      const hue = Number(/^hsl\((\d+) 100% 50%\)$/.exec(c)?.[1]);
+      expect(hue).toBeGreaterThanOrEqual(0);
+      expect(hue).toBeLessThanOrEqual(60);
     }
   });
 });

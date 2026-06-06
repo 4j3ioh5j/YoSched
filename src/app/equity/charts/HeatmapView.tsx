@@ -78,8 +78,8 @@ export function HeatmapView({
                   return (
                     <div
                       key={r.initials}
-                      className="h-[2.7rem] w-12 flex items-center justify-center text-[11px] tabular-nums rounded-sm cursor-default"
-                      style={{ backgroundColor: color + "33", color }}
+                      className="h-[2.7rem] w-12 flex items-center justify-center text-[11px] font-semibold tabular-nums rounded-sm cursor-default"
+                      style={{ backgroundColor: color, color: "#0f172a" }}
                       onMouseEnter={
                         setTip
                           ? (e) => {

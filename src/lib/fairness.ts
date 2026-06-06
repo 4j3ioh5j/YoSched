@@ -338,17 +338,17 @@ export function fairnessColor(deviation: number, t: EquityThresholds = DEFAULT_T
 }
 
 /**
- * Continuous "temperature" ramp for the equity heatmap: a smooth yellow→red
- * gradient as burden rises. R and B are pinned (255, 0); green falls from 255 to
- * 0, so (255,255,0) at the cold end → (255,0,0) at the hot end. The deviation is
- * mapped linearly across [-high, +high] (clamped), making the department average
- * (0) the gradient's midpoint. Returns a 6-digit hex so callers can still append
- * an alpha suffix (e.g. + "33"). Positive deviation = more burden = redder.
+ * Continuous "temperature" ramp for the equity heatmap: a vivid yellow→red
+ * gradient as burden rises, expressed in HSL at full saturation and 50% lightness
+ * so the cells read bright. Hue sweeps 60° (yellow, hsl 60 100% 50%) → 0° (red,
+ * hsl 0 100% 50%); the department average (0) lands at 30° (orange). The
+ * deviation maps linearly across [-high, +high] (clamped). Positive deviation =
+ * more burden = redder.
  */
 export function heatmapTempColor(deviation: number, t: EquityThresholds = DEFAULT_THRESHOLDS): string {
   const frac = Math.min(1, Math.max(0, (deviation + t.high) / (2 * t.high)));
-  const g = Math.round(255 * (1 - frac));
-  return "#ff" + g.toString(16).padStart(2, "0") + "00";
+  const hue = Math.round(60 * (1 - frac));
+  return `hsl(${hue} 100% 50%)`;
 }
 
 export function fairnessLabel(burden: number, t: EquityThresholds = DEFAULT_THRESHOLDS): string {
