@@ -96,19 +96,22 @@ export function shapePie(
 }
 
 /* ------------------------------------------------------------------ *
- * Heatmap — providers × shift codes, each cell carrying its raw count and the
- * provider's FTE-normalized per-shift z-score (deviation). The view colors the
- * cell from the deviation via `fairnessColor()`; this shaper stays color-free
- * so it is pure and unit-testable. `opportunityAdjusted` selects the
- * eligibility-adjusted deviations (spec.weighting === "opportunity") over the
- * plain ones, mirroring the radar.
+ * Heatmap — one row per provider, each cell carrying a shift code's raw count
+ * and the provider's FTE-normalized per-shift z-score (deviation); with
+ * `includeHolidays` a trailing "Holidays" cell (holidayWorkCount + holidayWork
+ * dev) is appended. The view transposes this to shift codes (y) × staff (x) and
+ * colors each cell from the deviation via `heatmapTempColor()`; this shaper
+ * stays color-free so it is pure and unit-testable. `opportunityAdjusted`
+ * selects the eligibility-adjusted deviations (spec.weighting === "opportunity")
+ * over the plain ones, mirroring the radar.
  * ------------------------------------------------------------------ */
 
-type PerShift = { perShift: Record<string, number> };
+type PerShift = { perShift: Record<string, number>; holidayWork?: number };
 
 export type HeatmapInput = {
   initials: string;
   shiftCounts: Record<string, number>;
+  holidayWorkCount?: number;
   deviation: PerShift;
   displayDeviation: PerShift;
 };
@@ -170,18 +173,20 @@ export function shapeHeatmap(
   rows: HeatmapInput[],
   codes: string[],
   opportunityAdjusted: boolean,
+  includeHolidays = false,
 ): HeatmapRow[] {
   return [...rows]
     .sort((a, b) => a.initials.localeCompare(b.initials))
     .map((r) => {
       const dev = opportunityAdjusted ? r.deviation : r.displayDeviation;
-      return {
-        initials: r.initials,
-        cells: codes.map((code) => ({
-          code,
-          count: r.shiftCounts[code] ?? 0,
-          deviation: dev.perShift[code] ?? 0,
-        })),
-      };
+      const cells = codes.map((code) => ({
+        code,
+        count: r.shiftCounts[code] ?? 0,
+        deviation: dev.perShift[code] ?? 0,
+      }));
+      if (includeHolidays) {
+        cells.push({ code: "Holidays", count: r.holidayWorkCount ?? 0, deviation: dev.holidayWork ?? 0 });
+      }
+      return { initials: r.initials, cells };
     });
 }

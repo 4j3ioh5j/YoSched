@@ -337,6 +337,22 @@ export function fairnessColor(deviation: number, t: EquityThresholds = DEFAULT_T
   return "#6b7280";
 }
 
+/**
+ * Sequential "temperature" ramp for the equity heatmap: coldest (well below the
+ * department average) → hottest (well above). Unlike `fairnessColor`'s diverging
+ * palette, this is a single low→high gradient so the grid reads like a heat map.
+ *   cyan → pale green → yellow → orange → red
+ * Cut points are symmetric about 0 at ±low and ±high, giving a neutral yellow
+ * band around the average. Positive deviation = more burden = hotter.
+ */
+export function heatmapTempColor(deviation: number, t: EquityThresholds = DEFAULT_THRESHOLDS): string {
+  if (deviation > t.high) return "#ef4444"; // red — hottest
+  if (deviation > t.low) return "#f97316"; // orange
+  if (deviation >= -t.low) return "#eab308"; // yellow — neutral
+  if (deviation >= -t.high) return "#86efac"; // pale green
+  return "#06b6d4"; // cyan — coldest
+}
+
 export function fairnessLabel(burden: number, t: EquityThresholds = DEFAULT_THRESHOLDS): string {
   if (burden > t.high) return "Overworked";
   if (burden > t.med) return "Heavy";

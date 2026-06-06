@@ -491,12 +491,13 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
     // Heatmap — the all-codes equity grid; valid for "all shifts" or a
     // specific code (it shows the chosen code in context of the others).
     if (spec.chart === "heatmap" && (metric === "shiftCount" || isCode)) {
-      if (codes.length === 0) return null;
+      if (codes.length === 0 && !showHoliday) return null;
       return (
         <HeatmapView
           data={filteredData}
           codes={codes}
           opportunityAdjusted={oppAdj}
+          includeHolidays={showHoliday}
           thresholds={equityThresholds}
           onSelect={(initials) => {
             const match = filteredData.find((d) => d.initials === initials);

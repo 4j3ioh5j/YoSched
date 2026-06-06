@@ -111,6 +111,33 @@ describe("shapeHeatmap", () => {
     shapeHeatmap(rows, ["CALL"], false);
     expect(rows.map((r) => r.initials)).toEqual(["ZZ", "AA"]);
   });
+
+  it("appends a Holidays cell (count + holidayWork dev) when includeHolidays is set", () => {
+    const hol: HeatmapInput[] = [
+      {
+        initials: "AB",
+        shiftCounts: { CALL: 3 },
+        holidayWorkCount: 2,
+        displayDeviation: { perShift: { CALL: 0.4 }, holidayWork: 1.3 },
+        deviation: { perShift: { CALL: 0.9 }, holidayWork: 2.1 },
+      },
+    ];
+    expect(shapeHeatmap(hol, ["CALL"], false, true)[0].cells).toEqual([
+      { code: "CALL", count: 3, deviation: 0.4 },
+      { code: "Holidays", count: 2, deviation: 1.3 },
+    ]);
+    // opportunity-adjusted picks the opp holidayWork dev
+    expect(shapeHeatmap(hol, ["CALL"], true, true)[0].cells[1]).toEqual({
+      code: "Holidays",
+      count: 2,
+      deviation: 2.1,
+    });
+  });
+
+  it("defaults missing holiday count/dev to 0 under includeHolidays", () => {
+    const out = shapeHeatmap(rows, ["CALL"], false, true);
+    expect(out[0].cells.at(-1)).toEqual({ code: "Holidays", count: 0, deviation: 0 });
+  });
 });
 
 const mRow = (

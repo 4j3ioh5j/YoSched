@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeFairness, fairnessColor, fairnessLabel, type EquityFactor } from "../fairness";
+import { computeFairness, fairnessColor, fairnessLabel, heatmapTempColor, type EquityFactor } from "../fairness";
 
 function makeProvider(id: string, initials: string, fte = 1) {
   return { id, initials, ftePercentage: fte, isActive: true, isAutoScheduled: true };
@@ -269,6 +269,23 @@ describe("fairnessColor", () => {
 
   it("returns indigo for slightly light", () => {
     expect(fairnessColor(-0.5)).toBe("#6366f1");
+  });
+});
+
+describe("heatmapTempColor", () => {
+  it("ramps cyan → pale green → yellow → orange → red as burden rises", () => {
+    expect(heatmapTempColor(-2.0)).toBe("#06b6d4"); // coldest
+    expect(heatmapTempColor(-1.0)).toBe("#86efac"); // pale green
+    expect(heatmapTempColor(0.0)).toBe("#eab308"); // neutral yellow
+    expect(heatmapTempColor(1.0)).toBe("#f97316"); // orange
+    expect(heatmapTempColor(2.0)).toBe("#ef4444"); // hottest
+  });
+
+  it("is symmetric: the neutral yellow band spans ±low", () => {
+    expect(heatmapTempColor(0.25)).toBe("#eab308");
+    expect(heatmapTempColor(-0.25)).toBe("#eab308");
+    expect(heatmapTempColor(0.26)).toBe("#f97316");
+    expect(heatmapTempColor(-0.26)).toBe("#86efac");
   });
 });
 
