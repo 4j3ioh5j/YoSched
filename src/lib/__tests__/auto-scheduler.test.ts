@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { daysBetween, bestSpread, autoSchedule, type ScheduleProvider, type ScheduleShiftType, type AutoScheduleResult } from "../auto-scheduler";
+import { type ScheduleRequestData } from "../schedule-requests";
 
 // ─── helpers ───
 
@@ -699,5 +700,121 @@ describe("autoSchedule", () => {
       // 2025-05-16 is Friday (day 5) — the only eligible day
       expect(admSuggestions[0].date).toBe("2025-05-16");
     });
+  });
+});
+
+// ─── schedule requests (approved constraints) ───
+//
+// Default runSchedule: 2 providers, OR fill shift, FTE target 40h ⇒ each provider
+// is filled with OR on all 5 weekdays. These tests assert how an approved request
+// perturbs that baseline. Only approved requests exert force; pending/soft don't.
+
+describe("autoSchedule — schedule requests", () => {
+  const AL = makeShift("st-al", "AL", {
+    isLeave: true,
+    countsTowardFte: false,
+    autoSchedulable: false,
+    ignoresWorkingDays: true,
+  });
+
+  function req(
+    o: Partial<ScheduleRequestData> & {
+      providerId: string;
+      startDate: string;
+      endDate: string;
+      kind: ScheduleRequestData["kind"];
+    }
+  ): ScheduleRequestData {
+    return {
+      id: `req-${o.providerId}-${o.startDate}-${o.kind}`,
+      shiftTypeIds: [],
+      leaveShiftTypeId: null,
+      strength: "hard",
+      status: "approved",
+      ...o,
+    };
+  }
+
+  const worksOR = (r: AutoScheduleResult, providerId: string, date: string) =>
+    r.suggestions.some((s) => s.providerId === providerId && s.date === date && s.code === "OR");
+
+  it("control: without requests, p1 works OR every weekday", () => {
+    const r = runSchedule({});
+    expect(worksOR(r, "p1", "2025-05-12")).toBe(true);
+    expect(worksOR(r, "p1", "2025-05-13")).toBe(true);
+  });
+
+  it("approved hard OFF keeps the provider off working shifts", () => {
+    const r = runSchedule({
+      scheduleRequests: [req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF" })],
+    });
+    expect(worksOR(r, "p1", "2025-05-12")).toBe(false);
+    // The constraint is scoped to that one date — p1 still works the next day.
+    expect(worksOR(r, "p1", "2025-05-13")).toBe(true);
+    // p2 is unaffected.
+    expect(worksOR(r, "p2", "2025-05-12")).toBe(true);
+  });
+
+  it("approved hard NEGATE_SHIFT blocks only that shift on that date", () => {
+    const r = runSchedule({
+      scheduleRequests: [
+        req({ providerId: "p1", startDate: "2025-05-13", endDate: "2025-05-13", kind: "NEGATE_SHIFT", shiftTypeIds: ["st-or"] }),
+      ],
+    });
+    expect(worksOR(r, "p1", "2025-05-13")).toBe(false);
+    expect(worksOR(r, "p1", "2025-05-14")).toBe(true);
+  });
+
+  it("approved hard LEAVE pre-places the leave shift across the whole range", () => {
+    const r = runSchedule({
+      shiftTypes: [OR, AL, OFF],
+      scheduleRequests: [
+        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-13", kind: "LEAVE", leaveShiftTypeId: "st-al" }),
+      ],
+    });
+    const leave = r.suggestions.filter((s) => s.providerId === "p1" && s.code === "AL");
+    expect(leave.map((s) => s.date).sort()).toEqual(["2025-05-12", "2025-05-13"]);
+    expect(leave.every((s) => s.step === "request-leave")).toBe(true);
+    // Leave days are not also filled with a working shift.
+    expect(worksOR(r, "p1", "2025-05-12")).toBe(false);
+    expect(worksOR(r, "p1", "2025-05-13")).toBe(false);
+  });
+
+  it("warns (and skips) when an approved leave references an unknown shift type", () => {
+    const r = runSchedule({
+      scheduleRequests: [
+        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-missing" }),
+      ],
+    });
+    expect(r.warnings.some((w) => w.includes("unknown shift type"))).toBe(true);
+    expect(r.suggestions.some((s) => s.providerId === "p1" && s.date === "2025-05-12" && s.step === "request-leave")).toBe(false);
+  });
+
+  it("ignores pending requests — only approved exert force", () => {
+    const r = runSchedule({
+      scheduleRequests: [
+        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF", status: "pending" }),
+      ],
+    });
+    expect(worksOR(r, "p1", "2025-05-12")).toBe(true);
+  });
+
+  it("soft OFF advises only — it does not forbid working", () => {
+    const r = runSchedule({
+      scheduleRequests: [
+        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF", strength: "soft" }),
+      ],
+    });
+    expect(worksOR(r, "p1", "2025-05-12")).toBe(true);
+  });
+
+  it("hard OFF overrides a standing commitment on the same date", () => {
+    const r = runSchedule({
+      standingCommitments: [{ providerId: "p1", shiftTypeId: "st-or", dayOfWeek: null, frequency: "weekly" }],
+      scheduleRequests: [req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF" })],
+    });
+    expect(worksOR(r, "p1", "2025-05-12")).toBe(false);
+    // The standing commitment still applies on a day with no request.
+    expect(worksOR(r, "p1", "2025-05-13")).toBe(true);
   });
 });

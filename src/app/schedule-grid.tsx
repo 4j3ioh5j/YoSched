@@ -643,6 +643,14 @@ export function ScheduleGrid({
     return map;
   }, [localRequests, dates, visibleProviders]);
 
+  // Approved requests only — these are the ones that exert scheduling force, so
+  // they're what the cell-warning checks consume (checkRequestConflict ignores
+  // pending, but pre-filtering keeps the per-cell work small).
+  const approvedRequests = useMemo(
+    () => localRequests.filter((r) => r.status === "approved"),
+    [localRequests]
+  );
+
   const requestTooltip = useCallback(
     (reqs: GridRequest[], date: string): string => {
       const header = `Requests · ${formatDate(parseDate(date), dateFormat)}`;
@@ -759,6 +767,7 @@ export function ScheduleGrid({
           holidaySet,
           staffingMins,
           followRuleMap,
+          scheduleRequests: approvedRequests,
         });
         if (warnings.length > 0) {
           map.set(`${p.id}:${date}`, warnings);
@@ -766,7 +775,7 @@ export function ScheduleGrid({
       }
     }
     return map;
-  }, [dates, providers, assignmentMap, shiftTypeMap, holidaySet, staffingMins, followRuleMap]);
+  }, [dates, providers, assignmentMap, shiftTypeMap, holidaySet, staffingMins, followRuleMap, approvedRequests]);
 
   // Compute per-day staffing warnings
   const dayWarnings = useMemo(() => {
@@ -1545,13 +1554,14 @@ export function ScheduleGrid({
         holidaySet,
         staffingMins,
         followRuleMap,
+        scheduleRequests: approvedRequests,
       });
       if (warnings.length > 0) {
         result.set(st.id, warnings);
       }
     }
     return result;
-  }, [picker, providerMap, shiftTypes, shiftTypeMap, assignmentMap, providers, holidaySet, staffingMins, followRuleMap]);
+  }, [picker, providerMap, shiftTypes, shiftTypeMap, assignmentMap, providers, holidaySet, staffingMins, followRuleMap, approvedRequests]);
 
   function renderSuggestion(sug: SuggestionEntry, stMap: Map<string, ShiftType>) {
     const st = stMap.get(sug.shiftTypeId);

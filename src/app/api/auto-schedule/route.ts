@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { autoSchedule } from "@/lib/auto-scheduler";
+import { type ScheduleRequestData } from "@/lib/schedule-requests";
 
 export async function POST(req: NextRequest) {
   const { error } = await getSession("schedule:auto");
@@ -55,6 +56,7 @@ export async function POST(req: NextRequest) {
     followRules,
     shiftEligibilityRules,
     shiftMinimumTargets,
+    scheduleRequests,
   ] = await Promise.all([
     prisma.provider.findMany({ where: { isActive: true } }),
     prisma.shiftType.findMany(),
@@ -86,6 +88,16 @@ export async function POST(req: NextRequest) {
     prisma.shiftFollowRule.findMany(),
     prisma.shiftEligibilityRule.findMany(),
     prisma.shiftMinimumTarget.findMany(),
+    // Approved requests overlapping the (effective) scheduling window. Overlap =
+    // req.startDate <= windowEnd AND req.endDate >= windowStart. Only approved
+    // requests exert scheduling force.
+    prisma.scheduleRequest.findMany({
+      where: {
+        status: "approved",
+        startDate: { lte: new Date(effectiveEnd + "T00:00:00Z") },
+        endDate: { gte: new Date(effectiveStart + "T00:00:00Z") },
+      },
+    }),
   ]);
 
   const payPeriods = allPayPeriods;
@@ -258,6 +270,17 @@ export async function POST(req: NextRequest) {
       allowedShiftId: r.allowedShiftId,
       allowOffShifts: r.allowOffShifts,
       mode: r.mode,
+    })),
+    scheduleRequests: scheduleRequests.map((r) => ({
+      id: r.id,
+      providerId: r.providerId,
+      startDate: r.startDate.toISOString().split("T")[0],
+      endDate: r.endDate.toISOString().split("T")[0],
+      kind: r.kind as ScheduleRequestData["kind"],
+      shiftTypeIds: r.shiftTypeIds,
+      leaveShiftTypeId: r.leaveShiftTypeId,
+      strength: r.strength as ScheduleRequestData["strength"],
+      status: r.status as ScheduleRequestData["status"],
     })),
   });
 

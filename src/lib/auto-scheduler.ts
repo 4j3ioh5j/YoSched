@@ -2,6 +2,7 @@ import { computeFairness, type FairnessSummary, type EquityFactor } from "./fair
 import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule, type PayPeriodRange } from "./availability";
 import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter, isRecoveryOnly } from "./follow-rules";
 import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
+import { foldRequestsForDate, type ScheduleRequestData, type FoldedRequests } from "./schedule-requests";
 
 export type ScheduleProvider = {
   id: string;
@@ -237,6 +238,7 @@ export function autoSchedule({
   schedulingPreferences,
   equityFactors,
   followRules,
+  scheduleRequests,
 }: {
   dates: string[];
   providers: ScheduleProvider[];
@@ -253,6 +255,7 @@ export function autoSchedule({
   schedulingPreferences: SchedulingPreferences;
   equityFactors: EquityFactor[];
   followRules?: FollowRuleRow[];
+  scheduleRequests?: ScheduleRequestData[];
 }): AutoScheduleResult {
   const suggestions: Suggestion[] = [];
   const warnings: string[] = [];
@@ -270,6 +273,31 @@ export function autoSchedule({
   }
 
   const offShift = shiftTypes.find((st) => st.isOffShift);
+
+  // Approved schedule requests, folded per (provider, date) on demand and cached.
+  // foldRequestsForDate already ignores non-approved requests, so only approved
+  // ones exert scheduling force here. Empty list ⇒ the gates below are no-ops.
+  const requestList = scheduleRequests ?? [];
+  const foldCache = new Map<string, FoldedRequests>();
+  function foldFor(providerId: string, date: string): FoldedRequests {
+    const key = `${providerId}:${date}`;
+    let folded = foldCache.get(key);
+    if (!folded) {
+      folded = foldRequestsForDate(requestList, providerId, date);
+      foldCache.set(key, folded);
+    }
+    return folded;
+  }
+
+  // A working shift is anything that isn't an off-shift or a leave shift. A hard
+  // OFF request forbids working shifts but still allows OFF / leave placement.
+  function requestBlocksWork(providerId: string, date: string, st: ScheduleShiftType): boolean {
+    if (requestList.length === 0) return false;
+    const folded = foldFor(providerId, date);
+    if (folded.forbidWorking && !st.isOffShift && !st.isLeave) return true;
+    if (folded.forbiddenShiftIds.has(st.id)) return true;
+    return false;
+  }
 
   const overrideMap = new Map<string, number>();
   for (const o of providerOverrides) {
@@ -354,6 +382,9 @@ export function autoSchedule({
 
   function isAvailable(provider: ScheduleProvider, date: string, st: ScheduleShiftType): boolean {
     if (isAssigned(provider.id, date)) return false;
+    // Approved hard requests (OFF / NEGATE_SHIFT) gate every placement that flows
+    // through isAvailable (staffing fills, minimum targets, FTE fill shift).
+    if (requestBlocksWork(provider.id, date, st)) return false;
     if (provider.shiftEligibilityRules && provider.shiftEligibilityRules.length > 0) {
       const eligResult = evaluateShiftEligibility(
         provider.shiftEligibilityRules, st.id, date,
@@ -569,6 +600,29 @@ export function autoSchedule({
 
   const fillShift = shiftTypes.find((st) => st.isFillShift) ?? null;
 
+  // ── STEP 0: Pre-place approved leave requests ──
+  // An approved hard LEAVE request pre-places its specific leave shift, exactly
+  // like an approved absence. It only fills empty / unlocked-off cells (assign()
+  // never overwrites a real assignment) and bypasses working-day availability
+  // because approved leave is authoritative. Placing it first marks the provider
+  // assigned, so later steps won't schedule work over the leave.
+  if (requestList.length > 0) {
+    for (const provider of providers) {
+      if (!provider.isActive) continue;
+      for (const date of dates) {
+        if (isAssigned(provider.id, date)) continue;
+        const leaveShiftId = foldFor(provider.id, date).leaveShiftTypeId;
+        if (!leaveShiftId) continue;
+        const leaveSt = stById.get(leaveShiftId);
+        if (!leaveSt) {
+          warnings.push(`${provider.initials}: approved leave on ${date} references an unknown shift type`);
+          continue;
+        }
+        assign(provider.id, date, leaveSt, `Approved leave request: ${leaveSt.code}`, "request-leave", 1.0);
+      }
+    }
+  }
+
   // ── STEP 1: Apply standing commitments ──
   for (const sc of standingCommitments) {
     const st = stById.get(sc.shiftTypeId);
@@ -598,6 +652,9 @@ export function autoSchedule({
         }
 
         if (isAtMaximum(provider, st, date)) continue;
+        // An approved hard OFF / NEGATE_SHIFT request overrides a standing
+        // commitment (this path doesn't flow through isAvailable).
+        if (requestBlocksWork(sc.providerId, date, st)) continue;
 
         assign(
           sc.providerId,
