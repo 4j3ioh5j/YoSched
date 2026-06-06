@@ -299,6 +299,19 @@ export function autoSchedule({
     return false;
   }
 
+  // Soft request bias for placing `st` on `date`: positive = prefer this provider,
+  // negative = prefer to spare them. Used only as a tiebreak below hard staffing
+  // need, so soft requests advise without overriding fairness/coverage.
+  function requestBias(providerId: string, date: string, st: ScheduleShiftType): number {
+    if (requestList.length === 0) return 0;
+    const folded = foldFor(providerId, date);
+    let bias = 0;
+    if (folded.preferredShiftIds.has(st.id)) bias += 1;
+    if (folded.avoidedShiftIds.has(st.id)) bias -= 1;
+    if (folded.avoidWorking && !st.isOffShift && !st.isLeave) bias -= 1;
+    return bias;
+  }
+
   const overrideMap = new Map<string, number>();
   for (const o of providerOverrides) {
     overrideMap.set(`${o.providerId}:${o.shiftTypeId}`, o.durationHrs);
@@ -607,8 +620,7 @@ export function autoSchedule({
   // because approved leave is authoritative. Placing it first marks the provider
   // assigned, so later steps won't schedule work over the leave.
   if (requestList.length > 0) {
-    for (const provider of providers) {
-      if (!provider.isActive) continue;
+    for (const provider of activeProviders) {
       for (const date of dates) {
         if (isAssigned(provider.id, date)) continue;
         const leaveShiftId = foldFor(provider.id, date).leaveShiftTypeId;
@@ -619,6 +631,37 @@ export function autoSchedule({
           continue;
         }
         assign(provider.id, date, leaveSt, `Approved leave request: ${leaveSt.code}`, "request-leave", 1.0);
+      }
+    }
+  }
+
+  // ── STEP 0b: Honor approved hard REQUEST_SHIFT ("wants this shift") ──
+  // Pre-place one of the requested shifts when the provider is eligible for it and
+  // the placement is otherwise legal (availability / follow rules / per-day & max
+  // caps are all enforced by isAvailable). Runs before standing commitments and
+  // staffing fills so an explicit "I want to work X" wins, and counts toward that
+  // shift's staffing so later steps fill only the remainder. Warns when a request
+  // can't be honored (ineligible, capped, or no legal slot).
+  if (requestList.length > 0) {
+    for (const provider of activeProviders) {
+      const eligSet = eligibleShiftSets.get(provider.id);
+      for (const date of dates) {
+        if (isAssigned(provider.id, date)) continue;
+        const forced = foldFor(provider.id, date).forcedShiftIds;
+        if (forced.size === 0) continue;
+        let placed = false;
+        // Sorted for deterministic choice when several shifts are requested.
+        for (const wantedId of [...forced].sort()) {
+          const st = stById.get(wantedId);
+          if (!st || !eligSet?.has(st.id)) continue;
+          if (!isAvailable(provider, date, st)) continue;
+          assign(provider.id, date, st, `Approved shift request: ${st.code}`, "request-shift", 1.0);
+          placed = true;
+          break;
+        }
+        if (!placed) {
+          warnings.push(`${provider.initials}: could not honor approved shift request on ${date} (ineligible or no legal slot)`);
+        }
       }
     }
   }
@@ -705,6 +748,12 @@ export function autoSchedule({
           const defA = getMinimumDeficit(a, st, date);
           const defB = getMinimumDeficit(b, st, date);
           if (defA !== defB) return defB - defA;
+          // Soft request preference: below hard minimum need, above even-
+          // distribution. A provider who prefers this shift sorts ahead of one
+          // who's indifferent; one who soft-avoids it (or prefers off) sorts behind.
+          const biasA = requestBias(a.id, date, st);
+          const biasB = requestBias(b.id, date, st);
+          if (biasA !== biasB) return biasB - biasA;
         }
         const countDiff = (runCount.get(a.id) ?? 0) - (runCount.get(b.id) ?? 0);
         if (countDiff !== 0) return countDiff;
@@ -1152,6 +1201,22 @@ export function autoSchedule({
     }
 
     const MAX_COMBOS = 5000;
+    // How strongly a soft "prefers off" / "avoid this fill shift" request pulls a
+    // day into the chosen off-day set. Comparable to the weekend-clustering weights
+    // so it can tip day-off selection, but it only acts within the slack the FTE
+    // target leaves — it never creates a day off that hours don't allow.
+    const SOFT_REQUEST_OFF_WEIGHT = 5;
+
+    function softOffBonus(providerId: string, offDays: Set<string>): number {
+      if (requestList.length === 0) return 0;
+      let bonus = 0;
+      for (const d of offDays) {
+        const folded = foldFor(providerId, d);
+        if (folded.avoidWorking) bonus += SOFT_REQUEST_OFF_WEIGHT;
+        if (fillShift && folded.avoidedShiftIds.has(fillShift.id)) bonus += SOFT_REQUEST_OFF_WEIGHT;
+      }
+      return bonus;
+    }
 
     for (const pp of sortedPPs) {
       const ppDates = dates.filter(
@@ -1216,7 +1281,8 @@ export function autoSchedule({
             if (!feasible) continue;
 
             const offSet = new Set<string>(offIndices.map((i: number) => availableDates[i]));
-            const score = scoreOffDays(offSet, availableDates, getBaseWorkDays(provider.availabilityRules));
+            const score = scoreOffDays(offSet, availableDates, getBaseWorkDays(provider.availabilityRules))
+              + softOffBonus(provider.id, offSet);
             if (score > bestScore) {
               bestScore = score;
               bestOffIndices = offIndices;

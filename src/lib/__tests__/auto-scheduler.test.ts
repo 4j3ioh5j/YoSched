@@ -818,3 +818,170 @@ describe("autoSchedule — schedule requests", () => {
     expect(worksOR(r, "p1", "2025-05-13")).toBe(true);
   });
 });
+
+// ─── schedule request preferences: forcing + soft weighting (slice 2d) ───
+
+describe("autoSchedule — schedule request preferences", () => {
+  const ADM = makeShift("st-adm", "ADM", { schedulePriority: 2 });
+
+  function req(
+    o: Partial<ScheduleRequestData> & {
+      providerId: string;
+      startDate: string;
+      endDate: string;
+      kind: ScheduleRequestData["kind"];
+    }
+  ): ScheduleRequestData {
+    return {
+      id: `req-${o.providerId}-${o.startDate}-${o.kind}-${o.strength ?? "hard"}`,
+      shiftTypeIds: [],
+      leaveShiftTypeId: null,
+      strength: "hard",
+      status: "approved",
+      ...o,
+    };
+  }
+
+  const has = (r: AutoScheduleResult, providerId: string, date: string, code: string) =>
+    r.suggestions.some((s) => s.providerId === providerId && s.date === date && s.code === code);
+
+  // ── hard REQUEST_SHIFT (forcing) ──
+
+  it("approved hard REQUEST_SHIFT pre-places the wanted shift for an eligible provider", () => {
+    const p1 = makeProvider("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"] });
+    const r = runSchedule({
+      providers: [p1, makeProvider("p2", "CD")],
+      shiftTypes: [OR, ADM, OFF],
+      scheduleRequests: [
+        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"] }),
+      ],
+    });
+    const adm = r.suggestions.find((s) => s.providerId === "p1" && s.date === "2025-05-12" && s.code === "ADM");
+    expect(adm).toBeDefined();
+    expect(adm!.step).toBe("request-shift");
+  });
+
+  it("warns (and places nothing) when a hard REQUEST_SHIFT names a shift the provider can't do", () => {
+    const r = runSchedule({
+      // default providers are eligible only for OR/off, not ADM
+      shiftTypes: [OR, ADM, OFF],
+      scheduleRequests: [
+        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"] }),
+      ],
+    });
+    expect(r.warnings.some((w) => w.includes("could not honor approved shift request"))).toBe(true);
+    expect(has(r, "p1", "2025-05-12", "ADM")).toBe(false);
+  });
+
+  // ── soft weighting in contested staffing (STEP 2 pickProvider) ──
+
+  function contestedADM(overrides: Record<string, unknown>): AutoScheduleResult {
+    const p1 = makeProvider("p1", "AB", { eligibleShiftTypeIds: ["st-adm", "st-off"] });
+    const p2 = makeProvider("p2", "CD", { eligibleShiftTypeIds: ["st-adm", "st-off"] });
+    return runSchedule({
+      providers: [p1, p2],
+      shiftTypes: [ADM, OFF],
+      dates: weekdayDates("2025-05-12", 1), // Monday 2025-05-12 only
+      staffingRequirements: [{ shiftCode: "ADM", dayKey: "1", minCount: 1 }], // Mon needs 1
+      ...overrides,
+    });
+  }
+
+  it("control: with no requests the first-ordered provider (p1) wins a contested shift", () => {
+    const r = contestedADM({});
+    expect(has(r, "p1", "2025-05-12", "ADM")).toBe(true);
+    expect(has(r, "p2", "2025-05-12", "ADM")).toBe(false);
+  });
+
+  it("soft REQUEST_SHIFT preference flips a tie toward the preferring provider", () => {
+    const r = contestedADM({
+      scheduleRequests: [
+        req({ providerId: "p2", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"], strength: "soft" }),
+      ],
+    });
+    expect(has(r, "p2", "2025-05-12", "ADM")).toBe(true);
+    expect(has(r, "p1", "2025-05-12", "ADM")).toBe(false);
+  });
+
+  it("soft NEGATE_SHIFT (avoid) pushes a contested shift onto the other provider", () => {
+    const r = contestedADM({
+      scheduleRequests: [
+        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "NEGATE_SHIFT", shiftTypeIds: ["st-adm"], strength: "soft" }),
+      ],
+    });
+    expect(has(r, "p2", "2025-05-12", "ADM")).toBe(true);
+    expect(has(r, "p1", "2025-05-12", "ADM")).toBe(false);
+  });
+
+  it("soft preference only tiebreaks — it never starves a hard minimum-target deficit", () => {
+    // p1 must hit an ADM minimum (deficit), p2 merely prefers ADM. The hard
+    // deficit outranks the soft preference, so p1 still gets it.
+    const p1 = makeProvider("p1", "AB", {
+      eligibleShiftTypeIds: ["st-adm", "st-off"],
+      shiftMinimumTargets: [{ shiftTypeId: "st-adm", minCount: 1, window: "pay_period" as const }],
+    });
+    const p2 = makeProvider("p2", "CD", { eligibleShiftTypeIds: ["st-adm", "st-off"] });
+    const r = runSchedule({
+      providers: [p1, p2],
+      shiftTypes: [ADM, OFF],
+      dates: weekdayDates("2025-05-12", 1),
+      staffingRequirements: [{ shiftCode: "ADM", dayKey: "1", minCount: 1 }],
+      scheduleRequests: [
+        req({ providerId: "p2", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"], strength: "soft" }),
+      ],
+    });
+    expect(has(r, "p1", "2025-05-12", "ADM")).toBe(true);
+    expect(has(r, "p2", "2025-05-12", "ADM")).toBe(false);
+  });
+
+  // ── soft "prefers off" biasing the FTE fill step (STEP 3) ──
+
+  it("soft OFF steers the fill step to leave that day off when there is slack", () => {
+    // FTE 0.8 ⇒ target 32h ⇒ 4 of 5 weekdays filled, 1 day off. The soft OFF on
+    // Wed should make Wed the chosen day off (default off-day pick would be Mon).
+    const p1 = makeProvider("p1", "AB", { ftePercentage: 0.8 });
+    const r = runSchedule({
+      providers: [p1],
+      shiftTypes: [OR, OFF],
+      payPeriods: [{ startDate: "2025-05-12", endDate: "2025-05-16", targetHours: 40 }],
+      dates: weekdayDates("2025-05-12", 5),
+      scheduleRequests: [
+        req({ providerId: "p1", startDate: "2025-05-14", endDate: "2025-05-14", kind: "OFF", strength: "soft" }),
+      ],
+    });
+    expect(has(r, "p1", "2025-05-14", "OR")).toBe(false); // Wed off
+    expect(has(r, "p1", "2025-05-12", "OR")).toBe(true);
+    expect(has(r, "p1", "2025-05-16", "OR")).toBe(true);
+  });
+
+  it("control: without the soft OFF, the fill step's default day off is not Wed", () => {
+    const p1 = makeProvider("p1", "AB", { ftePercentage: 0.8 });
+    const r = runSchedule({
+      providers: [p1],
+      shiftTypes: [OR, OFF],
+      payPeriods: [{ startDate: "2025-05-12", endDate: "2025-05-16", targetHours: 40 }],
+      dates: weekdayDates("2025-05-12", 5),
+    });
+    expect(has(r, "p1", "2025-05-14", "OR")).toBe(true); // Wed worked by default
+  });
+
+  // ── pre-placement respects isAutoScheduled ──
+
+  it("does not pre-place leave or wanted shifts for a non-auto-scheduled provider", () => {
+    // A provider scheduled manually (isAutoScheduled=false) is off-limits to the
+    // auto-scheduler entirely — even approved hard leave / shift requests.
+    const manual = makeProvider("p1", "AB", {
+      isAutoScheduled: false,
+      eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"],
+    });
+    const r = runSchedule({
+      providers: [manual, makeProvider("p2", "CD")],
+      shiftTypes: [OR, ADM, OFF],
+      scheduleRequests: [
+        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-adm" }),
+        req({ providerId: "p1", startDate: "2025-05-13", endDate: "2025-05-13", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"] }),
+      ],
+    });
+    expect(r.suggestions.some((s) => s.providerId === "p1")).toBe(false);
+  });
+});
