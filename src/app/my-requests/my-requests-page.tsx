@@ -78,7 +78,7 @@ export function MyRequestsPage({
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [justSubmitted, setJustSubmitted] = useState<RequestRow | null>(null);
+  const [receiptFor, setReceiptFor] = useState<RequestRow | null>(null);
   const [queue, setQueue] = useState<LeaveQueueSummary | null>(null);
 
   const needsShifts = kind === "NEGATE_SHIFT" || kind === "REQUEST_SHIFT";
@@ -161,8 +161,13 @@ export function MyRequestsPage({
     }
     const created: RequestRow = await res.json();
     setRequests((prev) => [created, ...prev]);
-    setJustSubmitted(created);
+    setReceiptFor(created); // show the printable confirmation receipt
     resetForm();
+  }
+
+  // Human-readable describe of one request, for the receipt + list.
+  function describe(r: RequestRow) {
+    return describeRequest(r, codeOf);
   }
 
   async function withdraw(id: string) {
@@ -192,19 +197,13 @@ export function MyRequestsPage({
   }
 
   return (
-    <div className="flex-1 overflow-auto bg-slate-950 text-slate-100">
-      <div className="max-w-3xl mx-auto p-4 sm:p-6 space-y-6">
+    <div className="flex-1 overflow-auto bg-slate-950 text-slate-100 print:bg-white print:overflow-visible">
+      {/* Page chrome is hidden when printing a receipt (see the overlay below). */}
+      <div data-print-hide className="max-w-3xl mx-auto p-4 sm:p-6 space-y-6">
         <div>
           <h1 className="text-xl font-bold">My Requests</h1>
           <p className="text-sm text-slate-400">Submitting as {providerName}.</p>
         </div>
-
-        {justSubmitted && (
-          <div className="p-3 rounded border border-emerald-700/50 bg-emerald-900/20 text-sm text-emerald-200">
-            Request submitted and timestamped — the scheduler will review it. It now shows as
-            <span className="font-medium"> Pending</span> below.
-          </div>
-        )}
 
         {/* ── New request form ── */}
         <div className="p-4 rounded border border-slate-700 bg-slate-900 space-y-4">
@@ -371,6 +370,9 @@ export function MyRequestsPage({
                 <span className={`inline-block text-xs px-2 py-0.5 rounded border capitalize ${STATUS_BADGE[r.status]}`}>
                   {r.status}
                 </span>
+                <button onClick={() => setReceiptFor(r)} className="text-xs text-slate-500 hover:text-slate-300">
+                  Receipt
+                </button>
                 {r.status === "pending" && (
                   <button onClick={() => withdraw(r.id)} className="text-xs text-rose-500/70 hover:text-rose-400">
                     Withdraw
@@ -379,6 +381,89 @@ export function MyRequestsPage({
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      {receiptFor && (
+        <Receipt
+          request={receiptFor}
+          providerName={providerName}
+          describe={describe}
+          dateRangeLabel={dateRangeLabel}
+          submittedLabel={submittedLabel}
+          onClose={() => setReceiptFor(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Printable confirmation receipt. On screen it's a centered modal; when printing
+// the rest of the page is hidden (data-print-hide) so only this prints.
+function Receipt({
+  request,
+  providerName,
+  describe,
+  dateRangeLabel,
+  submittedLabel,
+  onClose,
+}: {
+  request: RequestRow;
+  providerName: string;
+  describe: (r: RequestRow) => string;
+  dateRangeLabel: (r: { startDate: string; endDate: string }) => string;
+  submittedLabel: (iso: string) => string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 print:static print:bg-white print:block print:p-0">
+      <div className="w-full max-w-md bg-white text-slate-900 rounded-lg shadow-xl p-6 print:shadow-none print:max-w-none">
+        <div className="text-center border-b border-slate-200 pb-3 mb-3">
+          <div className="text-lg font-bold">Schedule Request — Confirmation</div>
+          <div className="text-xs text-slate-500">YoSched</div>
+        </div>
+        <dl className="text-sm space-y-2">
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Provider</dt>
+            <dd className="font-medium text-right">{providerName}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Request</dt>
+            <dd className="font-medium text-right">
+              {describe(request)}
+              {request.strength === "soft" && <span className="text-slate-500"> (preference)</span>}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Date(s)</dt>
+            <dd className="font-medium text-right">{dateRangeLabel(request)}</dd>
+          </div>
+          {request.notes && (
+            <div className="flex justify-between gap-4">
+              <dt className="text-slate-500">Note</dt>
+              <dd className="text-right">{request.notes}</dd>
+            </div>
+          )}
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Status</dt>
+            <dd className="font-medium text-right capitalize">{request.status}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Submitted</dt>
+            <dd className="font-medium text-right">{submittedLabel(request.receivedAt)}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Reference</dt>
+            <dd className="font-mono text-xs text-right break-all">{request.id}</dd>
+          </div>
+        </dl>
+        <div data-print-hide className="flex gap-2 justify-end mt-5">
+          <button onClick={() => window.print()} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded">
+            Print
+          </button>
+          <button onClick={onClose} className="px-3 py-1.5 text-sm text-slate-500 hover:text-slate-700">
+            Close
+          </button>
         </div>
       </div>
     </div>
