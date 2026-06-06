@@ -2173,13 +2173,14 @@ export function ScheduleGrid({
                         ) : null}
                         {cw && <WarningDot warnings={cw} setTooltip={setTooltip} />}
                         {reqSummary && a && (
-                          // Assigned cell with request(s): corner marker carries the tooltip.
+                          // Assigned cell with request(s): bare corner marker (no pill) carries the tooltip.
+                          // label is letters for a single request, the count for multiple.
                           <span
-                            className={`absolute top-0 left-0 px-0.5 text-[8px] font-bold leading-none rounded-br bg-slate-900/80 ${reqCls!.text} ${reqSummary.hasApproved ? "" : "opacity-60"}`}
+                            className={`absolute top-0 left-0 px-0.5 text-[8px] font-bold leading-none ${reqCls!.text} ${reqSummary.hasApproved ? "" : "opacity-60"}`}
                             onMouseEnter={(e) => showTip(setTooltip, requestTooltip(reqs!, date), e)}
                             onMouseLeave={() => setTooltip(null)}
                           >
-                            {reqSummary.single ? "•" : reqSummary.count}
+                            {reqSummary.label}
                           </span>
                         )}
                       </td>
