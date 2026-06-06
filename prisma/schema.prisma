@@ -278,6 +278,23 @@ model Holiday {
   @@map("holidays")
 }
 
+// Singleton SMTP config for outbound mail (id always "default"). The password is
+// write-only over the API — never serialized back to a client.
+model EmailSettings {
+  id          String   @id @default("default")
+  enabled     Boolean  @default(false)
+  host        String?
+  port        Int      @default(587)
+  secure      Boolean  @default(false) // true = implicit TLS (465); false = STARTTLS (587)
+  username    String?
+  password    String? // SMTP password — write-only via API
+  fromAddress String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("email_settings")
+}
+
 model SchedulingPreferences {
   id                    String  @id @default(cuid())
   prefer3DayWeekends    Boolean @default(true)

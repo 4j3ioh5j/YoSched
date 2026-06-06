@@ -1917,6 +1917,111 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
   );
 }
 
+// ─── Email (SMTP) Section ───────────────────────────────────────────────────
+
+function EmailSettingsSection() {
+  const canEdit = useCanEdit();
+  const [loaded, setLoaded] = useState(false);
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+  const [testMsg, setTestMsg] = useState("");
+  const [cfg, setCfg] = useState({ enabled: false, host: "", port: 587, secure: false, username: "", fromAddress: "", passwordConfigured: false });
+  const [password, setPassword] = useState("");
+
+  useEffect(() => {
+    fetch("/api/settings/email")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setCfg({ enabled: d.enabled, host: d.host ?? "", port: d.port ?? 587, secure: d.secure, username: d.username ?? "", fromAddress: d.fromAddress ?? "", passwordConfigured: d.passwordConfigured });
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  async function save() {
+    setStatus("saving"); setError("");
+    const body: Record<string, unknown> = {
+      enabled: cfg.enabled, host: cfg.host, port: cfg.port, secure: cfg.secure, username: cfg.username, fromAddress: cfg.fromAddress,
+    };
+    if (password) body.password = password;
+    const res = await fetch("/api/settings/email", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) { setError((await res.json().catch(() => ({}))).error ?? "Failed to save"); setStatus("error"); return; }
+    const d = await res.json();
+    setCfg((c) => ({ ...c, passwordConfigured: d.passwordConfigured }));
+    setPassword("");
+    setStatus("saved"); setTimeout(() => setStatus("idle"), 2000);
+  }
+
+  async function sendTest() {
+    setTestMsg("Sending…");
+    const res = await fetch("/api/settings/email/test", { method: "POST" });
+    const d = await res.json().catch(() => ({}));
+    setTestMsg(res.ok ? `Sent to ${d.sentTo}` : (d.error ?? "Send failed"));
+  }
+
+  const input = "w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50";
+
+  return (
+    <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
+      <SectionHeader
+        title="Email (SMTP)"
+        description="Outbound mail for request confirmations. Nothing sends until this is filled in and enabled."
+        status={status}
+        error={error}
+      />
+      {!loaded ? (
+        <p className="text-sm text-slate-500">Loading…</p>
+      ) : (
+        <div className="space-y-3 mt-2">
+          <label className="flex items-center gap-2 text-sm text-slate-300">
+            <input type="checkbox" checked={cfg.enabled} disabled={!canEdit} onChange={(e) => setCfg((c) => ({ ...c, enabled: e.target.checked }))} className="accent-blue-500" />
+            Enable outbound email
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <label className="text-sm sm:col-span-2">
+              <span className="block text-xs text-slate-400 mb-1">SMTP host</span>
+              <input className={input} disabled={!canEdit} value={cfg.host} placeholder="smtp.example.com" onChange={(e) => setCfg((c) => ({ ...c, host: e.target.value }))} />
+            </label>
+            <label className="text-sm">
+              <span className="block text-xs text-slate-400 mb-1">Port</span>
+              <input className={input} disabled={!canEdit} type="number" value={cfg.port} onChange={(e) => setCfg((c) => ({ ...c, port: parseInt(e.target.value) || 0 }))} />
+            </label>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-300">
+            <input type="checkbox" checked={cfg.secure} disabled={!canEdit} onChange={(e) => setCfg((c) => ({ ...c, secure: e.target.checked }))} className="accent-blue-500" />
+            Use implicit TLS (port 465). Leave off for STARTTLS (587).
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="text-sm">
+              <span className="block text-xs text-slate-400 mb-1">Username</span>
+              <input className={input} disabled={!canEdit} value={cfg.username} autoComplete="off" onChange={(e) => setCfg((c) => ({ ...c, username: e.target.value }))} />
+            </label>
+            <label className="text-sm">
+              <span className="block text-xs text-slate-400 mb-1">Password {cfg.passwordConfigured && <span className="text-emerald-400">(configured)</span>}</span>
+              <input className={input} disabled={!canEdit} type="password" value={password} autoComplete="new-password" placeholder={cfg.passwordConfigured ? "•••••••• (leave blank to keep)" : ""} onChange={(e) => setPassword(e.target.value)} />
+            </label>
+          </div>
+          <label className="text-sm block">
+            <span className="block text-xs text-slate-400 mb-1">From address</span>
+            <input className={input} disabled={!canEdit} value={cfg.fromAddress} placeholder="scheduler@example.com" onChange={(e) => setCfg((c) => ({ ...c, fromAddress: e.target.value }))} />
+          </label>
+          {canEdit && (
+            <div className="flex items-center gap-3 pt-1">
+              <button onClick={save} disabled={status === "saving"} className="px-4 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 rounded transition-colors font-medium disabled:opacity-50">
+                {status === "saving" ? "Saving…" : "Save"}
+              </button>
+              <button onClick={sendTest} className="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded transition-colors text-slate-300">
+                Send test email
+              </button>
+              {testMsg && <span className="text-xs text-slate-400">{testMsg}</span>}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Employment Types Section ───────────────────────────────────────────────
 
 const ET_DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -2387,6 +2492,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
         <SchedulingPrefsSection initial={schedulingPrefs} />
+        <EmailSettingsSection />
         <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
         <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
       </div>
