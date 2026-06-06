@@ -17,6 +17,7 @@ const ALL_PERMISSIONS = [
   { key: "schedule:view", label: "View Schedule", category: "Schedule" },
   { key: "schedule:edit", label: "Edit Schedule", category: "Schedule" },
   { key: "schedule:auto", label: "Auto-Scheduler", category: "Schedule" },
+  { key: "requests:self", label: "Submit Own Requests", category: "Schedule" },
   { key: "staff:view", label: "View Staff", category: "Staff" },
   { key: "staff:edit", label: "Edit Staff", category: "Staff" },
   { key: "statistics:view", label: "View Statistics", category: "Statistics" },

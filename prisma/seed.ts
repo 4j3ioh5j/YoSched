@@ -351,6 +351,7 @@ async function main() {
   // --- Groups ---
   const ALL_PERMISSIONS = [
     "schedule:view", "schedule:edit", "schedule:auto",
+    "requests:self",
     "staff:view", "staff:edit", "statistics:view", "statistics:manage",
     "settings:view", "settings:edit",
     "users:view", "users:edit",

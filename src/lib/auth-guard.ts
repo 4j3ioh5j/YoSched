@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 export type Permission =
   | "schedule:view" | "schedule:edit" | "schedule:auto"
+  | "requests:self"
   | "staff:view" | "staff:edit"
   | "statistics:view" | "statistics:manage"
   | "settings:view" | "settings:edit"

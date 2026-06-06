@@ -458,3 +458,27 @@ export function validateRequestInput(
     },
   };
 }
+
+// ---- Provider self-service -----------------------------------------------
+// A provider entering their own request can't be trusted to set providerId or
+// source — both are forced server-side from the authenticated session.
+
+/** Validate a self-service request, forcing it to belong to `providerId` and the
+ *  "provider" source regardless of what the client sent. Reuses validateRequestInput
+ *  for all field rules. Pure. */
+export function buildSelfRequestInput(
+  body: unknown,
+  providerId: string
+): { error: string } | { value: RequestInput } {
+  const b = (body ?? {}) as Record<string, unknown>;
+  return validateRequestInput({ ...b, providerId, source: "provider" });
+}
+
+/** A provider may withdraw only their own request, and only while it is still
+ *  pending (approved/declined/etc. are terminal for self-service). Pure. */
+export function canWithdrawOwnRequest(
+  request: { providerId: string; status: string } | null,
+  providerId: string
+): boolean {
+  return !!request && request.providerId === providerId && request.status === "pending";
+}

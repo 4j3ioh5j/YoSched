@@ -12,6 +12,8 @@ import {
   groupCellsIntoTargets,
   requestCategory,
   summarizeCellRequests,
+  buildSelfRequestInput,
+  canWithdrawOwnRequest,
   type ScheduleRequestData,
 } from "../schedule-requests";
 
@@ -572,5 +574,45 @@ describe("requestCategory / summarizeCellRequests", () => {
   it("hasApproved false when all pending", () => {
     const s = summarizeCellRequests([req({ kind: "OFF", status: "pending" })], codeOf);
     expect(s?.hasApproved).toBe(false);
+  });
+});
+
+describe("buildSelfRequestInput", () => {
+  it("forces providerId and source=provider, ignoring spoofed client values", () => {
+    const out = buildSelfRequestInput(
+      { providerId: "someone-else", source: "scheduler", startDate: "2026-07-01", kind: "OFF" },
+      "me"
+    );
+    expect("value" in out).toBe(true);
+    if ("value" in out) {
+      expect(out.value.providerId).toBe("me");
+      expect(out.value.source).toBe("provider");
+    }
+  });
+
+  it("still applies field validation (bad kind rejected)", () => {
+    const out = buildSelfRequestInput({ startDate: "2026-07-01", kind: "NONSENSE" }, "me");
+    expect("error" in out).toBe(true);
+  });
+
+  it("validates kind-specific fields (LEAVE needs a leave shift)", () => {
+    const out = buildSelfRequestInput({ startDate: "2026-07-01", kind: "LEAVE" }, "me");
+    expect("error" in out).toBe(true);
+  });
+});
+
+describe("canWithdrawOwnRequest", () => {
+  it("allows withdrawing your own pending request", () => {
+    expect(canWithdrawOwnRequest({ providerId: "me", status: "pending" }, "me")).toBe(true);
+  });
+  it("rejects another provider's request", () => {
+    expect(canWithdrawOwnRequest({ providerId: "other", status: "pending" }, "me")).toBe(false);
+  });
+  it("rejects a non-pending (already approved/declined) request", () => {
+    expect(canWithdrawOwnRequest({ providerId: "me", status: "approved" }, "me")).toBe(false);
+    expect(canWithdrawOwnRequest({ providerId: "me", status: "declined" }, "me")).toBe(false);
+  });
+  it("rejects a missing request", () => {
+    expect(canWithdrawOwnRequest(null, "me")).toBe(false);
   });
 });
