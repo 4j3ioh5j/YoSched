@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Warning } from "@/lib/constraints";
 import type { PickerMarks } from "@/lib/schedule-requests";
 import { RequestSection } from "./request-section";
@@ -74,6 +74,7 @@ function ShiftButton({
 
 export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect, onClear, onClose, warnings, bulkCount, existingRequests, onDeleteRequest, onSaveRequest, requestTargetCount }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const [tab, setTab] = useState<"assign" | "request">("assign");
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -109,15 +110,43 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
   const leaveShifts = shiftTypes.filter((s) => s.category === "leave");
   const offShift = shiftTypes.find((s) => s.isOffShift);
 
+  // Assign vs Request — a tab so the request controls are discoverable rather
+  // than buried below the assign grid. Tabs only show when requests are enabled.
+  const showRequest = !!onSaveRequest;
+
   return (
     <div
       ref={ref}
-      className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-2 min-w-[200px] max-h-[400px] overflow-y-auto"
+      className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-2 min-w-[200px] max-h-[440px] overflow-y-auto"
       style={{ left: position.x + 12, top: position.y + 12 }}
     >
+      {showRequest && (
+        <div className="flex gap-1 mb-1 pb-1 border-b border-slate-700">
+          <button
+            onClick={() => setTab("assign")}
+            className={[
+              "flex-1 px-2 py-1 text-xs font-semibold rounded transition-colors",
+              tab === "assign" ? "bg-slate-600 text-white" : "text-slate-400 hover:text-slate-200",
+            ].join(" ")}
+          >
+            Assign
+          </button>
+          <button
+            onClick={() => setTab("request")}
+            className={[
+              "flex-1 px-2 py-1 text-xs font-semibold rounded transition-colors",
+              tab === "request" ? "bg-violet-600 text-white" : "text-violet-300 hover:text-violet-200",
+            ].join(" ")}
+          >
+            Request
+          </button>
+        </div>
+      )}
+
+      {/* A cell's existing requests — always visible so they can be deleted. */}
       {existingRequests && existingRequests.length > 0 && (
         <div className="border-b border-slate-700 mb-1 pb-1">
-          <div className="text-[10px] uppercase tracking-wider text-violet-300 px-2 py-0.5">Requests</div>
+          <div className="text-[10px] uppercase tracking-wider text-violet-300 px-2 py-0.5">On this day</div>
           {existingRequests.map((r) => (
             <div key={r.id} className="flex items-center justify-between gap-2 px-2 py-0.5 text-xs">
               <span className={r.pending ? "text-slate-400" : "text-slate-200"}>
@@ -137,61 +166,65 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
           ))}
         </div>
       )}
-      {bulkCount && (
-        <div className="text-[10px] font-semibold text-emerald-400 px-2 py-1 border-b border-slate-700 mb-1">
-          Assign {bulkCount} cells
-        </div>
-      )}
-      <div className="text-[10px] uppercase tracking-wider text-slate-500 px-2 py-1">Work</div>
-      <div className="grid grid-cols-3 gap-0.5">
-        {workShifts.map((st) => (
-          <ShiftButton
-            key={st.id}
-            st={st}
-            isCurrent={st.id === currentShiftTypeId}
-            warnings={warnings?.get(st.id)}
-            onSelect={onSelect}
-          />
-        ))}
-      </div>
 
-      <div className="text-[10px] uppercase tracking-wider text-slate-500 px-2 py-1 mt-1">Leave</div>
-      <div className="grid grid-cols-3 gap-0.5">
-        {leaveShifts.map((st) => (
-          <ShiftButton
-            key={st.id}
-            st={st}
-            isCurrent={st.id === currentShiftTypeId}
-            warnings={warnings?.get(st.id)}
-            onSelect={onSelect}
-          />
-        ))}
-      </div>
+      {tab === "assign" || !showRequest ? (
+        <>
+          {bulkCount && (
+            <div className="text-[10px] font-semibold text-emerald-400 px-2 py-1 border-b border-slate-700 mb-1">
+              Assign {bulkCount} cells
+            </div>
+          )}
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 px-2 py-1">Work</div>
+          <div className="grid grid-cols-3 gap-0.5">
+            {workShifts.map((st) => (
+              <ShiftButton
+                key={st.id}
+                st={st}
+                isCurrent={st.id === currentShiftTypeId}
+                warnings={warnings?.get(st.id)}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
 
-      {offShift && (
-        <div className="border-t border-slate-700 mt-2 pt-1">
-          <button
-            onClick={() => onSelect(offShift.id)}
-            className={[
-              "w-full px-2 py-1.5 text-xs font-bold rounded text-center text-slate-400 bg-slate-700/50 hover:bg-slate-600/50 transition-colors",
-              offShift.id === currentShiftTypeId ? "ring-2 ring-white/50" : "",
-            ].join(" ")}
-          >
-            OFF
-          </button>
-        </div>
-      )}
-      {(currentShiftTypeId || bulkCount) && (
-        <div className="border-t border-slate-700 mt-1 pt-1">
-          <button
-            onClick={onClear}
-            className="w-full px-2 py-1.5 text-xs text-red-400 hover:bg-red-900/30 rounded transition-colors"
-          >
-            {bulkCount ? `Clear ${bulkCount} cells` : "Clear"}
-          </button>
-        </div>
-      )}
-      {onSaveRequest && (
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 px-2 py-1 mt-1">Leave</div>
+          <div className="grid grid-cols-3 gap-0.5">
+            {leaveShifts.map((st) => (
+              <ShiftButton
+                key={st.id}
+                st={st}
+                isCurrent={st.id === currentShiftTypeId}
+                warnings={warnings?.get(st.id)}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+
+          {offShift && (
+            <div className="border-t border-slate-700 mt-2 pt-1">
+              <button
+                onClick={() => onSelect(offShift.id)}
+                className={[
+                  "w-full px-2 py-1.5 text-xs font-bold rounded text-center text-slate-400 bg-slate-700/50 hover:bg-slate-600/50 transition-colors",
+                  offShift.id === currentShiftTypeId ? "ring-2 ring-white/50" : "",
+                ].join(" ")}
+              >
+                OFF
+              </button>
+            </div>
+          )}
+          {(currentShiftTypeId || bulkCount) && (
+            <div className="border-t border-slate-700 mt-1 pt-1">
+              <button
+                onClick={onClear}
+                className="w-full px-2 py-1.5 text-xs text-red-400 hover:bg-red-900/30 rounded transition-colors"
+              >
+                {bulkCount ? `Clear ${bulkCount} cells` : "Clear"}
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
         <RequestSection shiftTypes={shiftTypes} targetCount={requestTargetCount ?? 1} onSave={onSaveRequest} />
       )}
     </div>
