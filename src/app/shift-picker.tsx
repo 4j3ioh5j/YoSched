@@ -2,6 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import type { Warning } from "@/lib/constraints";
+import type { PickerMarks } from "@/lib/schedule-requests";
+import { RequestSection } from "./request-section";
 
 type ShiftType = {
   id: string;
@@ -13,6 +15,9 @@ type ShiftType = {
   isOffShift: boolean;
 };
 
+// A cell's existing request, shown at the top of the picker with a delete button.
+export type ExistingRequest = { id: string; label: string; pending: boolean };
+
 type Props = {
   shiftTypes: ShiftType[];
   currentShiftTypeId: string | null;
@@ -22,6 +27,12 @@ type Props = {
   onClose: () => void;
   warnings?: Map<string, Warning[]>;
   bulkCount?: number;
+  // Request controls (unified picker). When onSaveRequest is set, the picker
+  // also shows the "Request" section and any existing requests on this cell.
+  existingRequests?: ExistingRequest[];
+  onDeleteRequest?: (id: string) => void;
+  onSaveRequest?: (marks: PickerMarks) => void;
+  requestTargetCount?: number;
 };
 
 function ShiftButton({
@@ -61,7 +72,7 @@ function ShiftButton({
   );
 }
 
-export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect, onClear, onClose, warnings, bulkCount }: Props) {
+export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect, onClear, onClose, warnings, bulkCount, existingRequests, onDeleteRequest, onSaveRequest, requestTargetCount }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -104,6 +115,28 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
       className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-2 min-w-[200px] max-h-[400px] overflow-y-auto"
       style={{ left: position.x + 12, top: position.y + 12 }}
     >
+      {existingRequests && existingRequests.length > 0 && (
+        <div className="border-b border-slate-700 mb-1 pb-1">
+          <div className="text-[10px] uppercase tracking-wider text-violet-300 px-2 py-0.5">Requests</div>
+          {existingRequests.map((r) => (
+            <div key={r.id} className="flex items-center justify-between gap-2 px-2 py-0.5 text-xs">
+              <span className={r.pending ? "text-slate-400" : "text-slate-200"}>
+                {r.label}
+                {r.pending && <span className="text-[9px] text-amber-400 ml-1">pending</span>}
+              </span>
+              {onDeleteRequest && (
+                <button
+                  onClick={() => onDeleteRequest(r.id)}
+                  className="text-slate-500 hover:text-red-400 text-sm leading-none px-1"
+                  title="Delete request"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       {bulkCount && (
         <div className="text-[10px] font-semibold text-emerald-400 px-2 py-1 border-b border-slate-700 mb-1">
           Assign {bulkCount} cells
@@ -157,6 +190,9 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
             {bulkCount ? `Clear ${bulkCount} cells` : "Clear"}
           </button>
         </div>
+      )}
+      {onSaveRequest && (
+        <RequestSection shiftTypes={shiftTypes} targetCount={requestTargetCount ?? 1} onSave={onSaveRequest} />
       )}
     </div>
   );
