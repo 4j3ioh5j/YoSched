@@ -346,7 +346,10 @@ export function fairnessColor(deviation: number, t: EquityThresholds = DEFAULT_T
  * more burden = redder.
  */
 export function heatmapTempColor(deviation: number, t: EquityThresholds = DEFAULT_THRESHOLDS): string {
-  const frac = Math.min(1, Math.max(0, (deviation + t.high) / (2 * t.high)));
+  // Guard a degenerate range: a non-positive `high` would divide by zero / invert
+  // the ramp, so fall back to the default span.
+  const span = t.high > 0 ? t.high : DEFAULT_THRESHOLDS.high;
+  const frac = Math.min(1, Math.max(0, (deviation + span) / (2 * span)));
   const hue = Math.round(60 * (1 - frac));
   return `hsl(${hue} 100% 50%)`;
 }

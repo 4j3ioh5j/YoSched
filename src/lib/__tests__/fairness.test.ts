@@ -293,6 +293,16 @@ describe("heatmapTempColor", () => {
       expect(hue).toBeLessThanOrEqual(60);
     }
   });
+
+  it("falls back to the default span when high is non-positive (no NaN/invalid color)", () => {
+    // high <= 0 would divide by zero; the guard reuses the default 1.5 span.
+    for (const high of [0, -1]) {
+      const t = { low: 0.25, med: 0.75, high };
+      expect(heatmapTempColor(0, t)).toBe("hsl(30 100% 50%)"); // midpoint orange
+      expect(heatmapTempColor(-1.5, t)).toBe("hsl(60 100% 50%)"); // yellow
+      expect(heatmapTempColor(1.5, t)).toBe("hsl(0 100% 50%)"); // red
+    }
+  });
 });
 
 describe("fairnessLabel", () => {
