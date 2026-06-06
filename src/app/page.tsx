@@ -97,7 +97,7 @@ export default async function Home() {
   }
 
   return (
-    <main className="flex flex-col h-screen">
+    <main className="flex flex-col h-dvh">
       <NavHeader />
 
       <ScheduleGrid

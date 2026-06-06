@@ -123,7 +123,7 @@ function LoginForm() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center relative overflow-hidden"
+      className="min-h-dvh flex items-center justify-center relative overflow-hidden"
       style={{ background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)" }}
     >
       <div

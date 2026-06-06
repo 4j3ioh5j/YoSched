@@ -22,7 +22,7 @@ export default async function Staff() {
   ]);
 
   return (
-    <main className="flex flex-col h-screen">
+    <main className="flex flex-col h-dvh">
       <NavHeader />
 
       <StaffPage

@@ -107,7 +107,7 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
   }));
 
   return (
-    <main className="flex flex-col h-screen">
+    <main className="flex flex-col h-dvh">
       <NavHeader />
       <EquityPage raw={raw} equityThresholds={equityThresholds} payPeriods={payPeriodRefs} initialSpec={initialSpec} dateFormat={schedPrefs?.dateFormat ?? DEFAULT_DATE_FORMAT} canManageViews={canManageViews} />
     </main>

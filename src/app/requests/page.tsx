@@ -38,7 +38,7 @@ export default async function Requests() {
   for (const s of shiftTypes) shiftCode[s.id] = s.code;
 
   return (
-    <main className="flex flex-col h-screen">
+    <main className="flex flex-col h-dvh">
       <NavHeader />
       <RequestsPage
         canEdit={canEdit}

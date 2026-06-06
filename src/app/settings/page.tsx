@@ -34,7 +34,7 @@ export default async function Settings() {
   };
 
   return (
-    <main className="flex flex-col h-screen">
+    <main className="flex flex-col h-dvh">
       <NavHeader />
 
       <SettingsPage
