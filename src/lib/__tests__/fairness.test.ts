@@ -11,7 +11,7 @@ function makeAssignment(
   shiftCode: string,
   shiftId: string,
   hours = 8,
-  opts: { countsTowardFte?: boolean; isLeave?: boolean; isOffShift?: boolean } = {},
+  opts: { countsTowardFte?: boolean; countsAsHolidayWork?: boolean; isLeave?: boolean; isOffShift?: boolean } = {},
 ) {
   return {
     providerId,
@@ -21,6 +21,7 @@ function makeAssignment(
       code: shiftCode,
       defaultHours: hours,
       countsTowardFte: opts.countsTowardFte ?? true,
+      countsAsHolidayWork: opts.countsAsHolidayWork ?? true,
       isLeave: opts.isLeave ?? false,
       isOffShift: opts.isOffShift ?? false,
     },
@@ -125,6 +126,20 @@ describe("computeFairness", () => {
       holidays: [{ date: "2025-05-26" }, { date: "2025-12-25" }],
     });
     expect(result.metrics[0].holidayWorkCount).toBe(2);
+  });
+
+  it("excludes shifts flagged countsAsHolidayWork=false from holiday work", () => {
+    const result = computeFairness({
+      assignments: [
+        // worked shift on a holiday, but department opted it out of holiday burden
+        makeAssignment("p1", "2025-05-26", "CITC", "st1", 8, { countsAsHolidayWork: false }),
+        makeAssignment("p1", "2025-12-25", "ORC", "st2"), // default true => counts
+      ],
+      providers: [makeProvider("p1", "AB")],
+      desirabilityWeights: [],
+      holidays: [{ date: "2025-05-26" }, { date: "2025-12-25" }],
+    });
+    expect(result.metrics[0].holidayWorkCount).toBe(1);
   });
 
   it("does not count leave or off shifts on a holiday as holiday work", () => {

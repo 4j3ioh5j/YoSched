@@ -46,6 +46,7 @@ export default async function Settings() {
           defaultHours: st.defaultHours,
           countsTowardFte: st.countsTowardFte,
           countsOnWeekend: st.countsOnWeekend,
+          countsAsHolidayWork: st.countsAsHolidayWork,
           isLeave: st.isLeave,
           isPaid: st.isPaid,
           category: st.category,

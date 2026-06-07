@@ -14,6 +14,7 @@ type ShiftType = {
   defaultHours: number;
   countsTowardFte: boolean;
   countsOnWeekend: boolean;
+  countsAsHolidayWork: boolean;
   isLeave: boolean;
   isPaid: boolean;
   category: string;
@@ -483,6 +484,7 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
         defaultHours: created.defaultHours,
         countsTowardFte: created.countsTowardFte,
         countsOnWeekend: created.countsOnWeekend,
+        countsAsHolidayWork: created.countsAsHolidayWork ?? true,
         isLeave: created.isLeave,
         isPaid: created.isPaid,
         category: created.category,
@@ -653,6 +655,9 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
               </FieldRow>
               <FieldRow label="Count hours on weekends" description="Include weekend hours in pay period totals">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.countsOnWeekend} onChange={(e) => updateField(editingShift.id, "countsOnWeekend", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
+              </FieldRow>
+              <FieldRow label="Counts as holiday work" description="When worked on a holiday, this shift counts toward the holiday-burden equity metric. Includes call/duty shifts that don't accrue FTE hours; uncheck for shifts that shouldn't count (e.g. routine clinic).">
+                <input disabled={!canEdit} type="checkbox" checked={editingShift.countsAsHolidayWork} onChange={(e) => updateField(editingShift.id, "countsAsHolidayWork", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FollowRulesEditor
                 sourceShiftId={editingShift.id}

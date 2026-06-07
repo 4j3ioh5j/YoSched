@@ -6,6 +6,7 @@ type Assignment = {
     code: string;
     defaultHours: number;
     countsTowardFte: boolean;
+    countsAsHolidayWork?: boolean;
     isLeave: boolean;
     isOffShift?: boolean;
   };
@@ -152,10 +153,12 @@ export function computeFairness({
 
       shiftCounts[code] = (shiftCounts[code] || 0) + 1;
 
-      // Any *worked* shift on a holiday is holiday burden — including ones that
-      // don't accrue FTE hours (e.g. CALL). Off/leave shifts already `continue`d
-      // above, so reaching here means this is a real worked shift.
-      if (isHoliday) holidayWorkCount++;
+      // Holiday burden = a worked shift on a holiday whose type is configured to
+      // count as holiday work (per-department `countsAsHolidayWork`, default true).
+      // Off/leave shifts already `continue`d above; the flag lets a department
+      // further exclude specific worked shifts (e.g. routine clinic) from the
+      // holiday metric. Default true preserves "every worked holiday shift counts".
+      if (isHoliday && (a.shiftType.countsAsHolidayWork ?? true)) holidayWorkCount++;
 
       const dwKey = `${a.shiftType.id}:${dow}`;
       const weight = dwMap.get(dwKey) ?? 0;

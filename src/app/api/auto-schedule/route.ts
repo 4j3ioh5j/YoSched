@@ -193,6 +193,7 @@ export async function POST(req: NextRequest) {
       defaultHours: st.defaultHours,
       countsTowardFte: st.countsTowardFte,
       countsOnWeekend: st.countsOnWeekend,
+      countsAsHolidayWork: st.countsAsHolidayWork,
       isLeave: st.isLeave,
       isOffShift: st.isOffShift,
       isFillShift: st.isFillShift,

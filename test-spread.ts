@@ -104,6 +104,7 @@ async function main() {
     shiftTypes: shiftTypes.map((st) => ({
       id: st.id, code: st.code, name: st.name, defaultHours: st.defaultHours,
       countsTowardFte: st.countsTowardFte, countsOnWeekend: st.countsOnWeekend,
+      countsAsHolidayWork: st.countsAsHolidayWork,
       isLeave: st.isLeave, isOffShift: st.isOffShift, isFillShift: st.isFillShift,
       schedulePriority: st.schedulePriority, weekendPaired: st.weekendPaired,
       ignoresWorkingDays: st.ignoresWorkingDays, maxPerDay: st.maxPerDay,

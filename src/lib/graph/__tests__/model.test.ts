@@ -145,7 +145,7 @@ describe("computeStatsModel — full engine wiring", () => {
           providerId: "p1",
           shiftTypeId: "call",
           date: "2026-06-03",
-          shiftType: { id: "call", code: "CALL", defaultHours: 24, countsTowardFte: true, isLeave: false, isOffShift: false },
+          shiftType: { id: "call", code: "CALL", defaultHours: 24, countsTowardFte: true, countsAsHolidayWork: true, isLeave: false, isOffShift: false },
         },
       ],
       shiftTypes: [{ id: "call", countsTowardFte: true, countsOnWeekend: true, defaultHours: 24 }],

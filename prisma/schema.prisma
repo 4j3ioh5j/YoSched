@@ -75,6 +75,7 @@ model ShiftType {
   defaultHours    Float
   countsTowardFte Boolean  @default(true)
   countsOnWeekend Boolean  @default(false)
+  countsAsHolidayWork Boolean @default(true) // counts toward holiday-burden equity metric when worked on a holiday
   isLeave         Boolean  @default(false)
   isPaid          Boolean  @default(true)
   category        String   @default("work") // work, leave, imported, other

@@ -187,6 +187,7 @@ export type RawShiftTypeRef = {
   code: string;
   defaultHours: number;
   countsTowardFte: boolean;
+  countsAsHolidayWork: boolean;
   isLeave: boolean;
   isOffShift: boolean;
 };
@@ -232,6 +233,7 @@ export function computeStatsModel(raw: RawStatsData): EquityModel {
         code: a.shiftType.code,
         defaultHours: a.shiftType.defaultHours,
         countsTowardFte: a.shiftType.countsTowardFte,
+        countsAsHolidayWork: a.shiftType.countsAsHolidayWork,
         isLeave: a.shiftType.isLeave,
         isOffShift: a.shiftType.isOffShift,
       },

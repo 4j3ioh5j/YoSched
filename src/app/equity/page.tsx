@@ -65,6 +65,7 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
         code: a.shiftType.code,
         defaultHours: a.shiftType.defaultHours,
         countsTowardFte: a.shiftType.countsTowardFte,
+        countsAsHolidayWork: a.shiftType.countsAsHolidayWork,
         isLeave: a.shiftType.isLeave,
         isOffShift: a.shiftType.isOffShift,
       },

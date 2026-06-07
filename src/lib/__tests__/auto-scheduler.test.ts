@@ -31,6 +31,7 @@ function makeShift(id: string, code: string, overrides: Partial<ScheduleShiftTyp
     defaultHours: 8,
     countsTowardFte: true,
     countsOnWeekend: false,
+    countsAsHolidayWork: true,
     isLeave: false,
     isOffShift: false,
     isFillShift: false,

@@ -24,6 +24,7 @@ export type ScheduleShiftType = {
   defaultHours: number;
   countsTowardFte: boolean;
   countsOnWeekend: boolean;
+  countsAsHolidayWork: boolean;
   isLeave: boolean;
   isOffShift: boolean;
   isFillShift: boolean;
@@ -363,6 +364,7 @@ export function autoSchedule({
           code: a.code,
           defaultHours: st?.defaultHours ?? 0,
           countsTowardFte: st?.countsTowardFte ?? false,
+          countsAsHolidayWork: st?.countsAsHolidayWork ?? true,
           isLeave: st?.isLeave ?? false,
         };
       })(),
