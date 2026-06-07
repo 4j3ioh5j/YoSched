@@ -113,6 +113,33 @@ describe("computeFairness", () => {
     expect(result.metrics[0].holidayWorkCount).toBe(1);
   });
 
+  it("counts non-FTE worked shifts (e.g. CALL) on holidays as holiday work", () => {
+    const result = computeFairness({
+      assignments: [
+        // CALL does not count toward FTE but is still a worked holiday shift
+        makeAssignment("p1", "2025-05-26", "CALL", "st1", 8, { countsTowardFte: false }),
+        makeAssignment("p1", "2025-12-25", "ORC", "st2"), // Christmas, FTE-counting
+      ],
+      providers: [makeProvider("p1", "AB")],
+      desirabilityWeights: [],
+      holidays: [{ date: "2025-05-26" }, { date: "2025-12-25" }],
+    });
+    expect(result.metrics[0].holidayWorkCount).toBe(2);
+  });
+
+  it("does not count leave or off shifts on a holiday as holiday work", () => {
+    const result = computeFairness({
+      assignments: [
+        makeAssignment("p1", "2025-05-26", "AL", "st1", 8, { isLeave: true }),
+        makeAssignment("p1", "2025-05-26", "X", "st2", 8, { isOffShift: true }),
+      ],
+      providers: [makeProvider("p1", "AB")],
+      desirabilityWeights: [],
+      holidays: [{ date: "2025-05-26" }],
+    });
+    expect(result.metrics[0].holidayWorkCount).toBe(0);
+  });
+
   it("tracks shift counts by code", () => {
     const result = computeFairness({
       assignments: [

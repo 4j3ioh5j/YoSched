@@ -152,7 +152,10 @@ export function computeFairness({
 
       shiftCounts[code] = (shiftCounts[code] || 0) + 1;
 
-      if (isHoliday && a.shiftType.countsTowardFte) holidayWorkCount++;
+      // Any *worked* shift on a holiday is holiday burden — including ones that
+      // don't accrue FTE hours (e.g. CALL). Off/leave shifts already `continue`d
+      // above, so reaching here means this is a real worked shift.
+      if (isHoliday) holidayWorkCount++;
 
       const dwKey = `${a.shiftType.id}:${dow}`;
       const weight = dwMap.get(dwKey) ?? 0;
