@@ -1,6 +1,19 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@/generated/prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+
+// Editable columns. PUT is a partial update — only keys actually present in the
+// request body are written, so omitting a field leaves it untouched (rather than
+// resetting it to a default). The Settings UI sends the full object; other
+// callers can safely PATCH a subset.
+const EDITABLE_FIELDS = [
+  "name", "code", "defaultHours",
+  "countsTowardFte", "countsOnWeekend", "countsAsHolidayWork",
+  "isLeave", "isPaid", "category", "color", "sortOrder",
+  "schedulePriority", "isOffShift", "isFillShift", "weekendPaired",
+  "ignoresWorkingDays", "maxPerDay", "autoSchedulable", "hotkey", "dedicatedColumn",
+] as const;
 
 export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
@@ -8,32 +21,15 @@ export async function PUT(req: NextRequest) {
   const { id, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  const updated = await prisma.shiftType.update({
-    where: { id },
-    data: {
-      name: data.name,
-      code: data.code,
-      defaultHours: data.defaultHours,
-      countsTowardFte: data.countsTowardFte,
-      countsOnWeekend: data.countsOnWeekend,
-      countsAsHolidayWork: data.countsAsHolidayWork ?? true,
-      isLeave: data.isLeave,
-      isPaid: data.isPaid,
-      category: data.category,
+  const updateData: Prisma.ShiftTypeUpdateInput = {};
+  for (const key of EDITABLE_FIELDS) {
+    if (key in data) (updateData as Record<string, unknown>)[key] = data[key];
+  }
+  if (Object.keys(updateData).length === 0) {
+    return NextResponse.json({ error: "No editable fields provided" }, { status: 400 });
+  }
 
-      color: data.color,
-      sortOrder: data.sortOrder,
-      schedulePriority: data.schedulePriority ?? null,
-      isOffShift: data.isOffShift ?? false,
-      isFillShift: data.isFillShift ?? false,
-      weekendPaired: data.weekendPaired ?? false,
-      ignoresWorkingDays: data.ignoresWorkingDays ?? false,
-      maxPerDay: data.maxPerDay ?? null,
-      autoSchedulable: data.autoSchedulable ?? false,
-      hotkey: data.hotkey ?? null,
-      dedicatedColumn: data.dedicatedColumn ?? false,
-    },
-  });
+  const updated = await prisma.shiftType.update({ where: { id }, data: updateData });
   return NextResponse.json(updated);
 }
 
