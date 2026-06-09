@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
+import { syncRequestApprovals } from "@/lib/request-sync";
 import { NextRequest, NextResponse } from "next/server";
 
 function formatAssignment(a: { id: string; providerId: string; shiftTypeId: string; isLocked: boolean; shiftType: { code: string; color: string | null } }, date: string) {
@@ -15,7 +16,7 @@ function formatAssignment(a: { id: string; providerId: string; shiftTypeId: stri
 }
 
 export async function PUT(req: NextRequest) {
-  const { error } = await getSession("schedule:edit");
+  const { error, userId } = await getSession("schedule:edit");
   if (error) return error;
   const { providerId, date, shiftTypeId } = await req.json();
 
@@ -44,11 +45,13 @@ export async function PUT(req: NextRequest) {
     include: { shiftType: true },
   });
 
+  await syncRequestApprovals([{ providerId, date }], userId);
+
   return NextResponse.json(formatAssignment(assignment, date));
 }
 
 export async function POST(req: NextRequest) {
-  const { error } = await getSession("schedule:edit");
+  const { error, userId } = await getSession("schedule:edit");
   if (error) return error;
   const { action, from, to } = await req.json();
 
@@ -119,6 +122,14 @@ export async function POST(req: NextRequest) {
       results.cleared = { providerId: from.providerId, date: from.date };
     }
 
+    await syncRequestApprovals(
+      [
+        { providerId: from.providerId, date: from.date },
+        { providerId: to.providerId, date: to.date },
+      ],
+      userId
+    );
+
     return NextResponse.json(results);
   }
 
@@ -126,7 +137,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const { error } = await getSession("schedule:edit");
+  const { error, userId } = await getSession("schedule:edit");
   if (error) return error;
   const { providerId, date } = await req.json();
 
@@ -147,6 +158,8 @@ export async function DELETE(req: NextRequest) {
       date: new Date(date + "T00:00:00Z"),
     },
   });
+
+  await syncRequestApprovals([{ providerId, date }], userId);
 
   return NextResponse.json({ ok: true });
 }

@@ -1,11 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
+import { syncRequestApprovals } from "@/lib/request-sync";
 import { NextRequest, NextResponse } from "next/server";
 
 type BulkItem = { providerId: string; date: string };
 
 export async function PUT(req: NextRequest) {
-  const { error } = await getSession("schedule:edit");
+  const { error, userId } = await getSession("schedule:edit");
   if (error) return error;
   const { cells, shiftTypeId } = await req.json() as {
     cells: BulkItem[];
@@ -50,11 +51,16 @@ export async function PUT(req: NextRequest) {
     });
   }
 
+  await syncRequestApprovals(
+    results.map((r) => ({ providerId: r.providerId, date: r.date })),
+    userId
+  );
+
   return NextResponse.json({ applied: results, skipped });
 }
 
 export async function DELETE(req: NextRequest) {
-  const { error } = await getSession("schedule:edit");
+  const { error, userId } = await getSession("schedule:edit");
   if (error) return error;
   const { cells } = await req.json() as { cells: BulkItem[] };
 
@@ -63,7 +69,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   const skipped = [];
-  let cleared = 0;
+  const clearedCells: BulkItem[] = [];
   for (const { providerId, date } of cells) {
     const existing = await prisma.assignment.findUnique({
       where: { providerId_date: { providerId, date: new Date(date + "T00:00:00Z") } },
@@ -78,8 +84,10 @@ export async function DELETE(req: NextRequest) {
         date: new Date(date + "T00:00:00Z"),
       },
     });
-    cleared++;
+    clearedCells.push({ providerId, date });
   }
 
-  return NextResponse.json({ ok: true, cleared, skipped });
+  await syncRequestApprovals(clearedCells, userId);
+
+  return NextResponse.json({ ok: true, cleared: clearedCells.length, skipped });
 }

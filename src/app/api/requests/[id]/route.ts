@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
+import { syncRequestApprovals } from "@/lib/request-sync";
+import { resolveRequestPlacement, releasableDates, eachDateInclusive, type RequestKind } from "@/lib/schedule-requests";
 import { NextRequest, NextResponse } from "next/server";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -8,7 +10,78 @@ type Ctx = { params: Promise<{ id: string }> };
 // states (declined/withdrawn/fulfilled) just record the outcome.
 const STATUSES = ["pending", "approved", "declined", "withdrawn", "fulfilled"] as const;
 
+type RequestRow = {
+  id: string;
+  providerId: string;
+  kind: string;
+  shiftTypeIds: string[];
+  leaveShiftTypeId: string | null;
+  startDate: Date;
+  endDate: Date;
+};
+
+function serialize(r: { id: string; status: string; approvedAt: Date | null }) {
+  return { id: r.id, status: r.status, approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null };
+}
+
+const ymd = (d: Date): string => d.toISOString().slice(0, 10);
+
+async function offShiftId(): Promise<string | null> {
+  const off = await prisma.shiftType.findFirst({ where: { isOffShift: true }, select: { id: true } });
+  return off?.id ?? null;
+}
+
+/** The single shift this request would place if approved directly, or null when
+ *  it doesn't resolve to one concrete shift (multi-option REQUEST_SHIFT / NEGATE). */
+const placementOf = (r: RequestRow, offId: string | null): string | null =>
+  resolveRequestPlacement(
+    { kind: r.kind as RequestKind, shiftTypeIds: r.shiftTypeIds, leaveShiftTypeId: r.leaveShiftTypeId },
+    offId
+  );
+
+const coveredCells = (r: RequestRow) =>
+  eachDateInclusive(ymd(r.startDate), ymd(r.endDate)).map((date) => ({ providerId: r.providerId, date }));
+
+/** Dates of `r` whose request-placed shift is safe to clear when r is removed —
+ *  excludes dates another still-approved request also resolves to the same shift,
+ *  so removing one request never yanks a shift another still relies on. */
+async function datesToRelease(r: RequestRow, placement: string | null, offId: string | null): Promise<Date[]> {
+  if (!placement) return [];
+  const days = coveredCells(r).map((c) => c.date);
+  const others = await prisma.scheduleRequest.findMany({
+    where: {
+      providerId: r.providerId,
+      id: { not: r.id },
+      status: "approved",
+      startDate: { lte: new Date(days[days.length - 1] + "T00:00:00Z") },
+      endDate: { gte: new Date(days[0] + "T00:00:00Z") },
+    },
+  });
+  return releasableDates(
+    { startDate: ymd(r.startDate), endDate: ymd(r.endDate) },
+    placement,
+    others.map((o) => ({
+      kind: o.kind as RequestKind,
+      shiftTypeIds: o.shiftTypeIds,
+      leaveShiftTypeId: o.leaveShiftTypeId,
+      startDate: ymd(o.startDate),
+      endDate: ymd(o.endDate),
+    })),
+    offId
+  ).map((d) => new Date(d + "T00:00:00Z"));
+}
+
 // PATCH — change a request's status (the approval action). Requires schedule:edit.
+//
+// Approval and assignment are two routes to the same end state, so this keeps
+// them in sync:
+//   • approve a request that resolves to one shift (LEAVE / OFF / single-option
+//     REQUEST_SHIFT) → place that shift on every covered day; satisfaction then
+//     drives the status (syncRequestApprovals), and removing the shift later
+//     reverts it to pending.
+//   • approve a multi-option REQUEST_SHIFT / NEGATE_SHIFT → there's no single
+//     shift to place, so it's a sticky human override (autoApproved=false).
+//   • decline / withdraw / re-open → pull back any shift this request placed.
 export async function PATCH(req: NextRequest, { params }: Ctx) {
   const result = await getSession("schedule:edit");
   if (result.error) return result.error;
@@ -23,21 +96,66 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: `status must be one of ${STATUSES.join(", ")}` }, { status: 400 });
   }
 
-  const updated = await prisma.scheduleRequest.update({
-    where: { id },
-    data: {
-      status,
-      // Stamp the approval; clear the stamp if it moves back off "approved".
-      approvedAt: status === "approved" ? new Date() : null,
-      approvedBy: status === "approved" ? result.userId : null,
-    },
-  });
+  const cells = coveredCells(existing);
+  const offId = await offShiftId();
+  const placement = placementOf(existing, offId);
 
-  return NextResponse.json({
-    id: updated.id,
-    status: updated.status,
-    approvedAt: updated.approvedAt ? updated.approvedAt.toISOString() : null,
-  });
+  if (status === "approved") {
+    if (placement) {
+      // Place the resolved shift on every covered, non-locked day.
+      for (const { providerId, date } of cells) {
+        const at = new Date(date + "T00:00:00Z");
+        const cell = await prisma.assignment.findUnique({ where: { providerId_date: { providerId, date: at } } });
+        if (cell?.isLocked) continue;
+        await prisma.assignment.upsert({
+          where: { providerId_date: { providerId, date: at } },
+          update: { shiftTypeId: placement, source: "request" },
+          create: { providerId, date: at, shiftTypeId: placement, source: "request" },
+        });
+      }
+    }
+    // Explicit approval is authoritative — stamp it directly regardless of the
+    // prior status (don't delegate to sync, which only promotes pending rows).
+    // Placement-backed approvals are autoApproved (revert if the shift is later
+    // removed); a request with no single shift to place is a sticky override.
+    const updated = await prisma.scheduleRequest.update({
+      where: { id },
+      data: { status: "approved", autoApproved: placement != null, approvedAt: new Date(), approvedBy: result.userId },
+    });
+    // Co-approve any OTHER requests the placement satisfies; never re-derive this one.
+    await syncRequestApprovals(cells, result.userId, { excludeRequestId: id });
+    return NextResponse.json(serialize(updated));
+  }
+
+  if (status === "declined" || status === "withdrawn" || status === "pending") {
+    // Pull back this request's placed shift — but only on dates no OTHER approved
+    // request still needs it, and never a cell a scheduler took over (source flips
+    // to "manual") or locked.
+    const release = await datesToRelease(existing, placement, offId);
+    if (release.length > 0) {
+      await prisma.assignment.deleteMany({
+        where: {
+          providerId: existing.providerId,
+          source: "request",
+          isLocked: false,
+          shiftTypeId: placement!,
+          date: { in: release },
+        },
+      });
+    }
+    const updated = await prisma.scheduleRequest.update({
+      where: { id },
+      data: { status, autoApproved: false, approvedAt: null, approvedBy: null },
+    });
+    // Reconcile OTHER requests on those cells, but never re-derive THIS one — the
+    // explicit transition is authoritative, even if a satisfying shift remains.
+    await syncRequestApprovals(cells, result.userId, { excludeRequestId: id });
+    return NextResponse.json(serialize(updated));
+  }
+
+  // fulfilled — record the outcome only; leave assignments and the stamp as-is.
+  const updated = await prisma.scheduleRequest.update({ where: { id }, data: { status } });
+  return NextResponse.json(serialize(updated));
 }
 
 // DELETE — remove a request entirely. Requires schedule:edit.
@@ -49,6 +167,25 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const existing = await prisma.scheduleRequest.findUnique({ where: { id } });
   if (!existing) return NextResponse.json({ error: "Request not found" }, { status: 404 });
 
+  // Pull back this request's placed shift before removing it — but only on dates
+  // no OTHER approved request still needs it — then reconcile neighbours.
+  const cells = coveredCells(existing);
+  const offId = await offShiftId();
+  const placement = placementOf(existing, offId);
+  const release = await datesToRelease(existing, placement, offId);
+  if (release.length > 0) {
+    await prisma.assignment.deleteMany({
+      where: {
+        providerId: existing.providerId,
+        source: "request",
+        isLocked: false,
+        shiftTypeId: placement!,
+        date: { in: release },
+      },
+    });
+  }
+
   await prisma.scheduleRequest.delete({ where: { id } });
+  await syncRequestApprovals(cells, result.userId);
   return NextResponse.json({ ok: true });
 }

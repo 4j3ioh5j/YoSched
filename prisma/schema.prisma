@@ -347,7 +347,7 @@ model Assignment {
   date        DateTime @db.Date
   shiftTypeId String
   isLocked    Boolean  @default(false)
-  source      String   @default("manual") // manual, auto, imported
+  source      String   @default("manual") // manual, auto, imported, request (placed by an approved schedule request)
   notes       String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -509,6 +509,7 @@ model ScheduleRequest {
   leaveShiftTypeId String? // LEAVE: the leave shift type to pre-place (AL/SL/ILD…)
   strength     String    @default("hard") // hard (forbid/force) | soft (avoid/prefer)
   status       String    @default("pending") // pending | approved | declined | fulfilled | withdrawn
+  autoApproved Boolean   @default(false) // approval derived from a satisfying assignment (auto-revertible); false = sticky human decision
   source       String    @default("scheduler") // scheduler | provider | email
   receivedAt   DateTime  @default(now()) // when the request came in (the stamp)
   approvedAt   DateTime?

@@ -588,14 +588,18 @@ export function ScheduleGrid({
     return map;
   }, [shiftTypes]);
 
-  // Requests affecting each visible cell, keyed `${providerId}:${date}`. Includes
-  // pending (the grid renders them, distinct from approved). Empty cells omitted.
+  // Request chrome (boxed border + bare letters + corner badge) is for PENDING
+  // requests only — the open asks still awaiting a decision. Once approved, a
+  // request is honored by a real assignment and reads as a normal shift, so it
+  // drops the chrome. Hard-constraint violations still raise the warning dot.
+  // Keyed `${providerId}:${date}`; empty cells omitted.
   const requestsByCell = useMemo(() => {
     const map = new Map<string, GridRequest[]>();
     if (localRequests.length === 0) return map;
     for (const date of dates) {
       for (const p of visibleProviders) {
-        const rs = requestsForProviderDate(localRequests, p.id, date, { includePending: true });
+        const rs = requestsForProviderDate(localRequests, p.id, date, { includePending: true })
+          .filter((r) => r.status === "pending");
         if (rs.length > 0) map.set(`${p.id}:${date}`, rs);
       }
     }

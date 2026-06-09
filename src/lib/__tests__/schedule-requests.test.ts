@@ -15,6 +15,12 @@ import {
   buildSelfRequestInput,
   canWithdrawOwnRequest,
   summarizeLeaveQueue,
+  eachDateInclusive,
+  assignmentSatisfiesRequestOnDate,
+  isRequestSatisfied,
+  resolveRequestPlacement,
+  reconcileApprovalAction,
+  releasableDates,
   type LeaveQueueRequest,
   type ScheduleRequestData,
 } from "../schedule-requests";
@@ -720,5 +726,172 @@ describe("summarizeLeaveQueue", () => {
     // 07-03 has a, b, c = 3 others (the peak)
     expect(out?.peakDate).toBe("2026-07-03");
     expect(out?.othersOnPeak).toBe(3);
+  });
+});
+
+// ---- Assignment ⇆ request reconciliation ---------------------------------
+
+const isOff = (id: string) => id === "off";
+
+describe("eachDateInclusive", () => {
+  it("returns a single date when start == end", () => {
+    expect(eachDateInclusive("2026-08-03", "2026-08-03")).toEqual(["2026-08-03"]);
+  });
+  it("includes both endpoints and every day between", () => {
+    expect(eachDateInclusive("2026-08-30", "2026-09-02")).toEqual([
+      "2026-08-30", "2026-08-31", "2026-09-01", "2026-09-02",
+    ]);
+  });
+  it("returns empty when end precedes start", () => {
+    expect(eachDateInclusive("2026-08-05", "2026-08-01")).toEqual([]);
+  });
+});
+
+describe("assignmentSatisfiesRequestOnDate", () => {
+  it("a blank cell never satisfies any kind", () => {
+    for (const kind of ["OFF", "LEAVE", "REQUEST_SHIFT", "NEGATE_SHIFT"] as const) {
+      const r = req({ kind, shiftTypeIds: ["orc"], leaveShiftTypeId: "al" });
+      expect(assignmentSatisfiesRequestOnDate(r, null, isOff)).toBe(false);
+    }
+  });
+
+  it("LEAVE: satisfied only by the requested leave shift", () => {
+    const r = req({ kind: "LEAVE", leaveShiftTypeId: "al" });
+    expect(assignmentSatisfiesRequestOnDate(r, "al", isOff)).toBe(true);
+    expect(assignmentSatisfiesRequestOnDate(r, "orc", isOff)).toBe(false);
+    expect(assignmentSatisfiesRequestOnDate(r, "off", isOff)).toBe(false);
+  });
+
+  it("OFF: satisfied by any off shift, not by a working shift", () => {
+    const r = req({ kind: "OFF" });
+    expect(assignmentSatisfiesRequestOnDate(r, "off", isOff)).toBe(true);
+    expect(assignmentSatisfiesRequestOnDate(r, "orc", isOff)).toBe(false);
+  });
+
+  it("REQUEST_SHIFT: satisfied when the assigned shift is one of the wanted", () => {
+    const r = req({ kind: "REQUEST_SHIFT", shiftTypeIds: ["ild", "al"] });
+    expect(assignmentSatisfiesRequestOnDate(r, "ild", isOff)).toBe(true);
+    expect(assignmentSatisfiesRequestOnDate(r, "al", isOff)).toBe(true);
+    expect(assignmentSatisfiesRequestOnDate(r, "orc", isOff)).toBe(false);
+  });
+
+  it("NEGATE_SHIFT: satisfied by any placed shift that is not negated", () => {
+    const r = req({ kind: "NEGATE_SHIFT", shiftTypeIds: ["orc", "orl"] });
+    expect(assignmentSatisfiesRequestOnDate(r, "ild", isOff)).toBe(true);
+    expect(assignmentSatisfiesRequestOnDate(r, "off", isOff)).toBe(true);
+    expect(assignmentSatisfiesRequestOnDate(r, "orc", isOff)).toBe(false);
+    expect(assignmentSatisfiesRequestOnDate(r, "orl", isOff)).toBe(false);
+  });
+
+  it("the user's example: assigning ILD satisfies both 'ILD or AL' and 'no ORC/ORL'", () => {
+    const want = req({ kind: "REQUEST_SHIFT", shiftTypeIds: ["ild", "al"] });
+    const negate = req({ kind: "NEGATE_SHIFT", shiftTypeIds: ["orc", "orl"] });
+    expect(assignmentSatisfiesRequestOnDate(want, "ild", isOff)).toBe(true);
+    expect(assignmentSatisfiesRequestOnDate(negate, "ild", isOff)).toBe(true);
+  });
+});
+
+describe("isRequestSatisfied (multi-day = all days)", () => {
+  const assigned = (m: Record<string, string>) => (d: string) => m[d] ?? null;
+
+  it("single-day satisfied", () => {
+    const r = req({ kind: "LEAVE", leaveShiftTypeId: "al", startDate: "2026-08-01", endDate: "2026-08-01" });
+    expect(isRequestSatisfied(r, assigned({ "2026-08-01": "al" }), isOff)).toBe(true);
+  });
+
+  it("multi-day satisfied only when EVERY covered day is satisfied", () => {
+    const r = req({ kind: "LEAVE", leaveShiftTypeId: "al", startDate: "2026-08-01", endDate: "2026-08-03" });
+    const full = { "2026-08-01": "al", "2026-08-02": "al", "2026-08-03": "al" };
+    expect(isRequestSatisfied(r, assigned(full), isOff)).toBe(true);
+    // one day missing → not satisfied
+    expect(isRequestSatisfied(r, assigned({ "2026-08-01": "al", "2026-08-03": "al" }), isOff)).toBe(false);
+    // one day wrong shift → not satisfied
+    expect(isRequestSatisfied(r, assigned({ ...full, "2026-08-02": "orc" }), isOff)).toBe(false);
+  });
+});
+
+describe("resolveRequestPlacement", () => {
+  it("LEAVE → its leave shift", () => {
+    expect(resolveRequestPlacement(req({ kind: "LEAVE", leaveShiftTypeId: "ild" }), "off")).toBe("ild");
+  });
+  it("OFF → the supplied off shift id (or null when none defined)", () => {
+    expect(resolveRequestPlacement(req({ kind: "OFF" }), "off")).toBe("off");
+    expect(resolveRequestPlacement(req({ kind: "OFF" }), null)).toBe(null);
+  });
+  it("REQUEST_SHIFT → the sole option, null when ambiguous", () => {
+    expect(resolveRequestPlacement(req({ kind: "REQUEST_SHIFT", shiftTypeIds: ["ild"] }), "off")).toBe("ild");
+    expect(resolveRequestPlacement(req({ kind: "REQUEST_SHIFT", shiftTypeIds: ["ild", "al"] }), "off")).toBe(null);
+  });
+  it("NEGATE_SHIFT → null (places nothing)", () => {
+    expect(resolveRequestPlacement(req({ kind: "NEGATE_SHIFT", shiftTypeIds: ["orc"] }), "off")).toBe(null);
+  });
+});
+
+describe("reconcileApprovalAction", () => {
+  const row = (o: { id?: string; status: string; autoApproved?: boolean }) => ({
+    id: o.id ?? "r1", status: o.status, autoApproved: o.autoApproved ?? false,
+  });
+
+  it("approves a pending request once satisfied", () => {
+    expect(reconcileApprovalAction(row({ status: "pending" }), true)).toBe("approve");
+    expect(reconcileApprovalAction(row({ status: "pending" }), false)).toBe("none");
+  });
+
+  it("reverts an auto-approval that is no longer satisfied", () => {
+    expect(reconcileApprovalAction(row({ status: "approved", autoApproved: true }), false)).toBe("revert");
+    expect(reconcileApprovalAction(row({ status: "approved", autoApproved: true }), true)).toBe("none");
+  });
+
+  it("never reverts a sticky (manual) approval", () => {
+    expect(reconcileApprovalAction(row({ status: "approved", autoApproved: false }), false)).toBe("none");
+  });
+
+  it("leaves terminal states alone", () => {
+    for (const status of ["declined", "withdrawn", "fulfilled"]) {
+      expect(reconcileApprovalAction(row({ status }), true)).toBe("none");
+    }
+  });
+
+  it("regression: the explicitly-transitioned request is excluded, so a manual " +
+     "un-approve of a still-satisfied request is NOT instantly re-approved", () => {
+    // request "r1" was just set to pending by the user; its cell still has a
+    // satisfying shift. Without the exclusion this returns "approve" → instant
+    // re-approval (the CRITICAL bug). With it, the manual transition stands.
+    expect(reconcileApprovalAction(row({ id: "r1", status: "pending" }), true)).toBe("approve");
+    expect(reconcileApprovalAction(row({ id: "r1", status: "pending" }), true, { excludeRequestId: "r1" })).toBe("none");
+    // a DIFFERENT request on the same cell is still reconciled normally
+    expect(reconcileApprovalAction(row({ id: "r2", status: "pending" }), true, { excludeRequestId: "r1" })).toBe("approve");
+  });
+});
+
+describe("releasableDates", () => {
+  it("releases every covered date when no other approved request claims the shift", () => {
+    const target = { startDate: "2026-08-01", endDate: "2026-08-03" };
+    expect(releasableDates(target, "ild", [], "off")).toEqual(["2026-08-01", "2026-08-02", "2026-08-03"]);
+  });
+
+  it("releases nothing when the request placed nothing", () => {
+    expect(releasableDates({ startDate: "2026-08-01", endDate: "2026-08-03" }, null, [], "off")).toEqual([]);
+  });
+
+  it("regression: a date shared with another approved same-shift request is NOT released", () => {
+    // Two ILD leaves: target covers 08-01..08-03, other covers 08-03..08-05. Both
+    // placed ILD on 08-03 (one shared assignment). Releasing target must keep 08-03
+    // because the other approved leave still relies on it.
+    const target = { startDate: "2026-08-01", endDate: "2026-08-03" };
+    const other = req({ kind: "LEAVE", leaveShiftTypeId: "ild", startDate: "2026-08-03", endDate: "2026-08-05" });
+    expect(releasableDates(target, "ild", [other], "off")).toEqual(["2026-08-01", "2026-08-02"]);
+  });
+
+  it("ignores other approved requests that resolve to a DIFFERENT shift", () => {
+    const target = { startDate: "2026-08-01", endDate: "2026-08-02" };
+    const otherAL = req({ kind: "LEAVE", leaveShiftTypeId: "al", startDate: "2026-08-01", endDate: "2026-08-02" });
+    expect(releasableDates(target, "ild", [otherAL], "off")).toEqual(["2026-08-01", "2026-08-02"]);
+  });
+
+  it("an OFF request claims its dates against another OFF removal (off shift id)", () => {
+    const target = { startDate: "2026-08-01", endDate: "2026-08-01" };
+    const otherOff = req({ kind: "OFF", startDate: "2026-08-01", endDate: "2026-08-01" });
+    expect(releasableDates(target, "off", [otherOff], "off")).toEqual([]);
   });
 });

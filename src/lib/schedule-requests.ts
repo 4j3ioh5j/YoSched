@@ -289,6 +289,129 @@ export function checkRequestConflict({
   return conflicts;
 }
 
+// ---- Assignment ⇆ request reconciliation ---------------------------------
+// A request is "satisfied" when the schedule already honors it. Approving a
+// request and assigning a satisfying shift are two routes to the same state, so
+// these helpers drive both the approve→place path and the assign→auto-approve
+// path. checkRequestConflict (above) is the contradiction view; this is its
+// mirror — the satisfaction view.
+
+/** Inclusive list of "YYYY-MM-DD" dates from start to end (both literal dates). */
+export function eachDateInclusive(start: string, end: string): string[] {
+  const out: string[] = [];
+  const cur = new Date(start + "T00:00:00Z");
+  const last = new Date(end + "T00:00:00Z");
+  while (cur.getTime() <= last.getTime()) {
+    out.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return out;
+}
+
+/** Does the shift assigned on a single date satisfy this request for that date?
+ *  `assignedShiftTypeId` is the cell's shift (null = blank). A blank cell never
+ *  satisfies — nothing is scheduled yet, including for NEGATE/OFF.
+ *   - LEAVE         → the requested leave shift is placed
+ *   - OFF           → an off shift is placed
+ *   - REQUEST_SHIFT → one of the wanted shifts is placed
+ *   - NEGATE_SHIFT  → some shift is placed and it is NOT a negated one */
+export function assignmentSatisfiesRequestOnDate(
+  req: Pick<ScheduleRequestData, "kind" | "shiftTypeIds" | "leaveShiftTypeId">,
+  assignedShiftTypeId: string | null,
+  isOffShift: (shiftTypeId: string) => boolean
+): boolean {
+  if (!assignedShiftTypeId) return false;
+  switch (req.kind) {
+    case "LEAVE":
+      return req.leaveShiftTypeId != null && assignedShiftTypeId === req.leaveShiftTypeId;
+    case "OFF":
+      return isOffShift(assignedShiftTypeId);
+    case "REQUEST_SHIFT":
+      return req.shiftTypeIds.includes(assignedShiftTypeId);
+    case "NEGATE_SHIFT":
+      return !req.shiftTypeIds.includes(assignedShiftTypeId);
+  }
+}
+
+/** Is the request satisfied across its WHOLE inclusive date range? A multi-day
+ *  request needs every covered day satisfied (one unsatisfied day → not yet).
+ *  `assignedShiftOnDate` returns the cell's shift id for a date (null = blank). */
+export function isRequestSatisfied(
+  req: Pick<ScheduleRequestData, "kind" | "shiftTypeIds" | "leaveShiftTypeId" | "startDate" | "endDate">,
+  assignedShiftOnDate: (date: string) => string | null,
+  isOffShift: (shiftTypeId: string) => boolean
+): boolean {
+  for (const date of eachDateInclusive(req.startDate, req.endDate)) {
+    if (!assignmentSatisfiesRequestOnDate(req, assignedShiftOnDate(date), isOffShift)) return false;
+  }
+  return true;
+}
+
+/** The single shift to place when a request is approved directly (no assignment
+ *  exists yet), or null when the request doesn't resolve to one concrete shift:
+ *   - LEAVE         → its leave shift
+ *   - OFF           → the off shift (caller supplies its id, or null if none)
+ *   - REQUEST_SHIFT → the sole wanted shift, only when exactly one is named
+ *   - NEGATE_SHIFT  → null (an exclusion places nothing)
+ *  A null result means "approve as a sticky override; let the scheduler assign". */
+export function resolveRequestPlacement(
+  req: Pick<ScheduleRequestData, "kind" | "shiftTypeIds" | "leaveShiftTypeId">,
+  offShiftTypeId: string | null
+): string | null {
+  switch (req.kind) {
+    case "LEAVE":
+      return req.leaveShiftTypeId ?? null;
+    case "OFF":
+      return offShiftTypeId;
+    case "REQUEST_SHIFT":
+      return req.shiftTypeIds.length === 1 ? req.shiftTypeIds[0] : null;
+    case "NEGATE_SHIFT":
+      return null;
+  }
+}
+
+/** Of `target`'s covered dates, the ones whose request-placed shift can be safely
+ *  cleared when target is unapproved/declined/deleted — i.e. NOT also claimed by
+ *  another still-approved request that resolves to the SAME shift. Without this,
+ *  two requests mapping to one shift on overlapping days would let removing one
+ *  yank the shift the other still relies on. `placement` is target's resolved
+ *  shift (null → it placed nothing, so nothing to release). Pure. */
+export function releasableDates(
+  target: { startDate: string; endDate: string },
+  placement: string | null,
+  otherApproved: Array<Pick<ScheduleRequestData, "kind" | "shiftTypeIds" | "leaveShiftTypeId" | "startDate" | "endDate">>,
+  offShiftTypeId: string | null
+): string[] {
+  if (!placement) return [];
+  const claimed = new Set<string>();
+  for (const o of otherApproved) {
+    if (resolveRequestPlacement(o, offShiftTypeId) !== placement) continue;
+    for (const d of eachDateInclusive(o.startDate, o.endDate)) claimed.add(d);
+  }
+  return eachDateInclusive(target.startDate, target.endDate).filter((d) => !claimed.has(d));
+}
+
+/** What reconciliation should do to one request given whether the schedule now
+ *  satisfies it. The sole writer of derived approval state, shared by the sync
+ *  helper so the rule is unit-testable:
+ *   - pending & satisfied                    → "approve"  (becomes autoApproved)
+ *   - approved & autoApproved & !satisfied   → "revert"   (back to pending)
+ *   - everything else (incl. sticky approvals) → "none"
+ *  `excludeRequestId` pins a request the caller is explicitly transitioning
+ *  (e.g. a manual un-approve): it must NOT be re-derived in the same pass, or
+ *  un-approving a still-satisfied request would instantly re-approve it. */
+export type ApprovalAction = "approve" | "revert" | "none";
+export function reconcileApprovalAction(
+  req: { id: string; status: string; autoApproved: boolean },
+  satisfied: boolean,
+  opts: { excludeRequestId?: string | null } = {}
+): ApprovalAction {
+  if (opts.excludeRequestId && req.id === opts.excludeRequestId) return "none";
+  if (req.status === "pending" && satisfied) return "approve";
+  if (req.status === "approved" && req.autoApproved && !satisfied) return "revert";
+  return "none";
+}
+
 /** Strict calendar-date check: must be literal "YYYY-MM-DD" AND a real date.
  *  Rejects malformed ("2026-6-1", "nope") and impossible dates that JS would
  *  silently roll over ("2026-02-31" → Mar 3, "2026-13-01"). */

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { autoSchedule } from "@/lib/auto-scheduler";
 import { type ScheduleRequestData } from "@/lib/schedule-requests";
+import { syncRequestApprovals } from "@/lib/request-sync";
 
 export async function POST(req: NextRequest) {
   const { error } = await getSession("schedule:auto");
@@ -289,7 +290,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const { error } = await getSession("schedule:auto");
+  const { error, userId } = await getSession("schedule:auto");
   if (error) return error;
   const body = await req.json();
   const { suggestions } = body as {
@@ -349,11 +350,16 @@ export async function PUT(req: NextRequest) {
     });
   }
 
+  await syncRequestApprovals(
+    applied.map((a) => ({ providerId: a.providerId, date: a.date })),
+    userId
+  );
+
   return NextResponse.json({ applied, skipped });
 }
 
 export async function DELETE(req: NextRequest) {
-  const { error } = await getSession("schedule:auto");
+  const { error, userId } = await getSession("schedule:auto");
   if (error) return error;
   const body = await req.json();
   const { startDate, endDate } = body as { startDate: string; endDate: string };
@@ -392,6 +398,11 @@ export async function DELETE(req: NextRequest) {
   await prisma.assignment.deleteMany({
     where: { id: { in: toDelete.map((a) => a.id) } },
   });
+
+  await syncRequestApprovals(
+    removed.map((a) => ({ providerId: a.providerId, date: a.date })),
+    userId
+  );
 
   return NextResponse.json({ removed });
 }
