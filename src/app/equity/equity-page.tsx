@@ -652,7 +652,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-800/80 border-b border-slate-700">
-                  <SortHeader label="Staff Member" sortId="initials" className="text-left w-44" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />
+                  <SortHeader label="Staff Member" sortId="initials" className="text-left w-56" sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />
                   {showDesirability && <SortHeader label="Desirability" sortId="desirability" className="text-right w-24" title={COLUMN_FORMULAS.desirability} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />}
                   {showDesirability && <SortHeader label="Opp. Adj." sortId="oppAdj" className="text-right w-20" title={COLUMN_FORMULAS.oppAdj} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />}
                   {showHoliday && <SortHeader label="Holidays" sortId="holiday" className="text-right w-20" title={COLUMN_FORMULAS.holiday} sortKey={sortKey} sortAsc={sortAsc} onSort={handleSort} setTip={setTip} />}
@@ -678,7 +678,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
                       <td className="px-3 py-2.5">
                         <div className="flex items-center gap-2">
                           <span className={`font-mono font-bold text-sm w-9 ${!row.isAutoScheduled ? "text-amber-400" : "text-slate-200"}`}>{row.initials}</span>
-                          <span className="text-xs text-slate-500 truncate max-w-[60px]">{row.name}</span>
+                          <span className="text-xs text-slate-500 whitespace-nowrap">{row.name}</span>
                           {row.employmentTypeName === "FTE" && row.ftePercentage < 1 && (
                             <span className="text-[10px] px-1 py-px rounded bg-amber-900/30 text-amber-400/80 font-mono">{(row.ftePercentage * 100).toFixed(0)}%</span>
                           )}
