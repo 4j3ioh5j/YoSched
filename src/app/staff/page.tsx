@@ -30,6 +30,7 @@ export default async function Staff() {
         providers={providers.map((p) => ({
           id: p.id,
           name: p.name,
+          email: p.email,
           initials: p.initials,
           employmentTypeId: p.employmentTypeId,
           employmentTypeName: p.employmentType.name,

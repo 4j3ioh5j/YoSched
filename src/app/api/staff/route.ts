@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
+import { normalizeOptionalEmail } from "@/lib/email";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(req: NextRequest) {
@@ -8,11 +9,15 @@ export async function PUT(req: NextRequest) {
   const { id, eligibleShiftTypeIds, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
+  const email = normalizeOptionalEmail(data.email);
+  if (!email.ok) return NextResponse.json({ error: email.error }, { status: 400 });
+
   await prisma.$transaction(async (tx) => {
     await tx.provider.update({
       where: { id },
       data: {
         name: data.name,
+        email: email.value,
         initials: data.initials,
         employmentTypeId: data.employmentTypeId,
         ftePercentage: data.ftePercentage,
@@ -105,6 +110,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing name or initials" }, { status: 400 });
   }
 
+  const email = normalizeOptionalEmail(data.email);
+  if (!email.ok) return NextResponse.json({ error: email.error }, { status: 400 });
+
   let employmentTypeId = data.employmentTypeId;
   if (!employmentTypeId) {
     const defaultType = await prisma.employmentType.findFirst({ orderBy: { sortOrder: "asc" } });
@@ -115,6 +123,7 @@ export async function POST(req: NextRequest) {
   const created = await prisma.provider.create({
     data: {
       name: data.name,
+      email: email.value,
       initials: data.initials,
       employmentTypeId,
       ftePercentage: data.ftePercentage ?? 1.0,
