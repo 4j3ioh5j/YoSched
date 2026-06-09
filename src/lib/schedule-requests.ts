@@ -347,6 +347,29 @@ export function isRequestSatisfied(
   return true;
 }
 
+/** Of a placement-backed request's covered dates, the ones that BLOCK direct
+ *  approval: a day that is LOCKED and whose current assignment does not already
+ *  satisfy the request. Approval can neither place its shift (the cell is locked)
+ *  nor lean on what's there, so the request can't be fully honoured — the
+ *  scheduler must resolve these first (unlock the day, or place the shift
+ *  manually). Returns [] when nothing blocks. Only meaningful for requests that
+ *  resolve to one concrete shift; multi-option / NEGATE approvals place nothing
+ *  and so a lock never blocks them. `cellAt(date)` → the covered day's cell, or
+ *  null for a blank cell. Pure. */
+export function lockedBlockingDates(
+  req: Pick<ScheduleRequestData, "kind" | "shiftTypeIds" | "leaveShiftTypeId" | "startDate" | "endDate">,
+  cellAt: (date: string) => { shiftTypeId: string | null; isLocked: boolean } | null,
+  isOffShift: (shiftTypeId: string) => boolean
+): string[] {
+  const blocked: string[] = [];
+  for (const date of eachDateInclusive(req.startDate, req.endDate)) {
+    const cell = cellAt(date);
+    if (!cell?.isLocked) continue;
+    if (!assignmentSatisfiesRequestOnDate(req, cell.shiftTypeId, isOffShift)) blocked.push(date);
+  }
+  return blocked;
+}
+
 /** The single shift to place when a request is approved directly (no assignment
  *  exists yet), or null when the request doesn't resolve to one concrete shift:
  *   - LEAVE         → its leave shift

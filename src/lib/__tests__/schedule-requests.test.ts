@@ -18,6 +18,7 @@ import {
   eachDateInclusive,
   assignmentSatisfiesRequestOnDate,
   isRequestSatisfied,
+  lockedBlockingDates,
   resolveRequestPlacement,
   reconcileApprovalAction,
   releasableDates,
@@ -807,6 +808,57 @@ describe("isRequestSatisfied (multi-day = all days)", () => {
     expect(isRequestSatisfied(r, assigned({ "2026-08-01": "al", "2026-08-03": "al" }), isOff)).toBe(false);
     // one day wrong shift → not satisfied
     expect(isRequestSatisfied(r, assigned({ ...full, "2026-08-02": "orc" }), isOff)).toBe(false);
+  });
+});
+
+describe("lockedBlockingDates", () => {
+  // cell map: date → { shiftTypeId, isLocked }; missing date = blank cell (null)
+  const cells = (m: Record<string, { shiftTypeId: string | null; isLocked: boolean }>) =>
+    (d: string) => m[d] ?? null;
+
+  it("no locked days → nothing blocks", () => {
+    const r = req({ kind: "LEAVE", leaveShiftTypeId: "al", startDate: "2026-08-01", endDate: "2026-08-03" });
+    expect(lockedBlockingDates(r, cells({ "2026-08-02": { shiftTypeId: "orc", isLocked: false } }), isOff)).toEqual([]);
+  });
+
+  it("locked day that does NOT satisfy → blocks", () => {
+    const r = req({ kind: "LEAVE", leaveShiftTypeId: "al", startDate: "2026-08-01", endDate: "2026-08-01" });
+    expect(lockedBlockingDates(r, cells({ "2026-08-01": { shiftTypeId: "orc", isLocked: true } }), isOff)).toEqual(["2026-08-01"]);
+  });
+
+  it("locked blank cell → blocks (nothing there to satisfy)", () => {
+    const r = req({ kind: "LEAVE", leaveShiftTypeId: "al", startDate: "2026-08-01", endDate: "2026-08-01" });
+    expect(lockedBlockingDates(r, cells({ "2026-08-01": { shiftTypeId: null, isLocked: true } }), isOff)).toEqual(["2026-08-01"]);
+  });
+
+  it("locked day that ALREADY satisfies the request → does not block", () => {
+    const r = req({ kind: "LEAVE", leaveShiftTypeId: "al", startDate: "2026-08-01", endDate: "2026-08-01" });
+    expect(lockedBlockingDates(r, cells({ "2026-08-01": { shiftTypeId: "al", isLocked: true } }), isOff)).toEqual([]);
+  });
+
+  it("OFF request: locked off-cell satisfies, locked working-cell blocks", () => {
+    const r = req({ kind: "OFF", startDate: "2026-08-01", endDate: "2026-08-02" });
+    const m = { "2026-08-01": { shiftTypeId: "off", isLocked: true }, "2026-08-02": { shiftTypeId: "orc", isLocked: true } };
+    expect(lockedBlockingDates(r, cells(m), isOff)).toEqual(["2026-08-02"]);
+  });
+
+  it("multi-day: only the unsatisfied locked days are returned, in order", () => {
+    const r = req({ kind: "LEAVE", leaveShiftTypeId: "al", startDate: "2026-08-01", endDate: "2026-08-03" });
+    const m = {
+      "2026-08-01": { shiftTypeId: "al", isLocked: true },   // locked + satisfies → ok
+      "2026-08-02": { shiftTypeId: "orc", isLocked: true },  // locked + wrong → blocks
+      "2026-08-03": { shiftTypeId: "orc", isLocked: false },  // unlocked → placeable, not a blocker
+    };
+    expect(lockedBlockingDates(r, cells(m), isOff)).toEqual(["2026-08-02"]);
+  });
+
+  it("NEGATE request: locked day blocks only when its shift is in the negated set", () => {
+    const r = req({ kind: "NEGATE_SHIFT", shiftTypeIds: ["orc", "orl"], startDate: "2026-08-01", endDate: "2026-08-02" });
+    const m = {
+      "2026-08-01": { shiftTypeId: "orc", isLocked: true },  // negated shift locked in → blocks
+      "2026-08-02": { shiftTypeId: "call", isLocked: true },  // allowed shift → satisfies, ok
+    };
+    expect(lockedBlockingDates(r, cells(m), isOff)).toEqual(["2026-08-01"]);
   });
 });
 
