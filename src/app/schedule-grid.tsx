@@ -567,51 +567,10 @@ export function ScheduleGrid({
     }
   }, [firstOfMonth]);
 
-  // Pre-fill empty cells with X (off day) for the visible date range
-  const prefillRan = useRef<string | null>(null);
-  useEffect(() => {
-    const key = `${viewYear}-${viewMonth}`;
-    if (prefillRan.current === key || !canEdit) return;
-    // Never prefill off-days into a past month — viewing history must not mutate
-    // it, and stray X rows must not surface inactive/unscheduled providers.
-    if (pastMonth) return;
-    prefillRan.current = key;
-    const offShift = shiftTypes.find((st) => st.isOffShift);
-    // Prefill only the active roster, matching the server route (which filters
-    // isActive). The providers prop also carries inactive-with-assignments
-    // providers (for historical columns) — they must not get optimistic X rows.
-    const activeProviders = providers.filter((p) => p.isActive);
-    if (!offShift || activeProviders.length === 0) return;
-    fetch("/api/assignments/prefill", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dates }),
-    }).then((r) => r.json()).then((data) => {
-      if (data.created > 0) {
-        setLocalAssignments((prev) => {
-          const existing = new Set(prev.map((a) => `${a.providerId}:${a.date}`));
-          const newAssignments: AssignmentData[] = [];
-          for (const d of dates) {
-            for (const p of activeProviders) {
-              if (!existing.has(`${p.id}:${d}`)) {
-                newAssignments.push({
-                  id: `prefill-${p.id}:${d}`,
-                  providerId: p.id,
-                  date: d,
-                  shiftTypeId: offShift.id,
-                  isLocked: false,
-                  code: offShift.code,
-                  color: offShift.color ?? "#d1d5db",
-                });
-              }
-            }
-          }
-          return newAssignments.length > 0 ? [...prev, ...newAssignments] : prev;
-        });
-      }
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewYear, viewMonth]);
+  // Empty cells default to blank (no assignment). An off-day "X" is now an
+  // explicit choice the scheduler makes via the shift picker, not an
+  // auto-filled default — so a cell with no shift reads as "unscheduled"
+  // rather than "off".
 
   const rowItems = useMemo(() => buildRowItems(dates, payPeriods), [dates, payPeriods]);
 
