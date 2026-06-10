@@ -3,7 +3,7 @@
 // assertUsersAdminSurvives BEFORE persisting; it throws AdminGuardError, which routes
 // translate to HTTP 409. The set-counting logic is pure (src/lib/user-admin-safety.ts).
 //
-// Scope note: this governs only what affects the invariant — isActive / role / group /
+// Scope note: this governs only what affects the invariant — isActive / group /
 // existence. Credential & security writes (password change, failed-attempt/lockout,
 // TOTP) do NOT pass through here; they can't change who can administer.
 
