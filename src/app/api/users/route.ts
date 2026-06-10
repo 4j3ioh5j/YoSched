@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { validatePassword } from "@/lib/password";
-import { normalizeStaffId, isStaffLinkConflict } from "@/lib/user-link";
 import { assertUsersAdminSurvives, AdminGuardError } from "@/lib/user-lifecycle";
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
@@ -22,13 +21,6 @@ function toClientUser<T extends { email: string | null; passwordHash: string | n
   return { ...rest, loginComplete: !!u.email && !!passwordHash };
 }
 
-// True if `wantedStaffId` is already linked to a user other than `editingUserId`.
-async function staffLinkConflict(wantedStaffId: string | null, editingUserId: string | null): Promise<boolean> {
-  if (!wantedStaffId) return false;
-  const owner = await prisma.user.findUnique({ where: { staffId: wantedStaffId }, select: { id: true } });
-  return isStaffLinkConflict({ wantedStaffId, currentOwnerUserId: owner?.id ?? null, editingUserId });
-}
-
 export async function GET() {
   const { error } = await getSession("users:view");
   if (error) return error;
@@ -44,14 +36,9 @@ export async function POST(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
-  const { email, name, password, role, groupId, staffId } = await req.json();
+  const { email, name, password, role, groupId } = await req.json();
   if (!email || !name || !password) {
     return NextResponse.json({ error: "Email, name, and password required" }, { status: 400 });
-  }
-
-  const linkStaffId = normalizeStaffId(staffId);
-  if (await staffLinkConflict(linkStaffId, null)) {
-    return NextResponse.json({ error: "That staff is already linked to another login" }, { status: 409 });
   }
 
   const { valid, errors } = validatePassword(password);
@@ -74,7 +61,7 @@ export async function POST(req: NextRequest) {
   const defaultGroup = groupId ? undefined : await prisma.group.findUnique({ where: { name: "Staff" }, select: { id: true } });
   const passwordHash = await hash(password, 12);
   const user = await prisma.user.create({
-    data: { email, name, passwordHash, role: role || "viewer", groupId: groupId || defaultGroup?.id, staffId: linkStaffId },
+    data: { email, name, passwordHash, role: role || "viewer", groupId: groupId || defaultGroup?.id },
     select: USER_SELECT,
   });
 
@@ -85,7 +72,7 @@ export async function PUT(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
-  const { id, email, name, password, role, groupId, isActive, staffId } = await req.json();
+  const { id, email, name, password, role, groupId, isActive } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   const targetUser = await prisma.user.findUnique({
@@ -109,15 +96,6 @@ export async function PUT(req: NextRequest) {
   if (role) data.role = role;
   if (groupId) data.groupId = groupId;
   if (typeof isActive === "boolean") data.isActive = isActive;
-  // staffId is only touched when the key is present (so {id,isActive} toggles
-  // don't clear an existing link). An empty value unlinks; a real id links.
-  if (staffId !== undefined) {
-    const linkStaffId = normalizeStaffId(staffId);
-    if (await staffLinkConflict(linkStaffId, id)) {
-      return NextResponse.json({ error: "That staff is already linked to another login" }, { status: 409 });
-    }
-    data.staffId = linkStaffId;
-  }
   if (password) {
     const { valid, errors } = validatePassword(password);
     if (!valid) {

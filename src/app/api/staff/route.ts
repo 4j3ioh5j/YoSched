@@ -125,22 +125,26 @@ export async function POST(req: NextRequest) {
   }
 
   const maxSort = await prisma.staff.aggregate({ _max: { sortOrder: true } });
-  const created = await prisma.staff.create({
-    data: {
-      name: data.name,
-      initials: data.initials,
-      employmentTypeId,
-      ftePercentage: data.ftePercentage ?? 1.0,
-      specialQualifications: data.specialQualifications ?? [],
-      isActive: true,
-      isAutoScheduled: data.isAutoScheduled ?? true,
-      sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
-    },
-    include: { employmentType: true },
+  // Create the staff member and its paired, disabled shell login atomically — the
+  // "every active staff has a login" invariant (slice 2b) must not be left half-applied
+  // if provisioning fails after the staff row is committed.
+  const created = await prisma.$transaction(async (tx) => {
+    const staff = await tx.staff.create({
+      data: {
+        name: data.name,
+        initials: data.initials,
+        employmentTypeId,
+        ftePercentage: data.ftePercentage ?? 1.0,
+        specialQualifications: data.specialQualifications ?? [],
+        isActive: true,
+        isAutoScheduled: data.isAutoScheduled ?? true,
+        sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
+      },
+      include: { employmentType: true },
+    });
+    await provisionStaffLogin(staff.id, staff.name, tx);
+    return staff;
   });
-
-  // Every active staff member gets a paired, disabled shell login (slice 2b).
-  await provisionStaffLogin(created.id, created.name);
 
   const [defaultShifts, defaultAvailability] = await Promise.all([
     prisma.employmentTypeDefaultShift.findMany({ where: { employmentTypeId } }),

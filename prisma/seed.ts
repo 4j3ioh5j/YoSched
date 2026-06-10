@@ -396,21 +396,32 @@ async function main() {
     console.log(`Skipping bootstrap admin — ${existingAdmins} active administrator(s) already present.`);
   } else {
     const email = process.env.SEED_ADMIN_EMAIL?.trim() || "admin@yosched.local";
-    const { password, fromEnv, envIgnored } = resolveBootstrapPassword(process.env.SEED_ADMIN_PASSWORD);
-    await prisma.user.create({
-      data: { email, name: "Admin", passwordHash: hashSync(password, 12), role: "admin", groupId: adminGroup!.id },
-    });
-    if (fromEnv) {
-      console.log(`Created bootstrap admin ${email} using the provided SEED_ADMIN_PASSWORD.`);
+    // The bootstrap email can already belong to a NON-admin or inactive login (those
+    // don't count toward existingAdmins). Creating over it would throw a unique-constraint
+    // error and abort the whole seed — detect the collision and skip with actionable advice
+    // instead of crashing.
+    const emailTaken = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (emailTaken) {
+      console.log(`WARNING: cannot bootstrap admin — ${email} is already in use by a non-administrator login.`);
+      console.log("No active administrator exists. Set SEED_ADMIN_EMAIL to a free address (or promote/activate the");
+      console.log("existing login from another admin session) and re-run the seed.");
     } else {
-      // Generated password — ALWAYS reveal it, or the operator can't log in.
-      if (envIgnored) {
-        console.log("WARNING: SEED_ADMIN_PASSWORD was ignored (must be at least 8 characters).");
+      const { password, fromEnv, envIgnored } = resolveBootstrapPassword(process.env.SEED_ADMIN_PASSWORD);
+      await prisma.user.create({
+        data: { email, name: "Admin", passwordHash: hashSync(password, 12), role: "admin", groupId: adminGroup!.id },
+      });
+      if (fromEnv) {
+        console.log(`Created bootstrap admin ${email} using the provided SEED_ADMIN_PASSWORD.`);
+      } else {
+        // Generated password — ALWAYS reveal it, or the operator can't log in.
+        if (envIgnored) {
+          console.log("WARNING: SEED_ADMIN_PASSWORD was ignored (must be at least 8 characters).");
+        }
+        console.log("=".repeat(64));
+        console.log(`Created bootstrap admin: ${email}`);
+        console.log(`Temporary password (shown ONCE — log in and change it now): ${password}`);
+        console.log("=".repeat(64));
       }
-      console.log("=".repeat(64));
-      console.log(`Created bootstrap admin: ${email}`);
-      console.log(`Temporary password (shown ONCE — log in and change it now): ${password}`);
-      console.log("=".repeat(64));
     }
   }
 }

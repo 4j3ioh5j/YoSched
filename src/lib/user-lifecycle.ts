@@ -103,10 +103,16 @@ function isAdminLogin(u: LinkedLogin): boolean {
 }
 
 /** Create the disabled, credential-less shell login that pairs with a newly created
- *  active staff member (Staff group; admin completes email+password + activates later). */
-export async function provisionStaffLogin(staffId: string, name: string): Promise<void> {
-  const staffGroup = await prisma.group.findUnique({ where: { name: "Staff" }, select: { id: true } });
-  await prisma.user.create({
+ *  active staff member (Staff group; admin completes email+password + activates later).
+ *  Accepts a transaction client so the caller can pair the login atomically with the
+ *  staff insert (defaults to the shared `prisma` when run standalone). */
+export async function provisionStaffLogin(
+  staffId: string,
+  name: string,
+  db: Pick<typeof prisma, "user" | "group"> = prisma,
+): Promise<void> {
+  const staffGroup = await db.group.findUnique({ where: { name: "Staff" }, select: { id: true } });
+  await db.user.create({
     data: { staffId, name, email: null, passwordHash: null, isActive: false, role: "viewer", groupId: staffGroup?.id ?? null },
   });
 }
