@@ -2,6 +2,35 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useEscape } from "@/lib/use-escape";
+import type { StaffLoginStatus } from "@/lib/staff-login-status";
+
+// Read-only login-setup badge shown per staff row. Activation/credentials are managed
+// on /users (deep-link); editing here only changes scheduling attributes.
+const LOGIN_STATUS_STYLE: Record<StaffLoginStatus, { label: string; cls: string }> = {
+  active: { label: "Active", cls: "bg-emerald-700/40 text-emerald-300" },
+  disabled: { label: "Disabled", cls: "bg-slate-600/40 text-slate-300" },
+  needs_setup: { label: "Needs setup", cls: "bg-amber-700/40 text-amber-300" },
+  none: { label: "No login", cls: "bg-red-900/40 text-red-300" },
+};
+
+function LoginStatusBadge({ status }: { status: StaffLoginStatus }) {
+  const s = LOGIN_STATUS_STYLE[status];
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={`text-[10px] px-1.5 py-0.5 rounded ${s.cls}`}>{s.label}</span>
+      {status !== "active" && (
+        <a
+          href="/users"
+          onClick={(e) => e.stopPropagation()}
+          className="text-[10px] text-blue-400 hover:underline"
+          title="Manage logins on the Users page"
+        >
+          manage →
+        </a>
+      )}
+    </span>
+  );
+}
 
 type AvailabilityRule = {
   dayOfWeek: number;
@@ -35,6 +64,7 @@ type ShiftMinimumTargetData = {
 type Staff = {
   id: string;
   name: string;
+  loginStatus: StaffLoginStatus;
   initials: string;
   employmentTypeId: string;
   employmentTypeName: string;
@@ -791,6 +821,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
       const newProv: Staff = {
         id: created.id,
         name: created.name,
+        loginStatus: "needs_setup", // POST auto-provisions a fresh disabled shell
         initials: created.initials,
         employmentTypeId: created.employmentTypeId,
         employmentTypeName: created.employmentType?.name ?? defaultType?.name ?? "",
@@ -930,6 +961,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
                   <th className="text-center py-2.5 px-3 w-14 cursor-pointer hover:text-slate-200 transition-colors select-none" onClick={() => toggleSort("isAutoScheduled")}>
                     Auto{sortIndicator("isAutoScheduled")}
                   </th>
+                  <th className="text-center py-2.5 px-3 w-36">Login</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
@@ -989,6 +1021,9 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
                           {p.isAutoScheduled ? "✓" : "—"}
                         </span>
                       </td>
+                      <td className="py-2 px-3 text-center">
+                        <LoginStatusBadge status={p.loginStatus} />
+                      </td>
                     </tr>
                   );
                 })}
@@ -1004,6 +1039,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
                     <td className="py-2 px-3 text-center"><span className="text-xs text-slate-600">—</span></td>
                     <td className="py-2 px-3"><div className="flex gap-0.5 justify-center">{DAY_INDICES.map((d) => (<span key={d} className="w-5 h-5 text-[10px] rounded font-medium flex items-center justify-center bg-slate-700/30 text-slate-700">{DAY_SHORT[d]}</span>))}</div></td>
                     <td className="py-2 px-3 text-center text-slate-600">—</td>
+                    <td className="py-2 px-3 text-center"><LoginStatusBadge status={p.loginStatus} /></td>
                   </tr>
                 ))}
               </tbody>

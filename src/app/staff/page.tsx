@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { StaffPage } from "./staff-page";
 import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
+import { staffLoginStatus } from "@/lib/staff-login-status";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,10 @@ export default async function Staff() {
   const [staff, employmentTypes, allShiftTypes] = await Promise.all([
     prisma.staff.findMany({
       orderBy: { sortOrder: "asc" },
-      include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true },
+      include: {
+        employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true,
+        loginUser: { select: { isActive: true, email: true, passwordHash: true } },
+      },
     }),
     prisma.employmentType.findMany({
       orderBy: { sortOrder: "asc" },
@@ -30,6 +34,7 @@ export default async function Staff() {
         staff={staff.map((p) => ({
           id: p.id,
           name: p.name,
+          loginStatus: staffLoginStatus(p.loginUser),
           initials: p.initials,
           employmentTypeId: p.employmentTypeId,
           employmentTypeName: p.employmentType.name,
