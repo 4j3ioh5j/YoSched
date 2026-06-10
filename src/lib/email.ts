@@ -4,26 +4,6 @@
 
 import nodemailer from "nodemailer";
 
-// Validation for an OPTIONAL contact email — empty is allowed (→ null), but a
-// non-empty value must look like an email. Pure + unit-tested so the staff API
-// and any other caller share one rule. Deliberately permissive (not RFC-5322):
-// a single @, non-empty local part, and a dotted domain with a 2+ char TLD.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-
-export type EmailResult = { ok: true; value: string | null } | { ok: false; error: string };
-
-/** Normalize an optional email coming off a request body. Trims; treats
- *  empty/whitespace/null/undefined as "no email" (null); lowercases the value;
- *  rejects a non-empty value that isn't a plausible email. */
-export function normalizeOptionalEmail(raw: unknown): EmailResult {
-  if (raw == null) return { ok: true, value: null };
-  if (typeof raw !== "string") return { ok: false, error: "Email must be text" };
-  const trimmed = raw.trim();
-  if (trimmed === "") return { ok: true, value: null };
-  if (!EMAIL_RE.test(trimmed)) return { ok: false, error: "Enter a valid email address" };
-  return { ok: true, value: trimmed.toLowerCase() };
-}
-
 export type EmailConfig = {
   enabled: boolean;
   host: string | null;

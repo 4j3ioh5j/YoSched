@@ -35,7 +35,6 @@ type ShiftMinimumTargetData = {
 type Staff = {
   id: string;
   name: string;
-  email: string | null;
   initials: string;
   employmentTypeId: string;
   employmentTypeName: string;
@@ -792,7 +791,6 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
       const newProv: Staff = {
         id: created.id,
         name: created.name,
-        email: created.email ?? null,
         initials: created.initials,
         employmentTypeId: created.employmentTypeId,
         employmentTypeName: created.employmentType?.name ?? defaultType?.name ?? "",
@@ -1054,15 +1052,6 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
               </FieldRow>
               <FieldRow label="Full name">
                 <input className="w-56 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm" value={ep.name} onChange={(e) => updateField(ep.id, "name", e.target.value)} />
-              </FieldRow>
-              <FieldRow label="Email" description="Optional contact email for this staff member">
-                <input
-                  type="email"
-                  placeholder="name@example.com"
-                  className="w-56 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm"
-                  value={ep.email ?? ""}
-                  onChange={(e) => updateField(ep.id, "email", e.target.value)}
-                />
               </FieldRow>
               <FieldRow label="Employment type" description="Changing type applies its default scheduling values">
                 <select

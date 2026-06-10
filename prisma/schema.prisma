@@ -140,7 +140,6 @@ model EmploymentType {
 model Staff {
   id                    String   @id @default(cuid())
   name                  String
-  email                 String?
   initials              String   @unique
   employmentTypeId      String
   ftePercentage         Float?   @default(1.0)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isEmailConfigured, buildConfirmationEmail, normalizeOptionalEmail, type EmailConfig } from "../email";
+import { isEmailConfigured, buildConfirmationEmail, type EmailConfig } from "../email";
 
 const base: EmailConfig = {
   enabled: true,
@@ -10,37 +10,6 @@ const base: EmailConfig = {
   password: "pass",
   fromAddress: "scheduler@example.com",
 };
-
-describe("normalizeOptionalEmail", () => {
-  const ok = (r: ReturnType<typeof normalizeOptionalEmail>) => (r.ok ? r.value : `ERR:${(r as { error: string }).error}`);
-
-  it("null/undefined/empty/whitespace → null (email is optional)", () => {
-    expect(ok(normalizeOptionalEmail(null))).toBeNull();
-    expect(ok(normalizeOptionalEmail(undefined))).toBeNull();
-    expect(ok(normalizeOptionalEmail(""))).toBeNull();
-    expect(ok(normalizeOptionalEmail("   "))).toBeNull();
-  });
-
-  it("trims and lowercases a valid address", () => {
-    expect(ok(normalizeOptionalEmail("  Jane.Doe@Hospital.ORG  "))).toBe("jane.doe@hospital.org");
-  });
-
-  it("accepts plus-tags and subdomains", () => {
-    expect(ok(normalizeOptionalEmail("a+b@mail.sub.example.io"))).toBe("a+b@mail.sub.example.io");
-  });
-
-  it("rejects malformed values", () => {
-    for (const bad of ["nope", "no@domain", "@example.com", "a@b.c d", "two@@at.com", "trailing@dot."]) {
-      const r = normalizeOptionalEmail(bad);
-      expect(r.ok).toBe(false);
-    }
-  });
-
-  it("rejects non-string input", () => {
-    const r = normalizeOptionalEmail(42);
-    expect(r.ok).toBe(false);
-  });
-});
 
 describe("isEmailConfigured", () => {
   it("true when enabled with host, port, and from-address", () => {
