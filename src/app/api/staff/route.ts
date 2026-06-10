@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
+import { provisionStaffLogin, disableLoginForStaff, deleteLoginForStaff } from "@/lib/user-lifecycle";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(req: NextRequest) {
@@ -22,6 +23,11 @@ export async function PUT(req: NextRequest) {
         sortOrder: data.sortOrder,
       },
     });
+
+    if (data.name) {
+      // Staff.name is canonical — keep the linked login's name in sync (slice 2b).
+      await tx.user.updateMany({ where: { staffId: id }, data: { name: data.name } });
+    }
 
     if (Array.isArray(eligibleShiftTypeIds)) {
       await tx.staffEligibleShift.deleteMany({ where: { staffId: id } });
@@ -89,6 +95,13 @@ export async function PUT(req: NextRequest) {
     }
   });
 
+  // If this edit deactivated the staff member, disable their paired login too (never an
+  // admin's). Reactivating staff does NOT auto-re-enable the login — that stays a
+  // deliberate /users action.
+  if (data.isActive === false) {
+    await disableLoginForStaff(id);
+  }
+
   const result = await prisma.staff.findUnique({
     where: { id },
     include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true },
@@ -125,6 +138,9 @@ export async function POST(req: NextRequest) {
     },
     include: { employmentType: true },
   });
+
+  // Every active staff member gets a paired, disabled shell login (slice 2b).
+  await provisionStaffLogin(created.id, created.name);
 
   const [defaultShifts, defaultAvailability] = await Promise.all([
     prisma.employmentTypeDefaultShift.findMany({ where: { employmentTypeId } }),
@@ -167,9 +183,11 @@ export async function DELETE(req: NextRequest) {
   const assignmentCount = await prisma.assignment.count({ where: { staffId: id } });
   if (assignmentCount > 0) {
     await prisma.staff.update({ where: { id }, data: { isActive: false } });
+    await disableLoginForStaff(id); // disable the paired login (never an admin's)
     return NextResponse.json({ ok: true, deactivated: true });
   }
 
+  await deleteLoginForStaff(id); // before the staff delete — onDelete:SetNull would orphan the link
   await prisma.staff.delete({ where: { id } });
   return NextResponse.json({ ok: true, deleted: true });
 }
