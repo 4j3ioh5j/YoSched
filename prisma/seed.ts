@@ -3,6 +3,7 @@ import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { hashSync } from "bcryptjs";
+import { resolveBootstrapPassword } from "../src/lib/seed-admin.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
@@ -376,19 +377,42 @@ async function main() {
 
   const adminGroup = await prisma.group.findUnique({ where: { name: "Admin" } });
 
-  // --- Default Admin User ---
-  await prisma.user.upsert({
-    where: { email: "admin@yosched.local" },
-    update: {},
-    create: {
-      email: "admin@yosched.local",
-      name: "Admin",
-      passwordHash: hashSync("admin", 12),
-      role: "admin",
-      groupId: adminGroup!.id,
+  // --- Bootstrap admin (only when nobody can administer the system) ---
+  // NEVER plant a known-password admin. If any active user already has effective
+  // `users:edit` we skip entirely (matches auth-guard's resolution: a grouped user's
+  // perms come from the group, otherwise the role default — admin/manager include
+  // users:edit). On a truly fresh DB we create ONE bootstrap admin using
+  // SEED_ADMIN_PASSWORD if provided, else a random temp password printed once.
+  const existingAdmins = await prisma.user.count({
+    where: {
+      isActive: true,
+      OR: [
+        { group: { permissions: { has: "users:edit" } } },
+        { groupId: null, role: { in: ["admin", "manager"] } },
+      ],
     },
   });
-  console.log("Seeded default admin user (admin@yosched.local / admin)");
+  if (existingAdmins > 0) {
+    console.log(`Skipping bootstrap admin — ${existingAdmins} active administrator(s) already present.`);
+  } else {
+    const email = process.env.SEED_ADMIN_EMAIL?.trim() || "admin@yosched.local";
+    const { password, fromEnv, envIgnored } = resolveBootstrapPassword(process.env.SEED_ADMIN_PASSWORD);
+    await prisma.user.create({
+      data: { email, name: "Admin", passwordHash: hashSync(password, 12), role: "admin", groupId: adminGroup!.id },
+    });
+    if (fromEnv) {
+      console.log(`Created bootstrap admin ${email} using the provided SEED_ADMIN_PASSWORD.`);
+    } else {
+      // Generated password — ALWAYS reveal it, or the operator can't log in.
+      if (envIgnored) {
+        console.log("WARNING: SEED_ADMIN_PASSWORD was ignored (must be at least 8 characters).");
+      }
+      console.log("=".repeat(64));
+      console.log(`Created bootstrap admin: ${email}`);
+      console.log(`Temporary password (shown ONCE — log in and change it now): ${password}`);
+      console.log("=".repeat(64));
+    }
+  }
 }
 
 main()
