@@ -26,6 +26,7 @@ type User = {
   staffId?: string | null;
   staff?: { id: string; name: string; initials: string } | null;
   isActive: boolean;
+  loginComplete: boolean; // has both email + password (server-derived; gate 3 of activation)
   totpEnabled?: boolean;
   createdAt: string | Date;
 };
@@ -34,12 +35,6 @@ type GroupOption = {
   id: string;
   name: string;
   level: number;
-};
-
-type StaffOption = {
-  id: string;
-  name: string;
-  initials: string;
 };
 
 const GROUP_BADGE: Record<string, string> = {
@@ -54,7 +49,6 @@ export function UsersPage({
   currentUserId,
   currentGroupLevel,
   groups,
-  staff,
   canEditUsers,
   canViewGroups,
   canEditGroups,
@@ -66,7 +60,6 @@ export function UsersPage({
   currentUserId: string;
   currentGroupLevel: number;
   groups: GroupOption[];
-  staff: StaffOption[];
   canEditUsers: boolean;
   canViewGroups: boolean;
   canEditGroups: boolean;
@@ -81,13 +74,13 @@ export function UsersPage({
   const [users, setUsers] = useState(initialUsers);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId, staffId: "" });
+  const [form, setForm] = useState({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId });
   const [error, setError] = useState("");
   const [trustDays, setTrustDays] = useState(initialTrustDays);
   const [savingTrust, setSavingTrust] = useState(false);
 
   const resetForm = useCallback(() => {
-    setForm({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId, staffId: "" });
+    setForm({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId });
     setShowForm(false);
     setEditingId(null);
     setError("");
@@ -105,7 +98,7 @@ export function UsersPage({
     const endpoint = "/api/users";
 
     if (editingId) {
-      const body: Record<string, string> = { id: editingId, email: form.email, name: form.name, groupId: form.groupId, staffId: form.staffId };
+      const body: Record<string, string> = { id: editingId, email: form.email, name: form.name, groupId: form.groupId };
       if (form.password) body.password = form.password;
       const res = await fetch(endpoint, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) { setError((await res.json()).error); return; }
@@ -135,24 +128,21 @@ export function UsersPage({
   }
 
   async function handleToggleActive(user: User) {
-    const res = await fetch("/api/users", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: user.id, isActive: !user.isActive }) });
-    if (res.ok) {
-      const updated = await res.json();
-      setUsers((prev) => prev.map((u) => (u.id === user.id ? updated : u)));
+    if (!user.isActive && !user.loginComplete) {
+      alert("Set an email and password for this login before activating it.");
+      return;
     }
+    const res = await fetch("/api/users", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: user.id, isActive: !user.isActive }) });
+    if (!res.ok) { alert((await res.json()).error); return; }
+    const updated = await res.json();
+    setUsers((prev) => prev.map((u) => (u.id === user.id ? updated : u)));
   }
 
   function startEdit(user: User) {
-    setForm({ email: user.email ?? "", name: user.name, password: "", confirmPassword: "", groupId: user.groupId ?? defaultGroupId, staffId: user.staffId ?? "" });
+    setForm({ email: user.email ?? "", name: user.name, password: "", confirmPassword: "", groupId: user.groupId ?? defaultGroupId });
     setEditingId(user.id);
     setShowForm(true);
   }
-
-  // Staff already linked to a different login — disabled in the dropdown so
-  // the admin doesn't pick one that the API would reject with a 409.
-  const takenStaffIds = new Set(
-    users.filter((u) => u.staffId && u.id !== editingId).map((u) => u.staffId as string)
-  );
 
   function canManageUser(user: User): boolean {
     if (!canEditUsers) return false;
@@ -216,19 +206,6 @@ export function UsersPage({
               >
                 {assignableGroups.map((g) => (
                   <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
-              <select
-                value={form.staffId}
-                onChange={(e) => setForm({ ...form, staffId: e.target.value })}
-                title="Link this login to a staff so they can enter their own schedule requests"
-                className="px-3 py-2 bg-slate-900 border border-slate-700 rounded text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">— No linked staff —</option>
-                {staff.map((p) => (
-                  <option key={p.id} value={p.id} disabled={takenStaffIds.has(p.id)}>
-                    {p.name} ({p.initials}){takenStaffIds.has(p.id) ? " — linked" : ""}
-                  </option>
                 ))}
               </select>
             </div>
@@ -325,12 +302,21 @@ export function UsersPage({
                   </td>
                   <td className="py-2.5 px-3">
                     {manageable ? (
-                      <button
-                        onClick={() => handleToggleActive(user)}
-                        className={`inline-block w-[60px] text-center text-xs py-0.5 rounded transition-colors ${user.isActive ? "bg-green-800/50 text-green-300 hover:bg-green-800/80" : "bg-red-900/50 text-red-400 hover:bg-red-900/80"}`}
-                      >
-                        {user.isActive ? "Active" : "Disabled"}
-                      </button>
+                      !user.isActive && !user.loginComplete ? (
+                        <span
+                          title="Set an email and password (Edit) before this login can be activated"
+                          className="inline-block w-[76px] text-center text-xs py-0.5 rounded bg-amber-900/40 text-amber-400 cursor-help"
+                        >
+                          Needs setup
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleToggleActive(user)}
+                          className={`inline-block w-[60px] text-center text-xs py-0.5 rounded transition-colors ${user.isActive ? "bg-green-800/50 text-green-300 hover:bg-green-800/80" : "bg-red-900/50 text-red-400 hover:bg-red-900/80"}`}
+                        >
+                          {user.isActive ? "Active" : "Disabled"}
+                        </button>
+                      )
                     ) : (
                       <span className={`inline-block w-[60px] text-center text-xs py-0.5 rounded ${user.isActive ? "bg-green-800/50 text-green-300" : "bg-red-900/50 text-red-400"}`}>
                         {user.isActive ? "Active" : "Disabled"}

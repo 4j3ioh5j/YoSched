@@ -6,12 +6,21 @@ import { assertUsersAdminSurvives, AdminGuardError } from "@/lib/user-lifecycle"
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
 
-// Shape returned for every user row — includes the linked staff (if any).
+// Shape selected for every user row — includes the linked staff (if any) and
+// passwordHash (used ONLY to derive `loginComplete`; never returned to the client).
 const USER_SELECT = {
   id: true, email: true, name: true, role: true, groupId: true, staffId: true, isActive: true, totpEnabled: true, createdAt: true,
+  passwordHash: true,
   group: { select: { name: true, level: true } },
   staff: { select: { id: true, name: true, initials: true } },
 } as const;
+
+/** Strip passwordHash and add a derived `loginComplete` (has both email + password) —
+ *  the activation gate the /users UI uses. The hash never leaves the server. */
+function toClientUser<T extends { email: string | null; passwordHash: string | null }>(u: T) {
+  const { passwordHash, ...rest } = u;
+  return { ...rest, loginComplete: !!u.email && !!passwordHash };
+}
 
 // True if `wantedStaffId` is already linked to a user other than `editingUserId`.
 async function staffLinkConflict(wantedStaffId: string | null, editingUserId: string | null): Promise<boolean> {
@@ -28,7 +37,7 @@ export async function GET() {
     select: USER_SELECT,
     orderBy: { createdAt: "asc" },
   });
-  return NextResponse.json(users);
+  return NextResponse.json(users.map(toClientUser));
 }
 
 export async function POST(req: NextRequest) {
@@ -69,7 +78,7 @@ export async function POST(req: NextRequest) {
     select: USER_SELECT,
   });
 
-  return NextResponse.json(user);
+  return NextResponse.json(toClientUser(user));
 }
 
 export async function PUT(req: NextRequest) {
@@ -81,7 +90,7 @@ export async function PUT(req: NextRequest) {
 
   const targetUser = await prisma.user.findUnique({
     where: { id },
-    select: { group: { select: { level: true } } },
+    select: { email: true, passwordHash: true, group: { select: { level: true } } },
   });
   if (targetUser?.group && targetUser.group.level >= result.groupLevel) {
     return NextResponse.json({ error: "Cannot edit a user at or above your group level" }, { status: 403 });
@@ -117,6 +126,16 @@ export async function PUT(req: NextRequest) {
     data.passwordHash = await hash(password, 12);
   }
 
+  // Gate 3 of activation: a login may only be enabled once it has both an email and a
+  // password (set here or already present). Keeps "Active" honest for shell logins.
+  if (isActive === true) {
+    const willHaveEmail = email || targetUser?.email;
+    const willHavePassword = !!password || !!targetUser?.passwordHash;
+    if (!willHaveEmail || !willHavePassword) {
+      return NextResponse.json({ error: "Set an email and password before activating this login" }, { status: 400 });
+    }
+  }
+
   // Admin-safety: a role/group/active change must not remove the last administrator.
   if (role !== undefined || groupId || typeof isActive === "boolean") {
     try {
@@ -139,7 +158,7 @@ export async function PUT(req: NextRequest) {
     select: USER_SELECT,
   });
 
-  return NextResponse.json(user);
+  return NextResponse.json(toClientUser(user));
 }
 
 export async function DELETE(req: NextRequest) {

@@ -10,9 +10,10 @@ export default async function Page() {
   const result = await getSession("users:view");
   if (result.error) redirect("/");
 
-  const [users, prefs, groups, staff] = await Promise.all([
+  const [rawUsers, prefs, groups] = await Promise.all([
     prisma.user.findMany({
       select: { id: true, email: true, name: true, role: true, groupId: true, staffId: true, isActive: true, totpEnabled: true, createdAt: true,
+        passwordHash: true,
         group: { select: { name: true, level: true } },
         staff: { select: { id: true, name: true, initials: true } } },
       orderBy: { createdAt: "asc" },
@@ -22,12 +23,11 @@ export default async function Page() {
       orderBy: { level: "desc" },
       select: { id: true, name: true, level: true },
     }),
-    prisma.staff.findMany({
-      where: { isActive: true },
-      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-      select: { id: true, name: true, initials: true },
-    }),
   ]);
+
+  // Derive loginComplete (has both email + password) server-side; the hash never
+  // crosses to the client.
+  const users = rawUsers.map(({ passwordHash, ...u }) => ({ ...u, loginComplete: !!u.email && !!passwordHash }));
 
   return (
     <>
@@ -37,7 +37,6 @@ export default async function Page() {
         currentUserId={result.userId!}
         currentGroupLevel={result.groupLevel!}
         groups={groups}
-        staff={staff}
         canEditUsers={result.permissions!.includes("users:edit")}
         canViewGroups={result.permissions!.includes("groups:view")}
         canEditGroups={result.permissions!.includes("groups:edit")}
