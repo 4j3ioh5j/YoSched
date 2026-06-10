@@ -2,24 +2,9 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { validatePassword } from "@/lib/password";
 import { assertUsersAdminSurvives, AdminGuardError } from "@/lib/user-lifecycle";
+import { USER_SELECT, toClientUser, isHiddenStaffLogin } from "@/lib/user-view";
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
-
-// Shape selected for every user row — includes the linked staff (if any) and
-// passwordHash (used ONLY to derive `loginComplete`; never returned to the client).
-const USER_SELECT = {
-  id: true, email: true, name: true, role: true, groupId: true, staffId: true, isActive: true, totpEnabled: true, createdAt: true,
-  passwordHash: true,
-  group: { select: { name: true, level: true } },
-  staff: { select: { id: true, name: true, initials: true } },
-} as const;
-
-/** Strip passwordHash and add a derived `loginComplete` (has both email + password) —
- *  the activation gate the /users UI uses. The hash never leaves the server. */
-function toClientUser<T extends { email: string | null; passwordHash: string | null }>(u: T) {
-  const { passwordHash, ...rest } = u;
-  return { ...rest, loginComplete: !!u.email && !!passwordHash };
-}
 
 export async function GET() {
   const { error } = await getSession("users:view");
@@ -29,7 +14,9 @@ export async function GET() {
     select: USER_SELECT,
     orderBy: { createdAt: "asc" },
   });
-  return NextResponse.json(users.map(toClientUser));
+  // Hide logins belonging to deactivated staff — they've been reset to bare shells and
+  // re-appear only if the staff member is reactivated (see resetLoginForStaff).
+  return NextResponse.json(users.filter((u) => !isHiddenStaffLogin(u)).map(toClientUser));
 }
 
 export async function POST(req: NextRequest) {
@@ -152,8 +139,16 @@ export async function DELETE(req: NextRequest) {
 
   const targetUser = await prisma.user.findUnique({
     where: { id },
-    select: { group: { select: { level: true } } },
+    select: { staffId: true, group: { select: { level: true } } },
   });
+  // Staff-linked logins are subordinate to the staff record and can NEVER be deleted here
+  // — use Reset, or deactivate/delete the staff member (which resets/deletes the login).
+  if (targetUser?.staffId) {
+    return NextResponse.json(
+      { error: "This login belongs to a staff member and can't be deleted. Use Reset, or deactivate/delete the staff member." },
+      { status: 400 },
+    );
+  }
   if (targetUser?.group && targetUser.group.level >= result.groupLevel) {
     return NextResponse.json({ error: "Cannot delete a user at or above your group level" }, { status: 403 });
   }

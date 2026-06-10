@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
+import { USER_SELECT, toClientUser, isHiddenStaffLogin } from "@/lib/user-view";
 import { redirect } from "next/navigation";
 import { NavHeader } from "../nav-header";
 import { UsersPage } from "./users-page";
@@ -12,10 +13,7 @@ export default async function Page() {
 
   const [rawUsers, prefs, groups] = await Promise.all([
     prisma.user.findMany({
-      select: { id: true, email: true, name: true, role: true, groupId: true, staffId: true, isActive: true, totpEnabled: true, createdAt: true,
-        passwordHash: true,
-        group: { select: { name: true, level: true } },
-        staff: { select: { id: true, name: true, initials: true } } },
+      select: USER_SELECT,
       orderBy: { createdAt: "asc" },
     }),
     prisma.schedulingPreferences.findFirst(),
@@ -25,9 +23,9 @@ export default async function Page() {
     }),
   ]);
 
-  // Derive loginComplete (has both email + password) server-side; the hash never
-  // crosses to the client.
-  const users = rawUsers.map(({ passwordHash, ...u }) => ({ ...u, loginComplete: !!u.email && !!passwordHash }));
+  // Same shape + filtering as GET /api/users: hide deactivated-staff logins and strip
+  // the password hash (toClientUser derives loginComplete; the hash never reaches the client).
+  const users = rawUsers.filter((u) => !isHiddenStaffLogin(u)).map(toClientUser);
 
   return (
     <>

@@ -121,6 +121,17 @@ export function UsersPage({
     setUsers((prev) => prev.filter((u) => u.id !== id));
   }
 
+  // Staff-linked logins can't be deleted — they're reset to a bare shell instead
+  // (disabled, no email, no password). The staff member stays in the system; the login
+  // is removed only by deactivating/deleting the staff member.
+  async function handleReset(id: string) {
+    if (!confirm("Reset this staff login? This disables it and clears the email + password. The staff member stays in the system.")) return;
+    const res = await fetch("/api/users/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    if (!res.ok) { alert((await res.json()).error); return; }
+    const updated = await res.json();
+    setUsers((prev) => prev.map((u) => (u.id === id ? updated : u)));
+  }
+
   async function handleReset2FA(id: string) {
     if (!confirm("Reset 2FA for this user? They will need to set it up again.")) return;
     const res = await fetch("/api/users/reset-totp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: id }) });
@@ -352,14 +363,22 @@ export function UsersPage({
                         Edit
                       </button>
                     )}
-                    {manageable && (
+                    {manageable && (user.staff ? (
+                      <button
+                        onClick={() => handleReset(user.id)}
+                        title="Disable this login and clear its email + password (the staff member stays)"
+                        className="text-xs text-amber-500/60 hover:text-amber-400"
+                      >
+                        Reset
+                      </button>
+                    ) : (
                       <button
                         onClick={() => handleDelete(user.id)}
                         className="text-xs text-red-500/60 hover:text-red-400"
                       >
                         Delete
                       </button>
-                    )}
+                    ))}
                   </td>
                 </tr>
               );

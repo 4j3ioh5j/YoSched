@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { provisionStaffLogin, disableLoginForStaff, deleteLoginForStaff } from "@/lib/user-lifecycle";
+import { provisionStaffLogin, resetLoginForStaff, deleteLoginForStaff } from "@/lib/user-lifecycle";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(req: NextRequest) {
@@ -95,11 +95,12 @@ export async function PUT(req: NextRequest) {
     }
   });
 
-  // If this edit deactivated the staff member, disable their paired login too (never an
-  // admin's). Reactivating staff does NOT auto-re-enable the login — that stays a
-  // deliberate /users action.
+  // If this edit deactivated the staff member, reset their paired login (disable + clear
+  // email/password, never an admin's) and let the /users hide-filter drop it from the
+  // list. Reactivating staff does NOT auto-re-enable the login — it re-surfaces as a
+  // bare "Needs setup" shell for a deliberate /users re-activation.
   if (data.isActive === false) {
-    await disableLoginForStaff(id);
+    await resetLoginForStaff(id);
   }
 
   const result = await prisma.staff.findUnique({
@@ -187,7 +188,7 @@ export async function DELETE(req: NextRequest) {
   const assignmentCount = await prisma.assignment.count({ where: { staffId: id } });
   if (assignmentCount > 0) {
     await prisma.staff.update({ where: { id }, data: { isActive: false } });
-    await disableLoginForStaff(id); // disable the paired login (never an admin's)
+    await resetLoginForStaff(id); // reset the paired login to a bare shell (never an admin's)
     return NextResponse.json({ ok: true, deactivated: true });
   }
 

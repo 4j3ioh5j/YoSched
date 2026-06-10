@@ -117,12 +117,15 @@ export async function provisionStaffLogin(
   });
 }
 
-/** Staff deactivated → disable its linked login, but NEVER an administrator's. */
-export async function disableLoginForStaff(staffId: string): Promise<void> {
+/** Staff deactivated → RESET its linked login to a bare, disabled shell (disabled, no
+ *  email, no password), but NEVER an administrator's. The row is kept; combined with the
+ *  /users hide-filter (isHiddenStaffLogin) the login disappears from the list until the
+ *  staff member is reactivated, at which point it re-surfaces as a "Needs setup" shell. */
+export async function resetLoginForStaff(staffId: string): Promise<void> {
   const user = await findLinkedLogin(staffId);
-  if (!user || !user.isActive) return;
+  if (!user) return;
   if (isAdminLogin(user)) return; // admin logins are decoupled from staff active-state
-  await prisma.user.update({ where: { id: user.id }, data: { isActive: false } });
+  await prisma.user.update({ where: { id: user.id }, data: { isActive: false, email: null, passwordHash: null } });
 }
 
 /** Staff hard-deleted → delete its linked shell login, but leave an administrator's
