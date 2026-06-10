@@ -33,7 +33,7 @@ async function main() {
   let created = 0;
   for (const shell of shells) {
     try {
-      await prisma.user.create({ data: { ...shell, role: "viewer" } });
+      await prisma.user.create({ data: shell });
       created++;
     } catch (e) {
       // Unique staffId/email collision (e.g. a concurrent run) — safe to skip.

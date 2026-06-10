@@ -25,7 +25,6 @@ export const authConfig: NextAuthConfig = {
   callbacks: {
     jwt({ token, user }) {
       if (user) {
-        token.role = (user as { role: string }).role;
         if ((user as { totpVerifiedAt?: number }).totpVerifiedAt) {
           token.totpVerifiedAt = (user as { totpVerifiedAt: number }).totpVerifiedAt;
         }
@@ -40,7 +39,6 @@ export const authConfig: NextAuthConfig = {
     session({ session, token }) {
       if (session.user) {
         session.user.id = token.sub!;
-        (session.user as { role: string }).role = token.role as string;
         (session.user as { totpVerifiedAt?: number }).totpVerifiedAt = token.totpVerifiedAt as number | undefined;
         (session.user as { groupId?: string }).groupId = token.groupId as string | undefined;
         (session.user as { groupName?: string }).groupName = token.groupName as string | undefined;

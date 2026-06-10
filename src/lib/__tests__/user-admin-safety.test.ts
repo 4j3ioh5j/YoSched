@@ -6,7 +6,6 @@ import {
   withUserRemoved,
   withUserPatched,
   withGroupPermissions,
-  withGroupRemoved,
   type AdminUser,
 } from "../user-admin-safety";
 
@@ -14,7 +13,7 @@ const ADMIN_GROUP = ["users:edit", "staff:view"];
 const PLAIN_GROUP = ["schedule:view"];
 
 function mk(id: string, over: Partial<AdminUser> = {}): AdminUser {
-  return { id, isActive: true, role: "viewer", groupPermissions: null, ...over };
+  return { id, isActive: true, groupPermissions: PLAIN_GROUP, ...over };
 }
 
 describe("hasUsersEdit / activeAdminCount", () => {
@@ -25,59 +24,39 @@ describe("hasUsersEdit / activeAdminCount", () => {
     expect(activeAdminCount(users)).toBe(1);
   });
 
-  it("counts ungrouped admin/manager via role default, not viewer", () => {
-    const users = [
-      mk("a", { role: "admin", groupPermissions: null }),
-      mk("b", { role: "manager", groupPermissions: null }),
-      mk("c", { role: "viewer", groupPermissions: null }),
-    ];
-    expect(activeAdminCount(users)).toBe(2);
-  });
-
   it("does not count inactive admins", () => {
-    expect(activeAdminCount([mk("a", { role: "admin", groupPermissions: null, isActive: false })])).toBe(0);
+    expect(activeAdminCount([mk("a", { groupPermissions: ADMIN_GROUP, isActive: false })])).toBe(0);
   });
 });
 
 describe("the last-admin invariant survives each simulated mutation", () => {
   const users: AdminUser[] = [
     mk("admin1", { groupPermissions: ADMIN_GROUP }),
-    mk("mgr", { role: "manager", groupPermissions: null }), // admin via role default
+    mk("admin2", { groupPermissions: ADMIN_GROUP }),
     mk("viewer", { groupPermissions: PLAIN_GROUP }),
   ];
 
   it("delete: removing one of two admins is OK; removing the last is not", () => {
     expect(leavesNoActiveAdmin(withUserRemoved(users, "admin1"))).toBe(false);
     const oneLeft = withUserRemoved(users, "admin1");
-    expect(leavesNoActiveAdmin(withUserRemoved(oneLeft, "mgr"))).toBe(true);
+    expect(leavesNoActiveAdmin(withUserRemoved(oneLeft, "admin2"))).toBe(true);
   });
 
-  it("demote: changing the last admin's group/role away from users:edit trips it", () => {
+  it("demote: moving the last admin to a non-admin group trips it", () => {
     const onlyAdmin = [mk("admin1", { groupPermissions: ADMIN_GROUP }), mk("v", { groupPermissions: PLAIN_GROUP })];
     expect(leavesNoActiveAdmin(withUserPatched(onlyAdmin, "admin1", { groupPermissions: PLAIN_GROUP }))).toBe(true);
-    const ungrouped = [mk("a", { role: "admin", groupPermissions: null })];
-    expect(leavesNoActiveAdmin(withUserPatched(ungrouped, "a", { role: "viewer" }))).toBe(true);
   });
 
   it("deactivate: disabling the last admin trips it", () => {
-    const onlyAdmin = [mk("a", { role: "admin", groupPermissions: null })];
+    const onlyAdmin = [mk("a", { groupPermissions: ADMIN_GROUP })];
     expect(leavesNoActiveAdmin(withUserPatched(onlyAdmin, "a", { isActive: false }))).toBe(true);
   });
 
   it("group permission edit: stripping users:edit from the group holding all admins trips it", () => {
     const allInGroup = [mk("a", { groupPermissions: ADMIN_GROUP }), mk("b", { groupPermissions: ADMIN_GROUP })];
     expect(leavesNoActiveAdmin(withGroupPermissions(allInGroup, new Set(["a", "b"]), PLAIN_GROUP))).toBe(true);
-    // safe when an independent ungrouped admin-role user also exists
-    const mixed = [mk("a", { groupPermissions: ADMIN_GROUP }), mk("b", { role: "admin", groupPermissions: null })];
+    // safe when an admin in a different group also exists
+    const mixed = [mk("a", { groupPermissions: ADMIN_GROUP }), mk("b", { groupPermissions: ADMIN_GROUP })];
     expect(leavesNoActiveAdmin(withGroupPermissions(mixed, new Set(["a"]), PLAIN_GROUP))).toBe(false);
-  });
-
-  it("group delete: members fall back to role default", () => {
-    // admin-ROLE member keeps users:edit via the role default → safe
-    const adminRole = [mk("a", { role: "admin", groupPermissions: ADMIN_GROUP })];
-    expect(leavesNoActiveAdmin(withGroupRemoved(adminRole, new Set(["a"])))).toBe(false);
-    // viewer-ROLE member who was an admin only through the group → loses it → trips
-    const viewerRole = [mk("a", { role: "viewer", groupPermissions: ADMIN_GROUP })];
-    expect(leavesNoActiveAdmin(withGroupRemoved(viewerRole, new Set(["a"])))).toBe(true);
   });
 });

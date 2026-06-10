@@ -3,13 +3,12 @@
 // it reaches the client, and which rows are hidden.
 
 import { hasUsersEdit } from "./user-admin-safety";
-import type { Role } from "./permissions";
 
 // Shape selected for every user row — includes the linked staff (with its active
 // state, used to hide deactivated-staff logins) and passwordHash (used ONLY to
 // derive `loginComplete`; never returned to the client).
 export const USER_SELECT = {
-  id: true, email: true, name: true, role: true, groupId: true, staffId: true, isActive: true, totpEnabled: true, createdAt: true,
+  id: true, email: true, name: true, groupId: true, staffId: true, isActive: true, totpEnabled: true, createdAt: true,
   passwordHash: true,
   group: { select: { name: true, level: true, permissions: true } },
   staff: { select: { id: true, name: true, initials: true, isActive: true } },
@@ -28,12 +27,11 @@ export function toClientUser<T extends { email: string | null; passwordHash: str
  *  are managed independently of staff active-state (the admin-skip in the staff
  *  lifecycle keeps them intact), so they must stay visible/manageable here. */
 export function isHiddenStaffLogin(u: {
-  role: string;
   isActive: boolean;
   group: { permissions: string[] } | null;
   staff: { isActive: boolean } | null;
 }): boolean {
   if (!u.staff || u.staff.isActive) return false;
-  const isAdmin = hasUsersEdit({ id: "", isActive: u.isActive, role: u.role as Role, groupPermissions: u.group?.permissions ?? null });
+  const isAdmin = hasUsersEdit({ id: "", isActive: u.isActive, groupPermissions: u.group?.permissions ?? [] });
   return !isAdmin;
 }

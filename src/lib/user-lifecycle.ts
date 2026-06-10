@@ -8,7 +8,6 @@
 // TOTP) do NOT pass through here; they can't change who can administer.
 
 import { prisma } from "./prisma";
-import type { Role } from "./permissions";
 import {
   type AdminUser,
   hasUsersEdit,
@@ -16,7 +15,6 @@ import {
   withUserRemoved,
   withUserPatched,
   withGroupPermissions,
-  withGroupRemoved,
 } from "./user-admin-safety";
 
 export class AdminGuardError extends Error {
@@ -28,14 +26,13 @@ export class AdminGuardError extends Error {
 
 export type UsersAdminChange =
   | { kind: "deleteUser"; userId: string }
-  | { kind: "updateUser"; userId: string; isActive?: boolean; role?: Role; groupId?: string | null }
-  | { kind: "updateGroupPermissions"; groupId: string; permissions: string[] }
-  | { kind: "deleteGroup"; groupId: string };
+  | { kind: "updateUser"; userId: string; isActive?: boolean; groupId?: string }
+  | { kind: "updateGroupPermissions"; groupId: string; permissions: string[] };
 
-type RawUser = { id: string; isActive: boolean; role: string; groupId: string | null; group: { permissions: string[] } | null };
+type RawUser = { id: string; isActive: boolean; groupId: string; group: { permissions: string[] } };
 
 function toAdminUser(u: RawUser): AdminUser {
-  return { id: u.id, isActive: u.isActive, role: u.role as Role, groupPermissions: u.group?.permissions ?? null };
+  return { id: u.id, isActive: u.isActive, groupPermissions: u.group.permissions };
 }
 
 /** Throw AdminGuardError if applying `change` would leave zero active administrators
@@ -43,7 +40,7 @@ function toAdminUser(u: RawUser): AdminUser {
  *  the change in-memory, and counts. */
 export async function assertUsersAdminSurvives(change: UsersAdminChange): Promise<void> {
   const raw: RawUser[] = await prisma.user.findMany({
-    select: { id: true, isActive: true, role: true, groupId: true, group: { select: { permissions: true } } },
+    select: { id: true, isActive: true, groupId: true, group: { select: { permissions: true } } },
   });
   const users = raw.map(toAdminUser);
 
@@ -53,16 +50,11 @@ export async function assertUsersAdminSurvives(change: UsersAdminChange): Promis
       after = withUserRemoved(users, change.userId);
       break;
     case "updateUser": {
-      const patch: Partial<Pick<AdminUser, "isActive" | "role" | "groupPermissions">> = {};
+      const patch: Partial<Pick<AdminUser, "isActive" | "groupPermissions">> = {};
       if (change.isActive !== undefined) patch.isActive = change.isActive;
-      if (change.role !== undefined) patch.role = change.role;
       if (change.groupId !== undefined) {
-        if (change.groupId === null) {
-          patch.groupPermissions = null; // ungrouped → role default
-        } else {
-          const g = await prisma.group.findUnique({ where: { id: change.groupId }, select: { permissions: true } });
-          patch.groupPermissions = g?.permissions ?? null;
-        }
+        const g = await prisma.group.findUnique({ where: { id: change.groupId }, select: { permissions: true } });
+        patch.groupPermissions = g?.permissions ?? [];
       }
       after = withUserPatched(users, change.userId, patch);
       break;
@@ -70,11 +62,6 @@ export async function assertUsersAdminSurvives(change: UsersAdminChange): Promis
     case "updateGroupPermissions": {
       const memberIds = new Set(raw.filter((u) => u.groupId === change.groupId).map((u) => u.id));
       after = withGroupPermissions(users, memberIds, change.permissions);
-      break;
-    }
-    case "deleteGroup": {
-      const memberIds = new Set(raw.filter((u) => u.groupId === change.groupId).map((u) => u.id));
-      after = withGroupRemoved(users, memberIds);
       break;
     }
   }
@@ -89,17 +76,17 @@ export async function assertUsersAdminSurvives(change: UsersAdminChange): Promis
 // /users. Because non-admin changes can't shrink the admin set, the admin-skip is itself
 // the invariant protection here (no assertUsersAdminSurvives needed).
 
-type LinkedLogin = { id: string; isActive: boolean; role: string; group: { permissions: string[] } | null };
+type LinkedLogin = { id: string; isActive: boolean; group: { permissions: string[] } | null };
 
 async function findLinkedLogin(staffId: string): Promise<LinkedLogin | null> {
   return prisma.user.findUnique({
     where: { staffId },
-    select: { id: true, isActive: true, role: true, group: { select: { permissions: true } } },
+    select: { id: true, isActive: true, group: { select: { permissions: true } } },
   });
 }
 
 function isAdminLogin(u: LinkedLogin): boolean {
-  return hasUsersEdit({ id: u.id, isActive: u.isActive, role: u.role as Role, groupPermissions: u.group?.permissions ?? null });
+  return hasUsersEdit({ id: u.id, isActive: u.isActive, groupPermissions: u.group?.permissions ?? [] });
 }
 
 /** Create the disabled, credential-less shell login that pairs with a newly created
@@ -116,7 +103,7 @@ export async function provisionStaffLogin(
   // than create an orphaned login if the seeded "Staff" group is somehow missing.
   if (!staffGroup) throw new Error('Cannot provision a staff login: the "Staff" group is missing — run the seed.');
   await db.user.create({
-    data: { staffId, name, email: null, passwordHash: null, isActive: false, role: "viewer", groupId: staffGroup.id },
+    data: { staffId, name, email: null, passwordHash: null, isActive: false, groupId: staffGroup.id },
   });
 }
 

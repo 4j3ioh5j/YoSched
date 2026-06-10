@@ -407,7 +407,7 @@ async function main() {
     } else {
       const { password, fromEnv, envIgnored } = resolveBootstrapPassword(process.env.SEED_ADMIN_PASSWORD);
       await prisma.user.create({
-        data: { email, name: "Admin", passwordHash: hashSync(password, 12), role: "admin", groupId: adminGroup!.id },
+        data: { email, name: "Admin", passwordHash: hashSync(password, 12), groupId: adminGroup!.id },
       });
       if (fromEnv) {
         console.log(`Created bootstrap admin ${email} using the provided SEED_ADMIN_PASSWORD.`);

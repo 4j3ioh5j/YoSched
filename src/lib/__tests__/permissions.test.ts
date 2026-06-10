@@ -1,46 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { effectivePermissions, effectiveGroupLevel, canManageGroupLevel, FULL_PERMISSIONS, VIEWER_PERMISSIONS } from "../permissions";
+import { effectivePermissions, canManageGroupLevel } from "../permissions";
 
 describe("effectivePermissions", () => {
-  it("uses the group's permissions when grouped — role is ignored", () => {
-    expect(effectivePermissions("viewer", { permissions: ["users:edit", "staff:view"] })).toEqual(["users:edit", "staff:view"]);
-    // an admin-ROLE user is still limited by a restricted group
-    expect(effectivePermissions("admin", { permissions: ["schedule:view"] })).toEqual(["schedule:view"]);
-  });
-
-  it("falls back to the full set for ungrouped admin/manager", () => {
-    expect(effectivePermissions("admin", null)).toEqual(FULL_PERMISSIONS);
-    expect(effectivePermissions("manager", null)).toEqual(FULL_PERMISSIONS);
-    expect(effectivePermissions("admin", null)).toContain("users:edit");
-  });
-
-  it("falls back to the viewer set for ungrouped viewer", () => {
-    expect(effectivePermissions("viewer", null)).toEqual(VIEWER_PERMISSIONS);
-    expect(effectivePermissions("viewer", null)).not.toContain("users:edit");
-  });
-
-  it("treats undefined group like null", () => {
-    expect(effectivePermissions("admin", undefined)).toEqual(FULL_PERMISSIONS);
-  });
-});
-
-describe("effectiveGroupLevel", () => {
-  it("uses the group level when grouped (role ignored)", () => {
-    expect(effectiveGroupLevel("viewer", { level: 3 })).toBe(3);
-    expect(effectiveGroupLevel("admin", { level: 0 })).toBe(0);
-  });
-
-  it("falls back by role when ungrouped — admin 3, manager 2, else 0", () => {
-    expect(effectiveGroupLevel("admin", null)).toBe(3);
-    expect(effectiveGroupLevel("manager", null)).toBe(2);
-    expect(effectiveGroupLevel("viewer", null)).toBe(0);
-    expect(effectiveGroupLevel("admin", undefined)).toBe(3);
-  });
-
-  it("an ungrouped admin target is NOT manageable by a super user (the privilege-bypass guard)", () => {
-    const actor = 2; // super user
-    const target = effectiveGroupLevel("admin", null); // 3, despite no group
-    expect(canManageGroupLevel(actor, target)).toBe(false);
+  it("returns the group's permission array", () => {
+    expect(effectivePermissions({ permissions: ["users:edit", "staff:view"] })).toEqual(["users:edit", "staff:view"]);
+    expect(effectivePermissions({ permissions: ["schedule:view"] })).toEqual(["schedule:view"]);
+    expect(effectivePermissions({ permissions: [] })).toEqual([]);
   });
 });
 

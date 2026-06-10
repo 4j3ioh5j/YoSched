@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
-import { canManageGroupLevel, effectiveGroupLevel, type Role } from "@/lib/permissions";
+import { canManageGroupLevel } from "@/lib/permissions";
 import { GroupsSection } from "../settings/groups-section";
 
 type LoginLogEntry = {
@@ -21,7 +21,6 @@ type User = {
   id: string;
   email: string | null;
   name: string;
-  role: string;
   groupId?: string | null;
   group?: { name: string; level: number } | null;
   staffId?: string | null;
@@ -161,8 +160,8 @@ export function UsersPage({
   function canManageUser(user: User): boolean {
     if (!canEditUsers) return false;
     if (user.id === currentUserId) return false;
-    // Effective level mirrors the server (ungrouped admin/manager are NOT level 0).
-    const userLevel = effectiveGroupLevel(user.role as Role, user.group);
+    // Every user has a group, so their level is just the group's level.
+    const userLevel = user.group?.level ?? 0;
     // At-or-below your level is manageable (peers included); only strictly-higher is not.
     return canManageGroupLevel(currentGroupLevel, userLevel);
   }
@@ -311,7 +310,7 @@ export function UsersPage({
                   <td className="py-2.5 px-3 text-slate-400 truncate">{user.email ?? <span className="italic text-slate-600">no email</span>}</td>
                   <td className="py-2.5 px-3">
                     <span className={`inline-block w-[88px] text-center text-xs py-0.5 rounded ${GROUP_BADGE[gName] || "bg-slate-600 text-slate-300"}`}>
-                      {gName || user.role}
+                      {gName}
                     </span>
                   </td>
                   <td className="py-2.5 px-3 text-slate-400 truncate">

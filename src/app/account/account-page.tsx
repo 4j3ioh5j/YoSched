@@ -7,7 +7,6 @@ type User = {
   id: string;
   email: string | null;
   name: string;
-  role: string;
   groupName?: string;
   totpEnabled: boolean;
 };
@@ -148,7 +147,7 @@ export function AccountPage({ user }: { user: User }) {
               <span className="text-slate-500">Group</span>
               <p>
                 <span className={`text-xs px-1.5 py-0.5 rounded ${GROUP_BADGE[user.groupName ?? ""] || "bg-slate-600 text-slate-300"}`}>
-                  {user.groupName || user.role}
+                  {user.groupName}
                 </span>
               </p>
             </div>

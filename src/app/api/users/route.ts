@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth-guard";
 import { validatePassword } from "@/lib/password";
 import { assertUsersAdminSurvives, AdminGuardError } from "@/lib/user-lifecycle";
 import { USER_SELECT, toClientUser, isHiddenStaffLogin } from "@/lib/user-view";
-import { canManageGroupLevel, effectiveGroupLevel, type Role } from "@/lib/permissions";
+import { canManageGroupLevel } from "@/lib/permissions";
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
 
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
-  const { email, name, password, role, groupId } = await req.json();
+  const { email, name, password, groupId } = await req.json();
   if (!email || !name || !password) {
     return NextResponse.json({ error: "Email, name, and password required" }, { status: 400 });
   }
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
   }
   const passwordHash = await hash(password, 12);
   const user = await prisma.user.create({
-    data: { email, name, passwordHash, role: role || "viewer", groupId: finalGroupId },
+    data: { email, name, passwordHash, groupId: finalGroupId },
     select: USER_SELECT,
   });
 
@@ -65,14 +65,14 @@ export async function PUT(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
-  const { id, email, name, password, role, groupId, isActive } = await req.json();
+  const { id, email, name, password, groupId, isActive } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   const targetUser = await prisma.user.findUnique({
     where: { id },
-    select: { email: true, passwordHash: true, role: true, group: { select: { level: true } } },
+    select: { email: true, passwordHash: true, group: { select: { level: true } } },
   });
-  if (targetUser && !canManageGroupLevel(result.groupLevel, effectiveGroupLevel(targetUser.role as Role, targetUser.group))) {
+  if (targetUser && !canManageGroupLevel(result.groupLevel, targetUser.group.level)) {
     return NextResponse.json({ error: "Cannot edit a user above your group level" }, { status: 403 });
   }
 
@@ -86,7 +86,6 @@ export async function PUT(req: NextRequest) {
   const data: Record<string, unknown> = {};
   if (email) data.email = email;
   if (name) data.name = name;
-  if (role) data.role = role;
   if (groupId) data.groupId = groupId;
   if (typeof isActive === "boolean") data.isActive = isActive;
   if (password) {
@@ -107,13 +106,12 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  // Admin-safety: a role/group/active change must not remove the last administrator.
-  if (role !== undefined || groupId || typeof isActive === "boolean") {
+  // Admin-safety: a group/active change must not remove the last administrator.
+  if (groupId || typeof isActive === "boolean") {
     try {
       await assertUsersAdminSurvives({
         kind: "updateUser",
         userId: id,
-        ...(role !== undefined ? { role } : {}),
         ...(groupId ? { groupId } : {}),
         ...(typeof isActive === "boolean" ? { isActive } : {}),
       });
@@ -145,7 +143,7 @@ export async function DELETE(req: NextRequest) {
 
   const targetUser = await prisma.user.findUnique({
     where: { id },
-    select: { staffId: true, role: true, group: { select: { level: true } } },
+    select: { staffId: true, group: { select: { level: true } } },
   });
   // Staff-linked logins are subordinate to the staff record and can NEVER be deleted here
   // — use Reset, or deactivate/delete the staff member (which resets/deletes the login).
@@ -155,7 +153,7 @@ export async function DELETE(req: NextRequest) {
       { status: 400 },
     );
   }
-  if (targetUser && !canManageGroupLevel(result.groupLevel, effectiveGroupLevel(targetUser.role as Role, targetUser.group))) {
+  if (targetUser && !canManageGroupLevel(result.groupLevel, targetUser.group.level)) {
     return NextResponse.json({ error: "Cannot delete a user above your group level" }, { status: 403 });
   }
 

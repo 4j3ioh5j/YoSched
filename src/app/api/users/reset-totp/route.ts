@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { canManageGroupLevel, effectiveGroupLevel, type Role } from "@/lib/permissions";
+import { canManageGroupLevel } from "@/lib/permissions";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
@@ -12,9 +12,9 @@ export async function POST(req: NextRequest) {
 
   const targetUser = await prisma.user.findUnique({
     where: { id: userId },
-    select: { role: true, group: { select: { level: true } } },
+    select: { group: { select: { level: true } } },
   });
-  if (targetUser && !canManageGroupLevel(result.groupLevel, effectiveGroupLevel(targetUser.role as Role, targetUser.group))) {
+  if (targetUser && !canManageGroupLevel(result.groupLevel, targetUser.group.level)) {
     return NextResponse.json({ error: "Cannot reset TOTP for a user above your group level" }, { status: 403 });
   }
 

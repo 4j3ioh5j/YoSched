@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { assertUsersAdminSurvives, AdminGuardError } from "@/lib/user-lifecycle";
 import { USER_SELECT, toClientUser } from "@/lib/user-view";
-import { canManageGroupLevel, effectiveGroupLevel, type Role } from "@/lib/permissions";
+import { canManageGroupLevel } from "@/lib/permissions";
 import { NextRequest, NextResponse } from "next/server";
 
 // Reset a STAFF-LINKED login back to a bare, disabled shell: disabled, no email, no
@@ -18,13 +18,13 @@ export async function POST(req: NextRequest) {
 
   const target = await prisma.user.findUnique({
     where: { id },
-    select: { staffId: true, role: true, group: { select: { level: true } } },
+    select: { staffId: true, group: { select: { level: true } } },
   });
   if (!target) return NextResponse.json({ error: "User not found" }, { status: 404 });
   if (!target.staffId) {
     return NextResponse.json({ error: "Reset is only for staff-linked logins" }, { status: 400 });
   }
-  if (!canManageGroupLevel(result.groupLevel, effectiveGroupLevel(target.role as Role, target.group))) {
+  if (!canManageGroupLevel(result.groupLevel, target.group.level)) {
     return NextResponse.json({ error: "Cannot reset a user above your group level" }, { status: 403 });
   }
 

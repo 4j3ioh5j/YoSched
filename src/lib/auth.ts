@@ -78,8 +78,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }
 
         return {
-          id: user.id, email: user.email, name: user.name, role: user.role, totpVerifiedAt,
-          groupId: user.groupId ?? undefined, groupName: user.group?.name, groupLevel: user.group?.level,
+          id: user.id, email: user.email, name: user.name, totpVerifiedAt,
+          groupId: user.groupId, groupName: user.group?.name, groupLevel: user.group?.level,
           permissions: user.group?.permissions ?? [],
         };
       },
