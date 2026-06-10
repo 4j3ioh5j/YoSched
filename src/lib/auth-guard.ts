@@ -1,7 +1,7 @@
 import { auth } from "./auth";
 import { prisma } from "./prisma";
 import { NextResponse } from "next/server";
-import { effectivePermissions, type Role } from "./permissions";
+import { effectivePermissions, effectiveGroupLevel, type Role } from "./permissions";
 
 export type Permission =
   | "schedule:view" | "schedule:edit" | "schedule:auto"
@@ -59,20 +59,16 @@ export async function getSession(required?: Permission | Permission[]): Promise<
   // (src/lib/permissions.ts): group wins, else role default.
   const role = dbUser.role as Role;
   const permissions = effectivePermissions(role, dbUser.group);
-  let groupLevel: number;
+  // Level shares one source of truth with the /users target-level guards (effectiveGroupLevel).
+  const groupLevel = effectiveGroupLevel(role, dbUser.group);
   let groupName: string;
   if (dbUser.group) {
-    groupLevel = dbUser.group.level;
     groupName = dbUser.group.name;
   } else if (role === "admin") {
-    // Dual-mode fallback: user not yet assigned to a group (stale data)
-    groupLevel = 3;
-    groupName = "Admin";
+    groupName = "Admin"; // dual-mode fallback: user not yet assigned to a group (stale data)
   } else if (role === "manager") {
-    groupLevel = 2;
     groupName = "Super User";
   } else {
-    groupLevel = 0;
     groupName = "Staff";
   }
 

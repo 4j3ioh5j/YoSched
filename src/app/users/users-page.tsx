@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
+import { canManageGroupLevel, effectiveGroupLevel, type Role } from "@/lib/permissions";
 import { GroupsSection } from "../settings/groups-section";
 
 type LoginLogEntry = {
@@ -68,7 +69,9 @@ export function UsersPage({
   dateFormat?: string;
 }) {
   const dateFormat = (dateFormatProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
-  const assignableGroups = groups.filter((g) => g.level < currentGroupLevel);
+  // You can assign any group at or below your own level (so an admin can create another
+  // admin). Only strictly-higher groups are off-limits — same predicate as the server.
+  const assignableGroups = groups.filter((g) => canManageGroupLevel(currentGroupLevel, g.level));
   const defaultGroupId = assignableGroups.find((g) => g.name === "Staff")?.id ?? assignableGroups[0]?.id ?? "";
 
   const [users, setUsers] = useState(initialUsers);
@@ -158,8 +161,10 @@ export function UsersPage({
   function canManageUser(user: User): boolean {
     if (!canEditUsers) return false;
     if (user.id === currentUserId) return false;
-    const userLevel = user.group?.level ?? 0;
-    return userLevel < currentGroupLevel;
+    // Effective level mirrors the server (ungrouped admin/manager are NOT level 0).
+    const userLevel = effectiveGroupLevel(user.role as Role, user.group);
+    // At-or-below your level is manageable (peers included); only strictly-higher is not.
+    return canManageGroupLevel(currentGroupLevel, userLevel);
   }
 
   return (

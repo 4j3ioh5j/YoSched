@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth-guard";
 import { validatePassword } from "@/lib/password";
 import { assertUsersAdminSurvives, AdminGuardError } from "@/lib/user-lifecycle";
 import { USER_SELECT, toClientUser, isHiddenStaffLogin } from "@/lib/user-view";
+import { canManageGroupLevel, effectiveGroupLevel, type Role } from "@/lib/permissions";
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
 
@@ -35,8 +36,8 @@ export async function POST(req: NextRequest) {
 
   if (groupId) {
     const targetGroup = await prisma.group.findUnique({ where: { id: groupId }, select: { level: true } });
-    if (!targetGroup || targetGroup.level >= result.groupLevel) {
-      return NextResponse.json({ error: "Cannot assign user to a group at or above your level" }, { status: 403 });
+    if (!targetGroup || !canManageGroupLevel(result.groupLevel, targetGroup.level)) {
+      return NextResponse.json({ error: "Cannot assign user to a group above your level" }, { status: 403 });
     }
   }
 
@@ -64,16 +65,16 @@ export async function PUT(req: NextRequest) {
 
   const targetUser = await prisma.user.findUnique({
     where: { id },
-    select: { email: true, passwordHash: true, group: { select: { level: true } } },
+    select: { email: true, passwordHash: true, role: true, group: { select: { level: true } } },
   });
-  if (targetUser?.group && targetUser.group.level >= result.groupLevel) {
-    return NextResponse.json({ error: "Cannot edit a user at or above your group level" }, { status: 403 });
+  if (targetUser && !canManageGroupLevel(result.groupLevel, effectiveGroupLevel(targetUser.role as Role, targetUser.group))) {
+    return NextResponse.json({ error: "Cannot edit a user above your group level" }, { status: 403 });
   }
 
   if (groupId) {
     const targetGroup = await prisma.group.findUnique({ where: { id: groupId }, select: { level: true } });
-    if (!targetGroup || targetGroup.level >= result.groupLevel) {
-      return NextResponse.json({ error: "Cannot assign user to a group at or above your level" }, { status: 403 });
+    if (!targetGroup || !canManageGroupLevel(result.groupLevel, targetGroup.level)) {
+      return NextResponse.json({ error: "Cannot assign user to a group above your level" }, { status: 403 });
     }
   }
 
@@ -139,7 +140,7 @@ export async function DELETE(req: NextRequest) {
 
   const targetUser = await prisma.user.findUnique({
     where: { id },
-    select: { staffId: true, group: { select: { level: true } } },
+    select: { staffId: true, role: true, group: { select: { level: true } } },
   });
   // Staff-linked logins are subordinate to the staff record and can NEVER be deleted here
   // — use Reset, or deactivate/delete the staff member (which resets/deletes the login).
@@ -149,8 +150,8 @@ export async function DELETE(req: NextRequest) {
       { status: 400 },
     );
   }
-  if (targetUser?.group && targetUser.group.level >= result.groupLevel) {
-    return NextResponse.json({ error: "Cannot delete a user at or above your group level" }, { status: 403 });
+  if (targetUser && !canManageGroupLevel(result.groupLevel, effectiveGroupLevel(targetUser.role as Role, targetUser.group))) {
+    return NextResponse.json({ error: "Cannot delete a user above your group level" }, { status: 403 });
   }
 
   // Admin-safety: never delete the last administrator who can manage users.
