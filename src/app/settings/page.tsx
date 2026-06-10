@@ -61,6 +61,7 @@ export default async function Settings() {
           autoSchedulable: st.autoSchedulable,
           hotkey: st.hotkey,
           dedicatedColumn: st.dedicatedColumn,
+          boldOnSchedule: st.boldOnSchedule,
         }))}
         staffingReqs={staffingReqs.map((r) => ({
           id: r.id,

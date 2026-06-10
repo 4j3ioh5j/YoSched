@@ -137,11 +137,24 @@ input[type="checkbox"]:disabled {
     background: #fef3c7 !important;
   }
 
-  /* Shift codes: keep colors */
-  tbody td div[class*="font-bold"] {
-    font-size: 9px !important;
-    padding: 1px 2px !important;
-    border-radius: 2px !important;
+  /* Print only the calendar month — hide leading/trailing pay-period padding days */
+  tr[data-outside-month] {
+    display: none !important;
+  }
+
+  /* Shift codes: crisp black-on-white letters, no colored badge, constant size */
+  tbody td [data-shift-code] {
+    background: transparent !important;
+    color: #000 !important;
+    font-weight: 400 !important;
+    font-size: 10px !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Shifts flagged "Bold on schedule" (e.g. CALL/ORC/ORL) print in bold */
+  tbody td [data-shift-code][data-bold-print] {
+    font-weight: 700 !important;
   }
 
   /* Hide warning dots, drag handles */

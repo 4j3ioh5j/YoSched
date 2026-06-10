@@ -30,6 +30,7 @@ type ShiftType = {
   autoSchedulable: boolean;
   hotkey: string | null;
   dedicatedColumn: boolean;
+  boldOnSchedule: boolean;
 };
 
 type StaffingReq = {
@@ -499,6 +500,7 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
         autoSchedulable: created.autoSchedulable ?? false,
         hotkey: created.hotkey ?? null,
         dedicatedColumn: created.dedicatedColumn ?? false,
+        boldOnSchedule: created.boldOnSchedule ?? false,
       };
       setShifts((prev) => [...prev, newShift]);
       setEditingId(created.id);
@@ -643,6 +645,9 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
               </FieldRow>
               <FieldRow label="Color" description="Display color on the grid">
                 <input disabled={!canEdit} type="color" className="w-8 h-8 rounded cursor-pointer border-0 disabled:opacity-50 disabled:cursor-not-allowed" value={editingShift.color} onChange={(e) => updateField(editingShift.id, "color", e.target.value)} />
+              </FieldRow>
+              <FieldRow label="Bold on schedule" description="Print this shift's code in bold on the printed schedule (e.g. call shifts that should stand out). Default on for CALL, ORC, and ORL.">
+                <input disabled={!canEdit} type="checkbox" checked={editingShift.boldOnSchedule} onChange={(e) => updateField(editingShift.id, "boldOnSchedule", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Quick key" description="Single letter to assign this shift from the keyboard">
                 <input disabled={!canEdit} className="w-12 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono text-center uppercase disabled:opacity-50" maxLength={1} value={editingShift.hotkey ?? ""} onChange={(e) => updateField(editingShift.id, "hotkey", e.target.value.toUpperCase().slice(0, 1) || null)} />

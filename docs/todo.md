@@ -2,7 +2,7 @@
 
 ## Open
 
-_(none)_
+- [ ] **Consolidate request modal Off + Leave tabs** — the request modal currently has separate "Off" and "Leave" tabs that should be merged into one. (Requested 2026-06-10.)
 
 ## Done
 

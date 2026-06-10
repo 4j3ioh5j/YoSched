@@ -84,6 +84,7 @@ model ShiftType {
   autoSchedulable    Boolean  @default(false)
   hotkey             String?
   dedicatedColumn    Boolean  @default(false)
+  boldOnSchedule     Boolean  @default(false) // render this shift's code in bold on the printed schedule
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

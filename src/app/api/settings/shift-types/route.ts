@@ -13,6 +13,7 @@ const EDITABLE_FIELDS = [
   "isLeave", "isPaid", "category", "color", "sortOrder",
   "schedulePriority", "isOffShift", "isFillShift", "weekendPaired",
   "ignoresWorkingDays", "maxPerDay", "autoSchedulable", "hotkey", "dedicatedColumn",
+  "boldOnSchedule",
 ] as const;
 
 export async function PUT(req: NextRequest) {
@@ -65,6 +66,7 @@ export async function POST(req: NextRequest) {
       autoSchedulable: data.autoSchedulable ?? false,
       hotkey: data.hotkey ?? null,
       dedicatedColumn: data.dedicatedColumn ?? false,
+      boldOnSchedule: data.boldOnSchedule ?? false,
     },
   });
 

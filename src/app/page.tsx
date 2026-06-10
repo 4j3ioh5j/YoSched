@@ -149,6 +149,7 @@ export default async function Home() {
           countsOnWeekend: st.countsOnWeekend,
           hotkey: st.hotkey,
           dedicatedColumn: st.dedicatedColumn,
+          boldOnSchedule: st.boldOnSchedule,
         }))}
         payPeriods={payPeriods.map((pp) => ({
           startDate: pp.startDate.toISOString().split("T")[0],

@@ -68,6 +68,7 @@ type ShiftType = {
   countsOnWeekend: boolean;
   hotkey?: string | null;
   dedicatedColumn?: boolean;
+  boldOnSchedule?: boolean;
 };
 
 type PayPeriod = {
@@ -2029,6 +2030,7 @@ export function ScheduleGrid({
                   data-date={date}
                   data-weekend={isWeekend || undefined}
                   data-holiday={isHoliday || undefined}
+                  data-outside-month={isOutsideMonth || undefined}
                   className={[
                     isOutsideMonth ? "opacity-40" : "",
                     isWeekend && !isOutsideMonth ? "bg-slate-800/50" : "",
@@ -2112,6 +2114,8 @@ export function ScheduleGrid({
                             draggable={canEdit && !a.isLocked}
                             onDragStart={(e) => handleDragStart(p.id, date, e)}
                             onDragEnd={handleDragEnd}
+                            data-shift-code
+                            data-bold-print={shiftTypeMap.get(a.shiftTypeId)?.boldOnSchedule || undefined}
                             className={[
                               "text-[11px] font-bold rounded px-1 py-0.5 leading-tight",
                               !canEdit ? "cursor-default" : a.isLocked ? "ring-1 ring-yellow-500/50 cursor-not-allowed" : "hover:brightness-125 cursor-grab active:cursor-grabbing",
