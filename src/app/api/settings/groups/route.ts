@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession, type Permission } from "@/lib/auth-guard";
+import { assertUsersAdminSurvives, AdminGuardError } from "@/lib/user-lifecycle";
 import { NextRequest, NextResponse } from "next/server";
 
 const ALL_PERMISSIONS: Permission[] = [
@@ -76,6 +77,15 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: `Invalid permissions: ${invalid.join(", ")}` }, { status: 400 });
     }
     data.permissions = permissions;
+
+    // Admin-safety: editing this group's permissions must not strip users:edit from
+    // the last administrator (members of this group resolve through the new array).
+    try {
+      await assertUsersAdminSurvives({ kind: "updateGroupPermissions", groupId: id, permissions });
+    } catch (e) {
+      if (e instanceof AdminGuardError) return NextResponse.json({ error: e.message }, { status: 409 });
+      throw e;
+    }
   }
 
   const updated = await prisma.group.update({

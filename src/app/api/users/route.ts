@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { validatePassword } from "@/lib/password";
 import { normalizeStaffId, isStaffLinkConflict } from "@/lib/user-link";
+import { assertUsersAdminSurvives, AdminGuardError } from "@/lib/user-lifecycle";
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
 
@@ -116,6 +117,22 @@ export async function PUT(req: NextRequest) {
     data.passwordHash = await hash(password, 12);
   }
 
+  // Admin-safety: a role/group/active change must not remove the last administrator.
+  if (role !== undefined || groupId || typeof isActive === "boolean") {
+    try {
+      await assertUsersAdminSurvives({
+        kind: "updateUser",
+        userId: id,
+        ...(role !== undefined ? { role } : {}),
+        ...(groupId ? { groupId } : {}),
+        ...(typeof isActive === "boolean" ? { isActive } : {}),
+      });
+    } catch (e) {
+      if (e instanceof AdminGuardError) return NextResponse.json({ error: e.message }, { status: 409 });
+      throw e;
+    }
+  }
+
   const user = await prisma.user.update({
     where: { id },
     data,
@@ -142,6 +159,14 @@ export async function DELETE(req: NextRequest) {
   });
   if (targetUser?.group && targetUser.group.level >= result.groupLevel) {
     return NextResponse.json({ error: "Cannot delete a user at or above your group level" }, { status: 403 });
+  }
+
+  // Admin-safety: never delete the last administrator who can manage users.
+  try {
+    await assertUsersAdminSurvives({ kind: "deleteUser", userId: id });
+  } catch (e) {
+    if (e instanceof AdminGuardError) return NextResponse.json({ error: e.message }, { status: 409 });
+    throw e;
   }
 
   // Delete the user's PRIVATE saved graph views first. The FK uses onDelete: SetNull,

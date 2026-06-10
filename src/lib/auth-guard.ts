@@ -1,6 +1,7 @@
 import { auth } from "./auth";
 import { prisma } from "./prisma";
 import { NextResponse } from "next/server";
+import { effectivePermissions, type Role } from "./permissions";
 
 export type Permission =
   | "schedule:view" | "schedule:edit" | "schedule:auto"
@@ -10,8 +11,6 @@ export type Permission =
   | "settings:view" | "settings:edit"
   | "users:view" | "users:edit"
   | "groups:view" | "groups:edit";
-
-type Role = "admin" | "manager" | "viewer";
 
 const ROLE_LEVEL: Record<Role, number> = {
   viewer: 0,
@@ -56,30 +55,25 @@ export async function getSession(required?: Permission | Permission[]): Promise<
     return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }), session: null };
   }
 
-  let permissions: string[];
+  // Effective permissions resolve identically here and in the admin-safety invariant
+  // (src/lib/permissions.ts): group wins, else role default.
+  const role = dbUser.role as Role;
+  const permissions = effectivePermissions(role, dbUser.group);
   let groupLevel: number;
   let groupName: string;
-
   if (dbUser.group) {
-    permissions = dbUser.group.permissions;
     groupLevel = dbUser.group.level;
     groupName = dbUser.group.name;
-  } else {
+  } else if (role === "admin") {
     // Dual-mode fallback: user not yet assigned to a group (stale data)
-    const role = dbUser.role as Role;
-    if (role === "admin") {
-      permissions = ["schedule:view", "schedule:edit", "schedule:auto", "staff:view", "staff:edit", "statistics:view", "statistics:manage", "settings:view", "settings:edit", "users:view", "users:edit", "groups:view", "groups:edit"];
-      groupLevel = 3;
-      groupName = "Admin";
-    } else if (role === "manager") {
-      permissions = ["schedule:view", "schedule:edit", "schedule:auto", "staff:view", "staff:edit", "statistics:view", "statistics:manage", "settings:view", "settings:edit", "users:view", "users:edit", "groups:view", "groups:edit"];
-      groupLevel = 2;
-      groupName = "Super User";
-    } else {
-      permissions = ["schedule:view", "statistics:view", "settings:view"];
-      groupLevel = 0;
-      groupName = "Staff";
-    }
+    groupLevel = 3;
+    groupName = "Admin";
+  } else if (role === "manager") {
+    groupLevel = 2;
+    groupName = "Super User";
+  } else {
+    groupLevel = 0;
+    groupName = "Staff";
   }
 
   if (required) {
