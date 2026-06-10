@@ -363,7 +363,7 @@ async function main() {
     { name: "Admin", permissions: ALL_PERMISSIONS, level: 3, isSystem: true, permissionsLocked: true },
     { name: "Super User", permissions: ALL_PERMISSIONS, level: 2, isSystem: true, permissionsLocked: true },
     { name: "Scheduler", permissions: ["schedule:view", "schedule:edit", "schedule:auto", "staff:view", "staff:edit", "statistics:view", "statistics:manage", "settings:view", "settings:edit"], level: 1, isSystem: true, permissionsLocked: false },
-    { name: "Staff", permissions: ["schedule:view", "statistics:view", "settings:view"], level: 0, isSystem: true, permissionsLocked: false },
+    { name: "Staff", permissions: ["schedule:view", "requests:self", "statistics:view", "settings:view"], level: 0, isSystem: true, permissionsLocked: false },
   ];
 
   for (const g of groupDefs) {
