@@ -13,16 +13,17 @@ export type ShellUserSpec = {
   email: null;
   passwordHash: null;
   isActive: false;
-  groupId: string | null;
+  groupId: string;
 };
 
 /** Decide which staff need a shell login. Idempotent: a staff already backing a login
  *  (its id in `linkedStaffIds`) is skipped, so re-running creates nothing new. Inactive
- *  staff are excluded — only active staff get provisioned. */
+ *  staff are excluded — only active staff get provisioned. Every shell is placed in the
+ *  Staff group (groupId is required — the caller must resolve it first). */
 export function planStaffLoginShells(
   staff: StaffForBackfill[],
   linkedStaffIds: Set<string>,
-  staffGroupId: string | null,
+  staffGroupId: string,
 ): ShellUserSpec[] {
   return staff
     .filter((s) => s.isActive && !linkedStaffIds.has(s.id))

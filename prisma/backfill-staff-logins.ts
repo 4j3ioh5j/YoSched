@@ -17,7 +17,9 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   const staffGroup = await prisma.group.findUnique({ where: { name: "Staff" }, select: { id: true } });
   if (!staffGroup) {
-    console.warn('No "Staff" group found — shells will be created without a group (viewer-level perms).');
+    // Every user must belong to a group — without the Staff group there's nowhere to put
+    // the shells, so refuse rather than create orphaned logins.
+    throw new Error('No "Staff" group found — run the seed before backfilling staff logins.');
   }
 
   const [staff, linked] = await Promise.all([
@@ -26,7 +28,7 @@ async function main() {
   ]);
 
   const linkedStaffIds = new Set(linked.map((u) => u.staffId!));
-  const shells = planStaffLoginShells(staff, linkedStaffIds, staffGroup?.id ?? null);
+  const shells = planStaffLoginShells(staff, linkedStaffIds, staffGroup.id);
 
   let created = 0;
   for (const shell of shells) {

@@ -31,8 +31,9 @@ describe("planStaffLoginShells", () => {
     expect(shells).toEqual([]);
   });
 
-  it("tolerates a missing Staff group (null groupId)", () => {
-    const shells = planStaffLoginShells(staff, new Set(), null);
-    expect(shells.every((s) => s.groupId === null)).toBe(true);
+  it("places every shell in the provided (Staff) group", () => {
+    const shells = planStaffLoginShells(staff, new Set(), "grp-staff");
+    expect(shells.length).toBeGreaterThan(0);
+    expect(shells.every((s) => s.groupId === "grp-staff")).toBe(true);
   });
 });

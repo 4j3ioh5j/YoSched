@@ -19,7 +19,7 @@ model User {
   name           String
   passwordHash   String?
   role           Role      @default(viewer)
-  groupId        String?
+  groupId        String    // every user MUST belong to a group — authorization is group-based
   staffId     String?   @unique // links this login to a Staff record (self-service requests)
   isActive       Boolean   @default(true)
   totpSecret     String?
@@ -29,7 +29,7 @@ model User {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  group Group? @relation(fields: [groupId], references: [id])
+  group Group @relation(fields: [groupId], references: [id], onDelete: Restrict)
   staff Staff? @relation(fields: [staffId], references: [id], onDelete: SetNull)
 
   savedGraphViews SavedGraphView[]

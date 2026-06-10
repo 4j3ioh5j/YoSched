@@ -112,8 +112,11 @@ export async function provisionStaffLogin(
   db: Pick<typeof prisma, "user" | "group"> = prisma,
 ): Promise<void> {
   const staffGroup = await db.group.findUnique({ where: { name: "Staff" }, select: { id: true } });
+  // Every user must belong to a group (groupId is NOT NULL) — refuse to provision rather
+  // than create an orphaned login if the seeded "Staff" group is somehow missing.
+  if (!staffGroup) throw new Error('Cannot provision a staff login: the "Staff" group is missing — run the seed.');
   await db.user.create({
-    data: { staffId, name, email: null, passwordHash: null, isActive: false, role: "viewer", groupId: staffGroup?.id ?? null },
+    data: { staffId, name, email: null, passwordHash: null, isActive: false, role: "viewer", groupId: staffGroup.id },
   });
 }
 

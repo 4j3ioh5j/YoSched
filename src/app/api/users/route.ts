@@ -46,10 +46,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Email already in use" }, { status: 409 });
   }
 
+  // Every user must belong to a group. Use the requested group, else fall back to "Staff".
   const defaultGroup = groupId ? undefined : await prisma.group.findUnique({ where: { name: "Staff" }, select: { id: true } });
+  const finalGroupId = groupId || defaultGroup?.id;
+  if (!finalGroupId) {
+    return NextResponse.json({ error: 'No group specified and the default "Staff" group is missing' }, { status: 400 });
+  }
   const passwordHash = await hash(password, 12);
   const user = await prisma.user.create({
-    data: { email, name, passwordHash, role: role || "viewer", groupId: groupId || defaultGroup?.id },
+    data: { email, name, passwordHash, role: role || "viewer", groupId: finalGroupId },
     select: USER_SELECT,
   });
 

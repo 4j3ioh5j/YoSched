@@ -383,13 +383,12 @@ async function main() {
   // perms come from the group, otherwise the role default — admin/manager include
   // users:edit). On a truly fresh DB we create ONE bootstrap admin using
   // SEED_ADMIN_PASSWORD if provided, else a random temp password printed once.
+  // Every user belongs to a group (groupId is NOT NULL), so an administrator is simply an
+  // active user whose group grants users:edit.
   const existingAdmins = await prisma.user.count({
     where: {
       isActive: true,
-      OR: [
-        { group: { permissions: { has: "users:edit" } } },
-        { groupId: null, role: { in: ["admin", "manager"] } },
-      ],
+      group: { permissions: { has: "users:edit" } },
     },
   });
   if (existingAdmins > 0) {
