@@ -280,14 +280,17 @@ export function UsersPage({
         </div>
 
         <table className="w-full text-sm table-fixed">
+          {/* Proportional widths summing to 100% so no column balloons on the wide
+              page (an unconstrained Email col used to absorb all slack, leaving a
+              huge gap before Group). Staff gets extra room for "Name (INITIALS)". */}
           <colgroup>
-            <col className="w-[18%]" />
-            <col />
-            <col className="w-[110px]" />
-            <col className="w-[120px]" />
-            <col className="w-[80px]" />
-            <col className="w-[56px]" />
-            <col className="w-[160px]" />
+            <col className="w-[16%]" />
+            <col className="w-[24%]" />
+            <col className="w-[12%]" />
+            <col className="w-[20%]" />
+            <col className="w-[10%]" />
+            <col className="w-[6%]" />
+            <col className="w-[12%]" />
           </colgroup>
           <thead>
             <tr className="text-left text-slate-400 border-b border-slate-800 text-xs uppercase tracking-wider">
