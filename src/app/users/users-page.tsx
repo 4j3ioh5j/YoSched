@@ -167,7 +167,11 @@ export function UsersPage({
         </div>
 
         {showForm && (
-          <div className="mb-6 p-4 bg-slate-800 rounded border border-slate-700 space-y-3">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={resetForm}>
+            <div
+              className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5 space-y-3"
+              onClick={(e) => e.stopPropagation()}
+            >
             <h2 className="text-sm font-medium text-slate-300">
               {editingId ? "Edit User" : "New User"}
             </h2>
@@ -223,6 +227,7 @@ export function UsersPage({
               >
                 Cancel
               </button>
+            </div>
             </div>
           </div>
         )}
