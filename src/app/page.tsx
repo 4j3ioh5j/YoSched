@@ -3,14 +3,21 @@ import { computeFairness } from "@/lib/fairness";
 import { ScheduleGrid } from "./schedule-grid";
 import { NavHeader } from "./nav-header";
 import { getSession } from "@/lib/auth-guard";
+import { isRequestVisibleToViewer } from "@/lib/schedule-requests";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const { error, permissions } = await getSession("schedule:view");
+  const { error, permissions, staffId } = await getSession("schedule:view");
   if (error) redirect("/login");
   const canEdit = permissions!.includes("schedule:edit");
+  // Viewing OTHER staff's requests requires requests:view. Users without it (e.g.
+  // Staff) only ever see their OWN pending request chrome on the grid; everyone
+  // else's pending asks are withheld server-side so they never reach the client.
+  // Approved requests are honored as real shifts (the published schedule) and stay
+  // visible to all — they're not "viewing a request" any more than seeing a shift.
+  const canViewAllRequests = permissions!.includes("requests:view");
   const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, currentVersions, scheduleRequests] =
     await Promise.all([
       prisma.staff.findMany({
@@ -188,7 +195,9 @@ export default async function Home() {
           snapshotHash: v.snapshotHash,
           savedAt: v.createdAt.toISOString(),
         }))}
-        scheduleRequests={scheduleRequests.map((r) => ({
+        scheduleRequests={scheduleRequests
+          .filter((r) => isRequestVisibleToViewer(r, { canViewAll: canViewAllRequests, viewerStaffId: staffId }))
+          .map((r) => ({
           id: r.id,
           staffId: r.staffId,
           startDate: r.startDate.toISOString().split("T")[0],

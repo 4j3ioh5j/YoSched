@@ -7,7 +7,7 @@ import { signOut, useSession } from "next-auth/react";
 const NAV_ITEMS: { label: string; href: string; requiredPermission: string | null }[] = [
   { label: "Schedule", href: "/", requiredPermission: null },
   { label: "My Requests", href: "/my-requests", requiredPermission: "requests:self" },
-  { label: "Requests", href: "/requests", requiredPermission: "schedule:view" },
+  { label: "Requests", href: "/requests", requiredPermission: "requests:view" },
   { label: "Staff", href: "/staff", requiredPermission: "staff:view" },
   { label: "Statistics", href: "/equity", requiredPermission: "statistics:view" },
   { label: "Settings", href: "/settings", requiredPermission: "settings:view" },

@@ -168,7 +168,7 @@ export function UsersPage({
 
   return (
     <main className="flex-1 p-6 bg-slate-950 text-slate-100">
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-screen-2xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-xl font-bold">Users</h1>
           {canEditUsers && !showForm && (

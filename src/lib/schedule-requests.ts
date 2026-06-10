@@ -161,6 +161,20 @@ export function requestCategory(kind: RequestKind): RequestCategory {
   }
 }
 
+// Who may see a given request. Viewing OTHER staff's requests requires the
+// `requests:view` permission. A viewer without it (e.g. Staff) sees only:
+//   - their OWN requests (any status), and
+//   - APPROVED requests of anyone (an approved request is honored as a real shift,
+//     i.e. the published schedule — not "viewing a request").
+// Others' PENDING asks are hidden. Pure so the schedule page can filter props
+// server-side (never shipping hidden requests to the client) with test coverage.
+export function isRequestVisibleToViewer(
+  req: { status: RequestStatus | string; staffId: string },
+  opts: { canViewAll: boolean; viewerStaffId: string | null }
+): boolean {
+  return opts.canViewAll || req.status === "approved" || req.staffId === opts.viewerStaffId;
+}
+
 export type CellRequestSummary = {
   category: RequestCategory | "mixed"; // box/letter color; "mixed" when categories differ
   label: string; // letters to show when there's a single request, else the count

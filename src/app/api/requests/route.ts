@@ -28,7 +28,7 @@ function toDate(s: string): Date {
 
 // GET — all schedule requests (the grid filters to the visible month client-side).
 export async function GET() {
-  const result = await getSession("schedule:view");
+  const result = await getSession("requests:view");
   if (result.error) return result.error;
 
   const requests = await prisma.scheduleRequest.findMany({

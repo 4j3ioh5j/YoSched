@@ -1,16 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { getSession, type Permission } from "@/lib/auth-guard";
+import { PERMISSION_KEYS } from "@/lib/permission-catalog";
 import { assertUsersAdminSurvives, AdminGuardError } from "@/lib/user-lifecycle";
 import { NextRequest, NextResponse } from "next/server";
-
-const ALL_PERMISSIONS: Permission[] = [
-  "schedule:view", "schedule:edit", "schedule:auto",
-  "requests:self",
-  "staff:view", "staff:edit", "statistics:view", "statistics:manage",
-  "settings:view", "settings:edit",
-  "users:view", "users:edit",
-  "groups:view", "groups:edit",
-];
 
 export async function GET() {
   const { error } = await getSession("groups:view");
@@ -40,7 +32,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Custom group level must be 0 or 1" }, { status: 400 });
   }
 
-  const invalid = permissions.filter((p: string) => !ALL_PERMISSIONS.includes(p as Permission));
+  const invalid = permissions.filter((p: string) => !PERMISSION_KEYS.includes(p as Permission));
   if (invalid.length > 0) {
     return NextResponse.json({ error: `Invalid permissions: ${invalid.join(", ")}` }, { status: 400 });
   }
@@ -72,7 +64,7 @@ export async function PUT(req: NextRequest) {
   const data: Record<string, unknown> = {};
   if (name && !group.isSystem) data.name = name;
   if (Array.isArray(permissions)) {
-    const invalid = permissions.filter((p: string) => !ALL_PERMISSIONS.includes(p as Permission));
+    const invalid = permissions.filter((p: string) => !PERMISSION_KEYS.includes(p as Permission));
     if (invalid.length > 0) {
       return NextResponse.json({ error: `Invalid permissions: ${invalid.join(", ")}` }, { status: 400 });
     }

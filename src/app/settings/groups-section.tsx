@@ -2,6 +2,10 @@
 
 import { useState, useCallback } from "react";
 import { useEscape } from "@/lib/use-escape";
+import {
+  PERMISSION_CATALOG as ALL_PERMISSIONS,
+  PERMISSION_CATEGORIES as CATEGORIES,
+} from "@/lib/permission-catalog";
 
 type Group = {
   id: string;
@@ -13,25 +17,6 @@ type Group = {
   _count: { users: number };
 };
 
-const ALL_PERMISSIONS = [
-  { key: "schedule:view", label: "View Schedule", category: "Schedule" },
-  { key: "schedule:edit", label: "Edit Schedule", category: "Schedule" },
-  { key: "schedule:auto", label: "Auto-Scheduler", category: "Schedule" },
-  { key: "requests:self", label: "Submit Own Requests", category: "Schedule" },
-  { key: "staff:view", label: "View Staff", category: "Staff" },
-  { key: "staff:edit", label: "Edit Staff", category: "Staff" },
-  { key: "statistics:view", label: "View Statistics", category: "Statistics" },
-  { key: "statistics:manage", label: "Manage Statistics Views", category: "Statistics" },
-  { key: "settings:view", label: "View Settings", category: "Settings" },
-  { key: "settings:edit", label: "Edit Settings", category: "Settings" },
-  { key: "users:view", label: "View Users", category: "Users" },
-  { key: "users:edit", label: "Edit Users", category: "Users" },
-  { key: "groups:view", label: "View Groups", category: "Groups" },
-  { key: "groups:edit", label: "Edit Groups", category: "Groups" },
-] as const;
-
-const CATEGORIES = ["Schedule", "Staff", "Statistics", "Settings", "Users", "Groups"] as const;
-
 const GROUP_BADGE: Record<string, string> = {
   Admin: "bg-amber-700 text-amber-100",
   "Super User": "bg-blue-700 text-blue-100",
@@ -42,7 +27,7 @@ const GROUP_BADGE: Record<string, string> = {
 export function GroupsSection({ canEdit }: { canEdit: boolean }) {
   const [groups, setGroups] = useState<Group[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [showModal, setShowModal] = useState(false);
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
@@ -66,7 +51,19 @@ export function GroupsSection({ canEdit }: { canEdit: boolean }) {
     setNewPermissions([]);
     setError("");
   }, []);
-  useEscape(resetForm);
+
+  const closeModal = useCallback(() => {
+    resetForm();
+    setShowModal(false);
+  }, [resetForm]);
+
+  const formOpen = showCreate || editingGroup !== null;
+  // Escape closes the form first (if open), otherwise the whole modal.
+  const onEscape = useCallback(() => {
+    if (showCreate || editingGroup) resetForm();
+    else setShowModal(false);
+  }, [showCreate, editingGroup, resetForm]);
+  useEscape(onEscape);
 
   function togglePerm(perm: string) {
     setNewPermissions((prev) =>
@@ -133,15 +130,23 @@ export function GroupsSection({ canEdit }: { canEdit: boolean }) {
   return (
     <section className="bg-slate-800/50 border border-slate-700/50 rounded-lg">
       <button
-        onClick={() => { setExpanded(!expanded); if (!loaded) load(); }}
-        className="w-full flex items-center justify-between px-4 py-3 text-left"
+        onClick={() => { setShowModal(true); if (!loaded) load(); }}
+        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-800/30 rounded-lg transition-colors"
       >
         <h2 className="text-sm font-medium text-slate-300">Groups & Permissions</h2>
-        <span className="text-xs text-slate-500">{expanded ? "▼" : "▶"}</span>
+        <span className="text-xs text-slate-500">Manage →</span>
       </button>
 
-      {expanded && (
-        <div className="px-4 pb-4 space-y-4">
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closeModal}>
+          <div
+            className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-medium text-slate-300">Groups & Permissions</h2>
+              <button onClick={closeModal} className="text-slate-500 hover:text-slate-200 text-xl leading-none">×</button>
+            </div>
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500 border-b border-slate-700">
@@ -186,7 +191,7 @@ export function GroupsSection({ canEdit }: { canEdit: boolean }) {
             </tbody>
           </table>
 
-          {canEdit && !showCreate && !editingGroup && (
+          {canEdit && (
             <button
               onClick={() => { setShowCreate(true); setNewPermissions([]); setNewName(""); setNewLevel(0); }}
               className="text-xs text-blue-400 hover:text-blue-300"
@@ -194,10 +199,17 @@ export function GroupsSection({ canEdit }: { canEdit: boolean }) {
               + New Group
             </button>
           )}
+          </div>
+        </div>
+      )}
 
-          {(showCreate || editingGroup) && (
-            <div className="p-3 bg-slate-900/50 border border-slate-700 rounded space-y-3">
-              <h3 className="text-xs font-medium text-slate-400">
+      {formOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={resetForm}>
+          <div
+            className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-5 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+              <h3 className="text-sm font-medium text-slate-300">
                 {editingGroup ? `Edit: ${editingGroup.name}` : "New Group"}
               </h3>
               <div className="flex gap-3">
@@ -265,8 +277,7 @@ export function GroupsSection({ canEdit }: { canEdit: boolean }) {
                   Cancel
                 </button>
               </div>
-            </div>
-          )}
+          </div>
         </div>
       )}
     </section>

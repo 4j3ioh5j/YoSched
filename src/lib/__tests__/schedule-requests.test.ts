@@ -22,6 +22,7 @@ import {
   resolveRequestPlacement,
   reconcileApprovalAction,
   releasableDates,
+  isRequestVisibleToViewer,
   type LeaveQueueRequest,
   type ScheduleRequestData,
 } from "../schedule-requests";
@@ -945,5 +946,39 @@ describe("releasableDates", () => {
     const target = { startDate: "2026-08-01", endDate: "2026-08-01" };
     const otherOff = req({ kind: "OFF", startDate: "2026-08-01", endDate: "2026-08-01" });
     expect(releasableDates(target, "off", [otherOff], "off")).toEqual([]);
+  });
+});
+
+describe("isRequestVisibleToViewer", () => {
+  // requests:view holders see everything, regardless of owner or status.
+  it("shows all requests to a viewer with requests:view", () => {
+    const opts = { canViewAll: true, viewerStaffId: "me" };
+    expect(isRequestVisibleToViewer(req({ staffId: "other", status: "pending" }), opts)).toBe(true);
+    expect(isRequestVisibleToViewer(req({ staffId: "other", status: "approved" }), opts)).toBe(true);
+  });
+
+  // Without requests:view: only own requests + anyone's approved requests.
+  it("hides OTHER staff's pending requests from a viewer without requests:view", () => {
+    const opts = { canViewAll: false, viewerStaffId: "me" };
+    expect(isRequestVisibleToViewer(req({ staffId: "other", status: "pending" }), opts)).toBe(false);
+    expect(isRequestVisibleToViewer(req({ staffId: "other", status: "declined" }), opts)).toBe(false);
+    expect(isRequestVisibleToViewer(req({ staffId: "other", status: "withdrawn" }), opts)).toBe(false);
+  });
+
+  it("shows the viewer's OWN requests of any status without requests:view", () => {
+    const opts = { canViewAll: false, viewerStaffId: "me" };
+    expect(isRequestVisibleToViewer(req({ staffId: "me", status: "pending" }), opts)).toBe(true);
+    expect(isRequestVisibleToViewer(req({ staffId: "me", status: "declined" }), opts)).toBe(true);
+  });
+
+  it("shows anyone's APPROVED requests without requests:view (honored as real shifts)", () => {
+    const opts = { canViewAll: false, viewerStaffId: "me" };
+    expect(isRequestVisibleToViewer(req({ staffId: "other", status: "approved" }), opts)).toBe(true);
+  });
+
+  it("a viewer not linked to any staff (null) sees only approved requests without requests:view", () => {
+    const opts = { canViewAll: false, viewerStaffId: null };
+    expect(isRequestVisibleToViewer(req({ staffId: "other", status: "approved" }), opts)).toBe(true);
+    expect(isRequestVisibleToViewer(req({ staffId: "other", status: "pending" }), opts)).toBe(false);
   });
 });

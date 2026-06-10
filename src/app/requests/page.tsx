@@ -7,7 +7,7 @@ import { RequestsPage } from "./requests-page";
 export const dynamic = "force-dynamic";
 
 export default async function Requests() {
-  const { error, permissions } = await getSession("schedule:view");
+  const { error, permissions } = await getSession("requests:view");
   if (error) redirect("/login");
   const canEdit = permissions!.includes("schedule:edit");
 

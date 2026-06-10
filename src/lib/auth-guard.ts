@@ -5,7 +5,7 @@ import { effectivePermissions } from "./permissions";
 
 export type Permission =
   | "schedule:view" | "schedule:edit" | "schedule:auto"
-  | "requests:self"
+  | "requests:self" | "requests:view"
   | "staff:view" | "staff:edit"
   | "statistics:view" | "statistics:manage"
   | "settings:view" | "settings:edit"

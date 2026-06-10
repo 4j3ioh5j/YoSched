@@ -4,6 +4,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { hashSync } from "bcryptjs";
 import { resolveBootstrapPassword } from "../src/lib/seed-admin.js";
+import { PERMISSION_KEYS } from "../src/lib/permission-catalog.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
@@ -350,19 +351,14 @@ async function main() {
   console.log("Seeded scheduling preferences");
 
   // --- Groups ---
-  const ALL_PERMISSIONS = [
-    "schedule:view", "schedule:edit", "schedule:auto",
-    "requests:self",
-    "staff:view", "staff:edit", "statistics:view", "statistics:manage",
-    "settings:view", "settings:edit",
-    "users:view", "users:edit",
-    "groups:view", "groups:edit",
-  ];
+  // Full permission set (Admin / Super User) comes from the shared catalog so it
+  // never drifts from the API validator or the editor UI (see CR #578).
+  const ALL_PERMISSIONS = PERMISSION_KEYS;
 
   const groupDefs = [
     { name: "Admin", permissions: ALL_PERMISSIONS, level: 3, isSystem: true, permissionsLocked: true },
     { name: "Super User", permissions: ALL_PERMISSIONS, level: 2, isSystem: true, permissionsLocked: true },
-    { name: "Scheduler", permissions: ["schedule:view", "schedule:edit", "schedule:auto", "staff:view", "staff:edit", "statistics:view", "statistics:manage", "settings:view", "settings:edit"], level: 1, isSystem: true, permissionsLocked: false },
+    { name: "Scheduler", permissions: ["schedule:view", "schedule:edit", "schedule:auto", "requests:view", "staff:view", "staff:edit", "statistics:view", "statistics:manage", "settings:view", "settings:edit"], level: 1, isSystem: true, permissionsLocked: false },
     { name: "Staff", permissions: ["schedule:view", "requests:self", "statistics:view", "settings:view"], level: 0, isSystem: true, permissionsLocked: false },
   ];
 
