@@ -44,6 +44,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         if (!user.isActive) return null;
         if (user.lockedUntil && user.lockedUntil > new Date()) return null;
+        if (!user.passwordHash) return null; // un-provisioned shell login — no credential set
 
         const valid = await compare(password, user.passwordHash);
         if (!valid) {

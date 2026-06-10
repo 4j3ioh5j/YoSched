@@ -5,7 +5,7 @@ import { useEscape } from "@/lib/use-escape";
 
 type User = {
   id: string;
-  email: string;
+  email: string | null;
   name: string;
   role: string;
   groupName?: string;
@@ -142,7 +142,7 @@ export function AccountPage({ user }: { user: User }) {
             </div>
             <div>
               <span className="text-slate-500">Email</span>
-              <p className="text-slate-400">{user.email}</p>
+              <p className="text-slate-400">{user.email ?? "—"}</p>
             </div>
             <div>
               <span className="text-slate-500">Group</span>

@@ -15,6 +15,10 @@ export async function PUT(req: NextRequest) {
 
   const user = await prisma.user.findUnique({ where: { id: session!.user!.id } });
   if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
+  if (!user.passwordHash) {
+    // Shell login with no password — there is no "current password" to verify against.
+    return NextResponse.json({ error: "No password is set for this account" }, { status: 400 });
+  }
 
   const valid = await compare(currentPassword, user.passwordHash);
   if (!valid) {

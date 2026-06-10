@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:fast": "tsc --noEmit && vitest run"
+    "test:fast": "tsc --noEmit && vitest run",
+    "backfill:staff-logins": "tsx prisma/backfill-staff-logins.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

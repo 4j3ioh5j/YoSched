@@ -37,6 +37,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Account locked. Try again in ${mins} minutes.` }, { status: 423 });
   }
 
+  if (!user.passwordHash) {
+    // Un-provisioned shell login (no password set yet) — treat like a bad credential.
+    await logLogin({ email, userId: user.id, success: false, reason: "no_password_set" });
+    return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
+  }
+
   const valid = await compare(password, user.passwordHash);
   if (!valid) {
     const attempts = user.failedAttempts + 1;

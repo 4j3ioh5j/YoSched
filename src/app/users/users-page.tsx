@@ -18,7 +18,7 @@ type LoginLogEntry = {
 
 type User = {
   id: string;
-  email: string;
+  email: string | null;
   name: string;
   role: string;
   groupId?: string | null;
@@ -143,7 +143,7 @@ export function UsersPage({
   }
 
   function startEdit(user: User) {
-    setForm({ email: user.email, name: user.name, password: "", confirmPassword: "", groupId: user.groupId ?? defaultGroupId, staffId: user.staffId ?? "" });
+    setForm({ email: user.email ?? "", name: user.name, password: "", confirmPassword: "", groupId: user.groupId ?? defaultGroupId, staffId: user.staffId ?? "" });
     setEditingId(user.id);
     setShowForm(true);
   }
@@ -310,7 +310,7 @@ export function UsersPage({
               return (
                 <tr key={user.id} className={`border-b border-slate-800/50 hover:bg-slate-800/30 ${!user.isActive ? "opacity-50" : ""}`}>
                   <td className="py-2.5 px-3 truncate">{user.name}</td>
-                  <td className="py-2.5 px-3 text-slate-400 truncate">{user.email}</td>
+                  <td className="py-2.5 px-3 text-slate-400 truncate">{user.email ?? <span className="italic text-slate-600">no email</span>}</td>
                   <td className="py-2.5 px-3">
                     <span className={`inline-block w-[88px] text-center text-xs py-0.5 rounded ${GROUP_BADGE[gName] || "bg-slate-600 text-slate-300"}`}>
                       {gName || user.role}
