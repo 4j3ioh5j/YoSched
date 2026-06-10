@@ -13,7 +13,7 @@ describe("shapeBarSeries", () => {
     expect(shapeBarSeries([row("AB", { CALL: 3 })], [], false)).toEqual([]);
   });
 
-  it("emits one row per provider, sorted by initials, with selected codes", () => {
+  it("emits one row per staff, sorted by initials, with selected codes", () => {
     const data = [row("ZZ", { CALL: 2, ORC: 1 }), row("AA", { CALL: 5 })];
     expect(shapeBarSeries(data, ["CALL", "ORC"], false)).toEqual([
       { initials: "AA", CALL: 5, ORC: 0 },
@@ -84,7 +84,7 @@ describe("shapeHeatmap", () => {
     hRow("AA", { CALL: 5 }, { CALL: -1.0 }, { CALL: -2.0 }),
   ];
 
-  it("emits one row per provider, sorted by initials, one cell per code", () => {
+  it("emits one row per staff, sorted by initials, one cell per code", () => {
     const out = shapeHeatmap(rows, ["CALL", "ORC"], false);
     expect(out.map((r) => r.initials)).toEqual(["AA", "ZZ"]);
     expect(out[0].cells.map((c) => c.code)).toEqual(["CALL", "ORC"]);
@@ -187,7 +187,7 @@ describe("shapeMetricBar", () => {
     mRow("AA", { totalHours: 200, holidayWorkCount: 4, shiftCounts: { CALL: 3 }, ftePercentage: 1 }),
   ];
 
-  it("emits {initials, value} per provider, sorted by initials, for hours", () => {
+  it("emits {initials, value} per staff, sorted by initials, for hours", () => {
     expect(shapeMetricBar(rows, "hours")).toEqual([
       { initials: "AA", value: 200 },
       { initials: "ZZ", value: 100 },

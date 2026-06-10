@@ -1,9 +1,9 @@
-// Pure logic for schedule requests — date-specific, per-provider constraints
+// Pure logic for schedule requests — date-specific, per-staff constraints
 // ("off 7/4", "no ORC or ORL next week", "AL 8/1–8/5") that feed BOTH the manual
 // scheduler (as cell warnings) and auto-schedule (as candidate gates).
 //
 // Two surfaces:
-//   foldRequestsForDate()  — collapse a provider's APPROVED requests on a date into
+//   foldRequestsForDate()  — collapse a staff's APPROVED requests on a date into
 //                            the gates/weights the scheduler & auto-scheduler consume.
 //   checkRequestConflict() — given a placed assignment, flag where it contradicts an
 //                            approved HARD request (drives the manual cell warning).
@@ -18,15 +18,15 @@
 export type RequestKind = "OFF" | "LEAVE" | "NEGATE_SHIFT" | "REQUEST_SHIFT";
 export type RequestStrength = "hard" | "soft";
 export type RequestStatus = "pending" | "approved" | "declined" | "fulfilled" | "withdrawn";
-export type RequestSource = "scheduler" | "provider" | "email";
+export type RequestSource = "scheduler" | "staff" | "email";
 
 export const REQUEST_KINDS: readonly RequestKind[] = ["OFF", "LEAVE", "NEGATE_SHIFT", "REQUEST_SHIFT"];
 export const REQUEST_STRENGTHS: readonly RequestStrength[] = ["hard", "soft"];
-export const REQUEST_SOURCES: readonly RequestSource[] = ["scheduler", "provider", "email"];
+export const REQUEST_SOURCES: readonly RequestSource[] = ["scheduler", "staff", "email"];
 
 export type ScheduleRequestData = {
   id: string;
-  providerId: string;
+  staffId: string;
   startDate: string; // inclusive, "YYYY-MM-DD"
   endDate: string; // inclusive, "YYYY-MM-DD"
   kind: RequestKind;
@@ -36,14 +36,14 @@ export type ScheduleRequestData = {
   status: RequestStatus;
 };
 
-// The collapsed effect of a provider's approved requests on a single date.
+// The collapsed effect of a staff's approved requests on a single date.
 export type FoldedRequests = {
   forbidWorking: boolean; // hard OFF — cannot take any working (non-off) shift
   avoidWorking: boolean; // soft OFF — prefer not to work
   leaveShiftTypeId: string | null; // hard LEAVE — pre-place this leave shift
   forbiddenShiftIds: Set<string>; // hard NEGATE_SHIFT — exclude these shift ids
   avoidedShiftIds: Set<string>; // soft NEGATE_SHIFT — down-weight these
-  forcedShiftIds: Set<string>; // hard REQUEST_SHIFT — provider wants one of these
+  forcedShiftIds: Set<string>; // hard REQUEST_SHIFT — staff wants one of these
   preferredShiftIds: Set<string>; // soft REQUEST_SHIFT — up-weight these
   requestIds: string[]; // the approved requests that contributed (for badge/audit)
 };
@@ -61,28 +61,28 @@ export function coversDate(
   return req.startDate <= date && date <= req.endDate;
 }
 
-/** All of one provider's requests covering `date`. By default only approved ones;
+/** All of one staff's requests covering `date`. By default only approved ones;
  *  pass includePending to also show pending ones (grid display). Terminal statuses
  *  (declined / withdrawn / fulfilled) are never returned — they don't belong on the grid. */
-export function requestsForProviderDate<
-  T extends { providerId: string; startDate: string; endDate: string; status: RequestStatus }
+export function requestsForStaffDate<
+  T extends { staffId: string; startDate: string; endDate: string; status: RequestStatus }
 >(
   requests: T[],
-  providerId: string,
+  staffId: string,
   date: string,
   opts: { includePending?: boolean } = {}
 ): T[] {
   const visible: RequestStatus[] = opts.includePending ? ["approved", "pending"] : ["approved"];
   return requests.filter(
     (r) =>
-      r.providerId === providerId && coversDate(r, date) && visible.includes(r.status)
+      r.staffId === staffId && coversDate(r, date) && visible.includes(r.status)
   );
 }
 
-/** Collapse a provider's APPROVED requests on `date` into scheduling gates/weights. */
+/** Collapse a staff's APPROVED requests on `date` into scheduling gates/weights. */
 export function foldRequestsForDate(
   requests: ScheduleRequestData[],
-  providerId: string,
+  staffId: string,
   date: string
 ): FoldedRequests {
   const folded: FoldedRequests = {
@@ -96,7 +96,7 @@ export function foldRequestsForDate(
     requestIds: [],
   };
 
-  for (const r of requestsForProviderDate(requests, providerId, date)) {
+  for (const r of requestsForStaffDate(requests, staffId, date)) {
     folded.requestIds.push(r.id);
     const hard = r.strength === "hard";
     switch (r.kind) {
@@ -205,13 +205,13 @@ export function summarizeCellRequests(
   return { category, label, single, count: reqs.length, hasApproved };
 }
 
-/** Does this provider have any approved request affecting `date`? (grid: show badge) */
+/** Does this staff have any approved request affecting `date`? (grid: show badge) */
 export function hasActiveRequest(
   requests: ScheduleRequestData[],
-  providerId: string,
+  staffId: string,
   date: string
 ): boolean {
-  return requestsForProviderDate(requests, providerId, date).length > 0;
+  return requestsForStaffDate(requests, staffId, date).length > 0;
 }
 
 /** Flag where a placed assignment contradicts an approved HARD request.
@@ -220,14 +220,14 @@ export function hasActiveRequest(
  *  `codeOf` resolves a shift id to its display code for human-readable messages. */
 export function checkRequestConflict({
   requests,
-  providerId,
+  staffId,
   date,
   assignedShiftTypeId,
   isOffShift,
   codeOf,
 }: {
   requests: ScheduleRequestData[];
-  providerId: string;
+  staffId: string;
   date: string;
   assignedShiftTypeId: string | null;
   isOffShift: boolean;
@@ -237,7 +237,7 @@ export function checkRequestConflict({
   const conflicts: RequestConflict[] = [];
   const working = !isOffShift;
 
-  for (const r of requestsForProviderDate(requests, providerId, date)) {
+  for (const r of requestsForStaffDate(requests, staffId, date)) {
     if (r.strength !== "hard") continue; // soft requests advise, never conflict
     switch (r.kind) {
       case "OFF":
@@ -452,9 +452,9 @@ export function isValidDateStr(s: unknown): s is string {
 export type MarkPolarity = "accept" | "negate";
 export type ShiftMark = { shiftTypeId: string; polarity: MarkPolarity; strength: RequestStrength };
 
-// One provider over an (inclusive) date range — the picker groups the cell
+// One staff over an (inclusive) date range — the picker groups the cell
 // selection into these before building payloads.
-export type RequestTarget = { providerId: string; startDate: string; endDate: string };
+export type RequestTarget = { staffId: string; startDate: string; endDate: string };
 
 export type PickerMarks = {
   shiftMarks: ShiftMark[]; // marks on work shifts
@@ -487,7 +487,7 @@ export function buildRequestPayloads(marks: PickerMarks, targets: RequestTarget[
       shiftTypeIds: string[],
       leaveShiftTypeId: string | null
     ): RequestInput => ({
-      providerId: t.providerId,
+      staffId: t.staffId,
       startDate: t.startDate,
       endDate: t.endDate,
       kind,
@@ -511,22 +511,22 @@ export function buildRequestPayloads(marks: PickerMarks, targets: RequestTarget[
   return payloads;
 }
 
-/** Group a flat cell selection into one target per provider, spanning that
- *  provider's earliest→latest selected date (drag-select a week ⇒ a range). */
+/** Group a flat cell selection into one target per staff, spanning that
+ *  staff's earliest→latest selected date (drag-select a week ⇒ a range). */
 export function groupCellsIntoTargets(
-  cells: { providerId: string; date: string }[]
+  cells: { staffId: string; date: string }[]
 ): RequestTarget[] {
-  const byProvider = new Map<string, { min: string; max: string }>();
+  const byStaff = new Map<string, { min: string; max: string }>();
   for (const c of cells) {
-    const cur = byProvider.get(c.providerId);
-    if (!cur) byProvider.set(c.providerId, { min: c.date, max: c.date });
+    const cur = byStaff.get(c.staffId);
+    if (!cur) byStaff.set(c.staffId, { min: c.date, max: c.date });
     else {
       if (c.date < cur.min) cur.min = c.date;
       if (c.date > cur.max) cur.max = c.date;
     }
   }
-  return [...byProvider.entries()].map(([providerId, r]) => ({
-    providerId,
+  return [...byStaff.entries()].map(([staffId, r]) => ({
+    staffId,
     startDate: r.min,
     endDate: r.max,
   }));
@@ -534,7 +534,7 @@ export function groupCellsIntoTargets(
 
 // Validated, normalized POST input for creating a request.
 export type RequestInput = {
-  providerId: string;
+  staffId: string;
   startDate: string;
   endDate: string;
   kind: RequestKind;
@@ -553,8 +553,8 @@ export function validateRequestInput(
 ): { error: string } | { value: RequestInput } {
   const b = (body ?? {}) as Record<string, unknown>;
 
-  const providerId = b.providerId;
-  if (typeof providerId !== "string" || !providerId) return { error: "providerId required" };
+  const staffId = b.staffId;
+  if (typeof staffId !== "string" || !staffId) return { error: "staffId required" };
 
   const startDate = b.startDate;
   const endDate = b.endDate ?? b.startDate;
@@ -591,7 +591,7 @@ export function validateRequestInput(
 
   return {
     value: {
-      providerId,
+      staffId,
       startDate: startDate as string,
       endDate: endDate as string,
       kind: k,
@@ -605,41 +605,41 @@ export function validateRequestInput(
   };
 }
 
-// ---- Provider self-service -----------------------------------------------
-// A provider entering their own request can't be trusted to set providerId or
+// ---- Staff self-service -----------------------------------------------
+// A staff entering their own request can't be trusted to set staffId or
 // source — both are forced server-side from the authenticated session.
 
-/** Validate a self-service request, forcing it to belong to `providerId` and the
- *  "provider" source regardless of what the client sent. Reuses validateRequestInput
+/** Validate a self-service request, forcing it to belong to `staffId` and the
+ *  "staff" source regardless of what the client sent. Reuses validateRequestInput
  *  for all field rules. Pure. */
 export function buildSelfRequestInput(
   body: unknown,
-  providerId: string
+  staffId: string
 ): { error: string } | { value: RequestInput } {
   const b = (body ?? {}) as Record<string, unknown>;
-  return validateRequestInput({ ...b, providerId, source: "provider" });
+  return validateRequestInput({ ...b, staffId, source: "staff" });
 }
 
-/** A provider may withdraw only their own request, and only while it is still
+/** A staff may withdraw only their own request, and only while it is still
  *  pending (approved/declined/etc. are terminal for self-service). Pure. */
 export function canWithdrawOwnRequest(
-  request: { providerId: string; status: string } | null,
-  providerId: string
+  request: { staffId: string; status: string } | null,
+  staffId: string
 ): boolean {
-  return !!request && request.providerId === providerId && request.status === "pending";
+  return !!request && request.staffId === staffId && request.status === "pending";
 }
 
 // ---- Leave queue feedback -------------------------------------------------
 // "How many people already requested leave on this date, and where do I stand?"
 // OFF and LEAVE both mean "away" for queueing. Only live requests count (pending
 // or approved — declined/withdrawn don't hold a slot). Ordering is first-come by
-// receivedAt. Everything here is COUNTS ONLY — never the other providers' names.
+// receivedAt. Everything here is COUNTS ONLY — never the other staff' names.
 
 const LEAVE_QUEUE_KINDS: ReadonlySet<RequestKind> = new Set<RequestKind>(["OFF", "LEAVE"]);
 const LEAVE_QUEUE_STATUSES: ReadonlySet<RequestStatus> = new Set<RequestStatus>(["pending", "approved"]);
 
 export type LeaveQueueRequest = {
-  providerId: string;
+  staffId: string;
   startDate: string;
   endDate: string;
   kind: RequestKind;
@@ -649,17 +649,17 @@ export type LeaveQueueRequest = {
 
 export type LeaveQueueSummary = {
   peakDate: string; // the most-contended date in the requested range
-  othersOnPeak: number; // # of OTHER providers already away on peakDate
-  positionOnPeak: number; // this provider's 1-based queue position on peakDate (first-come)
+  othersOnPeak: number; // # of OTHER staff already away on peakDate
+  positionOnPeak: number; // this staff's 1-based queue position on peakDate (first-come)
 };
 
 function isLeaveQueueRow(r: LeaveQueueRequest): boolean {
   return LEAVE_QUEUE_KINDS.has(r.kind) && LEAVE_QUEUE_STATUSES.has(r.status);
 }
 
-/** Summarize the leave queue a provider faces over an inclusive [start,end] range.
- *  Reports the single most-contended date (most other providers away) and where
- *  this provider stands on it, first-come by receivedAt.
+/** Summarize the leave queue a staff faces over an inclusive [start,end] range.
+ *  Reports the single most-contended date (most other staff away) and where
+ *  this staff stands on it, first-come by receivedAt.
  *
  *  `receivedAtIso = null` means an as-yet-unsubmitted request: they queue last on
  *  every date (position = others + 1). For an existing request pass its receivedAt
@@ -667,38 +667,38 @@ function isLeaveQueueRow(r: LeaveQueueRequest): boolean {
  *  other leave. Pure — counts only, never identities. */
 export function summarizeLeaveQueue({
   requests,
-  providerId,
+  staffId,
   start,
   end,
   receivedAtIso,
 }: {
   requests: LeaveQueueRequest[];
-  providerId: string;
+  staffId: string;
   start: string;
   end: string;
   receivedAtIso: string | null;
 }): LeaveQueueSummary | null {
   if (start > end) return null;
-  const others = requests.filter((r) => r.providerId !== providerId && isLeaveQueueRow(r));
+  const others = requests.filter((r) => r.staffId !== staffId && isLeaveQueueRow(r));
 
   let best: LeaveQueueSummary | null = null;
   // Walk each date in the inclusive range (ISO date strings, lexical-safe).
   for (let d = start; d <= end; d = nextIsoDate(d)) {
     // Count distinct PROVIDERS away, not rows — one person with two overlapping
-    // requests is still one person off. Track each provider's earliest covering
+    // requests is still one person off. Track each staff's earliest covering
     // request so first-come ordering uses when they first got in line.
-    const earliestByProvider = new Map<string, string>();
+    const earliestByStaff = new Map<string, string>();
     for (const r of others) {
       if (!coversDate(r, d)) continue;
-      const prev = earliestByProvider.get(r.providerId);
-      if (prev === undefined || r.receivedAt < prev) earliestByProvider.set(r.providerId, r.receivedAt);
+      const prev = earliestByStaff.get(r.staffId);
+      if (prev === undefined || r.receivedAt < prev) earliestByStaff.set(r.staffId, r.receivedAt);
     }
-    const othersOnPeak = earliestByProvider.size;
+    const othersOnPeak = earliestByStaff.size;
     if (othersOnPeak === 0) continue;
-    // First-come: how many distinct providers got in line ahead of this one.
+    // First-come: how many distinct staff got in line ahead of this one.
     const ahead = receivedAtIso === null
       ? othersOnPeak // a new request is last
-      : [...earliestByProvider.values()].filter((ra) => ra < receivedAtIso).length;
+      : [...earliestByStaff.values()].filter((ra) => ra < receivedAtIso).length;
     const candidate: LeaveQueueSummary = { peakDate: d, othersOnPeak, positionOnPeak: ahead + 1 };
     if (!best || candidate.othersOnPeak > best.othersOnPeak) best = candidate;
   }

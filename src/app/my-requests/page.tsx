@@ -10,8 +10,8 @@ export default async function MyRequests() {
   const result = await getSession("requests:self");
   if (result.error) redirect("/login");
 
-  // Has the permission but no linked provider yet — show a friendly notice.
-  if (!result.providerId) {
+  // Has the permission but no linked staff yet — show a friendly notice.
+  if (!result.staffId) {
     return (
       <main className="flex flex-col h-dvh">
         <NavHeader />
@@ -19,7 +19,7 @@ export default async function MyRequests() {
           <div className="max-w-md text-center space-y-2">
             <h1 className="text-lg font-semibold text-slate-100">My Requests</h1>
             <p className="text-sm text-slate-400">
-              Your login isn&apos;t linked to a provider record yet. Ask an administrator to link
+              Your login isn&apos;t linked to a staff record yet. Ask an administrator to link
               your account so you can enter schedule requests.
             </p>
           </div>
@@ -28,9 +28,9 @@ export default async function MyRequests() {
     );
   }
 
-  const [provider, requests, shiftTypes, schedPrefs] = await Promise.all([
-    prisma.provider.findUnique({ where: { id: result.providerId }, select: { name: true, initials: true } }),
-    prisma.scheduleRequest.findMany({ where: { providerId: result.providerId }, orderBy: { receivedAt: "desc" } }),
+  const [staff, requests, shiftTypes, schedPrefs] = await Promise.all([
+    prisma.staff.findUnique({ where: { id: result.staffId }, select: { name: true, initials: true } }),
+    prisma.scheduleRequest.findMany({ where: { staffId: result.staffId }, orderBy: { receivedAt: "desc" } }),
     prisma.shiftType.findMany({ select: { id: true, code: true, name: true, isLeave: true, isOffShift: true }, orderBy: { code: "asc" } }),
     prisma.schedulingPreferences.findFirst(),
   ]);
@@ -39,13 +39,13 @@ export default async function MyRequests() {
     <main className="flex flex-col h-dvh">
       <NavHeader />
       <MyRequestsPage
-        providerName={provider?.name ?? "You"}
+        staffName={staff?.name ?? "You"}
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
         maxLeavePerDay={schedPrefs?.maxLeavePerDay ?? 0}
         shiftTypes={shiftTypes}
         initialRequests={requests.map((r) => ({
           id: r.id,
-          providerId: r.providerId,
+          staffId: r.staffId,
           startDate: r.startDate.toISOString().split("T")[0],
           endDate: r.endDate.toISOString().split("T")[0],
           kind: r.kind as "OFF" | "LEAVE" | "NEGATE_SHIFT" | "REQUEST_SHIFT",

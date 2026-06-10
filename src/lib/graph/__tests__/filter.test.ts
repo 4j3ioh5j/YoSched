@@ -76,8 +76,8 @@ describe("filterAssignmentsByDate", () => {
 });
 
 describe("filterStaff", () => {
-  const s = (providerId: string, employmentTypeName: string, ftePercentage: number) =>
-    ({ providerId, employmentTypeName, ftePercentage });
+  const s = (staffId: string, employmentTypeName: string, ftePercentage: number) =>
+    ({ staffId, employmentTypeName, ftePercentage });
   const rows = [
     s("a", "FTE", 1.0),
     s("b", "FTE", 0.5),
@@ -90,8 +90,8 @@ describe("filterStaff", () => {
     expect(filterStaff(rows, { all: true })).toBe(rows);
   });
 
-  it("filters by explicit provider names", () => {
-    expect(filterStaff(rows, { names: ["a", "c"] }).map((r) => r.providerId)).toEqual(["a", "c"]);
+  it("filters by explicit staff names", () => {
+    expect(filterStaff(rows, { names: ["a", "c"] }).map((r) => r.staffId)).toEqual(["a", "c"]);
   });
 
   it("ignores an empty names array", () => {
@@ -99,16 +99,16 @@ describe("filterStaff", () => {
   });
 
   it("filters by employment type", () => {
-    expect(filterStaff(rows, { employmentType: "Fee Basis" }).map((r) => r.providerId)).toEqual(["c", "d"]);
+    expect(filterStaff(rows, { employmentType: "Fee Basis" }).map((r) => r.staffId)).toEqual(["c", "d"]);
   });
 
   it("composes type AND minFte (the plan's example)", () => {
     const f: GraphStaffFilter = { employmentType: "Fee Basis", minFtePct: 0.5 };
-    expect(filterStaff(rows, f).map((r) => r.providerId)).toEqual(["d"]);
+    expect(filterStaff(rows, f).map((r) => r.staffId)).toEqual(["d"]);
   });
 
   it("composes names AND type AND minFte", () => {
     const f: GraphStaffFilter = { names: ["a", "b", "c"], employmentType: "FTE", minFtePct: 0.6 };
-    expect(filterStaff(rows, f).map((r) => r.providerId)).toEqual(["a"]);
+    expect(filterStaff(rows, f).map((r) => r.staffId)).toEqual(["a"]);
   });
 });

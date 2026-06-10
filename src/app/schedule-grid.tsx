@@ -7,9 +7,9 @@ import { buildAlerts, groupAlertsByDate } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
-import { isPastMonth, visibleProvidersForMonth } from "@/lib/schedule-visibility";
+import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
-import { requestsForProviderDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
+import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
 
 // A schedule request as delivered to the grid (pure-module shape + display stamp).
@@ -30,10 +30,10 @@ type AvailabilityRuleData = {
   type: string;
   strength: string;
   pattern: string;
-  conditionProviderId?: string | null;
+  conditionStaffId?: string | null;
 };
 
-type Provider = {
+type Staff = {
   id: string;
   initials: string;
   name: string;
@@ -46,7 +46,7 @@ type Provider = {
 
 type AssignmentData = {
   id: string;
-  providerId: string;
+  staffId: string;
   date: string;
   shiftTypeId: string;
   isLocked: boolean;
@@ -81,8 +81,8 @@ type Holiday = {
   name: string;
 };
 
-type ProviderOverride = {
-  providerId: string;
+type StaffOverride = {
+  staffId: string;
   shiftTypeId: string;
   durationHrs: number;
 };
@@ -106,7 +106,7 @@ type FairnessDeviation = {
 };
 
 type FairnessMetrics = {
-  providerId: string;
+  staffId: string;
   initials: string;
   desirabilityScore: number;
   undesirableShiftCount: number;
@@ -125,12 +125,12 @@ type FairnessEntry = {
 
 type Props = {
   canEdit?: boolean;
-  providers: Provider[];
+  staff: Staff[];
   assignments: AssignmentData[];
   shiftTypes: ShiftType[];
   payPeriods: PayPeriod[];
   holidays: Holiday[];
-  providerOverrides: ProviderOverride[];
+  staffOverrides: StaffOverride[];
   staffingMins: StaffingMin[];
   staffingReqs: StaffingReq[];
   fairnessData?: Record<string, FairnessEntry>;
@@ -178,7 +178,7 @@ type ChangesResponse = {
 };
 
 type PickerState = {
-  providerId: string;
+  staffId: string;
   date: string;
   x: number;
   y: number;
@@ -318,12 +318,12 @@ function ShiftChip({ st }: { st?: { code: string; color: string } }) {
 
 export function ScheduleGrid({
   canEdit = true,
-  providers,
+  staff,
   assignments: initialAssignments,
   shiftTypes,
   payPeriods,
   holidays,
-  providerOverrides,
+  staffOverrides,
   staffingMins,
   staffingReqs,
   fairnessData,
@@ -343,14 +343,14 @@ export function ScheduleGrid({
   const [requestError, setRequestError] = useState<string | null>(null);
   const [picker, setPicker] = useState<PickerState>(null);
   const [saving, setSaving] = useState<string | null>(null);
-  const [dragSource, setDragSource] = useState<{ providerId: string; date: string } | null>(null);
+  const [dragSource, setDragSource] = useState<{ staffId: string; date: string } | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [activeRow, setActiveRow] = useState<string | null>(null);
   const [activeCol, setActiveCol] = useState<string | null>(null);
   const [hoverCol, setHoverCol] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [autoSuggestions, setAutoSuggestions] = useState<Array<{
-    providerId: string;
+    staffId: string;
     date: string;
     shiftTypeId: string;
     code: string;
@@ -365,19 +365,19 @@ export function ScheduleGrid({
   type SuggestionEntry = NonNullable<typeof autoSuggestions>[0];
   const suggestionSet = useMemo(() => {
     if (!autoSuggestions) return new Set<string>();
-    return new Set(autoSuggestions.map((s) => `${s.providerId}:${s.date}`));
+    return new Set(autoSuggestions.map((s) => `${s.staffId}:${s.date}`));
   }, [autoSuggestions]);
 
   const suggestionMap = useMemo(() => {
     if (!autoSuggestions) return new Map<string, SuggestionEntry>();
     const m = new Map<string, SuggestionEntry>();
-    for (const s of autoSuggestions) m.set(`${s.providerId}:${s.date}`, s);
+    for (const s of autoSuggestions) m.set(`${s.staffId}:${s.date}`, s);
     return m;
   }, [autoSuggestions]);
 
   // Multi-select state
   const [selection, setSelection] = useState<Set<string>>(new Set());
-  const [selectionAnchor, setSelectionAnchor] = useState<{ providerId: string; date: string } | null>(null);
+  const [selectionAnchor, setSelectionAnchor] = useState<{ staffId: string; date: string } | null>(null);
 
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   // "Show all staff" override (past months only) — not persisted, default off.
@@ -413,7 +413,7 @@ export function ScheduleGrid({
       hashSnapshot(
         localAssignments
           .filter((a) => dateInMonth(a.date, viewYear, viewMonth))
-          .map((a) => ({ providerId: a.providerId, date: a.date, shiftTypeId: a.shiftTypeId, isLocked: a.isLocked })),
+          .map((a) => ({ staffId: a.staffId, date: a.date, shiftTypeId: a.shiftTypeId, isLocked: a.isLocked })),
       ),
     [localAssignments, viewYear, viewMonth],
   );
@@ -516,10 +516,10 @@ export function ScheduleGrid({
   // Shift+drag-select state
   const dragSelecting = useRef(false);
   const dragSelectMoved = useRef(false);
-  const dragSelectAnchor = useRef<{ providerId: string; date: string } | null>(null);
+  const dragSelectAnchor = useRef<{ staffId: string; date: string } | null>(null);
 
   // Undo/redo stacks — each entry is a group of changes applied together
-  type UndoOp = { providerId: string; date: string; prev: AssignmentData | null; next: AssignmentData | null };
+  type UndoOp = { staffId: string; date: string; prev: AssignmentData | null; next: AssignmentData | null };
   type UndoEntry = UndoOp[];
   const undoStack = useRef<UndoEntry[]>([]);
   const redoStack = useRef<UndoEntry[]>([]);
@@ -541,12 +541,12 @@ export function ScheduleGrid({
   );
 
   // The columns actually rendered for the displayed month. Past months show only
-  // providers who were scheduled (real, non-off-shift assignment); current/future
+  // staff who were scheduled (real, non-off-shift assignment); current/future
   // show the active roster. `showAllStaff` overrides suppression on past months.
-  const visibleProviders = useMemo(
+  const visibleStaff = useMemo(
     () =>
-      visibleProvidersForMonth(
-        providers,
+      visibleStaffForMonth(
+        staff,
         localAssignments,
         firstOfMonth,
         lastOfMonth,
@@ -554,7 +554,7 @@ export function ScheduleGrid({
         showAllStaff,
         offShiftTypeIds,
       ),
-    [providers, localAssignments, firstOfMonth, lastOfMonth, pastMonth, showAllStaff, offShiftTypeIds],
+    [staff, localAssignments, firstOfMonth, lastOfMonth, pastMonth, showAllStaff, offShiftTypeIds],
   );
 
   useEffect(() => {
@@ -577,7 +577,7 @@ export function ScheduleGrid({
   const assignmentMap = useMemo(() => {
     const map = new Map<string, AssignmentData>();
     for (const a of localAssignments) {
-      map.set(`${a.providerId}:${a.date}`, a);
+      map.set(`${a.staffId}:${a.date}`, a);
     }
     return map;
   }, [localAssignments]);
@@ -592,19 +592,19 @@ export function ScheduleGrid({
   // requests only — the open asks still awaiting a decision. Once approved, a
   // request is honored by a real assignment and reads as a normal shift, so it
   // drops the chrome. Hard-constraint violations still raise the warning dot.
-  // Keyed `${providerId}:${date}`; empty cells omitted.
+  // Keyed `${staffId}:${date}`; empty cells omitted.
   const requestsByCell = useMemo(() => {
     const map = new Map<string, GridRequest[]>();
     if (localRequests.length === 0) return map;
     for (const date of dates) {
-      for (const p of visibleProviders) {
-        const rs = requestsForProviderDate(localRequests, p.id, date, { includePending: true })
+      for (const p of visibleStaff) {
+        const rs = requestsForStaffDate(localRequests, p.id, date, { includePending: true })
           .filter((r) => r.status === "pending");
         if (rs.length > 0) map.set(`${p.id}:${date}`, rs);
       }
     }
     return map;
-  }, [localRequests, dates, visibleProviders]);
+  }, [localRequests, dates, visibleStaff]);
 
   // Approved requests only — these are the ones that exert scheduling force, so
   // they're what the cell-warning checks consume (checkRequestConflict ignores
@@ -628,11 +628,11 @@ export function ScheduleGrid({
     [shiftTypeMap, dateFormat],
   );
 
-  const providerInitialsMap = useMemo(() => {
+  const staffInitialsMap = useMemo(() => {
     const map = new Map<string, string>();
-    for (const p of providers) map.set(p.id, p.initials);
+    for (const p of staff) map.set(p.id, p.initials);
     return map;
-  }, [providers]);
+  }, [staff]);
 
   const hotkeyMap = useMemo(() => {
     const map = new Map<string, ShiftType>();
@@ -642,19 +642,19 @@ export function ScheduleGrid({
     return map;
   }, [shiftTypes]);
 
-  const providerMap = useMemo(() => {
-    const map = new Map<string, Provider>();
-    for (const p of providers) map.set(p.id, p);
+  const staffMap = useMemo(() => {
+    const map = new Map<string, Staff>();
+    for (const p of staff) map.set(p.id, p);
     return map;
-  }, [providers]);
+  }, [staff]);
 
   const overrideMap = useMemo(() => {
     const map = new Map<string, number>();
-    for (const o of providerOverrides) {
-      map.set(`${o.providerId}:${o.shiftTypeId}`, o.durationHrs);
+    for (const o of staffOverrides) {
+      map.set(`${o.staffId}:${o.shiftTypeId}`, o.durationHrs);
     }
     return map;
-  }, [providerOverrides]);
+  }, [staffOverrides]);
 
   const holidaySet = useMemo(() => new Set(holidays.map((h) => h.date)), [holidays]);
   const holidayNames = useMemo(() => {
@@ -668,8 +668,8 @@ export function ScheduleGrid({
     [payPeriods],
   );
 
-  function getHoursForAssignment(providerId: string, shiftTypeId: string): number {
-    const override = overrideMap.get(`${providerId}:${shiftTypeId}`);
+  function getHoursForAssignment(staffId: string, shiftTypeId: string): number {
+    const override = overrideMap.get(`${staffId}:${shiftTypeId}`);
     if (override !== undefined) return override;
     const st = shiftTypeMap.get(shiftTypeId);
     return st?.defaultHours ?? 0;
@@ -683,8 +683,8 @@ export function ScheduleGrid({
   const ppHours = useMemo(() => {
     const result = new Map<string, Map<string, number>>();
     for (const pp of sortedPPs) {
-      const providerHours = new Map<string, number>();
-      for (const p of visibleProviders) {
+      const staffHours = new Map<string, number>();
+      for (const p of visibleStaff) {
         let hours = 0;
         const cursor = new Date(parseDate(pp.startDate));
         const end = parseDate(pp.endDate);
@@ -704,29 +704,29 @@ export function ScheduleGrid({
           }
           cursor.setDate(cursor.getDate() + 1);
         }
-        providerHours.set(p.id, hours);
+        staffHours.set(p.id, hours);
       }
-      result.set(pp.startDate, providerHours);
+      result.set(pp.startDate, staffHours);
     }
     return result;
-  }, [sortedPPs, visibleProviders, assignmentMap, suggestionMap, overrideMap, shiftTypeMap]);
+  }, [sortedPPs, visibleStaff, assignmentMap, suggestionMap, overrideMap, shiftTypeMap]);
 
   const followRuleMap = useMemo(() => buildFollowRuleMap(followRules ?? []), [followRules]);
 
   const cellWarnings = useMemo(() => {
     const map = new Map<string, Warning[]>();
     for (const date of dates) {
-      for (const p of providers) {
+      for (const p of staff) {
         const a = assignmentMap.get(`${p.id}:${date}`);
         if (!a) continue;
         const warnings = checkCellWarnings({
-          providerId: p.id,
+          staffId: p.id,
           date,
           shiftTypeId: a.shiftTypeId,
-          provider: p,
+          staff: p,
           shiftTypeMap,
           assignmentMap,
-          providers,
+          allStaff: staff,
           holidaySet,
           staffingMins,
           followRuleMap,
@@ -738,7 +738,7 @@ export function ScheduleGrid({
       }
     }
     return map;
-  }, [dates, providers, assignmentMap, shiftTypeMap, holidaySet, staffingMins, followRuleMap, approvedRequests]);
+  }, [dates, staff, assignmentMap, shiftTypeMap, holidaySet, staffingMins, followRuleMap, approvedRequests]);
 
   // Compute per-day staffing warnings
   const dayWarnings = useMemo(() => {
@@ -746,7 +746,7 @@ export function ScheduleGrid({
     for (const date of dates) {
       const warnings = checkDayStaffing({
         date,
-        providers,
+        staff,
         assignmentMap,
         shiftTypeMap,
         holidaySet,
@@ -758,7 +758,7 @@ export function ScheduleGrid({
       }
     }
     return map;
-  }, [dates, providers, assignmentMap, shiftTypeMap, holidaySet, staffingMins, staffingReqs]);
+  }, [dates, staff, assignmentMap, shiftTypeMap, holidaySet, staffingMins, staffingReqs]);
 
   const columnCounts = useMemo(() => {
     return countColumns.map((col) => {
@@ -766,7 +766,7 @@ export function ScheduleGrid({
       const counts: Record<string, number> = {};
       for (const date of dates) {
         let count = 0;
-        for (const p of providers) {
+        for (const p of staff) {
           const key = `${p.id}:${date}`;
           const a = assignmentMap.get(key);
           const sug = !a ? suggestionMap.get(key) : null;
@@ -777,7 +777,7 @@ export function ScheduleGrid({
       }
       return counts;
     });
-  }, [dates, providers, assignmentMap, suggestionMap, countColumns]);
+  }, [dates, staff, assignmentMap, suggestionMap, countColumns]);
 
   // Shift types flagged for a dedicated column, in sort order. Each gets its own
   // column (left of the count columns) listing the initials of whoever covers
@@ -787,19 +787,19 @@ export function ScheduleGrid({
     [shiftTypes],
   );
 
-  // Per dedicated column: date -> initials of providers covering that shift that
-  // day. Mirrors columnCounts (includes suggestions, scans all providers so
-  // coverage shows even when a provider's own column is hidden).
+  // Per dedicated column: date -> initials of staff covering that shift that
+  // day. Mirrors columnCounts (includes suggestions, scans all staff so
+  // coverage shows even when a staff's own column is hidden).
   const dedicatedColumnInitialsData = useMemo(() => {
     return dedicatedColumns.map((st) =>
-      dedicatedColumnInitials(providers, dates, st.code, (pid, date) => {
+      dedicatedColumnInitials(staff, dates, st.code, (pid, date) => {
         const key = `${pid}:${date}`;
         const a = assignmentMap.get(key);
         const sug = !a ? suggestionMap.get(key) : null;
         return a?.code ?? sug?.code;
       }),
     );
-  }, [dedicatedColumns, dates, providers, assignmentMap, suggestionMap]);
+  }, [dedicatedColumns, dates, staff, assignmentMap, suggestionMap]);
 
   // Drop column focus + selection when the visible column set may change (month
   // change / Show-all toggle), so focus and selection rectangles never point at
@@ -837,23 +837,23 @@ export function ScheduleGrid({
     setViewMonth(today.getMonth());
   }
 
-  function handleCellClick(providerId: string, date: string, e: React.MouseEvent) {
+  function handleCellClick(staffId: string, date: string, e: React.MouseEvent) {
     setActiveRow(date);
-    setActiveCol(providerId);
+    setActiveCol(staffId);
     if (!canEdit) return;
-    const existing = assignmentMap.get(`${providerId}:${date}`);
+    const existing = assignmentMap.get(`${staffId}:${date}`);
     if (existing?.isLocked) return;
 
-    const cellKey = `${providerId}:${date}`;
+    const cellKey = `${staffId}:${date}`;
 
     if (e.shiftKey) {
       if (dragSelectMoved.current) { dragSelectMoved.current = false; return; }
       // Shift+click: rectangular range select from anchor
       if (selectionAnchor) {
-        setSelection(computeRectSelection(selectionAnchor, { providerId, date }));
+        setSelection(computeRectSelection(selectionAnchor, { staffId, date }));
       } else {
         setSelection(new Set([cellKey]));
-        setSelectionAnchor({ providerId, date });
+        setSelectionAnchor({ staffId, date });
       }
       return;
     }
@@ -867,8 +867,8 @@ export function ScheduleGrid({
         } else {
           const firstKey = [...next][0];
           if (firstKey) {
-            const existingProvider = firstKey.split(":")[0];
-            if (existingProvider !== providerId) {
+            const existingStaff = firstKey.split(":")[0];
+            if (existingStaff !== staffId) {
               return new Set([cellKey]);
             }
           }
@@ -876,25 +876,25 @@ export function ScheduleGrid({
         }
         return next;
       });
-      if (!selectionAnchor) setSelectionAnchor({ providerId, date });
+      if (!selectionAnchor) setSelectionAnchor({ staffId, date });
       return;
     }
 
     // Plain click on a selected cell — open picker, keep selection
     if (selection.size > 0 && selection.has(cellKey)) {
-      const pos = pickerPositionForCell(providerId, date);
-      setPicker({ providerId, date, ...pos });
+      const pos = pickerPositionForCell(staffId, date);
+      setPicker({ staffId, date, ...pos });
       return;
     }
 
     // Plain click on non-selected cell — select it, no picker
     setSelection(new Set());
-    setSelectionAnchor({ providerId, date });
+    setSelectionAnchor({ staffId, date });
     setPicker(null);
   }
 
-  function pickerPositionForCell(providerId: string, date: string): { x: number; y: number } {
-    const el = document.querySelector(`[data-cell="${providerId}:${date}"]`);
+  function pickerPositionForCell(staffId: string, date: string): { x: number; y: number } {
+    const el = document.querySelector(`[data-cell="${staffId}:${date}"]`);
     if (el) {
       const rect = el.getBoundingClientRect();
       return { x: rect.right, y: rect.bottom };
@@ -902,27 +902,27 @@ export function ScheduleGrid({
     return { x: 200, y: 200 };
   }
 
-  function handleCellContextMenu(providerId: string, date: string, e: React.MouseEvent) {
+  function handleCellContextMenu(staffId: string, date: string, e: React.MouseEvent) {
     e.preventDefault();
     if (!canEdit) return;
-    const existing = assignmentMap.get(`${providerId}:${date}`);
+    const existing = assignmentMap.get(`${staffId}:${date}`);
     if (existing?.isLocked) return;
     setActiveRow(date);
-    setActiveCol(providerId);
-    const cellKey = `${providerId}:${date}`;
+    setActiveCol(staffId);
+    const cellKey = `${staffId}:${date}`;
     if (selection.size === 0 || !selection.has(cellKey)) {
       setSelection(new Set());
-      setSelectionAnchor({ providerId, date });
+      setSelectionAnchor({ staffId, date });
     }
-    const pos = pickerPositionForCell(providerId, date);
-    setPicker({ providerId, date, ...pos });
+    const pos = pickerPositionForCell(staffId, date);
+    setPicker({ staffId, date, ...pos });
   }
 
-  function computeRectSelection(anchor: { providerId: string; date: string }, target: { providerId: string; date: string }): Set<string> {
+  function computeRectSelection(anchor: { staffId: string; date: string }, target: { staffId: string; date: string }): Set<string> {
     const aDateIdx = dates.indexOf(anchor.date);
     const tDateIdx = dates.indexOf(target.date);
-    const aProvIdx = visibleProviders.findIndex((p) => p.id === anchor.providerId);
-    const tProvIdx = visibleProviders.findIndex((p) => p.id === target.providerId);
+    const aProvIdx = visibleStaff.findIndex((p) => p.id === anchor.staffId);
+    const tProvIdx = visibleStaff.findIndex((p) => p.id === target.staffId);
     if (aDateIdx === -1 || tDateIdx === -1 || aProvIdx === -1 || tProvIdx === -1) return new Set();
     const dStart = Math.min(aDateIdx, tDateIdx);
     const dEnd = Math.max(aDateIdx, tDateIdx);
@@ -931,34 +931,34 @@ export function ScheduleGrid({
     const sel = new Set<string>();
     for (let di = dStart; di <= dEnd; di++) {
       for (let pi = pStart; pi <= pEnd; pi++) {
-        const k = `${visibleProviders[pi].id}:${dates[di]}`;
+        const k = `${visibleStaff[pi].id}:${dates[di]}`;
         if (!assignmentMap.get(k)?.isLocked) sel.add(k);
       }
     }
     return sel;
   }
 
-  function handleCellMouseDown(providerId: string, date: string, e: React.MouseEvent) {
+  function handleCellMouseDown(staffId: string, date: string, e: React.MouseEvent) {
     if (!canEdit || e.button !== 0 || !e.shiftKey) return;
     e.preventDefault();
     dragSelecting.current = true;
     dragSelectMoved.current = false;
-    const anchor = selectionAnchor ?? { providerId, date };
+    const anchor = selectionAnchor ?? { staffId, date };
     dragSelectAnchor.current = anchor;
-    setSelection(computeRectSelection(anchor, { providerId, date }));
-    if (!selectionAnchor) setSelectionAnchor({ providerId, date });
+    setSelection(computeRectSelection(anchor, { staffId, date }));
+    if (!selectionAnchor) setSelectionAnchor({ staffId, date });
     setActiveRow(date);
-    setActiveCol(providerId);
+    setActiveCol(staffId);
     setPicker(null);
   }
 
-  function handleCellMouseEnter(providerId: string, date: string) {
+  function handleCellMouseEnter(staffId: string, date: string) {
     if (!dragSelecting.current || !dragSelectAnchor.current) return;
     dragSelectMoved.current = true;
-    const sel = computeRectSelection(dragSelectAnchor.current, { providerId, date });
+    const sel = computeRectSelection(dragSelectAnchor.current, { staffId, date });
     setSelection(sel);
     setActiveRow(date);
-    setActiveCol(providerId);
+    setActiveCol(staffId);
   }
 
   useEffect(() => {
@@ -985,33 +985,33 @@ export function ScheduleGrid({
     redoStack.current = [];
   }
 
-  async function applyAssignment(providerId: string, date: string, assignment: AssignmentData | null) {
-    setSaving(`${providerId}:${date}`);
+  async function applyAssignment(staffId: string, date: string, assignment: AssignmentData | null) {
+    setSaving(`${staffId}:${date}`);
     if (assignment) {
       setLocalAssignments((prev) => {
-        const filtered = prev.filter((a) => !(a.providerId === providerId && a.date === date));
+        const filtered = prev.filter((a) => !(a.staffId === staffId && a.date === date));
         return [...filtered, assignment];
       });
       try {
         const res = await fetch("/api/assignments", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ providerId, date, shiftTypeId: assignment.shiftTypeId }),
+          body: JSON.stringify({ staffId, date, shiftTypeId: assignment.shiftTypeId }),
         });
         const saved = await res.json();
         setLocalAssignments((prev) =>
-          prev.map((a) => (a.providerId === providerId && a.date === date ? saved : a)),
+          prev.map((a) => (a.staffId === staffId && a.date === date ? saved : a)),
         );
       } catch { /* optimistic stays */ }
     } else {
       setLocalAssignments((prev) =>
-        prev.filter((a) => !(a.providerId === providerId && a.date === date)),
+        prev.filter((a) => !(a.staffId === staffId && a.date === date)),
       );
       try {
         await fetch("/api/assignments", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ providerId, date }),
+          body: JSON.stringify({ staffId, date }),
         });
       } catch { /* optimistic stays */ }
     }
@@ -1022,19 +1022,19 @@ export function ScheduleGrid({
     const group = undoStack.current.pop();
     if (!group) return;
     redoStack.current.push(group);
-    await Promise.all(group.map((op) => applyAssignment(op.providerId, op.date, op.prev)));
+    await Promise.all(group.map((op) => applyAssignment(op.staffId, op.date, op.prev)));
   }
 
   async function handleRedo() {
     const group = redoStack.current.pop();
     if (!group) return;
     undoStack.current.push(group);
-    await Promise.all(group.map((op) => applyAssignment(op.providerId, op.date, op.next)));
+    await Promise.all(group.map((op) => applyAssignment(op.staffId, op.date, op.next)));
   }
 
   const undoRef = useRef(handleUndo);
   const redoRef = useRef(handleRedo);
-  const clearRef = useRef<(target?: { providerId: string; date: string }) => Promise<void>>(async () => {});
+  const clearRef = useRef<(target?: { staffId: string; date: string }) => Promise<void>>(async () => {});
   useEffect(() => { undoRef.current = handleUndo; }, [handleUndo]);
   useEffect(() => { redoRef.current = handleRedo; }, [handleRedo]);
 
@@ -1063,10 +1063,10 @@ export function ScheduleGrid({
         const existing = assignmentMap.get(`${activeCol}:${activeRow}`);
         if (!existing?.isLocked) {
           if (selection.size === 0) {
-            setSelectionAnchor({ providerId: activeCol, date: activeRow });
+            setSelectionAnchor({ staffId: activeCol, date: activeRow });
           }
           const pos = pickerPositionForCell(activeCol, activeRow);
-          setPicker({ providerId: activeCol, date: activeRow, ...pos });
+          setPicker({ staffId: activeCol, date: activeRow, ...pos });
         }
       }
       if ((e.key === "Delete" || e.key === "Backspace") && !picker && canEdit && activeRow && activeCol) {
@@ -1074,22 +1074,22 @@ export function ScheduleGrid({
         if (selection.size > 0) {
           clearRef.current();
         } else {
-          clearRef.current({ providerId: activeCol, date: activeRow });
+          clearRef.current({ staffId: activeCol, date: activeRow });
         }
       }
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) && !picker && activeRow && activeCol) {
         e.preventDefault();
         const dateIdx = dates.indexOf(activeRow);
-        const provIdx = visibleProviders.findIndex((p) => p.id === activeCol);
+        const provIdx = visibleStaff.findIndex((p) => p.id === activeCol);
         if (dateIdx === -1 || provIdx === -1) return;
         let newDateIdx = dateIdx;
         let newProvIdx = provIdx;
         if (e.key === "ArrowUp") newDateIdx = Math.max(0, dateIdx - 1);
         if (e.key === "ArrowDown") newDateIdx = Math.min(dates.length - 1, dateIdx + 1);
         if (e.key === "ArrowLeft") newProvIdx = Math.max(0, provIdx - 1);
-        if (e.key === "ArrowRight") newProvIdx = Math.min(visibleProviders.length - 1, provIdx + 1);
+        if (e.key === "ArrowRight") newProvIdx = Math.min(visibleStaff.length - 1, provIdx + 1);
         const newDate = dates[newDateIdx];
-        const newProv = visibleProviders[newProvIdx];
+        const newProv = visibleStaff[newProvIdx];
         setActiveRow(newDate);
         setActiveCol(newProv.id);
         const el = document.querySelector(`[data-cell="${newProv.id}:${newDate}"]`);
@@ -1105,35 +1105,35 @@ export function ScheduleGrid({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleProviders, hotkeyMap, selection, showMonthPicker]);
+  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleStaff, hotkeyMap, selection, showMonthPicker]);
 
   const hotkeyAssign = useCallback(async (st: ShiftType) => {
-    const cells: { providerId: string; date: string }[] = [];
+    const cells: { staffId: string; date: string }[] = [];
     if (selection.size > 0) {
       for (const key of selection) {
         if (assignmentMap.get(key)?.isLocked) continue;
         const [pid, d] = key.split(":");
-        cells.push({ providerId: pid, date: d });
+        cells.push({ staffId: pid, date: d });
       }
     } else if (activeCol && activeRow) {
       const existing = assignmentMap.get(`${activeCol}:${activeRow}`);
       if (existing?.isLocked) return;
-      cells.push({ providerId: activeCol, date: activeRow });
+      cells.push({ staffId: activeCol, date: activeRow });
     }
     if (cells.length === 0) return;
 
-    const undoOps: UndoOp[] = cells.map(({ providerId, date }) => {
-      const prev = assignmentMap.get(`${providerId}:${date}`) ?? null;
+    const undoOps: UndoOp[] = cells.map(({ staffId, date }) => {
+      const prev = assignmentMap.get(`${staffId}:${date}`) ?? null;
       const next: AssignmentData = {
-        id: `temp-${providerId}:${date}`,
-        providerId,
+        id: `temp-${staffId}:${date}`,
+        staffId,
         date,
         shiftTypeId: st.id,
         isLocked: false,
         code: st.code,
         color: st.color,
       };
-      return { providerId, date, prev, next };
+      return { staffId, date, prev, next };
     });
     pushUndo(undoOps);
 
@@ -1143,11 +1143,11 @@ export function ScheduleGrid({
     setSaving("bulk");
 
     setLocalAssignments((prev) => {
-      const keys = new Set(cells.map((c) => `${c.providerId}:${c.date}`));
-      const filtered = prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`));
+      const keys = new Set(cells.map((c) => `${c.staffId}:${c.date}`));
+      const filtered = prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`));
       const temps = cells.map((c) => ({
-        id: `temp-${c.providerId}:${c.date}`,
-        providerId: c.providerId,
+        id: `temp-${c.staffId}:${c.date}`,
+        staffId: c.staffId,
         date: c.date,
         shiftTypeId: st.id,
         isLocked: false,
@@ -1166,8 +1166,8 @@ export function ScheduleGrid({
       if (res.ok) {
         const { applied } = await res.json() as { applied: AssignmentData[] };
         setLocalAssignments((prev) => {
-          const savedKeys = new Set(applied.map((s) => `${s.providerId}:${s.date}`));
-          return [...prev.filter((a) => !savedKeys.has(`${a.providerId}:${a.date}`)), ...applied];
+          const savedKeys = new Set(applied.map((s) => `${s.staffId}:${s.date}`));
+          return [...prev.filter((a) => !savedKeys.has(`${a.staffId}:${a.date}`)), ...applied];
         });
       }
     } catch { /* optimistic stays */ }
@@ -1183,32 +1183,32 @@ export function ScheduleGrid({
     if (!st) return;
 
     // Determine cells to assign: selection or single cell
-    const cells: { providerId: string; date: string }[] = [];
+    const cells: { staffId: string; date: string }[] = [];
     if (selection.size > 0) {
       for (const key of selection) {
         if (assignmentMap.get(key)?.isLocked) continue;
         const [pid, d] = key.split(":");
-        cells.push({ providerId: pid, date: d });
+        cells.push({ staffId: pid, date: d });
       }
     } else {
-      cells.push({ providerId: picker.providerId, date: picker.date });
+      cells.push({ staffId: picker.staffId, date: picker.date });
     }
     if (cells.length === 0) { setPicker(null); return; }
 
     // Build undo group
-    const undoOps: UndoOp[] = cells.map(({ providerId, date }) => {
-      const key = `${providerId}:${date}`;
+    const undoOps: UndoOp[] = cells.map(({ staffId, date }) => {
+      const key = `${staffId}:${date}`;
       const prev = assignmentMap.get(key) ?? null;
       const next: AssignmentData = {
         id: `temp-${key}`,
-        providerId,
+        staffId,
         date,
         shiftTypeId,
         isLocked: false,
         code: st.code,
         color: st.color,
       };
-      return { providerId, date, prev, next };
+      return { staffId, date, prev, next };
     });
     pushUndo(undoOps);
 
@@ -1219,11 +1219,11 @@ export function ScheduleGrid({
 
     // Optimistic update
     setLocalAssignments((prev) => {
-      const keys = new Set(cells.map((c) => `${c.providerId}:${c.date}`));
-      const filtered = prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`));
+      const keys = new Set(cells.map((c) => `${c.staffId}:${c.date}`));
+      const filtered = prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`));
       const temps = cells.map((c) => ({
-        id: `temp-${c.providerId}:${c.date}`,
-        providerId: c.providerId,
+        id: `temp-${c.staffId}:${c.date}`,
+        staffId: c.staffId,
         date: c.date,
         shiftTypeId,
         isLocked: false,
@@ -1235,15 +1235,15 @@ export function ScheduleGrid({
 
     try {
       if (cells.length === 1) {
-        const { providerId, date } = cells[0];
+        const { staffId, date } = cells[0];
         const res = await fetch("/api/assignments", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ providerId, date, shiftTypeId }),
+          body: JSON.stringify({ staffId, date, shiftTypeId }),
         });
         const saved = await res.json();
         setLocalAssignments((prev) =>
-          prev.map((a) => (a.providerId === providerId && a.date === date ? saved : a)),
+          prev.map((a) => (a.staffId === staffId && a.date === date ? saved : a)),
         );
       } else {
         const res = await fetch("/api/assignments/bulk", {
@@ -1253,8 +1253,8 @@ export function ScheduleGrid({
         });
         const { applied: saved }: { applied: AssignmentData[] } = await res.json();
         setLocalAssignments((prev) => {
-          const keys = new Set(saved.map((s) => `${s.providerId}:${s.date}`));
-          const filtered = prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`));
+          const keys = new Set(saved.map((s) => `${s.staffId}:${s.date}`));
+          const filtered = prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`));
           return [...filtered, ...saved];
         });
       }
@@ -1266,23 +1266,23 @@ export function ScheduleGrid({
     }
   }, [picker, shiftTypeMap, assignmentMap, selection]);
 
-  const handleClear = useCallback(async (target?: { providerId: string; date: string }) => {
-    const anchor = target ?? (picker ? { providerId: picker.providerId, date: picker.date } : null);
+  const handleClear = useCallback(async (target?: { staffId: string; date: string }) => {
+    const anchor = target ?? (picker ? { staffId: picker.staffId, date: picker.date } : null);
     if (!anchor && selection.size === 0) return;
 
     // Explicit target (Delete key) always clears just that cell;
     // selection path only used from picker (no target)
-    const cells: { providerId: string; date: string }[] = [];
+    const cells: { staffId: string; date: string }[] = [];
     if (!target && selection.size > 0) {
       for (const key of selection) {
         const a = assignmentMap.get(key);
         if (a && !a.isLocked) {
           const [pid, d] = key.split(":");
-          cells.push({ providerId: pid, date: d });
+          cells.push({ staffId: pid, date: d });
         }
       }
     } else if (anchor) {
-      const key = `${anchor.providerId}:${anchor.date}`;
+      const key = `${anchor.staffId}:${anchor.date}`;
       const a = assignmentMap.get(key);
       if (a && !a.isLocked) {
         cells.push(anchor);
@@ -1292,10 +1292,10 @@ export function ScheduleGrid({
     if (cells.length === 0) { setPicker(null); return; }
 
     // Build undo group
-    const undoOps: UndoOp[] = cells.map(({ providerId, date }) => ({
-      providerId,
+    const undoOps: UndoOp[] = cells.map(({ staffId, date }) => ({
+      staffId,
       date,
-      prev: assignmentMap.get(`${providerId}:${date}`) ?? null,
+      prev: assignmentMap.get(`${staffId}:${date}`) ?? null,
       next: null,
     }));
     pushUndo(undoOps);
@@ -1306,9 +1306,9 @@ export function ScheduleGrid({
     setSaving("bulk");
 
     // Optimistic removal
-    const keys = new Set(cells.map((c) => `${c.providerId}:${c.date}`));
+    const keys = new Set(cells.map((c) => `${c.staffId}:${c.date}`));
     setLocalAssignments((prev) =>
-      prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`)),
+      prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`)),
     );
 
     try {
@@ -1341,14 +1341,14 @@ export function ScheduleGrid({
   const handleSaveRequests = useCallback(
     async (marks: PickerMarks) => {
       if (!picker) return;
-      const cells: { providerId: string; date: string }[] = [];
+      const cells: { staffId: string; date: string }[] = [];
       if (selection.size > 0) {
         for (const key of selection) {
           const [pid, d] = key.split(":");
-          cells.push({ providerId: pid, date: d });
+          cells.push({ staffId: pid, date: d });
         }
       } else {
-        cells.push({ providerId: picker.providerId, date: picker.date });
+        cells.push({ staffId: picker.staffId, date: picker.date });
       }
       const payloads = buildRequestPayloads(marks, groupCellsIntoTargets(cells));
 
@@ -1401,19 +1401,19 @@ export function ScheduleGrid({
     }
   }, []);
 
-  function handleDragStart(providerId: string, date: string, e: React.DragEvent) {
+  function handleDragStart(staffId: string, date: string, e: React.DragEvent) {
     if (!canEdit) { e.preventDefault(); return; }
-    const a = assignmentMap.get(`${providerId}:${date}`);
+    const a = assignmentMap.get(`${staffId}:${date}`);
     if (!a || a.isLocked) { e.preventDefault(); return; }
-    setDragSource({ providerId, date });
+    setDragSource({ staffId, date });
     e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", `${providerId}:${date}`);
+    e.dataTransfer.setData("text/plain", `${staffId}:${date}`);
   }
 
-  function handleDragOver(providerId: string, date: string, e: React.DragEvent) {
+  function handleDragOver(staffId: string, date: string, e: React.DragEvent) {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    const key = `${providerId}:${date}`;
+    const key = `${staffId}:${date}`;
     if (dragOver !== key) setDragOver(key);
   }
 
@@ -1426,26 +1426,26 @@ export function ScheduleGrid({
     setDragOver(null);
   }
 
-  const handleDrop = useCallback(async (toProviderId: string, toDate: string, e: React.DragEvent) => {
+  const handleDrop = useCallback(async (toStaffId: string, toDate: string, e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(null);
 
     if (!dragSource) return;
-    const { providerId: fromProviderId, date: fromDate } = dragSource;
+    const { staffId: fromStaffId, date: fromDate } = dragSource;
     setDragSource(null);
 
-    if (fromProviderId === toProviderId && fromDate === toDate) return;
+    if (fromStaffId === toStaffId && fromDate === toDate) return;
 
-    const fromA = assignmentMap.get(`${fromProviderId}:${fromDate}`);
-    const toA = assignmentMap.get(`${toProviderId}:${toDate}`);
+    const fromA = assignmentMap.get(`${fromStaffId}:${fromDate}`);
+    const toA = assignmentMap.get(`${toStaffId}:${toDate}`);
     if (!fromA || fromA.isLocked || toA?.isLocked) return;
 
-    const fromKey = `${fromProviderId}:${fromDate}`;
-    const toKey = `${toProviderId}:${toDate}`;
+    const fromKey = `${fromStaffId}:${fromDate}`;
+    const toKey = `${toStaffId}:${toDate}`;
 
     pushUndo([
-      { providerId: fromProviderId, date: fromDate, prev: fromA, next: toA ?? null },
-      { providerId: toProviderId, date: toDate, prev: toA ?? null, next: { ...fromA, providerId: toProviderId, date: toDate, id: `temp-${toKey}` } },
+      { staffId: fromStaffId, date: fromDate, prev: fromA, next: toA ?? null },
+      { staffId: toStaffId, date: toDate, prev: toA ?? null, next: { ...fromA, staffId: toStaffId, date: toDate, id: `temp-${toKey}` } },
     ]);
 
     setSaving(fromKey);
@@ -1453,14 +1453,14 @@ export function ScheduleGrid({
     // Optimistic update
     setLocalAssignments((prev) => {
       const next = prev.filter(
-        (a) => !(a.providerId === fromProviderId && a.date === fromDate) &&
-               !(a.providerId === toProviderId && a.date === toDate)
+        (a) => !(a.staffId === fromStaffId && a.date === fromDate) &&
+               !(a.staffId === toStaffId && a.date === toDate)
       );
       // Move source to target
-      next.push({ ...fromA, providerId: toProviderId, date: toDate, id: `temp-${toKey}` });
+      next.push({ ...fromA, staffId: toStaffId, date: toDate, id: `temp-${toKey}` });
       // If target had assignment, move it to source (swap)
       if (toA) {
-        next.push({ ...toA, providerId: fromProviderId, date: fromDate, id: `temp-${fromKey}` });
+        next.push({ ...toA, staffId: fromStaffId, date: fromDate, id: `temp-${fromKey}` });
       }
       return next;
     });
@@ -1471,8 +1471,8 @@ export function ScheduleGrid({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "swap",
-          from: { providerId: fromProviderId, date: fromDate },
-          to: { providerId: toProviderId, date: toDate },
+          from: { staffId: fromStaffId, date: fromDate },
+          to: { staffId: toStaffId, date: toDate },
         }),
       });
       if (!res.ok) throw new Error("Swap failed");
@@ -1481,9 +1481,9 @@ export function ScheduleGrid({
       setLocalAssignments((prev) => {
         const next = prev.filter(
           (a) => (!a.id.startsWith("temp-")
-            || (a.providerId !== fromProviderId && a.providerId !== toProviderId))
-            && !(a.providerId === toProviderId && a.date === toDate)
-            && !(a.providerId === fromProviderId && a.date === fromDate)
+            || (a.staffId !== fromStaffId && a.staffId !== toStaffId))
+            && !(a.staffId === toStaffId && a.date === toDate)
+            && !(a.staffId === fromStaffId && a.date === fromDate)
         );
         if (result.moved) next.push(result.moved);
         if (result.swapped) next.push(result.swapped);
@@ -1499,21 +1499,21 @@ export function ScheduleGrid({
   // Compute warnings for picker preview (uses picker cell for single, first selected cell for bulk)
   const pickerWarnings = useMemo(() => {
     if (!picker) return new Map<string, Warning[]>();
-    const { providerId, date } = picker;
-    const provider = providerMap.get(providerId);
-    if (!provider) return new Map<string, Warning[]>();
+    const { staffId, date } = picker;
+    const cellStaff = staffMap.get(staffId);
+    if (!cellStaff) return new Map<string, Warning[]>();
 
     const result = new Map<string, Warning[]>();
     for (const st of shiftTypes) {
       if (st.category === "other") continue;
       const warnings = checkCellWarnings({
-        providerId,
+        staffId,
         date,
         shiftTypeId: st.id,
-        provider,
+        staff: cellStaff,
         shiftTypeMap,
         assignmentMap,
-        providers,
+        allStaff: staff,
         holidaySet,
         staffingMins,
         followRuleMap,
@@ -1524,7 +1524,7 @@ export function ScheduleGrid({
       }
     }
     return result;
-  }, [picker, providerMap, shiftTypes, shiftTypeMap, assignmentMap, providers, holidaySet, staffingMins, followRuleMap, approvedRequests]);
+  }, [picker, staffMap, shiftTypes, shiftTypeMap, assignmentMap, staff, holidaySet, staffingMins, followRuleMap, approvedRequests]);
 
   function renderSuggestion(sug: SuggestionEntry, stMap: Map<string, ShiftType>) {
     const st = stMap.get(sug.shiftTypeId);
@@ -1589,15 +1589,15 @@ export function ScheduleGrid({
       const applied: AssignmentData[] = data.applied;
 
       const undoOps: UndoOp[] = applied.map((a) => ({
-        providerId: a.providerId,
+        staffId: a.staffId,
         date: a.date,
-        prev: assignmentMap.get(`${a.providerId}:${a.date}`) ?? null,
+        prev: assignmentMap.get(`${a.staffId}:${a.date}`) ?? null,
         next: a,
       }));
 
       setLocalAssignments((prev) => {
-        const keys = new Set(applied.map((a) => `${a.providerId}:${a.date}`));
-        const filtered = prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`));
+        const keys = new Set(applied.map((a) => `${a.staffId}:${a.date}`));
+        const filtered = prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`));
         return [...filtered, ...applied];
       });
 
@@ -1630,14 +1630,14 @@ export function ScheduleGrid({
       }
 
       const undoOps: UndoOp[] = removed.map((a) => ({
-        providerId: a.providerId,
+        staffId: a.staffId,
         date: a.date,
         prev: a,
         next: null,
       }));
 
-      const keys = new Set(removed.map((a) => `${a.providerId}:${a.date}`));
-      setLocalAssignments((prev) => prev.filter((a) => !keys.has(`${a.providerId}:${a.date}`)));
+      const keys = new Set(removed.map((a) => `${a.staffId}:${a.date}`));
+      setLocalAssignments((prev) => prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`)));
 
       pushUndo(undoOps);
     } catch (e) {
@@ -1707,7 +1707,7 @@ export function ScheduleGrid({
       scroller.removeEventListener("scroll", apply);
       ro.disconnect();
     };
-  }, [alertGroups, dates, showPPRows, visibleProviders.length, viewMonth, viewYear]);
+  }, [alertGroups, dates, showPPRows, visibleStaff.length, viewMonth, viewYear]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -1894,7 +1894,7 @@ export function ScheduleGrid({
               <th className="sticky left-0 z-20 bg-slate-800 px-3 py-2 text-left text-xs font-medium text-slate-400 border-b border-r border-slate-700 w-[88px] min-w-[88px]">
                 Date
               </th>
-              {visibleProviders.map((p) => {
+              {visibleStaff.map((p) => {
                 const isActiveCol = activeCol === p.id;
                 const fe = fairnessData?.[p.id];
                 const fColor = fe ? fairnessColor(fe.deviation.overall) : undefined;
@@ -1967,7 +1967,7 @@ export function ScheduleGrid({
                       <span className="text-indigo-400">PP {ppIndex + 1}</span>
                       <span className="text-slate-500 ml-1">+/–</span>
                     </td>
-                    {visibleProviders.map((p) => {
+                    {visibleStaff.map((p) => {
                       const hours = provHours?.get(p.id) ?? 0;
                       const target = pp.targetHours * p.ftePercentage;
                       const diff = hours - target;
@@ -2060,14 +2060,14 @@ export function ScheduleGrid({
                       </span>
                     )}
                   </td>
-                  {visibleProviders.map((p) => {
+                  {visibleStaff.map((p) => {
                     const a = assignmentMap.get(`${p.id}:${date}`);
                     const cellKey = `${p.id}:${date}`;
                     const isSaving = saving === cellKey;
-                    const isPickerTarget = picker?.providerId === p.id && picker?.date === date;
+                    const isPickerTarget = picker?.staffId === p.id && picker?.date === date;
                     const cw = cellWarnings.get(cellKey);
                     const isDragTarget = dragOver === cellKey;
-                    const isDragSrc = dragSource?.providerId === p.id && dragSource?.date === date;
+                    const isDragSrc = dragSource?.staffId === p.id && dragSource?.date === date;
                     const isSelected = selection.has(cellKey);
                     const isActiveCell = activeCol === p.id && isActiveRow;
                     const suggestion = suggestionMap.get(cellKey);
@@ -2331,14 +2331,14 @@ export function ScheduleGrid({
         <div data-print-hide>
           <ShiftPicker
             shiftTypes={shiftTypes}
-            currentShiftTypeId={selectionCount > 1 ? null : (assignmentMap.get(`${picker.providerId}:${picker.date}`)?.shiftTypeId ?? null)}
+            currentShiftTypeId={selectionCount > 1 ? null : (assignmentMap.get(`${picker.staffId}:${picker.date}`)?.shiftTypeId ?? null)}
             position={{ x: picker.x, y: picker.y }}
             onSelect={handleSelect}
             onClear={() => {
               if (selection.size > 0) {
                 handleClear();
               } else if (picker) {
-                handleClear({ providerId: picker.providerId, date: picker.date });
+                handleClear({ staffId: picker.staffId, date: picker.date });
               }
             }}
             onClose={closePicker}
@@ -2347,7 +2347,7 @@ export function ScheduleGrid({
             existingRequests={
               selectionCount > 1
                 ? undefined
-                : requestsForProviderDate(localRequests, picker.providerId, picker.date, { includePending: true }).map((r) => ({
+                : requestsForStaffDate(localRequests, picker.staffId, picker.date, { includePending: true }).map((r) => ({
                     id: r.id,
                     label: describeRequest(r, (id) => shiftTypeMap.get(id)?.code ?? id),
                     pending: r.status === "pending",
@@ -2357,7 +2357,7 @@ export function ScheduleGrid({
             onSaveRequest={handleSaveRequests}
             requestTargetCount={
               selectionCount > 1
-                ? groupCellsIntoTargets([...selection].map((k) => { const [providerId, date] = k.split(":"); return { providerId, date }; })).length
+                ? groupCellsIntoTargets([...selection].map((k) => { const [staffId, date] = k.split(":"); return { staffId, date }; })).length
                 : 1
             }
           />
@@ -2431,8 +2431,8 @@ export function ScheduleGrid({
                   {!changesView.loading && changesView.data?.changes.map((c, i) => (
                     <div key={i} className="px-5 py-1.5 border-b border-slate-700/40 flex items-center gap-3 text-xs">
                       <span className="w-10 shrink-0 text-slate-500 tabular-nums">{formatDateCompact(parseDate(c.date), dateFormat)}</span>
-                      <span className="w-9 shrink-0 font-semibold text-slate-300 truncate" title={c.providerId}>
-                        {providerInitialsMap.get(c.providerId) ?? "—"}
+                      <span className="w-9 shrink-0 font-semibold text-slate-300 truncate" title={c.staffId}>
+                        {staffInitialsMap.get(c.staffId) ?? "—"}
                       </span>
                       <span className="flex items-center gap-1.5 min-w-0 flex-wrap">
                         {c.kind === "added" && (

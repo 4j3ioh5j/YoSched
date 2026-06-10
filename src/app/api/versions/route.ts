@@ -29,10 +29,10 @@ async function snapshotMonth(year: number, month: number): Promise<AssignmentSna
   const { start, end } = monthDateRange(year, month);
   const rows = await prisma.assignment.findMany({
     where: { date: { gte: start, lt: end } },
-    select: { providerId: true, date: true, shiftTypeId: true, isLocked: true, source: true, notes: true },
+    select: { staffId: true, date: true, shiftTypeId: true, isLocked: true, source: true, notes: true },
   });
   return rows.map((a) => ({
-    providerId: a.providerId,
+    staffId: a.staffId,
     date: a.date.toISOString().split("T")[0],
     shiftTypeId: a.shiftTypeId,
     isLocked: a.isLocked,

@@ -22,9 +22,9 @@ async function sendConfirmationEmail(created: ScheduleRequest, userId: string): 
   if (!isEmailConfigured(config)) return;
 
   const ids = [...created.shiftTypeIds, created.leaveShiftTypeId].filter((x): x is string => !!x);
-  const [user, provider, prefs, shifts] = await Promise.all([
+  const [user, staff, prefs, shifts] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: { email: true, name: true } }),
-    prisma.provider.findUnique({ where: { id: created.providerId }, select: { name: true } }),
+    prisma.staff.findUnique({ where: { id: created.staffId }, select: { name: true } }),
     prisma.schedulingPreferences.findFirst({ select: { dateFormat: true } }),
     ids.length ? prisma.shiftType.findMany({ where: { id: { in: ids } }, select: { id: true, code: true } }) : Promise.resolve([]),
   ]);
@@ -39,7 +39,7 @@ async function sendConfirmationEmail(created: ScheduleRequest, userId: string): 
   const submitted = `${formatDate(ra, df)} ${String(ra.getHours()).padStart(2, "0")}:${String(ra.getMinutes()).padStart(2, "0")}`;
 
   const { subject, text } = buildConfirmationEmail({
-    providerName: provider?.name ?? user.name ?? "there",
+    staffName: staff?.name ?? user.name ?? "there",
     requestDescription: describeRequest(
       { kind: created.kind as never, shiftTypeIds: created.shiftTypeIds, leaveShiftTypeId: created.leaveShiftTypeId, strength: created.strength as never },
       (id) => codeMap.get(id) ?? id
@@ -52,13 +52,13 @@ async function sendConfirmationEmail(created: ScheduleRequest, userId: string): 
   await sendSmtpMail(config, { to: user.email, subject, text });
 }
 
-// Provider self-service requests. Every handler forces the row to the caller's
-// linked provider — a provider can only see and act on their OWN requests.
+// Staff self-service requests. Every handler forces the row to the caller's
+// linked staff — a staff can only see and act on their OWN requests.
 
 function serialize(r: ScheduleRequest) {
   return {
     id: r.id,
-    providerId: r.providerId,
+    staffId: r.staffId,
     startDate: r.startDate.toISOString().split("T")[0],
     endDate: r.endDate.toISOString().split("T")[0],
     kind: r.kind,
@@ -77,31 +77,31 @@ function toDate(s: string): Date {
   return new Date(s + "T00:00:00Z");
 }
 
-// 403 when the login has requests:self but isn't linked to a provider yet.
+// 403 when the login has requests:self but isn't linked to a staff yet.
 function notLinked() {
-  return NextResponse.json({ error: "Your login isn't linked to a provider yet — ask an administrator." }, { status: 403 });
+  return NextResponse.json({ error: "Your login isn't linked to a staff yet — ask an administrator." }, { status: 403 });
 }
 
 // GET — the caller's own requests (every status), newest first.
 export async function GET() {
   const result = await getSession("requests:self");
   if (result.error) return result.error;
-  if (!result.providerId) return notLinked();
+  if (!result.staffId) return notLinked();
 
   const requests = await prisma.scheduleRequest.findMany({
-    where: { providerId: result.providerId },
+    where: { staffId: result.staffId },
     orderBy: { receivedAt: "desc" },
   });
   return NextResponse.json(requests.map(serialize));
 }
 
-// POST — create a request for yourself (forced source=provider, status pending).
+// POST — create a request for yourself (forced source=staff, status pending).
 export async function POST(req: NextRequest) {
   const result = await getSession("requests:self");
   if (result.error) return result.error;
-  if (!result.providerId) return notLinked();
+  if (!result.staffId) return notLinked();
 
-  const parsed = buildSelfRequestInput(await req.json(), result.providerId);
+  const parsed = buildSelfRequestInput(await req.json(), result.staffId);
   if ("error" in parsed) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
 
   const created = await prisma.scheduleRequest.create({
     data: {
-      providerId: v.providerId,
+      staffId: v.staffId,
       startDate: toDate(v.startDate),
       endDate: toDate(v.endDate),
       kind: v.kind,
@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const result = await getSession("requests:self");
   if (result.error) return result.error;
-  if (!result.providerId) return notLinked();
+  if (!result.staffId) return notLinked();
 
   const { id } = await req.json();
   if (!id || typeof id !== "string") {
@@ -144,9 +144,9 @@ export async function DELETE(req: NextRequest) {
 
   const existing = await prisma.scheduleRequest.findUnique({
     where: { id },
-    select: { providerId: true, status: true },
+    select: { staffId: true, status: true },
   });
-  if (!canWithdrawOwnRequest(existing, result.providerId)) {
+  if (!canWithdrawOwnRequest(existing, result.staffId)) {
     return NextResponse.json({ error: "You can only withdraw your own pending requests" }, { status: 403 });
   }
 

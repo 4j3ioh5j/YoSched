@@ -83,7 +83,7 @@ type EmploymentTypeData = {
   defaultEligibleShiftTypeIds: string[];
   defaultAvailabilityRules: DefaultAvailabilityRule[];
   sortOrder: number;
-  providerCount: number;
+  staffCount: number;
 };
 
 type EquityFactorData = {
@@ -678,19 +678,19 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
               <FieldRow label="Pair Saturday and Sunday" description="Assign the same person to both Saturday and Sunday when filling this shift on weekends">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.weekendPaired} onChange={(e) => updateField(editingShift.id, "weekendPaired", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
-              <FieldRow label="Can be assigned on days off" description="Allow this shift to be assigned even on a provider's non-working days (e.g., weekend call)">
+              <FieldRow label="Can be assigned on days off" description="Allow this shift to be assigned even on a staff's non-working days (e.g., weekend call)">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.ignoresWorkingDays} onChange={(e) => updateField(editingShift.id, "ignoresWorkingDays", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
-              <FieldRow label="Default shift for filling hours" description="Use this shift to fill remaining hours when a provider is under their pay period target">
+              <FieldRow label="Default shift for filling hours" description="Use this shift to fill remaining hours when a staff is under their pay period target">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.isFillShift} onChange={(e) => updateField(editingShift.id, "isFillShift", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
-              <FieldRow label="Represents a day off" description="This shift means the provider is not working (used for post-shift recovery days)">
+              <FieldRow label="Represents a day off" description="This shift means the staff is not working (used for post-shift recovery days)">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.isOffShift} onChange={(e) => updateField(editingShift.id, "isOffShift", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Dedicated column" description="Add a column on the schedule (left of the count columns) showing the initials of whoever is covering this shift each day. This is in addition to the normal shift display in the grid.">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.dedicatedColumn} onChange={(e) => updateField(editingShift.id, "dedicatedColumn", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
-<FieldRow label="Maximum per day" description="Limit how many providers can be assigned this shift on the same day. Set to 1 if only one person should do this shift per day. Leave blank for no limit.">
+<FieldRow label="Maximum per day" description="Limit how many staff can be assigned this shift on the same day. Set to 1 if only one person should do this shift per day. Leave blank for no limit.">
                 <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.maxPerDay ?? ""} placeholder="No limit" onChange={(e) => updateField(editingShift.id, "maxPerDay", e.target.value ? parseInt(e.target.value) : null)} />
               </FieldRow>
             </div>
@@ -1900,7 +1900,7 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
           <div className="flex-1">
             <div className="text-sm font-medium text-slate-200">Soft leave limit per day</div>
             <div className="text-xs text-slate-400">
-              Warn (don&apos;t block) when this many providers already have leave on a date. 0 = no limit.
+              Warn (don&apos;t block) when this many staff already have leave on a date. 0 = no limit.
               {leapStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
               {leapStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
               {leapStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
@@ -2106,7 +2106,7 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
           dayOfWeek: da.dayOfWeek, type: da.type, strength: da.strength, pattern: da.pattern,
         })),
         sortOrder: created.sortOrder,
-        providerCount: 0,
+        staffCount: 0,
       };
       setTypes((prev) => [...prev, newType]);
       setEditingId(created.id);
@@ -2212,7 +2212,7 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
                     ))}
                 </div>
               </td>
-              <td className="py-2 px-2 text-center text-slate-500 text-xs">{t.providerCount}</td>
+              <td className="py-2 px-2 text-center text-slate-500 text-xs">{t.staffCount}</td>
             </tr>
           ))}
         </tbody>
@@ -2346,8 +2346,8 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
               {canEdit ? (
                 <button
                   onClick={() => deleteType(et.id)}
-                  disabled={et.providerCount > 0}
-                  title={et.providerCount > 0 ? `${et.providerCount} staff member(s) use this type` : ""}
+                  disabled={et.staffCount > 0}
+                  title={et.staffCount > 0 ? `${et.staffCount} staff member(s) use this type` : ""}
                   className="px-3 py-1.5 text-xs bg-red-900/50 hover:bg-red-800/50 text-red-400 border border-red-800/50 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   Delete

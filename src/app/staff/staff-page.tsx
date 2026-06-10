@@ -10,7 +10,7 @@ type AvailabilityRule = {
   pattern: string;
   cycleLength?: number | null;
   cycleOffset?: number | null;
-  conditionProviderId?: string | null;
+  conditionStaffId?: string | null;
   conditionType?: string | null;
 };
 
@@ -32,7 +32,7 @@ type ShiftMinimumTargetData = {
   windowDays?: number | null;
 };
 
-type Provider = {
+type Staff = {
   id: string;
   name: string;
   email: string | null;
@@ -78,7 +78,7 @@ type ShiftTypeInfo = {
 
 type Props = {
   canEdit: boolean;
-  providers: Provider[];
+  staff: Staff[];
   employmentTypes: EmploymentType[];
   allShiftTypes: ShiftTypeInfo[];
 };
@@ -107,7 +107,7 @@ function hasAdvancedRule(rules: AvailabilityRule[], dayOfWeek: number): boolean 
   return rules.some(
     (r) =>
       r.dayOfWeek === dayOfWeek &&
-      (r.pattern !== "every" || r.strength !== "rule" || r.type !== "available" || r.conditionProviderId)
+      (r.pattern !== "every" || r.strength !== "rule" || r.type !== "available" || r.conditionStaffId)
   );
 }
 
@@ -116,7 +116,7 @@ function dayRuleSummary(rules: AvailabilityRule[], dayOfWeek: number): string {
   if (dayRules.length === 0) return "";
   const parts: string[] = [];
   for (const r of dayRules) {
-    if (r.type === "available" && r.strength === "rule" && r.pattern === "every" && !r.conditionProviderId) continue;
+    if (r.type === "available" && r.strength === "rule" && r.pattern === "every" && !r.conditionStaffId) continue;
     let s = "";
     if (r.strength === "preference") s += r.type === "available" ? "Prefer" : "Avoid";
     else if (r.type === "unavailable") s += "Off";
@@ -127,7 +127,7 @@ function dayRuleSummary(rules: AvailabilityRule[], dayOfWeek: number): string {
         s = `Every ${r.cycleLength === 2 ? "other" : r.cycleLength === 3 ? "3rd" : `${r.cycleLength}th`}`;
       }
     }
-    if (r.conditionProviderId) s += " (cond.)";
+    if (r.conditionStaffId) s += " (cond.)";
     if (s) parts.push(s);
   }
   return parts.join(", ");
@@ -161,13 +161,13 @@ function FieldRow({ label, description, children }: { label: string; description
 function AvailabilityEditor({
   rules,
   onChange,
-  allProviders,
-  currentProviderId,
+  allStaff,
+  currentStaffId,
 }: {
   rules: AvailabilityRule[];
   onChange: (rules: AvailabilityRule[]) => void;
-  allProviders: { id: string; initials: string }[];
-  currentProviderId: string;
+  allStaff: { id: string; initials: string }[];
+  currentStaffId: string;
 }) {
   function toggleDay(d: number) {
     const existing = rules.filter((r) => r.dayOfWeek === d);
@@ -179,7 +179,7 @@ function AvailabilityEditor({
   }
 
   const advancedRules = rules.filter(
-    (r) => r.pattern !== "every" || r.strength !== "rule" || r.type !== "available" || r.conditionProviderId
+    (r) => r.pattern !== "every" || r.strength !== "rule" || r.type !== "available" || r.conditionStaffId
   );
 
   function updateRuleAtIndex(globalIndex: number, updates: Partial<AvailabilityRule>) {
@@ -194,7 +194,7 @@ function AvailabilityEditor({
     onChange([...rules, { dayOfWeek: 1, type: "available", strength: "preference", pattern: "every" }]);
   }
 
-  const otherProviders = allProviders.filter((p) => p.id !== currentProviderId);
+  const otherStaff = allStaff.filter((p) => p.id !== currentStaffId);
 
   return (
     <div className="space-y-3">
@@ -234,11 +234,11 @@ function AvailabilityEditor({
 
         <div className="space-y-1.5">
           {rules.map((rule, globalIdx) => {
-            const isSimple = rule.type === "available" && rule.strength === "rule" && rule.pattern === "every" && !rule.conditionProviderId;
+            const isSimple = rule.type === "available" && rule.strength === "rule" && rule.pattern === "every" && !rule.conditionStaffId;
             if (isSimple) return null;
 
-            const condName = rule.conditionProviderId
-              ? otherProviders.find((p) => p.id === rule.conditionProviderId)?.initials ?? "?"
+            const condName = rule.conditionStaffId
+              ? otherStaff.find((p) => p.id === rule.conditionStaffId)?.initials ?? "?"
               : null;
 
             return (
@@ -332,21 +332,21 @@ function AvailabilityEditor({
                   <span className="text-slate-500">Condition:</span>
                   <select
                     className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300"
-                    value={rule.conditionProviderId ?? ""}
+                    value={rule.conditionStaffId ?? ""}
                     onChange={(e) => {
                       const pid = e.target.value || null;
                       updateRuleAtIndex(globalIdx, {
-                        conditionProviderId: pid,
+                        conditionStaffId: pid,
                         conditionType: pid ? (rule.conditionType ?? "not_working") : null,
                       });
                     }}
                   >
                     <option value="">Always (no condition)</option>
-                    {otherProviders.map((p) => (
+                    {otherStaff.map((p) => (
                       <option key={p.id} value={p.id}>Only when {p.initials}...</option>
                     ))}
                   </select>
-                  {rule.conditionProviderId && (
+                  {rule.conditionStaffId && (
                     <select
                       className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300"
                       value={rule.conditionType ?? "not_working"}
@@ -525,9 +525,9 @@ function ShiftEligibilityEditor({
 }
 
 function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
-  ep: Provider;
+  ep: Staff;
   allShiftTypes: ShiftTypeInfo[];
-  updateField: (id: string, field: keyof Provider, value: unknown) => void;
+  updateField: (id: string, field: keyof Staff, value: unknown) => void;
 }) {
   const [expandedShift, setExpandedShift] = useState<string | null>(null);
   const workShifts = allShiftTypes.filter((st) => !st.isLeave && st.autoSchedulable);
@@ -637,8 +637,8 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
   );
 }
 
-export function StaffPage({ canEdit, providers: initial, employmentTypes, allShiftTypes }: Props) {
-  const [providers, setProviders] = useState(initial);
+export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTypes }: Props) {
+  const [staff, setStaff] = useState(initial);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
@@ -666,16 +666,16 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
 
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
-  const editingProvider = editingId ? providers.find((p) => p.id === editingId) ?? null : null;
+  const editingStaff = editingId ? staff.find((p) => p.id === editingId) ?? null : null;
 
-  function updateField(id: string, field: keyof Provider, value: unknown) {
-    setProviders((prev) => prev.map((p) => p.id === id ? { ...p, [field]: value } : p));
+  function updateField(id: string, field: keyof Staff, value: unknown) {
+    setStaff((prev) => prev.map((p) => p.id === id ? { ...p, [field]: value } : p));
   }
 
   function changeEmploymentType(id: string, newTypeId: string) {
     const et = employmentTypes.find((t) => t.id === newTypeId);
     if (!et) return;
-    setProviders((prev) => prev.map((p) => p.id === id ? {
+    setStaff((prev) => prev.map((p) => p.id === id ? {
       ...p,
       employmentTypeId: et.id,
       employmentTypeName: et.name,
@@ -694,35 +694,35 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
   const cancelEdit = useCallback(() => {
     if (!editingId) return;
     const orig = initial.find((p) => p.id === editingId);
-    if (orig) setProviders((prev) => prev.map((p) => p.id === editingId ? orig : p));
+    if (orig) setStaff((prev) => prev.map((p) => p.id === editingId ? orig : p));
     setEditingId(null);
   }, [editingId, initial]);
   useEscape(cancelEdit);
 
-  async function saveProvider(provider: Provider) {
-    const prev = initial.find((p) => p.id === provider.id) ?? providers.find((p) => p.id === provider.id);
+  async function saveStaff(member: Staff) {
+    const prev = initial.find((p) => p.id === member.id) ?? staff.find((p) => p.id === member.id);
     setSaving(true);
     try {
       const res = await fetch("/api/staff", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(provider),
+        body: JSON.stringify(member),
       });
       if (!res.ok) {
-        if (prev) setProviders((cur) => cur.map((p) => p.id === provider.id ? prev : p));
+        if (prev) setStaff((cur) => cur.map((p) => p.id === member.id ? prev : p));
         return;
       }
       setEditingId(null);
       if (prev) {
         pushUndo({
-          label: `Updated ${provider.initials}`,
+          label: `Updated ${member.initials}`,
           execute: async () => {
             await fetch("/api/staff", {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(prev),
             });
-            setProviders((cur) => cur.map((p) => p.id === prev.id ? prev : p));
+            setStaff((cur) => cur.map((p) => p.id === prev.id ? prev : p));
           },
         });
       }
@@ -731,10 +731,10 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
     }
   }
 
-  async function deleteProvider(id: string) {
-    const provider = providers.find((p) => p.id === id);
-    if (!provider) return;
-    if (!confirm(`Remove ${provider.initials}? If they have assignments, they'll be deactivated instead.`)) return;
+  async function deleteStaff(id: string) {
+    const member = staff.find((p) => p.id === id);
+    if (!member) return;
+    if (!confirm(`Remove ${member.initials}? If they have assignments, they'll be deactivated instead.`)) return;
 
     setSaving(true);
     try {
@@ -746,30 +746,30 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
       if (!res.ok) return;
       const result = await res.json();
       if (result.deactivated) {
-        setProviders((prev) => prev.map((p) => p.id === id ? { ...p, isActive: false } : p));
+        setStaff((prev) => prev.map((p) => p.id === id ? { ...p, isActive: false } : p));
       } else {
-        setProviders((prev) => prev.filter((p) => p.id !== id));
+        setStaff((prev) => prev.filter((p) => p.id !== id));
       }
       setEditingId(null);
 
       pushUndo({
-        label: result.deactivated ? `Deactivated ${provider.initials}` : `Removed ${provider.initials}`,
+        label: result.deactivated ? `Deactivated ${member.initials}` : `Removed ${member.initials}`,
         execute: async () => {
           if (result.deactivated) {
             await fetch("/api/staff", {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...provider, isActive: true }),
+              body: JSON.stringify({ ...member, isActive: true }),
             });
-            setProviders((cur) => cur.map((p) => p.id === id ? { ...p, isActive: true } : p));
+            setStaff((cur) => cur.map((p) => p.id === id ? { ...p, isActive: true } : p));
           } else {
             const res = await fetch("/api/staff", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(provider),
+              body: JSON.stringify(member),
             });
             const created = await res.json();
-            setProviders((cur) => [...cur, { ...provider, id: created.id }].sort((a, b) => a.sortOrder - b.sortOrder));
+            setStaff((cur) => [...cur, { ...member, id: created.id }].sort((a, b) => a.sortOrder - b.sortOrder));
           }
         },
       });
@@ -778,18 +778,18 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
     }
   }
 
-  async function addProvider() {
+  async function addStaff() {
     setSaving(true);
     try {
       const defaultType = employmentTypes[0];
       const res = await fetch("/api/staff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "New Provider", initials: "NEW", employmentTypeId: defaultType?.id }),
+        body: JSON.stringify({ name: "New Staff", initials: "NEW", employmentTypeId: defaultType?.id }),
       });
       if (!res.ok) return;
       const created = await res.json();
-      const newProv: Provider = {
+      const newProv: Staff = {
         id: created.id,
         name: created.name,
         email: created.email ?? null,
@@ -804,7 +804,7 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
           pattern: ar.pattern,
           cycleLength: ar.cycleLength,
           cycleOffset: ar.cycleOffset,
-          conditionProviderId: ar.conditionProviderId,
+          conditionStaffId: ar.conditionStaffId,
           conditionType: ar.conditionType,
         })),
         eligibleShiftTypeIds: (created.eligibleShifts ?? []).map((es: { shiftTypeId: string }) => es.shiftTypeId),
@@ -815,7 +815,7 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
         isAutoScheduled: created.isAutoScheduled ?? true,
         sortOrder: created.sortOrder,
       };
-      setProviders((prev) => [...prev, newProv]);
+      setStaff((prev) => [...prev, newProv]);
       setEditingId(created.id);
 
       pushUndo({
@@ -826,7 +826,7 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ id: created.id }),
           });
-          setProviders((cur) => cur.filter((p) => p.id !== created.id));
+          setStaff((cur) => cur.filter((p) => p.id !== created.id));
         },
       });
     } finally {
@@ -847,7 +847,7 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
     return sortBy === key ? (sortAsc ? " ▲" : " ▼") : "";
   }
 
-  function sorted(list: Provider[]) {
+  function sorted(list: Staff[]) {
     return [...list].sort((a, b) => {
       if (sortBy === "ftePercentage") {
         if (a.isAutoScheduled !== b.isAutoScheduled) {
@@ -872,12 +872,12 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
     });
   }
 
-  const activeProviders = sorted(providers.filter((p) => p.isActive));
-  const inactiveProviders = sorted(providers.filter((p) => !p.isActive));
-  const scheduledCount = activeProviders.filter((p) => p.isAutoScheduled).length;
-  const unscheduledCount = activeProviders.filter((p) => !p.isAutoScheduled).length;
+  const activeStaff = sorted(staff.filter((p) => p.isActive));
+  const inactiveStaff = sorted(staff.filter((p) => !p.isActive));
+  const scheduledCount = activeStaff.filter((p) => p.isAutoScheduled).length;
+  const unscheduledCount = activeStaff.filter((p) => !p.isAutoScheduled).length;
 
-  const ep = editingProvider;
+  const ep = editingStaff;
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -886,22 +886,22 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
           <div>
             <h2 className="text-lg font-semibold text-slate-100">Staff Directory</h2>
             <p className="text-sm text-slate-400">
-              {activeProviders.length} active ({scheduledCount} auto-scheduled, {unscheduledCount} manual)
-              {inactiveProviders.length > 0 && `, ${inactiveProviders.length} inactive`}
+              {activeStaff.length} active ({scheduledCount} auto-scheduled, {unscheduledCount} manual)
+              {inactiveStaff.length > 0 && `, ${inactiveStaff.length} inactive`}
             </p>
           </div>
           <div className="flex gap-2">
-            {inactiveProviders.length > 0 && (
+            {inactiveStaff.length > 0 && (
               <button
                 onClick={() => setShowInactive(!showInactive)}
                 className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
               >
-                {showInactive ? "Hide" : "Show"} inactive ({inactiveProviders.length})
+                {showInactive ? "Hide" : "Show"} inactive ({inactiveStaff.length})
               </button>
             )}
             {canEdit && (
               <button
-                onClick={addProvider}
+                onClick={addStaff}
                 disabled={saving}
                 className="px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 rounded transition-colors font-medium"
               >
@@ -935,9 +935,9 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/50">
-                {activeProviders.map((p) => {
+                {activeStaff.map((p) => {
                   const hasAdv = p.availabilityRules.some(
-                    (r) => r.pattern !== "every" || r.strength !== "rule" || r.type !== "available" || r.conditionProviderId
+                    (r) => r.pattern !== "every" || r.strength !== "rule" || r.type !== "available" || r.conditionStaffId
                   );
                   return (
                     <tr
@@ -994,7 +994,7 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
                     </tr>
                   );
                 })}
-                {showInactive && inactiveProviders.map((p) => (
+                {showInactive && inactiveStaff.map((p) => (
                   <tr
                     key={p.id}
                     className={`hover:bg-slate-800/50 transition-colors opacity-50 ${canEdit ? "cursor-pointer" : ""}`}
@@ -1107,8 +1107,8 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
                 <AvailabilityEditor
                   rules={ep.availabilityRules}
                   onChange={(rules) => updateField(ep.id, "availabilityRules", rules)}
-                  allProviders={providers.filter((p) => p.isActive).map((p) => ({ id: p.id, initials: p.initials }))}
-                  currentProviderId={ep.id}
+                  allStaff={staff.filter((p) => p.isActive).map((p) => ({ id: p.id, initials: p.initials }))}
+                  currentStaffId={ep.id}
                 />
               </div>
             </div>
@@ -1116,7 +1116,7 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
             <div className="flex items-center justify-between px-6 py-4 border-t border-slate-700">
               {canEdit && (
                 <button
-                  onClick={() => deleteProvider(ep.id)}
+                  onClick={() => deleteStaff(ep.id)}
                   className="px-3 py-1.5 text-xs bg-red-900/50 hover:bg-red-800/50 text-red-400 border border-red-800/50 rounded transition-colors"
                 >
                   Delete
@@ -1131,7 +1131,7 @@ export function StaffPage({ canEdit, providers: initial, employmentTypes, allShi
                 </button>
                 {canEdit && (
                   <button
-                    onClick={() => saveProvider(ep)}
+                    onClick={() => saveStaff(ep)}
                     disabled={saving}
                     className="px-4 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 rounded transition-colors font-medium"
                   >

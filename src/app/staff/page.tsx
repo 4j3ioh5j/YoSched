@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic";
 export default async function Staff() {
   const { error, permissions } = await getSession("staff:view");
   if (error) redirect("/");
-  const [providers, employmentTypes, allShiftTypes] = await Promise.all([
-    prisma.provider.findMany({
+  const [staff, employmentTypes, allShiftTypes] = await Promise.all([
+    prisma.staff.findMany({
       orderBy: { sortOrder: "asc" },
       include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true },
     }),
@@ -27,7 +27,7 @@ export default async function Staff() {
 
       <StaffPage
         canEdit={permissions!.includes("staff:edit")}
-        providers={providers.map((p) => ({
+        staff={staff.map((p) => ({
           id: p.id,
           name: p.name,
           email: p.email,
@@ -42,7 +42,7 @@ export default async function Staff() {
             pattern: ar.pattern,
             cycleLength: ar.cycleLength,
             cycleOffset: ar.cycleOffset,
-            conditionProviderId: ar.conditionProviderId,
+            conditionStaffId: ar.conditionStaffId,
             conditionType: ar.conditionType,
           })),
           eligibleShiftTypeIds: p.eligibleShifts.map((es) => es.shiftTypeId),

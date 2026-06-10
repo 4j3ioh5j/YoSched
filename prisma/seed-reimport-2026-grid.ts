@@ -1,6 +1,6 @@
 /**
  * seed-reimport-2026-grid.ts — Phase 1 of the 2026 column-shift re-import.
- * Sets each Jan-Jul 2026 main-grid provider cell to the value from the printed
+ * Sets each Jan-Jul 2026 main-grid staff cell to the value from the printed
  * PDF (prisma/data/grid-2026-jan-jul.json, produced by parse-2026-pdf-grid.mjs
  * with monotonic column assignment — validated, zero collisions).
  *
@@ -11,7 +11,7 @@
  *  - Otherwise set the cell to the printed code (overwriting any value — auto,
  *    imported, OR a manual edit; the user wants historical reverted to print).
  *  - Create the cell if missing. Never deletes. Only touches Jan-Jul 2026 and
- *    only the provider columns present in the printed grid (OTHER/CARD = Phase 2).
+ *    only the staff columns present in the printed grid (OTHER/CARD = Phase 2).
  *
  * Idempotent. DRY_RUN=1 to preview. Run on the VM: pnpm tsx prisma/seed-reimport-2026-grid.ts
  */
@@ -35,8 +35,8 @@ async function main() {
     if (g.date < "2026-01-01" || g.date >= "2026-08-01") throw new Error(`out-of-scope date ${g.date}`);
   }
 
-  const providerMap = new Map<string, string>();
-  for (const p of await prisma.provider.findMany()) providerMap.set(p.initials, p.id);
+  const staffMap = new Map<string, string>();
+  for (const p of await prisma.staff.findMany()) staffMap.set(p.initials, p.id);
   const shiftMap = new Map<string, string>();
   const codeById = new Map<string, string>();
   let icuId = "";
@@ -46,12 +46,12 @@ async function main() {
   const changeLog: string[] = [];
 
   for (const { date: dateStr, initials, code } of GRID) {
-    const providerId = providerMap.get(initials);
+    const staffId = staffMap.get(initials);
     const shiftTypeId = shiftMap.get(code);
-    if (!providerId) { console.warn(`SKIP ${dateStr} ${initials}: provider not found`); skipped++; continue; }
+    if (!staffId) { console.warn(`SKIP ${dateStr} ${initials}: staff not found`); skipped++; continue; }
     if (!shiftTypeId) { console.warn(`SKIP ${dateStr} ${initials} ${code}: shift type not found`); skipped++; continue; }
     const date = new Date(dateStr + "T00:00:00Z");
-    const existing = await prisma.assignment.findFirst({ where: { providerId, date } });
+    const existing = await prisma.assignment.findFirst({ where: { staffId, date } });
 
     if (existing && existing.shiftTypeId === icuId) { preservedICU++; continue; }      // never clobber ICU
     if (existing && existing.shiftTypeId === shiftTypeId) { unchanged++; continue; }    // already correct
@@ -63,7 +63,7 @@ async function main() {
       if (was !== "X" && code !== "X") changeLog.push(`CHANGE ${dateStr} ${initials} ${was} -> ${code} (src ${existing.source})`);
       else changeLog.push(`change ${dateStr} ${initials} ${was} -> ${code} (src ${existing.source})`);
     } else {
-      if (!DRY_RUN) await prisma.assignment.create({ data: { providerId, date, shiftTypeId, source: "imported" } });
+      if (!DRY_RUN) await prisma.assignment.create({ data: { staffId, date, shiftTypeId, source: "imported" } });
       created++;
     }
   }

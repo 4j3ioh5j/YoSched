@@ -26,7 +26,7 @@ export type GraphDateRange =
 
 export type GraphStaffFilter = {
   all?: boolean;
-  /** explicit provider ids */
+  /** explicit staff ids */
   names?: string[];
   /** employment type name, e.g. "FTE" | "Fee Basis" */
   employmentType?: string | null;
@@ -46,7 +46,7 @@ export type GraphSpec = {
 };
 
 /**
- * Default spec — reproduces today's Statistics view: a raw, per-provider shift
+ * Default spec — reproduces today's Statistics view: a raw, per-staff shift
  * distribution bar chart across all staff and the full date range.
  */
 export const DEFAULT_SPEC: GraphSpec = {

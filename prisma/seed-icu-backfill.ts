@@ -2,7 +2,7 @@
  * seed-icu-backfill.ts — Restore ICU assignments dropped by the historical
  * imports. The source schedules (xlsx 2022-2025 + PDF 2026 Jan-Jul) record the
  * ICU duty in a dedicated "ICU" column; the importers only captured ICU when it
- * appeared in a provider's main-grid cell, so any day a provider covered ICU
+ * appeared in a staff's main-grid cell, so any day a staff covered ICU
  * without a main-grid column (DB, GL, ADh) — or only in the summary column — was
  * lost. Each pair below is the EXACT person named in that printed ICU column.
  *
@@ -28,7 +28,7 @@ const prisma = new PrismaClient({ adapter });
 
 const DRY_RUN = process.env.DRY_RUN === "1";
 
-// [date, provider initials] — exact person from the printed ICU column.
+// [date, staff initials] — exact person from the printed ICU column.
 const ICU_BACKFILL: [string, string][] = [
   ["2024-08-12", "ADh"],
   ["2025-02-28", "DB"],
@@ -100,8 +100,8 @@ const ICU_BACKFILL: [string, string][] = [
 async function main() {
   if (DRY_RUN) console.log("*** DRY RUN — no writes ***");
 
-  const providerMap = new Map<string, string>();
-  for (const p of await prisma.provider.findMany()) providerMap.set(p.initials, p.id);
+  const staffMap = new Map<string, string>();
+  for (const p of await prisma.staff.findMany()) staffMap.set(p.initials, p.id);
 
   const icu = await prisma.shiftType.findFirst({ where: { code: "ICU" } });
   if (!icu) throw new Error("ICU shift type not found");
@@ -116,14 +116,14 @@ async function main() {
   let inserted = 0, replacedX = 0, already = 0, skipped = 0;
 
   for (const [dateStr, initials] of ICU_BACKFILL) {
-    const providerId = providerMap.get(initials);
-    if (!providerId) { console.warn(`SKIP ${dateStr} ${initials}: provider not found`); skipped++; continue; }
+    const staffId = staffMap.get(initials);
+    if (!staffId) { console.warn(`SKIP ${dateStr} ${initials}: staff not found`); skipped++; continue; }
     const date = new Date(dateStr + "T00:00:00Z");
 
-    const existing = await prisma.assignment.findFirst({ where: { providerId, date } });
+    const existing = await prisma.assignment.findFirst({ where: { staffId, date } });
 
     if (!existing) {
-      if (!DRY_RUN) await prisma.assignment.create({ data: { providerId, date, shiftTypeId: icu.id, source: "imported" } });
+      if (!DRY_RUN) await prisma.assignment.create({ data: { staffId, date, shiftTypeId: icu.id, source: "imported" } });
       console.log(`INSERT  ${dateStr} ${initials} -> ICU`);
       inserted++;
     } else if (existing.shiftTypeId === icu.id) {

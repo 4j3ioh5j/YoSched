@@ -13,7 +13,7 @@ export async function PUT(req: NextRequest) {
   if (!email.ok) return NextResponse.json({ error: email.error }, { status: 400 });
 
   await prisma.$transaction(async (tx) => {
-    await tx.provider.update({
+    await tx.staff.update({
       where: { id },
       data: {
         name: data.name,
@@ -29,11 +29,11 @@ export async function PUT(req: NextRequest) {
     });
 
     if (Array.isArray(eligibleShiftTypeIds)) {
-      await tx.providerEligibleShift.deleteMany({ where: { providerId: id } });
+      await tx.staffEligibleShift.deleteMany({ where: { staffId: id } });
       if (eligibleShiftTypeIds.length > 0) {
-        await tx.providerEligibleShift.createMany({
+        await tx.staffEligibleShift.createMany({
           data: eligibleShiftTypeIds.map((stId: string) => ({
-            providerId: id,
+            staffId: id,
             shiftTypeId: stId,
           })),
         });
@@ -41,18 +41,18 @@ export async function PUT(req: NextRequest) {
     }
 
     if (Array.isArray(availabilityRules)) {
-      await tx.availabilityRule.deleteMany({ where: { providerId: id } });
+      await tx.availabilityRule.deleteMany({ where: { staffId: id } });
       if (availabilityRules.length > 0) {
         await tx.availabilityRule.createMany({
           data: availabilityRules.map((r: Record<string, unknown>) => ({
-            providerId: id,
+            staffId: id,
             dayOfWeek: r.dayOfWeek as number,
             type: (r.type as string) ?? "available",
             strength: (r.strength as string) ?? "rule",
             pattern: (r.pattern as string) ?? "every",
             cycleLength: r.cycleLength as number | undefined,
             cycleOffset: r.cycleOffset as number | undefined,
-            conditionProviderId: r.conditionProviderId as string | undefined,
+            conditionStaffId: r.conditionStaffId as string | undefined,
             conditionType: r.conditionType as string | undefined,
           })),
         });
@@ -60,11 +60,11 @@ export async function PUT(req: NextRequest) {
     }
 
     if (Array.isArray(shiftEligibilityRules)) {
-      await tx.shiftEligibilityRule.deleteMany({ where: { providerId: id } });
+      await tx.shiftEligibilityRule.deleteMany({ where: { staffId: id } });
       if (shiftEligibilityRules.length > 0) {
         await tx.shiftEligibilityRule.createMany({
           data: shiftEligibilityRules.map((r: Record<string, unknown>) => ({
-            providerId: id,
+            staffId: id,
             shiftTypeId: r.shiftTypeId as string,
             dayOfWeek: r.dayOfWeek as number,
             type: (r.type as string) ?? "eligible",
@@ -78,11 +78,11 @@ export async function PUT(req: NextRequest) {
     }
 
     if (Array.isArray(shiftMinimumTargets)) {
-      await tx.shiftMinimumTarget.deleteMany({ where: { providerId: id } });
+      await tx.shiftMinimumTarget.deleteMany({ where: { staffId: id } });
       if (shiftMinimumTargets.length > 0) {
         await tx.shiftMinimumTarget.createMany({
           data: shiftMinimumTargets.map((t: Record<string, unknown>) => ({
-            providerId: id,
+            staffId: id,
             shiftTypeId: t.shiftTypeId as string,
             minCount: t.minCount as number,
             maxCount: (t.maxCount as number | null) ?? null,
@@ -94,7 +94,7 @@ export async function PUT(req: NextRequest) {
     }
   });
 
-  const result = await prisma.provider.findUnique({
+  const result = await prisma.staff.findUnique({
     where: { id },
     include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true },
   });
@@ -119,8 +119,8 @@ export async function POST(req: NextRequest) {
     employmentTypeId = defaultType!.id;
   }
 
-  const maxSort = await prisma.provider.aggregate({ _max: { sortOrder: true } });
-  const created = await prisma.provider.create({
+  const maxSort = await prisma.staff.aggregate({ _max: { sortOrder: true } });
+  const created = await prisma.staff.create({
     data: {
       name: data.name,
       email: email.value,
@@ -140,9 +140,9 @@ export async function POST(req: NextRequest) {
     prisma.employmentTypeDefaultAvailability.findMany({ where: { employmentTypeId } }),
   ]);
   if (defaultShifts.length > 0) {
-    await prisma.providerEligibleShift.createMany({
+    await prisma.staffEligibleShift.createMany({
       data: defaultShifts.map((ds) => ({
-        providerId: created.id,
+        staffId: created.id,
         shiftTypeId: ds.shiftTypeId,
       })),
     });
@@ -150,7 +150,7 @@ export async function POST(req: NextRequest) {
   if (defaultAvailability.length > 0) {
     await prisma.availabilityRule.createMany({
       data: defaultAvailability.map((da) => ({
-        providerId: created.id,
+        staffId: created.id,
         dayOfWeek: da.dayOfWeek,
         type: da.type,
         strength: da.strength,
@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const result = await prisma.provider.findUnique({
+  const result = await prisma.staff.findUnique({
     where: { id: created.id },
     include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true },
   });
@@ -173,12 +173,12 @@ export async function DELETE(req: NextRequest) {
   const { id } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  const assignmentCount = await prisma.assignment.count({ where: { providerId: id } });
+  const assignmentCount = await prisma.assignment.count({ where: { staffId: id } });
   if (assignmentCount > 0) {
-    await prisma.provider.update({ where: { id }, data: { isActive: false } });
+    await prisma.staff.update({ where: { id }, data: { isActive: false } });
     return NextResponse.json({ ok: true, deactivated: true });
   }
 
-  await prisma.provider.delete({ where: { id } });
+  await prisma.staff.delete({ where: { id } });
   return NextResponse.json({ ok: true, deleted: true });
 }

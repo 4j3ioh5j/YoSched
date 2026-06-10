@@ -28,7 +28,7 @@ type AvailabilityRuleData = {
   pattern: string;
 };
 
-type Provider = {
+type Staff = {
   id: string;
   initials: string;
   ftePercentage: number;
@@ -84,29 +84,29 @@ function getDayType(dateStr: string, holidaySet: Set<string>): string {
 }
 
 export function checkCellWarnings({
-  providerId,
+  staffId,
   date,
   shiftTypeId,
-  provider,
+  staff,
   shiftTypeMap,
   assignmentMap,
-  providers,
+  allStaff,
   holidaySet,
   staffingMins,
   followRuleMap,
   scheduleRequests,
 }: {
-  providerId: string;
+  staffId: string;
   date: string;
   shiftTypeId: string | null;
-  provider: Provider;
+  staff: Staff;
   shiftTypeMap: Map<string, ShiftType>;
   assignmentMap: AssignmentLookup;
-  providers: Provider[];
+  allStaff: Staff[];
   holidaySet: Set<string>;
   staffingMins: StaffingMinimum[];
   followRuleMap?: FollowRuleMap;
-  scheduleRequests?: ScheduleRequestData[]; // approved requests for this provider (optional)
+  scheduleRequests?: ScheduleRequestData[]; // approved requests for this staff (optional)
 }): Warning[] {
   const warnings: Warning[] = [];
   if (!shiftTypeId) return warnings;
@@ -117,25 +117,25 @@ export function checkCellWarnings({
   const dow = parseDate(date).getDay();
 
   // Non-working day
-  const hasWorkRule = provider.availabilityRules.some(
+  const hasWorkRule = staff.availabilityRules.some(
     (r) => r.dayOfWeek === dow && r.type === "available" && r.strength === "rule"
   );
   if (!hasWorkRule && !st.isOffShift && !st.ignoresWorkingDays) {
     warnings.push({
       type: "non-working-day",
-      message: `${provider.initials} doesn't normally work on ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dow]}s`,
+      message: `${staff.initials} doesn't normally work on ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dow]}s`,
     });
   }
 
   // Follow rules: check if PREVIOUS day's shift restricts what can follow
   const prevDate = prevDateStr(date);
-  const prevAssignment = assignmentMap.get(`${providerId}:${prevDate}`);
+  const prevAssignment = assignmentMap.get(`${staffId}:${prevDate}`);
   if (prevAssignment && followRuleMap) {
     const prevSt = shiftTypeMap.get(prevAssignment.shiftTypeId);
     if (prevSt && !isShiftAllowedAfter(followRuleMap, prevAssignment.shiftTypeId, shiftTypeId!, st.isOffShift)) {
       warnings.push({
         type: "post-shift",
-        message: `${st.code} cannot follow ${prevSt.code} — ${provider.initials} had ${prevSt.code} yesterday`,
+        message: `${st.code} cannot follow ${prevSt.code} — ${staff.initials} had ${prevSt.code} yesterday`,
       });
     }
   }
@@ -143,13 +143,13 @@ export function checkCellWarnings({
   // Follow rules: check if THIS shift restricts what can follow and NEXT day violates it
   if (followRuleMap?.has(shiftTypeId!)) {
     const nextDate = nextDateStr(date);
-    const nextAssignment = assignmentMap.get(`${providerId}:${nextDate}`);
+    const nextAssignment = assignmentMap.get(`${staffId}:${nextDate}`);
     if (nextAssignment) {
       const nextSt = shiftTypeMap.get(nextAssignment.shiftTypeId);
       if (nextSt && !isShiftAllowedAfter(followRuleMap, shiftTypeId!, nextAssignment.shiftTypeId, nextSt.isOffShift)) {
         warnings.push({
           type: "post-shift",
-          message: `${nextSt.code} cannot follow ${st.code} — ${provider.initials} has ${nextSt.code} tomorrow`,
+          message: `${nextSt.code} cannot follow ${st.code} — ${staff.initials} has ${nextSt.code} tomorrow`,
         });
       }
     }
@@ -160,7 +160,7 @@ export function checkCellWarnings({
   if (scheduleRequests && scheduleRequests.length > 0) {
     const conflicts = checkRequestConflict({
       requests: scheduleRequests,
-      providerId,
+      staffId,
       date,
       assignedShiftTypeId: shiftTypeId,
       isOffShift: st.isOffShift,
@@ -176,7 +176,7 @@ export function checkCellWarnings({
 
 export function checkDayStaffing({
   date,
-  providers,
+  staff,
   assignmentMap,
   shiftTypeMap,
   holidaySet,
@@ -184,7 +184,7 @@ export function checkDayStaffing({
   staffingReqs,
 }: {
   date: string;
-  providers: Provider[];
+  staff: Staff[];
   assignmentMap: AssignmentLookup;
   shiftTypeMap: Map<string, ShiftType>;
   holidaySet: Set<string>;
@@ -203,7 +203,7 @@ export function checkDayStaffing({
     const dayKey = holidaySet.has(date) ? "holiday" : String(dow);
 
     const shiftCounts = new Map<string, number>();
-    for (const p of providers) {
+    for (const p of staff) {
       const a = assignmentMap.get(`${p.id}:${date}`);
       if (a && !isOff(a)) {
         shiftCounts.set(a.code, (shiftCounts.get(a.code) || 0) + 1);
@@ -227,7 +227,7 @@ export function checkDayStaffing({
   for (const min of staffingMins) {
     if (min.dayType !== dayType) continue;
     let staffed = 0;
-    for (const p of providers) {
+    for (const p of staff) {
       const a = assignmentMap.get(`${p.id}:${date}`);
       if (a && !isOff(a)) staffed++;
     }
@@ -242,24 +242,24 @@ export function checkDayStaffing({
   return warnings;
 }
 
-export function checkProviderPPHours({
-  providerId,
-  provider,
+export function checkStaffPPHours({
+  staffId,
+  staff,
   pp,
   currentHours,
 }: {
-  providerId: string;
-  provider: Provider;
+  staffId: string;
+  staff: Staff;
   pp: PayPeriod | null;
   currentHours: number;
 }): Warning | null {
   if (!pp) return null;
-  const target = pp.targetHours * provider.ftePercentage;
+  const target = pp.targetHours * staff.ftePercentage;
   if (target <= 0) return null;
   if (currentHours > target * 1.05) {
     return {
       type: "over-hours",
-      message: `${provider.initials}: ${currentHours}/${target}hrs this pay period`,
+      message: `${staff.initials}: ${currentHours}/${target}hrs this pay period`,
     };
   }
   return null;

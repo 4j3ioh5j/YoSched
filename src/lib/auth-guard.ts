@@ -26,7 +26,7 @@ type SessionOk = {
   permissions: string[];
   groupLevel: number;
   groupName: string;
-  providerId: string | null; // linked Provider record, if any (self-service requests)
+  staffId: string | null; // linked Staff record, if any (self-service requests)
 };
 
 type SessionErr = {
@@ -36,7 +36,7 @@ type SessionErr = {
   permissions?: undefined;
   groupLevel?: undefined;
   groupName?: undefined;
-  providerId?: undefined;
+  staffId?: undefined;
 };
 
 type SessionResult = SessionOk | SessionErr;
@@ -49,7 +49,7 @@ export async function getSession(required?: Permission | Permission[]): Promise<
 
   const dbUser = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { role: true, isActive: true, groupId: true, providerId: true, group: { select: { permissions: true, level: true, name: true } } },
+    select: { role: true, isActive: true, groupId: true, staffId: true, group: { select: { permissions: true, level: true, name: true } } },
   });
 
   if (!dbUser || !dbUser.isActive) {
@@ -93,7 +93,7 @@ export async function getSession(required?: Permission | Permission[]): Promise<
 
   const user = session.user!;
   (user as { role: string }).role = dbUser.role as string;
-  return { error: null, session: { user: user as { id: string; role?: string } }, userId: user.id!, permissions, groupLevel, groupName, providerId: dbUser.providerId };
+  return { error: null, session: { user: user as { id: string; role?: string } }, userId: user.id!, permissions, groupLevel, groupName, staffId: dbUser.staffId };
 }
 
 // --- Legacy functions (kept during migration, removed in phase 3) ---

@@ -4,7 +4,7 @@ import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter, isRecovery
 import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
 import { foldRequestsForDate, type ScheduleRequestData, type FoldedRequests } from "./schedule-requests";
 
-export type ScheduleProvider = {
+export type ScheduleStaff = {
   id: string;
   initials: string;
   ftePercentage: number;
@@ -38,7 +38,7 @@ export type ScheduleShiftType = {
 };
 
 export type ScheduleAssignment = {
-  providerId: string;
+  staffId: string;
   date: string;
   shiftTypeId: string;
   code: string;
@@ -60,20 +60,20 @@ type DesirabilityWeight = {
 };
 
 type StandingCommitment = {
-  providerId: string;
+  staffId: string;
   shiftTypeId: string;
   dayOfWeek: number | null;
   frequency: string;
 };
 
-type ProviderOverride = {
-  providerId: string;
+type StaffOverride = {
+  staffId: string;
   shiftTypeId: string;
   durationHrs: number;
 };
 
 type DayPreference = {
-  providerId: string;
+  staffId: string;
   dayOfWeek: number;
   preference: string;
 };
@@ -94,7 +94,7 @@ type SchedulingPreferences = {
 };
 
 export type Suggestion = {
-  providerId: string;
+  staffId: string;
   date: string;
   shiftTypeId: string;
   code: string;
@@ -129,11 +129,11 @@ function isWeekend(dateStr: string): boolean {
 }
 
 function getShiftHours(
-  providerId: string,
+  staffId: string,
   shiftType: ScheduleShiftType,
   overrides: Map<string, number>
 ): number {
-  const key = `${providerId}:${shiftType.id}`;
+  const key = `${staffId}:${shiftType.id}`;
   return overrides.get(key) ?? shiftType.defaultHours;
 }
 
@@ -166,7 +166,7 @@ export function daysBetween(a: string, b: string): number {
 
 // Find the combination of `count` dates from `candidates` that maximizes
 // the minimum gap between any two selected dates (and optionally existing
-// anchor dates like previously-assigned ORC shifts for the same provider).
+// anchor dates like previously-assigned ORC shifts for the same staff).
 export function bestSpread(
   candidates: string[],
   count: number,
@@ -225,14 +225,14 @@ export function bestSpread(
 
 export function autoSchedule({
   dates,
-  providers,
+  staff,
   shiftTypes,
   existingAssignments,
   payPeriods,
   holidays,
   desirabilityWeights,
   standingCommitments,
-  providerOverrides,
+  staffOverrides,
   dayPreferences,
   historicalAssignments,
   staffingRequirements,
@@ -242,14 +242,14 @@ export function autoSchedule({
   scheduleRequests,
 }: {
   dates: string[];
-  providers: ScheduleProvider[];
+  staff: ScheduleStaff[];
   shiftTypes: ScheduleShiftType[];
   existingAssignments: ScheduleAssignment[];
   payPeriods: PayPeriod[];
   holidays: Holiday[];
   desirabilityWeights: DesirabilityWeight[];
   standingCommitments: StandingCommitment[];
-  providerOverrides: ProviderOverride[];
+  staffOverrides: StaffOverride[];
   dayPreferences: DayPreference[];
   historicalAssignments: ScheduleAssignment[];
   staffingRequirements: StaffingRequirement[];
@@ -275,16 +275,16 @@ export function autoSchedule({
 
   const offShift = shiftTypes.find((st) => st.isOffShift);
 
-  // Approved schedule requests, folded per (provider, date) on demand and cached.
+  // Approved schedule requests, folded per (staff, date) on demand and cached.
   // foldRequestsForDate already ignores non-approved requests, so only approved
   // ones exert scheduling force here. Empty list ⇒ the gates below are no-ops.
   const requestList = scheduleRequests ?? [];
   const foldCache = new Map<string, FoldedRequests>();
-  function foldFor(providerId: string, date: string): FoldedRequests {
-    const key = `${providerId}:${date}`;
+  function foldFor(staffId: string, date: string): FoldedRequests {
+    const key = `${staffId}:${date}`;
     let folded = foldCache.get(key);
     if (!folded) {
-      folded = foldRequestsForDate(requestList, providerId, date);
+      folded = foldRequestsForDate(requestList, staffId, date);
       foldCache.set(key, folded);
     }
     return folded;
@@ -292,20 +292,20 @@ export function autoSchedule({
 
   // A working shift is anything that isn't an off-shift or a leave shift. A hard
   // OFF request forbids working shifts but still allows OFF / leave placement.
-  function requestBlocksWork(providerId: string, date: string, st: ScheduleShiftType): boolean {
+  function requestBlocksWork(staffId: string, date: string, st: ScheduleShiftType): boolean {
     if (requestList.length === 0) return false;
-    const folded = foldFor(providerId, date);
+    const folded = foldFor(staffId, date);
     if (folded.forbidWorking && !st.isOffShift && !st.isLeave) return true;
     if (folded.forbiddenShiftIds.has(st.id)) return true;
     return false;
   }
 
-  // Soft request bias for placing `st` on `date`: positive = prefer this provider,
+  // Soft request bias for placing `st` on `date`: positive = prefer this staff,
   // negative = prefer to spare them. Used only as a tiebreak below hard staffing
   // need, so soft requests advise without overriding fairness/coverage.
-  function requestBias(providerId: string, date: string, st: ScheduleShiftType): number {
+  function requestBias(staffId: string, date: string, st: ScheduleShiftType): number {
     if (requestList.length === 0) return 0;
-    const folded = foldFor(providerId, date);
+    const folded = foldFor(staffId, date);
     let bias = 0;
     if (folded.preferredShiftIds.has(st.id)) bias += 1;
     if (folded.avoidedShiftIds.has(st.id)) bias -= 1;
@@ -314,20 +314,20 @@ export function autoSchedule({
   }
 
   const overrideMap = new Map<string, number>();
-  for (const o of providerOverrides) {
-    overrideMap.set(`${o.providerId}:${o.shiftTypeId}`, o.durationHrs);
+  for (const o of staffOverrides) {
+    overrideMap.set(`${o.staffId}:${o.shiftTypeId}`, o.durationHrs);
   }
 
   const grid = new Map<string, { shiftTypeId: string; code: string; locked: boolean }>();
   for (const a of existingAssignments) {
-    grid.set(`${a.providerId}:${a.date}`, {
+    grid.set(`${a.staffId}:${a.date}`, {
       shiftTypeId: a.shiftTypeId,
       code: a.code,
       locked: a.isLocked,
     });
   }
 
-  const activeProviders = providers.filter(
+  const activeStaff = staff.filter(
     (p) => p.isActive && p.isAutoScheduled
   );
 
@@ -338,7 +338,7 @@ export function autoSchedule({
 
   const prefMap = new Map<string, string>();
   for (const dp of dayPreferences) {
-    prefMap.set(`${dp.providerId}:${dp.dayOfWeek}`, dp.preference);
+    prefMap.set(`${dp.staffId}:${dp.dayOfWeek}`, dp.preference);
   }
 
   // Build staffing requirements lookup: shiftCode → Map<dayKey, minCount>
@@ -355,7 +355,7 @@ export function autoSchedule({
 
   const fairness = computeFairness({
     assignments: [...historicalAssignments, ...existingAssignments].map((a) => ({
-      providerId: a.providerId,
+      staffId: a.staffId,
       date: a.date,
       shiftType: (() => {
         const st = stById.get(a.shiftTypeId);
@@ -369,7 +369,7 @@ export function autoSchedule({
         };
       })(),
     })),
-    providers: providers.map((p) => ({
+    staff: staff.map((p) => ({
       id: p.id,
       initials: p.initials,
       ftePercentage: p.ftePercentage,
@@ -382,67 +382,67 @@ export function autoSchedule({
     equityFactors,
   });
 
-  function getCell(providerId: string, date: string) {
-    const cell = grid.get(`${providerId}:${date}`);
+  function getCell(staffId: string, date: string) {
+    const cell = grid.get(`${staffId}:${date}`);
     if (cell && offShift && cell.shiftTypeId === offShift.id && !cell.locked) return undefined;
     return cell;
   }
 
-  function isAssigned(providerId: string, date: string): boolean {
-    const cell = grid.get(`${providerId}:${date}`);
+  function isAssigned(staffId: string, date: string): boolean {
+    const cell = grid.get(`${staffId}:${date}`);
     if (!cell) return false;
     if (offShift && cell.shiftTypeId === offShift.id && !cell.locked) return false;
     return true;
   }
 
-  function isAvailable(provider: ScheduleProvider, date: string, st: ScheduleShiftType): boolean {
-    if (isAssigned(provider.id, date)) return false;
+  function isAvailable(staff: ScheduleStaff, date: string, st: ScheduleShiftType): boolean {
+    if (isAssigned(staff.id, date)) return false;
     // Approved hard requests (OFF / NEGATE_SHIFT) gate every placement that flows
     // through isAvailable (staffing fills, minimum targets, FTE fill shift).
-    if (requestBlocksWork(provider.id, date, st)) return false;
-    if (provider.shiftEligibilityRules && provider.shiftEligibilityRules.length > 0) {
+    if (requestBlocksWork(staff.id, date, st)) return false;
+    if (staff.shiftEligibilityRules && staff.shiftEligibilityRules.length > 0) {
       const eligResult = evaluateShiftEligibility(
-        provider.shiftEligibilityRules, st.id, date,
+        staff.shiftEligibilityRules, st.id, date,
         payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
       );
       if (eligResult !== null && !eligResult.eligible && !(eligResult.weight < 0 && eligResult.weight > -10)) return false;
     }
     if (!st.ignoresWorkingDays) {
       const avail = evaluateAvailability(
-        provider.availabilityRules, date, payPeriods,
+        staff.availabilityRules, date, payPeriods,
         (pid, d) => isAssigned(pid, d)
       );
       if (!avail.available) return false;
     }
-    const prev = getCell(provider.id, prevDate(date));
+    const prev = getCell(staff.id, prevDate(date));
     if (prev) {
       const prevSt = stById.get(prev.shiftTypeId);
       if (prevSt && !isShiftAllowedAfter(followMap, prev.shiftTypeId, st.id, st.isOffShift)) return false;
     }
-    const next = getCell(provider.id, nextDate(date));
+    const next = getCell(staff.id, nextDate(date));
     if (next) {
       const nextSt = stById.get(next.shiftTypeId);
       if (nextSt && !isShiftAllowedAfter(followMap, st.id, next.shiftTypeId, nextSt.isOffShift)) return false;
     }
     if (st.maxPerDay != null && countAssigned(st.code, date) >= st.maxPerDay) return false;
-    if (isAtMaximum(provider, st, date)) return false;
+    if (isAtMaximum(staff, st, date)) return false;
     return true;
   }
 
   function assign(
-    providerId: string,
+    staffId: string,
     date: string,
     shiftType: ScheduleShiftType,
     reason: string,
     step: string,
     confidence: number
   ) {
-    const key = `${providerId}:${date}`;
+    const key = `${staffId}:${date}`;
     const existing = grid.get(key);
     if (existing && !(offShift && existing.shiftTypeId === offShift.id && !existing.locked)) return;
     grid.set(key, { shiftTypeId: shiftType.id, code: shiftType.code, locked: false });
     suggestions.push({
-      providerId,
+      staffId,
       date,
       shiftTypeId: shiftType.id,
       code: shiftType.code,
@@ -453,19 +453,19 @@ export function autoSchedule({
     byStep[step] = (byStep[step] || 0) + 1;
   }
 
-  function ppHoursForProvider(providerId: string, pp: PayPeriod): number {
+  function ppHoursForStaff(staffId: string, pp: PayPeriod): number {
     let hours = 0;
     const cur = new Date(pp.startDate + "T12:00:00");
     const end = new Date(pp.endDate + "T12:00:00");
     while (cur <= end) {
       const d = toDateStr(cur);
-      const cell = getCell(providerId, d);
+      const cell = getCell(staffId, d);
       if (cell) {
         const st = stById.get(cell.shiftTypeId);
         if (st?.countsTowardFte) {
           const isWknd = isWeekend(d);
           if (!isWknd || st.countsOnWeekend) {
-            hours += getShiftHours(providerId, st, overrideMap);
+            hours += getShiftHours(staffId, st, overrideMap);
           }
         }
       }
@@ -474,8 +474,8 @@ export function autoSchedule({
     return hours;
   }
 
-  function fairnessScore(providerId: string): number {
-    return fairness.deviations.get(providerId)?.overall ?? 0;
+  function fairnessScore(staffId: string): number {
+    return fairness.deviations.get(staffId)?.overall ?? 0;
   }
 
   function sortByFairness(pIds: string[]): string[] {
@@ -483,12 +483,12 @@ export function autoSchedule({
   }
 
   const eligibleShiftSets = new Map<string, Set<string>>();
-  for (const p of providers) {
+  for (const p of staff) {
     eligibleShiftSets.set(p.id, new Set(p.eligibleShiftTypeIds));
   }
 
-  function eligibleProviders(st: ScheduleShiftType, date?: string): ScheduleProvider[] {
-    return activeProviders.filter((p) => {
+  function eligibleStaff(st: ScheduleShiftType, date?: string): ScheduleStaff[] {
+    return activeStaff.filter((p) => {
       if (date && p.shiftEligibilityRules && p.shiftEligibilityRules.length > 0) {
         const result = evaluateShiftEligibility(
           p.shiftEligibilityRules, st.id, date,
@@ -500,9 +500,9 @@ export function autoSchedule({
     });
   }
 
-  function getMinimumDeficit(provider: ScheduleProvider, st: ScheduleShiftType, date: string): number {
-    if (!provider.shiftMinimumTargets || provider.shiftMinimumTargets.length === 0) return 0;
-    const targets = provider.shiftMinimumTargets.filter((t) => t.shiftTypeId === st.id);
+  function getMinimumDeficit(staff: ScheduleStaff, st: ScheduleShiftType, date: string): number {
+    if (!staff.shiftMinimumTargets || staff.shiftMinimumTargets.length === 0) return 0;
+    const targets = staff.shiftMinimumTargets.filter((t) => t.shiftTypeId === st.id);
     if (targets.length === 0) return 0;
 
     let maxDeficit = 0;
@@ -515,7 +515,7 @@ export function autoSchedule({
 
       const assigned: string[] = [];
       for (const [k, v] of grid.entries()) {
-        if (k.startsWith(provider.id + ":") && v.code === st.code) {
+        if (k.startsWith(staff.id + ":") && v.code === st.code) {
           const d = k.split(":")[1];
           if (d >= bounds.start && d <= bounds.end) assigned.push(d);
         }
@@ -526,9 +526,9 @@ export function autoSchedule({
     return maxDeficit;
   }
 
-  function isAtMaximum(provider: ScheduleProvider, st: ScheduleShiftType, date: string): boolean {
-    if (!provider.shiftMinimumTargets || provider.shiftMinimumTargets.length === 0) return false;
-    const targets = provider.shiftMinimumTargets.filter((t) => t.shiftTypeId === st.id && t.maxCount != null);
+  function isAtMaximum(staff: ScheduleStaff, st: ScheduleShiftType, date: string): boolean {
+    if (!staff.shiftMinimumTargets || staff.shiftMinimumTargets.length === 0) return false;
+    const targets = staff.shiftMinimumTargets.filter((t) => t.shiftTypeId === st.id && t.maxCount != null);
     if (targets.length === 0) return false;
 
     for (const target of targets) {
@@ -540,7 +540,7 @@ export function autoSchedule({
 
       let count = 0;
       for (const [k, v] of grid.entries()) {
-        if (k.startsWith(provider.id + ":") && v.code === st.code) {
+        if (k.startsWith(staff.id + ":") && v.code === st.code) {
           const d = k.split(":")[1];
           if (d >= bounds.start && d <= bounds.end) count++;
         }
@@ -572,7 +572,7 @@ export function autoSchedule({
     return null;
   }
 
-  function wouldBreakPPHours(providerId: string, date: string, st: ScheduleShiftType): boolean {
+  function wouldBreakPPHours(staffId: string, date: string, st: ScheduleShiftType): boolean {
     const hasRecoveryCost = isRecoveryOnly(followMap, st.id);
     if (!st.countsTowardFte && !hasRecoveryCost) return false;
 
@@ -580,22 +580,22 @@ export function autoSchedule({
     const recoveryPP = recoveryDate ? findPPForDate(recoveryDate) : null;
     const pp = st.countsTowardFte ? findPPForDate(date) : recoveryPP;
     if (!pp || !fillShift) return false;
-    const provider = activeProviders.find((p) => p.id === providerId);
-    if (!provider) return false;
-    const target = pp.targetHours * provider.ftePercentage;
+    const staff = activeStaff.find((p) => p.id === staffId);
+    if (!staff) return false;
+    const target = pp.targetHours * staff.ftePercentage;
     if (target <= 0) return false;
 
-    const addHours = st.countsTowardFte ? getShiftHours(providerId, st, overrideMap) : 0;
-    const current = ppHoursForProvider(providerId, pp);
+    const addHours = st.countsTowardFte ? getShiftHours(staffId, st, overrideMap) : 0;
+    const current = ppHoursForStaff(staffId, pp);
     if (st.countsTowardFte && current + addHours > target) return true;
 
-    const fillHrs = getShiftHours(providerId, fillShift, overrideMap);
+    const fillHrs = getShiftHours(staffId, fillShift, overrideMap);
     let availDays = 0;
     const cur = new Date(pp.startDate + "T12:00:00");
     const end = new Date(pp.endDate + "T12:00:00");
     while (cur <= end) {
       const d = toDateStr(cur);
-      if (isAvailable(provider, d, fillShift)) {
+      if (isAvailable(staff, d, fillShift)) {
         availDays++;
       }
       cur.setDate(cur.getDate() + 1);
@@ -619,50 +619,50 @@ export function autoSchedule({
   // An approved hard LEAVE request pre-places its specific leave shift, exactly
   // like an approved absence. It only fills empty / unlocked-off cells (assign()
   // never overwrites a real assignment) and bypasses working-day availability
-  // because approved leave is authoritative. Placing it first marks the provider
+  // because approved leave is authoritative. Placing it first marks the staff
   // assigned, so later steps won't schedule work over the leave.
   if (requestList.length > 0) {
-    for (const provider of activeProviders) {
+    for (const staff of activeStaff) {
       for (const date of dates) {
-        if (isAssigned(provider.id, date)) continue;
-        const leaveShiftId = foldFor(provider.id, date).leaveShiftTypeId;
+        if (isAssigned(staff.id, date)) continue;
+        const leaveShiftId = foldFor(staff.id, date).leaveShiftTypeId;
         if (!leaveShiftId) continue;
         const leaveSt = stById.get(leaveShiftId);
         if (!leaveSt) {
-          warnings.push(`${provider.initials}: approved leave on ${date} references an unknown shift type`);
+          warnings.push(`${staff.initials}: approved leave on ${date} references an unknown shift type`);
           continue;
         }
-        assign(provider.id, date, leaveSt, `Approved leave request: ${leaveSt.code}`, "request-leave", 1.0);
+        assign(staff.id, date, leaveSt, `Approved leave request: ${leaveSt.code}`, "request-leave", 1.0);
       }
     }
   }
 
   // ── STEP 0b: Honor approved hard REQUEST_SHIFT ("wants this shift") ──
-  // Pre-place one of the requested shifts when the provider is eligible for it and
+  // Pre-place one of the requested shifts when the staff is eligible for it and
   // the placement is otherwise legal (availability / follow rules / per-day & max
   // caps are all enforced by isAvailable). Runs before standing commitments and
   // staffing fills so an explicit "I want to work X" wins, and counts toward that
   // shift's staffing so later steps fill only the remainder. Warns when a request
   // can't be honored (ineligible, capped, or no legal slot).
   if (requestList.length > 0) {
-    for (const provider of activeProviders) {
-      const eligSet = eligibleShiftSets.get(provider.id);
+    for (const staff of activeStaff) {
+      const eligSet = eligibleShiftSets.get(staff.id);
       for (const date of dates) {
-        if (isAssigned(provider.id, date)) continue;
-        const forced = foldFor(provider.id, date).forcedShiftIds;
+        if (isAssigned(staff.id, date)) continue;
+        const forced = foldFor(staff.id, date).forcedShiftIds;
         if (forced.size === 0) continue;
         let placed = false;
         // Sorted for deterministic choice when several shifts are requested.
         for (const wantedId of [...forced].sort()) {
           const st = stById.get(wantedId);
           if (!st || !eligSet?.has(st.id)) continue;
-          if (!isAvailable(provider, date, st)) continue;
-          assign(provider.id, date, st, `Approved shift request: ${st.code}`, "request-shift", 1.0);
+          if (!isAvailable(staff, date, st)) continue;
+          assign(staff.id, date, st, `Approved shift request: ${st.code}`, "request-shift", 1.0);
           placed = true;
           break;
         }
         if (!placed) {
-          warnings.push(`${provider.initials}: could not honor approved shift request on ${date} (ineligible or no legal slot)`);
+          warnings.push(`${staff.initials}: could not honor approved shift request on ${date} (ineligible or no legal slot)`);
         }
       }
     }
@@ -672,37 +672,37 @@ export function autoSchedule({
   for (const sc of standingCommitments) {
     const st = stById.get(sc.shiftTypeId);
     if (!st || !st.autoSchedulable) continue;
-    const provider = providers.find((p) => p.id === sc.providerId);
-    if (!provider?.isActive) continue;
+    const member = staff.find((p) => p.id === sc.staffId);
+    if (!member?.isActive) continue;
 
     for (const date of dates) {
-      if (isAssigned(sc.providerId, date)) continue;
+      if (isAssigned(sc.staffId, date)) continue;
       const dow = getDow(date);
 
       if (sc.dayOfWeek !== null && sc.dayOfWeek !== dow) continue;
       if (sc.frequency === "weekly" || sc.dayOfWeek === null) {
         const avail = evaluateAvailability(
-          provider.availabilityRules, date, payPeriods,
+          member.availabilityRules, date, payPeriods,
           (pid, d) => isAssigned(pid, d)
         );
         if (!avail.available) continue;
         if (holidaySet.has(date)) continue;
 
-        if (provider.shiftEligibilityRules && provider.shiftEligibilityRules.length > 0) {
+        if (member.shiftEligibilityRules && member.shiftEligibilityRules.length > 0) {
           const eligResult = evaluateShiftEligibility(
-            provider.shiftEligibilityRules, st.id, date,
+            member.shiftEligibilityRules, st.id, date,
             payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
           );
           if (eligResult !== null && !eligResult.eligible && !(eligResult.weight < 0 && eligResult.weight > -10)) continue;
         }
 
-        if (isAtMaximum(provider, st, date)) continue;
+        if (isAtMaximum(member, st, date)) continue;
         // An approved hard OFF / NEGATE_SHIFT request overrides a standing
         // commitment (this path doesn't flow through isAvailable).
-        if (requestBlocksWork(sc.providerId, date, st)) continue;
+        if (requestBlocksWork(sc.staffId, date, st)) continue;
 
         assign(
-          sc.providerId,
+          sc.staffId,
           date,
           st,
           `Standing commitment: ${st.code}`,
@@ -715,9 +715,9 @@ export function autoSchedule({
 
   // ── STEP 2: Fill staffing requirements (even distribution + equity tiebreak) ──
   //
-  // For each shift type, distribute assignments evenly across eligible providers
+  // For each shift type, distribute assignments evenly across eligible staff
   // within this scheduling run. Historical per-shift equity only breaks ties when
-  // multiple providers have the same count — it never causes one person to absorb
+  // multiple staff have the same count — it never causes one person to absorb
   // all the burden just because they're historically underloaded.
   //
   // Sort priority: fewest-in-this-run → longest-gap-since-last → fewest-historical
@@ -728,15 +728,15 @@ export function autoSchedule({
 
   const historicalShiftCounts = new Map<string, Record<string, number>>();
   for (const m of fairness.metrics) {
-    historicalShiftCounts.set(m.providerId, m.shiftCounts);
+    historicalShiftCounts.set(m.staffId, m.shiftCounts);
   }
 
-  function historicalCount(providerId: string, shiftCode: string): number {
-    return historicalShiftCounts.get(providerId)?.[shiftCode] ?? 0;
+  function historicalCount(staffId: string, shiftCode: string): number {
+    return historicalShiftCounts.get(staffId)?.[shiftCode] ?? 0;
   }
 
   for (const st of scheduledShifts) {
-    const eligible = eligibleProviders(st);
+    const eligible = eligibleStaff(st);
     const stepName = st.code.toLowerCase();
 
     // Per-shift tracking for even distribution within this run
@@ -744,14 +744,14 @@ export function autoSchedule({
     const lastRunDate = new Map<string, string>();
     for (const p of eligible) runCount.set(p.id, 0);
 
-    function pickProvider(pool: ScheduleProvider[], date?: string): ScheduleProvider {
+    function pickStaff(pool: ScheduleStaff[], date?: string): ScheduleStaff {
       pool.sort((a, b) => {
         if (date) {
           const defA = getMinimumDeficit(a, st, date);
           const defB = getMinimumDeficit(b, st, date);
           if (defA !== defB) return defB - defA;
           // Soft request preference: below hard minimum need, above even-
-          // distribution. A provider who prefers this shift sorts ahead of one
+          // distribution. A staff who prefers this shift sorts ahead of one
           // who's indifferent; one who soft-avoids it (or prefers off) sorts behind.
           const biasA = requestBias(a.id, date, st);
           const biasB = requestBias(b.id, date, st);
@@ -767,9 +767,9 @@ export function autoSchedule({
       return pool[0];
     }
 
-    function recordAssignment(providerId: string, date: string) {
-      runCount.set(providerId, (runCount.get(providerId) ?? 0) + 1);
-      lastRunDate.set(providerId, date);
+    function recordAssignment(staffId: string, date: string) {
+      runCount.set(staffId, (runCount.get(staffId) ?? 0) + 1);
+      lastRunDate.set(staffId, date);
     }
 
     if (st.weekendPaired) {
@@ -798,10 +798,10 @@ export function autoSchedule({
               isAvailable(p, sat, st) && isAvailable(p, sun, st)
           );
           if (fallback.length === 0) {
-            warnings.push(`No eligible ${st.code} provider for ${sat}/${sun}`);
+            warnings.push(`No eligible ${st.code} staff for ${sat}/${sun}`);
             continue;
           }
-          warnings.push(`${st.code} ${sat}/${sun}: all eligible providers would exceed PP hours`);
+          warnings.push(`${st.code} ${sat}/${sun}: all eligible staff would exceed PP hours`);
         }
 
         const pool = available.length > 0 ? available : eligible.filter(
@@ -809,7 +809,7 @@ export function autoSchedule({
             isAvailable(p, sat, st) && isAvailable(p, sun, st)
         );
         if (pool.length === 0) continue;
-        const chosen = pickProvider(pool, sat);
+        const chosen = pickStaff(pool, sat);
         assign(chosen.id, sat, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
         if (!isAtMaximum(chosen, st, sun)) {
           assign(chosen.id, sun, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
@@ -836,11 +836,11 @@ export function autoSchedule({
           );
         }
         if (available.length === 0) {
-          warnings.push(`No eligible ${st.code} provider for holiday ${date}`);
+          warnings.push(`No eligible ${st.code} staff for holiday ${date}`);
           continue;
         }
 
-        const chosen = pickProvider(available, date);
+        const chosen = pickStaff(available, date);
         assign(chosen.id, date, st, `Holiday ${st.code} (even dist — ${chosen.initials})`, `holiday-${stepName}`, 0.8);
         recordAssignment(chosen.id, date);
       }
@@ -854,7 +854,7 @@ export function autoSchedule({
 
       if (pairingFactor > 1 && fillShift) {
         // PP-grouped distribution: assign in groups of pairingFactor to ensure
-        // each provider's total hours remain fill-divisible.
+        // each staff's total hours remain fill-divisible.
         const step2PPs = [...payPeriods]
           .filter(pp => dates.some(d => d >= pp.startDate && d <= pp.endDate))
           .sort((a, b) => a.startDate.localeCompare(b.startDate));
@@ -881,7 +881,7 @@ export function autoSchedule({
               if (provAvail.length < pairingFactor) return false;
               const groupHrs = pairingFactor * getShiftHours(p.id, st, overrideMap);
               const recoveryDays = isRecoveryOnly(followMap, st.id) ? pairingFactor : 0;
-              const currentHrs = ppHoursForProvider(p.id, pp);
+              const currentHrs = ppHoursForStaff(p.id, pp);
               const target = pp.targetHours * p.ftePercentage;
               if (target > 0 && currentHrs + groupHrs > target) return false;
               return true;
@@ -895,16 +895,16 @@ export function autoSchedule({
             }
 
             if (available.length === 0) {
-              warnings.push(`No eligible ${st.code} provider for group ${g + 1} in PP ${pp.startDate}`);
+              warnings.push(`No eligible ${st.code} staff for group ${g + 1} in PP ${pp.startDate}`);
               continue;
             }
 
-            const chosen = pickProvider([...available], remainDates[0]);
+            const chosen = pickStaff([...available], remainDates[0]);
             const provAvailDates = remainDates.filter(d => isAvailable(chosen, d, st));
             provAvailDates.sort((a, b) => a.localeCompare(b));
 
             // Anchor dates: PP boundaries (so shifts push toward the middle)
-            // plus dates where this provider already has other scheduled
+            // plus dates where this staff already has other scheduled
             // shifts in this PP (e.g., ORC + recovery day).
             const anchorDates: string[] = [
               prevDate(pp.startDate),
@@ -973,10 +973,10 @@ export function autoSchedule({
               available = eligible.filter(p => isAvailable(p, date, st));
             }
             if (available.length === 0) {
-              warnings.push(`No eligible ${st.code} provider for ${date} (partial PP)`);
+              warnings.push(`No eligible ${st.code} staff for ${date} (partial PP)`);
               continue;
             }
-            const chosen = pickProvider([...available], date);
+            const chosen = pickStaff([...available], date);
             const desirability = dwMap.get(`${st.id}:${getDow(date)}`) ?? 0;
             assign(
               chosen.id, date, st,
@@ -1012,7 +1012,7 @@ export function autoSchedule({
           }
 
           if (available.length === 0) {
-            warnings.push(`No eligible ${st.code} provider for ${date}`);
+            warnings.push(`No eligible ${st.code} staff for ${date}`);
             continue;
           }
 
@@ -1026,7 +1026,7 @@ export function autoSchedule({
 
           for (let i = 0; i < needed; i++) {
             if (pool.length === 0) break;
-            const chosen = pickProvider([...pool], date);
+            const chosen = pickStaff([...pool], date);
 
             assign(
               chosen.id,
@@ -1053,17 +1053,17 @@ export function autoSchedule({
     }
   }
 
-  // ── STEP 2b: Satisfy per-provider shift minimum targets ──
+  // ── STEP 2b: Satisfy per-staff shift minimum targets ──
   //
-  // If a provider has a minCount target for a shift (e.g. "at least 1 ADM per PP"),
+  // If a staff has a minCount target for a shift (e.g. "at least 1 ADM per PP"),
   // proactively assign that shift on eligible days even without global staffing
   // requirements. This runs after staffing reqs so those slots are filled first.
 
-  for (const provider of activeProviders) {
-    if (!provider.shiftMinimumTargets || provider.shiftMinimumTargets.length === 0) continue;
+  for (const staff of activeStaff) {
+    if (!staff.shiftMinimumTargets || staff.shiftMinimumTargets.length === 0) continue;
     const ppRanges = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
 
-    for (const target of provider.shiftMinimumTargets) {
+    for (const target of staff.shiftMinimumTargets) {
       if (target.minCount <= 0) continue;
       if (target.window === "days") continue; // rolling windows have overlapping bounds — post-schedule warning only
       const st = stById.get(target.shiftTypeId);
@@ -1080,7 +1080,7 @@ export function autoSchedule({
         function countInWindow(): number {
           let n = 0;
           for (const [k, v] of grid.entries()) {
-            if (k.startsWith(provider.id + ":") && v.code === st!.code) {
+            if (k.startsWith(staff.id + ":") && v.code === st!.code) {
               const d = k.split(":")[1];
               if (d >= bounds!.start && d <= bounds!.end) n++;
             }
@@ -1093,18 +1093,18 @@ export function autoSchedule({
 
         const windowDates = dates.filter((d) => d >= bounds.start && d <= bounds.end);
         const candidateDates = windowDates.filter((d) =>
-          !isAssigned(provider.id, d) && isAvailable(provider, d, st)
+          !isAssigned(staff.id, d) && isAvailable(staff, d, st)
         );
         if (candidateDates.length === 0) {
-          warnings.push(`${provider.initials}: no available days for ${st.code} min target in ${target.window} (${bounds.start}..${bounds.end})`);
+          warnings.push(`${staff.initials}: no available days for ${st.code} min target in ${target.window} (${bounds.start}..${bounds.end})`);
           continue;
         }
 
         for (const candidate of candidateDates) {
           if (countInWindow() >= target.minCount) break;
-          if (isAtMaximum(provider, st, candidate)) break;
+          if (isAtMaximum(staff, st, candidate)) break;
           assign(
-            provider.id, candidate, st,
+            staff.id, candidate, st,
             `${st.code} (min target: ${target.minCount}/${target.window === "pay_period" ? "PP" : target.window})`,
             "min-target", 0.75
           );
@@ -1141,10 +1141,10 @@ export function autoSchedule({
       return fillReqsByDay.get(dayKey) ?? 0;
     }
 
-    function scoreOffDays(offDays: Set<string>, allWorkdaysInPP: string[], providerWorkingDays: number[]): number {
+    function scoreOffDays(offDays: Set<string>, allWorkdaysInPP: string[], staffWorkingDays: number[]): number {
       if (offDays.size === 0) return 0;
 
-      const workingSet = new Set(providerWorkingDays);
+      const workingSet = new Set(staffWorkingDays);
       const firstDate = allWorkdaysInPP[0];
       const lastDate = allWorkdaysInPP[allWorkdaysInPP.length - 1];
 
@@ -1209,11 +1209,11 @@ export function autoSchedule({
     // target leaves — it never creates a day off that hours don't allow.
     const SOFT_REQUEST_OFF_WEIGHT = 5;
 
-    function softOffBonus(providerId: string, offDays: Set<string>): number {
+    function softOffBonus(staffId: string, offDays: Set<string>): number {
       if (requestList.length === 0) return 0;
       let bonus = 0;
       for (const d of offDays) {
-        const folded = foldFor(providerId, d);
+        const folded = foldFor(staffId, d);
         if (folded.avoidWorking) bonus += SOFT_REQUEST_OFF_WEIGHT;
         if (fillShift && folded.avoidedShiftIds.has(fillShift.id)) bonus += SOFT_REQUEST_OFF_WEIGHT;
       }
@@ -1225,34 +1225,34 @@ export function autoSchedule({
         (d) => d >= pp.startDate && d <= pp.endDate
       );
 
-      const sortedProviders = sortByFairness(activeProviders.map((p) => p.id))
-        .map((id) => activeProviders.find((p) => p.id === id)!)
+      const sortedStaff = sortByFairness(activeStaff.map((p) => p.id))
+        .map((id) => activeStaff.find((p) => p.id === id)!)
         .filter(Boolean);
 
-      for (const provider of sortedProviders) {
-        const target = pp.targetHours * provider.ftePercentage;
+      for (const staff of sortedStaff) {
+        const target = pp.targetHours * staff.ftePercentage;
         if (target <= 0) continue;
 
-        const currentHours = ppHoursForProvider(provider.id, pp);
+        const currentHours = ppHoursForStaff(staff.id, pp);
         if (currentHours >= target) continue;
 
-        const hoursPerDay = getShiftHours(provider.id, fillShift, overrideMap);
+        const hoursPerDay = getShiftHours(staff.id, fillShift, overrideMap);
         const hoursNeeded = target - currentHours;
 
         const availableDates = ppDates.filter((d) =>
-          isAvailable(provider, d, fillShift)
+          isAvailable(staff, d, fillShift)
         );
 
         if (availableDates.length === 0) {
           if (hoursNeeded > 0) {
-            warnings.push(`${provider.initials}: needs ${hoursNeeded}hrs but no available days in PP ${pp.startDate}`);
+            warnings.push(`${staff.initials}: needs ${hoursNeeded}hrs but no available days in PP ${pp.startDate}`);
           }
           continue;
         }
 
         if (availableDates.length * hoursPerDay < hoursNeeded) {
           warnings.push(
-            `${provider.initials}: cannot reach ${target}hrs — max ${currentHours + availableDates.length * hoursPerDay}hrs with ${availableDates.length} days`
+            `${staff.initials}: cannot reach ${target}hrs — max ${currentHours + availableDates.length * hoursPerDay}hrs with ${availableDates.length} days`
           );
         }
 
@@ -1283,8 +1283,8 @@ export function autoSchedule({
             if (!feasible) continue;
 
             const offSet = new Set<string>(offIndices.map((i: number) => availableDates[i]));
-            const score = scoreOffDays(offSet, availableDates, getBaseWorkDays(provider.availabilityRules))
-              + softOffBonus(provider.id, offSet);
+            const score = scoreOffDays(offSet, availableDates, getBaseWorkDays(staff.availabilityRules))
+              + softOffBonus(staff.id, offSet);
             if (score > bestScore) {
               bestScore = score;
               bestOffIndices = offIndices;
@@ -1303,15 +1303,15 @@ export function autoSchedule({
         for (const date of fillDates) {
           if (hours >= target) break;
           const shift = holidaySet.has(date) && holShift ? holShift : fillShift;
-          if (isAtMaximum(provider, shift, date)) { cappedByMax = true; break; }
-          const shiftHrs = getShiftHours(provider.id, shift, overrideMap);
-          assign(provider.id, date, shift,
+          if (isAtMaximum(staff, shift, date)) { cappedByMax = true; break; }
+          const shiftHrs = getShiftHours(staff.id, shift, overrideMap);
+          assign(staff.id, date, shift,
             `${shift.code} to fill hours (${hours}/${target}hrs)`,
             "fill", 0.6);
           hours += shiftHrs;
         }
         if (cappedByMax && hours < target) {
-          warnings.push(`${provider.initials}: ${hours}/${target}hrs in PP ${pp.startDate} — capped by max shift limit`);
+          warnings.push(`${staff.initials}: ${hours}/${target}hrs in PP ${pp.startDate} — capped by max shift limit`);
         }
       }
     }
@@ -1320,18 +1320,18 @@ export function autoSchedule({
   // ── STEP 4: Fill all remaining empty cells with X (day off) ──
   if (offShift) {
     for (const date of dates) {
-      for (const provider of activeProviders) {
-        if (!isAssigned(provider.id, date)) {
-          assign(provider.id, date, offShift, "Day off", "off", 0.95);
+      for (const staff of activeStaff) {
+        if (!isAssigned(staff.id, date)) {
+          assign(staff.id, date, offShift, "Day off", "off", 0.95);
         }
       }
     }
   }
 
   // ── Check minimum targets (after all assignments are final) ──
-  for (const provider of activeProviders) {
-    if (!provider.shiftMinimumTargets || provider.shiftMinimumTargets.length === 0) continue;
-    for (const target of provider.shiftMinimumTargets) {
+  for (const staff of activeStaff) {
+    if (!staff.shiftMinimumTargets || staff.shiftMinimumTargets.length === 0) continue;
+    for (const target of staff.shiftMinimumTargets) {
       const st = stById.get(target.shiftTypeId);
       if (!st) continue;
       const ppRanges = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
@@ -1346,17 +1346,17 @@ export function autoSchedule({
 
         const assigned: string[] = [];
         for (const [k, v] of grid.entries()) {
-          if (k.startsWith(provider.id + ":") && v.code === st.code) {
+          if (k.startsWith(staff.id + ":") && v.code === st.code) {
             const d = k.split(":")[1];
             if (d >= bounds.start && d <= bounds.end) assigned.push(d);
           }
         }
         const { met, current, needed } = checkMinimumTargetMet(target, assigned);
         if (!met) {
-          warnings.push(`${provider.initials}: only ${current}/${needed} ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
+          warnings.push(`${staff.initials}: only ${current}/${needed} ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
         }
         if (target.maxCount != null && assigned.length > target.maxCount) {
-          warnings.push(`${provider.initials}: ${assigned.length}/${target.maxCount} max ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
+          warnings.push(`${staff.initials}: ${assigned.length}/${target.maxCount} max ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
         }
       }
     }

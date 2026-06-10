@@ -8,7 +8,7 @@ type RequestStatus = "pending" | "approved" | "declined" | "withdrawn" | "fulfil
 
 type RequestRow = {
   id: string;
-  providerId: string;
+  staffId: string;
   startDate: string;
   endDate: string;
   kind: RequestKind;
@@ -26,7 +26,7 @@ type RequestRow = {
 type Props = {
   canEdit: boolean;
   requests: RequestRow[];
-  providerName: Record<string, { initials: string; name: string }>;
+  staffName: Record<string, { initials: string; name: string }>;
   shiftCode: Record<string, string>;
   dateFormat: string;
 };
@@ -41,7 +41,7 @@ const STATUS_BADGE: Record<RequestStatus, string> = {
   fulfilled: "bg-sky-900/40 text-sky-300 border-sky-700/50",
 };
 
-export function RequestsPage({ canEdit, requests: initial, providerName, shiftCode, dateFormat: dfProp }: Props) {
+export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode, dateFormat: dfProp }: Props) {
   const [requests, setRequests] = useState(initial);
   const [filter, setFilter] = useState<RequestStatus | "all">("all");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -157,7 +157,7 @@ export function RequestsPage({ canEdit, requests: initial, providerName, shiftCo
       <table className="w-full text-sm border-collapse">
         <thead>
           <tr className="text-left text-xs uppercase tracking-wider text-slate-500 border-b border-slate-700">
-            <th className="px-3 py-2">Provider</th>
+            <th className="px-3 py-2">Staff</th>
             <th className="px-3 py-2">Dates</th>
             <th className="px-3 py-2">Request</th>
             <th className="px-3 py-2">Status</th>
@@ -176,7 +176,7 @@ export function RequestsPage({ canEdit, requests: initial, providerName, shiftCo
             </tr>
           )}
           {rows.map((r) => {
-            const prov = providerName[r.providerId];
+            const prov = staffName[r.staffId];
             const busy = busyId === r.id;
             return (
               <tr key={r.id} className={`border-b border-slate-800 hover:bg-slate-800/40 ${busy ? "opacity-50" : ""}`}>

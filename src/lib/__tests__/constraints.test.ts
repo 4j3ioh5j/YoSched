@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkCellWarnings, checkDayStaffing, checkProviderPPHours, type Warning } from "../constraints";
+import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } from "../constraints";
 import { buildFollowRuleMap, type FollowRuleRow } from "../follow-rules";
 
 function makeShiftType(id: string, code: string, overrides: Record<string, unknown> = {}) {
@@ -14,7 +14,7 @@ function makeShiftType(id: string, code: string, overrides: Record<string, unkno
   };
 }
 
-function makeProvider(id: string, initials: string, workDays: number[] = [1, 2, 3, 4, 5]) {
+function makeStaff(id: string, initials: string, workDays: number[] = [1, 2, 3, 4, 5]) {
   return {
     id,
     initials,
@@ -39,36 +39,36 @@ describe("checkCellWarnings", () => {
     ["st-off", makeShiftType("st-off", "OFF", { isOffShift: true })],
     ["st-admin", makeShiftType("st-admin", "ADM", { ignoresWorkingDays: true })],
   ]);
-  const provider = makeProvider("p1", "AB");
-  const providers = [provider];
+  const staff = makeStaff("p1", "AB");
+  const allStaff = [staff];
   const holidaySet = new Set<string>();
   const staffingMins = [{ role: "OR", dayType: "weekday", minimumCount: 2 }];
 
   it("returns empty for null shiftTypeId", () => {
     const w = checkCellWarnings({
-      providerId: "p1", date: "2025-05-12", shiftTypeId: null,
-      provider, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
-      providers, holidaySet, staffingMins,
+      staffId: "p1", date: "2025-05-12", shiftTypeId: null,
+      staff, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
+      allStaff, holidaySet, staffingMins,
     });
     expect(w).toEqual([]);
   });
 
   it("returns empty for unknown shiftTypeId", () => {
     const w = checkCellWarnings({
-      providerId: "p1", date: "2025-05-12", shiftTypeId: "unknown",
-      provider, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
-      providers, holidaySet, staffingMins,
+      staffId: "p1", date: "2025-05-12", shiftTypeId: "unknown",
+      staff, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
+      allStaff, holidaySet, staffingMins,
     });
     expect(w).toEqual([]);
   });
 
   describe("non-working-day warnings", () => {
     it("warns when scheduled on a non-work day", () => {
-      // 2025-05-17 is Saturday, provider works M-F
+      // 2025-05-17 is Saturday, staff works M-F
       const w = checkCellWarnings({
-        providerId: "p1", date: "2025-05-17", shiftTypeId: "st-or",
-        provider, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
-        providers, holidaySet, staffingMins,
+        staffId: "p1", date: "2025-05-17", shiftTypeId: "st-or",
+        staff, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
+        allStaff, holidaySet, staffingMins,
       });
       expect(w).toHaveLength(1);
       expect(w[0].type).toBe("non-working-day");
@@ -78,27 +78,27 @@ describe("checkCellWarnings", () => {
     it("does not warn on working days", () => {
       // 2025-05-12 is Monday
       const w = checkCellWarnings({
-        providerId: "p1", date: "2025-05-12", shiftTypeId: "st-or",
-        provider, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
-        providers, holidaySet, staffingMins,
+        staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or",
+        staff, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
+        allStaff, holidaySet, staffingMins,
       });
       expect(w.find((w) => w.type === "non-working-day")).toBeUndefined();
     });
 
     it("does not warn for off-shifts on non-work days", () => {
       const w = checkCellWarnings({
-        providerId: "p1", date: "2025-05-17", shiftTypeId: "st-off",
-        provider, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
-        providers, holidaySet, staffingMins,
+        staffId: "p1", date: "2025-05-17", shiftTypeId: "st-off",
+        staff, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
+        allStaff, holidaySet, staffingMins,
       });
       expect(w.find((w) => w.type === "non-working-day")).toBeUndefined();
     });
 
     it("does not warn for ignoresWorkingDays shifts", () => {
       const w = checkCellWarnings({
-        providerId: "p1", date: "2025-05-17", shiftTypeId: "st-admin",
-        provider, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
-        providers, holidaySet, staffingMins,
+        staffId: "p1", date: "2025-05-17", shiftTypeId: "st-admin",
+        staff, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
+        allStaff, holidaySet, staffingMins,
       });
       expect(w.find((w) => w.type === "non-working-day")).toBeUndefined();
     });
@@ -116,9 +116,9 @@ describe("checkCellWarnings", () => {
         "p1:2025-05-11": { shiftTypeId: "st-call", code: "CALL" },
       });
       const w = checkCellWarnings({
-        providerId: "p1", date: "2025-05-12", shiftTypeId: "st-or",
-        provider, shiftTypeMap: stMap, assignmentMap: aMap,
-        providers, holidaySet, staffingMins, followRuleMap,
+        staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or",
+        staff, shiftTypeMap: stMap, assignmentMap: aMap,
+        allStaff, holidaySet, staffingMins, followRuleMap,
       });
       expect(w.some((w) => w.type === "post-shift")).toBe(true);
       expect(w.find((w) => w.type === "post-shift")!.message).toContain("cannot follow CALL");
@@ -129,9 +129,9 @@ describe("checkCellWarnings", () => {
         "p1:2025-05-11": { shiftTypeId: "st-call", code: "CALL" },
       });
       const w = checkCellWarnings({
-        providerId: "p1", date: "2025-05-12", shiftTypeId: "st-off",
-        provider, shiftTypeMap: stMap, assignmentMap: aMap,
-        providers, holidaySet, staffingMins, followRuleMap,
+        staffId: "p1", date: "2025-05-12", shiftTypeId: "st-off",
+        staff, shiftTypeMap: stMap, assignmentMap: aMap,
+        allStaff, holidaySet, staffingMins, followRuleMap,
       });
       expect(w.find((w) => w.type === "post-shift")).toBeUndefined();
     });
@@ -142,9 +142,9 @@ describe("checkCellWarnings", () => {
         "p1:2025-05-13": { shiftTypeId: "st-or", code: "OR" },
       });
       const w = checkCellWarnings({
-        providerId: "p1", date: "2025-05-12", shiftTypeId: "st-call",
-        provider, shiftTypeMap: stMap, assignmentMap: aMap,
-        providers, holidaySet, staffingMins, followRuleMap,
+        staffId: "p1", date: "2025-05-12", shiftTypeId: "st-call",
+        staff, shiftTypeMap: stMap, assignmentMap: aMap,
+        allStaff, holidaySet, staffingMins, followRuleMap,
       });
       expect(w.some((w) => w.type === "post-shift" && w.message.includes("tomorrow"))).toBe(true);
     });
@@ -154,9 +154,9 @@ describe("checkCellWarnings", () => {
         "p1:2025-05-11": { shiftTypeId: "st-call", code: "CALL" },
       });
       const w = checkCellWarnings({
-        providerId: "p1", date: "2025-05-12", shiftTypeId: "st-or",
-        provider, shiftTypeMap: stMap, assignmentMap: aMap,
-        providers, holidaySet, staffingMins,
+        staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or",
+        staff, shiftTypeMap: stMap, assignmentMap: aMap,
+        allStaff, holidaySet, staffingMins,
       });
       expect(w.find((w) => w.type === "post-shift")).toBeUndefined();
     });
@@ -164,16 +164,16 @@ describe("checkCellWarnings", () => {
 
   describe("request-violation warnings", () => {
     const offReq = {
-      id: "rq1", providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12",
+      id: "rq1", staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12",
       kind: "OFF" as const, shiftTypeIds: [], leaveShiftTypeId: null,
       strength: "hard" as const, status: "approved" as const,
     };
 
     it("flags a working shift placed on an approved hard OFF request", () => {
       const w = checkCellWarnings({
-        providerId: "p1", date: "2025-05-12", shiftTypeId: "st-or",
-        provider, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
-        providers, holidaySet, staffingMins, scheduleRequests: [offReq],
+        staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or",
+        staff, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
+        allStaff, holidaySet, staffingMins, scheduleRequests: [offReq],
       });
       const v = w.find((x) => x.type === "request-violation");
       expect(v?.message).toContain("Requested OFF");
@@ -181,9 +181,9 @@ describe("checkCellWarnings", () => {
 
     it("no request warning when scheduleRequests omitted (back-compat)", () => {
       const w = checkCellWarnings({
-        providerId: "p1", date: "2025-05-12", shiftTypeId: "st-or",
-        provider, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
-        providers, holidaySet, staffingMins,
+        staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or",
+        staff, shiftTypeMap: stMap, assignmentMap: makeAssignmentMap({}),
+        allStaff, holidaySet, staffingMins,
       });
       expect(w.find((x) => x.type === "request-violation")).toBeUndefined();
     });
@@ -196,10 +196,10 @@ describe("checkDayStaffing", () => {
     ["st-orc", makeShiftType("st-orc", "ORC")],
     ["st-off", makeShiftType("st-off", "OFF", { isOffShift: true })],
   ]);
-  const providers = [
-    makeProvider("p1", "AB"),
-    makeProvider("p2", "CD"),
-    makeProvider("p3", "EF"),
+  const staff = [
+    makeStaff("p1", "AB"),
+    makeStaff("p2", "CD"),
+    makeStaff("p3", "EF"),
   ];
   const holidaySet = new Set<string>();
 
@@ -211,7 +211,7 @@ describe("checkDayStaffing", () => {
         "p1:2025-05-12": { shiftTypeId: "st-or", code: "OR" },
       });
       const w = checkDayStaffing({
-        date: "2025-05-12", providers, assignmentMap: aMap,
+        date: "2025-05-12", staff, assignmentMap: aMap,
         shiftTypeMap: stMap, holidaySet, staffingMins,
       });
       expect(w.some((w) => w.type === "understaffed")).toBe(true);
@@ -223,7 +223,7 @@ describe("checkDayStaffing", () => {
         "p2:2025-05-12": { shiftTypeId: "st-or", code: "OR" },
       });
       const w = checkDayStaffing({
-        date: "2025-05-12", providers, assignmentMap: aMap,
+        date: "2025-05-12", staff, assignmentMap: aMap,
         shiftTypeMap: stMap, holidaySet, staffingMins,
       });
       expect(w.find((w) => w.type === "understaffed")).toBeUndefined();
@@ -235,7 +235,7 @@ describe("checkDayStaffing", () => {
         "p2:2025-05-12": { shiftTypeId: "st-off", code: "OFF" },
       });
       const w = checkDayStaffing({
-        date: "2025-05-12", providers, assignmentMap: aMap,
+        date: "2025-05-12", staff, assignmentMap: aMap,
         shiftTypeMap: stMap, holidaySet, staffingMins,
       });
       expect(w.some((w) => w.type === "understaffed")).toBe(true);
@@ -246,7 +246,7 @@ describe("checkDayStaffing", () => {
       const mins = [{ role: "OR", dayType: "holiday", minimumCount: 1 }];
       const aMap = makeAssignmentMap({});
       const w = checkDayStaffing({
-        date: "2025-05-12", providers, assignmentMap: aMap,
+        date: "2025-05-12", staff, assignmentMap: aMap,
         shiftTypeMap: stMap, holidaySet: hSet, staffingMins: mins,
       });
       expect(w.some((w) => w.type === "understaffed")).toBe(true);
@@ -260,7 +260,7 @@ describe("checkDayStaffing", () => {
         "p1:2025-05-12": { shiftTypeId: "st-or", code: "OR" },
       });
       const w = checkDayStaffing({
-        date: "2025-05-12", providers, assignmentMap: aMap,
+        date: "2025-05-12", staff, assignmentMap: aMap,
         shiftTypeMap: stMap, holidaySet, staffingMins: [], staffingReqs: reqs,
       });
       expect(w.some((w) => w.message.includes("OR"))).toBe(true);
@@ -270,7 +270,7 @@ describe("checkDayStaffing", () => {
       const reqs = [{ shiftCode: "OR", dayKey: "1", minCount: 1 }];
       const aMap = makeAssignmentMap({});
       const w = checkDayStaffing({
-        date: "2025-05-12", providers, assignmentMap: aMap,
+        date: "2025-05-12", staff, assignmentMap: aMap,
         shiftTypeMap: stMap, holidaySet, staffingMins: [], staffingReqs: reqs,
       });
       const shiftCountWarning = w.find((w) => w.type === "shift-count");
@@ -283,7 +283,7 @@ describe("checkDayStaffing", () => {
       const reqs = [{ shiftCode: "OR", dayKey: "holiday", minCount: 1 }];
       const aMap = makeAssignmentMap({});
       const w = checkDayStaffing({
-        date: "2025-05-12", providers, assignmentMap: aMap,
+        date: "2025-05-12", staff, assignmentMap: aMap,
         shiftTypeMap: stMap, holidaySet: hSet, staffingMins: [], staffingReqs: reqs,
       });
       expect(w.some((w) => w.message.includes("OR") && w.message.includes("holiday"))).toBe(true);
@@ -291,33 +291,33 @@ describe("checkDayStaffing", () => {
   });
 });
 
-describe("checkProviderPPHours", () => {
-  const provider = makeProvider("p1", "AB");
+describe("checkStaffPPHours", () => {
+  const staff = makeStaff("p1", "AB");
 
   it("returns null when no pay period", () => {
-    expect(checkProviderPPHours({
-      providerId: "p1", provider, pp: null, currentHours: 100,
+    expect(checkStaffPPHours({
+      staffId: "p1", staff, pp: null, currentHours: 100,
     })).toBeNull();
   });
 
   it("returns null when target is 0", () => {
     const pp = { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 0 };
-    expect(checkProviderPPHours({
-      providerId: "p1", provider, pp, currentHours: 100,
+    expect(checkStaffPPHours({
+      staffId: "p1", staff, pp, currentHours: 100,
     })).toBeNull();
   });
 
   it("returns null when within 5% of target", () => {
     const pp = { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 };
-    expect(checkProviderPPHours({
-      providerId: "p1", provider, pp, currentHours: 84, // 80 * 1.05 = 84
+    expect(checkStaffPPHours({
+      staffId: "p1", staff, pp, currentHours: 84, // 80 * 1.05 = 84
     })).toBeNull();
   });
 
   it("warns when exceeding target by more than 5%", () => {
     const pp = { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 };
-    const w = checkProviderPPHours({
-      providerId: "p1", provider, pp, currentHours: 85,
+    const w = checkStaffPPHours({
+      staffId: "p1", staff, pp, currentHours: 85,
     });
     expect(w).not.toBeNull();
     expect(w!.type).toBe("over-hours");
@@ -325,14 +325,14 @@ describe("checkProviderPPHours", () => {
   });
 
   it("scales target by FTE percentage", () => {
-    const partTime = { ...provider, ftePercentage: 0.5 };
+    const partTime = { ...staff, ftePercentage: 0.5 };
     const pp = { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 };
     // target = 80 * 0.5 = 40, 5% = 42
-    expect(checkProviderPPHours({
-      providerId: "p1", provider: partTime, pp, currentHours: 42,
+    expect(checkStaffPPHours({
+      staffId: "p1", staff: partTime, pp, currentHours: 42,
     })).toBeNull();
-    const w = checkProviderPPHours({
-      providerId: "p1", provider: partTime, pp, currentHours: 43,
+    const w = checkStaffPPHours({
+      staffId: "p1", staff: partTime, pp, currentHours: 43,
     });
     expect(w).not.toBeNull();
     expect(w!.type).toBe("over-hours");

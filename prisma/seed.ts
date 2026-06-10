@@ -57,11 +57,11 @@ async function main() {
   });
   console.log("Seeded 2 employment types");
 
-  // --- Providers ---
-  // Fee basis providers are ineligible for ORC, CALL, ORL
+  // --- Staff ---
+  // Fee basis staff are ineligible for ORC, CALL, ORL
   const feeBasisInitials = new Set(["CWr", "NH", "PN", "HC"]);
 
-  const providers = [
+  const staff = [
     { initials: "YA",  name: "YA",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 1 },
     { initials: "CC",  name: "CC",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 2 },
     { initials: "SC",  name: "SC",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 3 },
@@ -86,30 +86,30 @@ async function main() {
     { initials: "HC",  name: "HC",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, sortOrder: 22 },
   ];
 
-  for (const p of providers) {
-    await prisma.provider.upsert({
+  for (const p of staff) {
+    await prisma.staff.upsert({
       where: { initials: p.initials },
       update: p,
       create: p,
     });
   }
-  console.log(`Seeded ${providers.length} providers`);
+  console.log(`Seeded ${staff.length} staff`);
 
   // --- Eligible Shifts (join table) ---
   const allShiftTypeRecords = await prisma.shiftType.findMany();
-  const allProviderRecords = await prisma.provider.findMany();
+  const allStaffRecords = await prisma.staff.findMany();
   const restrictedCodes = new Set(["ORC", "CALL", "ORL"]);
 
-  await prisma.providerEligibleShift.deleteMany({});
-  const eligibilityRows: { providerId: string; shiftTypeId: string }[] = [];
-  for (const prov of allProviderRecords) {
+  await prisma.staffEligibleShift.deleteMany({});
+  const eligibilityRows: { staffId: string; shiftTypeId: string }[] = [];
+  for (const prov of allStaffRecords) {
     for (const st of allShiftTypeRecords) {
       if (feeBasisInitials.has(prov.initials) && restrictedCodes.has(st.code)) continue;
-      eligibilityRows.push({ providerId: prov.id, shiftTypeId: st.id });
+      eligibilityRows.push({ staffId: prov.id, shiftTypeId: st.id });
     }
   }
-  await prisma.providerEligibleShift.createMany({ data: eligibilityRows });
-  console.log(`Seeded ${eligibilityRows.length} provider eligible shifts`);
+  await prisma.staffEligibleShift.createMany({ data: eligibilityRows });
+  console.log(`Seeded ${eligibilityRows.length} staff eligible shifts`);
 
   // --- Employment Type Default Shifts (join table) ---
   await prisma.employmentTypeDefaultShift.deleteMany({});
@@ -137,62 +137,62 @@ async function main() {
   });
   console.log("Seeded employment type default availability rules");
 
-  // --- Provider Availability Rules ---
+  // --- Staff Availability Rules ---
   await prisma.availabilityRule.deleteMany({});
-  const availRules: { providerId: string; dayOfWeek: number; type: string; strength: string; pattern: string }[] = [];
+  const availRules: { staffId: string; dayOfWeek: number; type: string; strength: string; pattern: string }[] = [];
   const defaultWorkDays = [1, 2, 3, 4, 5];
   const kzWorkDays = [1, 3]; // KZ only works Mon/Wed
-  for (const prov of allProviderRecords) {
+  for (const prov of allStaffRecords) {
     const days = prov.initials === "KZ" ? kzWorkDays : (feeBasisInitials.has(prov.initials) ? [] : defaultWorkDays);
     for (const d of days) {
-      availRules.push({ providerId: prov.id, dayOfWeek: d, type: "available", strength: "rule", pattern: "every" });
+      availRules.push({ staffId: prov.id, dayOfWeek: d, type: "available", strength: "rule", pattern: "every" });
     }
   }
   if (availRules.length > 0) {
     await prisma.availabilityRule.createMany({ data: availRules });
   }
-  console.log(`Seeded ${availRules.length} provider availability rules`);
+  console.log(`Seeded ${availRules.length} staff availability rules`);
 
-  // --- Provider Shift Overrides ---
-  const rdId = (await prisma.provider.findUnique({ where: { initials: "RD" } }))!.id;
-  const koId = (await prisma.provider.findUnique({ where: { initials: "KO" } }))!.id;
+  // --- Staff Shift Overrides ---
+  const rdId = (await prisma.staff.findUnique({ where: { initials: "RD" } }))!.id;
+  const koId = (await prisma.staff.findUnique({ where: { initials: "KO" } }))!.id;
   const cardId = (await prisma.shiftType.findUnique({ where: { code: "CARD" } }))!.id;
   const admId = (await prisma.shiftType.findUnique({ where: { code: "ADM" } }))!.id;
   const preopId = (await prisma.shiftType.findUnique({ where: { code: "PREOP" } }))!.id;
 
   const overrides = [
-    { providerId: rdId, shiftTypeId: cardId, durationHrs: 8 },
-    { providerId: koId, shiftTypeId: admId, durationHrs: 10 },
-    { providerId: koId, shiftTypeId: preopId, durationHrs: 10 },
+    { staffId: rdId, shiftTypeId: cardId, durationHrs: 8 },
+    { staffId: koId, shiftTypeId: admId, durationHrs: 10 },
+    { staffId: koId, shiftTypeId: preopId, durationHrs: 10 },
   ];
 
   for (const o of overrides) {
-    await prisma.providerShiftOverride.upsert({
-      where: { providerId_shiftTypeId: { providerId: o.providerId, shiftTypeId: o.shiftTypeId } },
+    await prisma.staffShiftOverride.upsert({
+      where: { staffId_shiftTypeId: { staffId: o.staffId, shiftTypeId: o.shiftTypeId } },
       update: o,
       create: o,
     });
   }
-  console.log(`Seeded ${overrides.length} provider shift overrides`);
+  console.log(`Seeded ${overrides.length} staff shift overrides`);
 
   // --- KZ day preference ---
-  const kzId = (await prisma.provider.findUnique({ where: { initials: "KZ" } }))!.id;
+  const kzId = (await prisma.staff.findUnique({ where: { initials: "KZ" } }))!.id;
   const orcId = (await prisma.shiftType.findUnique({ where: { code: "ORC" } }))!.id;
 
-  await prisma.providerDayPreference.upsert({
-    where: { providerId_dayOfWeek: { providerId: kzId, dayOfWeek: 2 } },
+  await prisma.staffDayPreference.upsert({
+    where: { staffId_dayOfWeek: { staffId: kzId, dayOfWeek: 2 } },
     update: { preference: "ORC" },
-    create: { providerId: kzId, dayOfWeek: 2, preference: "ORC" },
+    create: { staffId: kzId, dayOfWeek: 2, preference: "ORC" },
   });
   console.log("Seeded KZ day preference (ORC on Tuesday)");
 
   // --- STa standing commitment (Research) ---
-  const staId = (await prisma.provider.findUnique({ where: { initials: "STa" } }))!.id;
+  const staId = (await prisma.staff.findUnique({ where: { initials: "STa" } }))!.id;
   const rsId = (await prisma.shiftType.findUnique({ where: { code: "RS" } }))!.id;
 
-  await prisma.standingCommitment.deleteMany({ where: { providerId: staId, shiftTypeId: rsId } });
+  await prisma.standingCommitment.deleteMany({ where: { staffId: staId, shiftTypeId: rsId } });
   await prisma.standingCommitment.create({
-    data: { providerId: staId, shiftTypeId: rsId, frequency: "weekly", notes: "Standing research days" },
+    data: { staffId: staId, shiftTypeId: rsId, frequency: "weekly", notes: "Standing research days" },
   });
   console.log("Seeded STa standing commitment (Research)");
 

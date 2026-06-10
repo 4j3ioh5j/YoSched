@@ -37,10 +37,10 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
       // 1. Auto-backup the current live month so the pre-restore state is recoverable.
       const liveRows = await tx.assignment.findMany({
         where: { date: { gte: start, lt: end } },
-        select: { providerId: true, date: true, shiftTypeId: true, isLocked: true, source: true, notes: true },
+        select: { staffId: true, date: true, shiftTypeId: true, isLocked: true, source: true, notes: true },
       });
       const backupSnap: AssignmentSnapshot[] = liveRows.map((a) => ({
-        providerId: a.providerId,
+        staffId: a.staffId,
         date: a.date.toISOString().split("T")[0],
         shiftTypeId: a.shiftTypeId,
         isLocked: a.isLocked,
@@ -68,7 +68,7 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
       if (snapshot.length > 0) {
         await tx.assignment.createMany({
           data: snapshot.map((s) => ({
-            providerId: s.providerId,
+            staffId: s.staffId,
             date: new Date(s.date + "T00:00:00Z"),
             shiftTypeId: s.shiftTypeId,
             isLocked: s.isLocked,
@@ -85,7 +85,7 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
 
     return NextResponse.json({ version: restored });
   } catch (e) {
-    // Most likely an FK violation: the snapshot references a provider or shift
+    // Most likely an FK violation: the snapshot references a staff or shift
     // type that has since been deleted. Fail loudly rather than silently drop rows.
     const msg = e instanceof Error ? e.message : "Restore failed";
     return NextResponse.json(

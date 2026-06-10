@@ -3,7 +3,7 @@
 import type { GraphChart, GraphMetric } from "@/lib/graph/spec";
 import { isCompatible } from "@/lib/graph/compat";
 
-// Chart types selectable for the overview panel. Radar is the per-provider
+// Chart types selectable for the overview panel. Radar is the per-staff
 // drill-down (not a panel chart).
 const CHARTS: { chart: GraphChart; label: string }[] = [
   { chart: "bar", label: "Bar" },

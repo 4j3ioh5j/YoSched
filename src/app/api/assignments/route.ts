@@ -3,10 +3,10 @@ import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals } from "@/lib/request-sync";
 import { NextRequest, NextResponse } from "next/server";
 
-function formatAssignment(a: { id: string; providerId: string; shiftTypeId: string; isLocked: boolean; shiftType: { code: string; color: string | null } }, date: string) {
+function formatAssignment(a: { id: string; staffId: string; shiftTypeId: string; isLocked: boolean; shiftType: { code: string; color: string | null } }, date: string) {
   return {
     id: a.id,
-    providerId: a.providerId,
+    staffId: a.staffId,
     date,
     shiftTypeId: a.shiftTypeId,
     isLocked: a.isLocked,
@@ -18,14 +18,14 @@ function formatAssignment(a: { id: string; providerId: string; shiftTypeId: stri
 export async function PUT(req: NextRequest) {
   const { error, userId } = await getSession("schedule:edit");
   if (error) return error;
-  const { providerId, date, shiftTypeId } = await req.json();
+  const { staffId, date, shiftTypeId } = await req.json();
 
-  if (!providerId || !date || !shiftTypeId) {
+  if (!staffId || !date || !shiftTypeId) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
 
   const existing = await prisma.assignment.findUnique({
-    where: { providerId_date: { providerId, date: new Date(date + "T00:00:00Z") } },
+    where: { staffId_date: { staffId, date: new Date(date + "T00:00:00Z") } },
   });
   if (existing?.isLocked) {
     return NextResponse.json({ error: "Cannot modify locked assignment" }, { status: 400 });
@@ -33,11 +33,11 @@ export async function PUT(req: NextRequest) {
 
   const assignment = await prisma.assignment.upsert({
     where: {
-      providerId_date: { providerId, date: new Date(date + "T00:00:00Z") },
+      staffId_date: { staffId, date: new Date(date + "T00:00:00Z") },
     },
     update: { shiftTypeId, source: "manual" },
     create: {
-      providerId,
+      staffId,
       date: new Date(date + "T00:00:00Z"),
       shiftTypeId,
       source: "manual",
@@ -45,7 +45,7 @@ export async function PUT(req: NextRequest) {
     include: { shiftType: true },
   });
 
-  await syncRequestApprovals([{ providerId, date }], userId);
+  await syncRequestApprovals([{ staffId, date }], userId);
 
   return NextResponse.json(formatAssignment(assignment, date));
 }
@@ -61,10 +61,10 @@ export async function POST(req: NextRequest) {
 
     const [fromAssignment, toAssignment] = await Promise.all([
       prisma.assignment.findUnique({
-        where: { providerId_date: { providerId: from.providerId, date: fromDate } },
+        where: { staffId_date: { staffId: from.staffId, date: fromDate } },
       }),
       prisma.assignment.findUnique({
-        where: { providerId_date: { providerId: to.providerId, date: toDate } },
+        where: { staffId_date: { staffId: to.staffId, date: toDate } },
       }),
     ]);
 
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
         return Promise.all([
           tx.assignment.create({
             data: {
-              providerId: to.providerId,
+              staffId: to.staffId,
               date: toDate,
               shiftTypeId: fromAssignment.shiftTypeId,
               source: "manual",
@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
           }),
           tx.assignment.create({
             data: {
-              providerId: from.providerId,
+              staffId: from.staffId,
               date: fromDate,
               shiftTypeId: toAssignment.shiftTypeId,
               source: "manual",
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
         await tx.assignment.delete({ where: { id: fromAssignment.id } });
         return tx.assignment.create({
           data: {
-            providerId: to.providerId,
+            staffId: to.staffId,
             date: toDate,
             shiftTypeId: fromAssignment.shiftTypeId,
             source: "manual",
@@ -119,13 +119,13 @@ export async function POST(req: NextRequest) {
         });
       });
       results.moved = formatAssignment(newAssignment, to.date);
-      results.cleared = { providerId: from.providerId, date: from.date };
+      results.cleared = { staffId: from.staffId, date: from.date };
     }
 
     await syncRequestApprovals(
       [
-        { providerId: from.providerId, date: from.date },
-        { providerId: to.providerId, date: to.date },
+        { staffId: from.staffId, date: from.date },
+        { staffId: to.staffId, date: to.date },
       ],
       userId
     );
@@ -139,14 +139,14 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const { error, userId } = await getSession("schedule:edit");
   if (error) return error;
-  const { providerId, date } = await req.json();
+  const { staffId, date } = await req.json();
 
-  if (!providerId || !date) {
+  if (!staffId || !date) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
 
   const existing = await prisma.assignment.findUnique({
-    where: { providerId_date: { providerId, date: new Date(date + "T00:00:00Z") } },
+    where: { staffId_date: { staffId, date: new Date(date + "T00:00:00Z") } },
   });
   if (existing?.isLocked) {
     return NextResponse.json({ error: "Cannot delete locked assignment" }, { status: 400 });
@@ -154,12 +154,12 @@ export async function DELETE(req: NextRequest) {
 
   await prisma.assignment.deleteMany({
     where: {
-      providerId,
+      staffId,
       date: new Date(date + "T00:00:00Z"),
     },
   });
 
-  await syncRequestApprovals([{ providerId, date }], userId);
+  await syncRequestApprovals([{ staffId, date }], userId);
 
   return NextResponse.json({ ok: true });
 }

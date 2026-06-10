@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { daysBetween, bestSpread, autoSchedule, type ScheduleProvider, type ScheduleShiftType, type AutoScheduleResult } from "../auto-scheduler";
+import { daysBetween, bestSpread, autoSchedule, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult } from "../auto-scheduler";
 import { type ScheduleRequestData } from "../schedule-requests";
 
 // ─── helpers ───
 
-function makeProvider(id: string, initials: string, overrides: Partial<ScheduleProvider> = {}): ScheduleProvider {
+function makeStaff(id: string, initials: string, overrides: Partial<ScheduleStaff> = {}): ScheduleStaff {
   return {
     id,
     initials,
@@ -77,14 +77,14 @@ function weekdayDates(startDate: string, count: number): string[] {
 function runSchedule(overrides: Record<string, unknown> = {}): AutoScheduleResult {
   return autoSchedule({
     dates: weekdayDates("2025-05-12", 5),
-    providers: [makeProvider("p1", "AB"), makeProvider("p2", "CD")],
+    staff: [makeStaff("p1", "AB"), makeStaff("p2", "CD")],
     shiftTypes: [OR, OFF],
     existingAssignments: [],
     payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
     holidays: [],
     desirabilityWeights: [],
     standingCommitments: [],
-    providerOverrides: [],
+    staffOverrides: [],
     dayPreferences: [],
     historicalAssignments: [],
     staffingRequirements: [],
@@ -174,12 +174,12 @@ describe("autoSchedule", () => {
     it("assigns standing commitments on matching days", () => {
       const result = runSchedule({
         standingCommitments: [
-          { providerId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "weekly" },
+          { staffId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "weekly" },
         ],
         staffingRequirements: [],
       });
       const mondayCommitments = result.suggestions.filter(
-        (s) => s.providerId === "p1" && s.step === "standing" && s.date === "2025-05-12"
+        (s) => s.staffId === "p1" && s.step === "standing" && s.date === "2025-05-12"
       );
       expect(mondayCommitments).toHaveLength(1);
       expect(mondayCommitments[0].code).toBe("OR");
@@ -188,33 +188,33 @@ describe("autoSchedule", () => {
     it("skips standing commitments on holidays", () => {
       const result = runSchedule({
         standingCommitments: [
-          { providerId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "weekly" },
+          { staffId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "weekly" },
         ],
         holidays: [{ date: "2025-05-12" }],
       });
       const mondayStanding = result.suggestions.filter(
-        (s) => s.providerId === "p1" && s.step === "standing" && s.date === "2025-05-12"
+        (s) => s.staffId === "p1" && s.step === "standing" && s.date === "2025-05-12"
       );
       expect(mondayStanding).toHaveLength(0);
     });
 
     it("skips standing commitments when temporal eligibility rules block the date", () => {
       const result = runSchedule({
-        providers: [
-          makeProvider("p1", "AB", {
+        staff: [
+          makeStaff("p1", "AB", {
             shiftEligibilityRules: [
               { shiftTypeId: "st-or", dayOfWeek: 3, type: "eligible", strength: "rule", pattern: "every" },
             ],
           }),
         ],
         standingCommitments: [
-          { providerId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "weekly" },
+          { staffId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "weekly" },
         ],
       });
       // p1 has temporal rules for OR: only Wednesday eligible
       // Standing commitment is for Monday — should be skipped
       const mondayStanding = result.suggestions.filter(
-        (s) => s.providerId === "p1" && s.step === "standing" && s.date === "2025-05-12"
+        (s) => s.staffId === "p1" && s.step === "standing" && s.date === "2025-05-12"
       );
       expect(mondayStanding).toHaveLength(0);
     });
@@ -222,7 +222,7 @@ describe("autoSchedule", () => {
     it("skips standing commitments for non-autoSchedulable shifts", () => {
       const result = runSchedule({
         standingCommitments: [
-          { providerId: "p1", shiftTypeId: "st-off", dayOfWeek: 1, frequency: "weekly" },
+          { staffId: "p1", shiftTypeId: "st-off", dayOfWeek: 1, frequency: "weekly" },
         ],
       });
       const standing = result.suggestions.filter((s) => s.step === "standing");
@@ -231,14 +231,14 @@ describe("autoSchedule", () => {
   });
 
   describe("step 2: staffing requirements", () => {
-    it("fills staffing requirements evenly across providers", () => {
+    it("fills staffing requirements evenly across staff", () => {
       const ORC = makeShift("st-orc", "ORC", { schedulePriority: 2, autoSchedulable: true });
-      const providers = [
-        makeProvider("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
-        makeProvider("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
+      const staff = [
+        makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
+        makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
       ];
       const result = runSchedule({
-        providers,
+        staff,
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
           { shiftCode: "ORC", dayKey: "1", minCount: 1 },
@@ -248,27 +248,27 @@ describe("autoSchedule", () => {
           { shiftCode: "ORC", dayKey: "5", minCount: 1 },
         ],
       });
-      const orcByProvider = new Map<string, number>();
+      const orcByStaff = new Map<string, number>();
       for (const s of result.suggestions) {
         if (s.code === "ORC") {
-          orcByProvider.set(s.providerId, (orcByProvider.get(s.providerId) || 0) + 1);
+          orcByStaff.set(s.staffId, (orcByStaff.get(s.staffId) || 0) + 1);
         }
       }
-      // Should be roughly even — neither provider gets all 5
-      for (const [, count] of orcByProvider) {
+      // Should be roughly even — neither staff gets all 5
+      for (const [, count] of orcByStaff) {
         expect(count).toBeGreaterThanOrEqual(2);
         expect(count).toBeLessThanOrEqual(3);
       }
     });
 
-    it("warns when no eligible provider is available", () => {
+    it("warns when no eligible staff is available", () => {
       const RARE = makeShift("st-rare", "RARE", { schedulePriority: 1, autoSchedulable: true });
       const result = runSchedule({
-        providers: [makeProvider("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-off"] })],
+        staff: [makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-off"] })],
         shiftTypes: [OR, RARE, OFF],
         staffingRequirements: [{ shiftCode: "RARE", dayKey: "1", minCount: 1 }],
       });
-      // No provider is eligible for RARE
+      // No staff is eligible for RARE
       expect(result.warnings.some((w) => w.includes("RARE"))).toBe(true);
     });
   });
@@ -279,7 +279,7 @@ describe("autoSchedule", () => {
         payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
       });
       const p1Fill = result.suggestions.filter(
-        (s) => s.providerId === "p1" && s.step === "fill"
+        (s) => s.staffId === "p1" && s.step === "fill"
       );
       // 40 target / 8 hrs per day = 5 fill days needed
       expect(p1Fill.length).toBe(5);
@@ -289,20 +289,20 @@ describe("autoSchedule", () => {
       // Only 2 weekday dates available, but target is 40hrs (5 days needed)
       const result = runSchedule({
         dates: weekdayDates("2025-05-12", 2),
-        providers: [makeProvider("p1", "AB")],
+        staff: [makeStaff("p1", "AB")],
         payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
       });
       expect(result.warnings.some((w) => w.includes("cannot reach"))).toBe(true);
     });
 
-    it("respects FTE percentage for part-time providers", () => {
+    it("respects FTE percentage for part-time staff", () => {
       const result = runSchedule({
-        providers: [makeProvider("p1", "AB", { ftePercentage: 0.5 })],
+        staff: [makeStaff("p1", "AB", { ftePercentage: 0.5 })],
         payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
         dates: weekdayDates("2025-05-12", 10),
       });
       const p1Fill = result.suggestions.filter(
-        (s) => s.providerId === "p1" && s.step === "fill"
+        (s) => s.staffId === "p1" && s.step === "fill"
       );
       // 80 * 0.5 = 40 target / 8 hrs per day = 5 fill days
       expect(p1Fill.length).toBe(5);
@@ -313,7 +313,7 @@ describe("autoSchedule", () => {
     it("fills remaining empty cells with off-shift", () => {
       const result = runSchedule();
       const offSuggestions = result.suggestions.filter((s) => s.step === "off");
-      // 2 providers * 5 days = 10 slots, minus fill slots = off slots
+      // 2 staff * 5 days = 10 slots, minus fill slots = off slots
       const totalSlots = 2 * 5;
       const fillSlots = result.suggestions.filter((s) => s.step === "fill").length;
       expect(offSuggestions.length).toBe(totalSlots - fillSlots);
@@ -324,11 +324,11 @@ describe("autoSchedule", () => {
     it("does not overwrite existing assignments", () => {
       const result = runSchedule({
         existingAssignments: [
-          { providerId: "p1", date: "2025-05-12", shiftTypeId: "st-or", code: "OR", isLocked: false },
+          { staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or", code: "OR", isLocked: false },
         ],
       });
       const p1Mon = result.suggestions.filter(
-        (s) => s.providerId === "p1" && s.date === "2025-05-12"
+        (s) => s.staffId === "p1" && s.date === "2025-05-12"
       );
       expect(p1Mon).toHaveLength(0);
     });
@@ -337,11 +337,11 @@ describe("autoSchedule", () => {
   describe("follow rules integration", () => {
     it("places recovery day after shift with recovery-only follow rule", () => {
       const CALL = makeShift("st-call", "CALL", { schedulePriority: 1, autoSchedulable: true });
-      const providers = [
-        makeProvider("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-call", "st-off"] }),
+      const staff = [
+        makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-call", "st-off"] }),
       ];
       const result = runSchedule({
-        providers,
+        staff,
         shiftTypes: [OR, CALL, OFF],
         staffingRequirements: [
           { shiftCode: "CALL", dayKey: "1", minCount: 1 },
@@ -353,7 +353,7 @@ describe("autoSchedule", () => {
       const callDay = result.suggestions.find((s) => s.code === "CALL");
       expect(callDay).toBeDefined();
       const nextDay = result.suggestions.find(
-        (s) => s.providerId === callDay!.providerId && s.step.includes("recovery")
+        (s) => s.staffId === callDay!.staffId && s.step.includes("recovery")
       );
       expect(nextDay).toBeDefined();
       expect(nextDay!.code).toBe("X");
@@ -361,21 +361,21 @@ describe("autoSchedule", () => {
   });
 
   describe("weekend-paired shifts", () => {
-    it("assigns paired weekend shifts to the same provider", () => {
+    it("assigns paired weekend shifts to the same staff", () => {
       const ORC = makeShift("st-orc", "ORC", {
         schedulePriority: 1,
         autoSchedulable: true,
         weekendPaired: true,
         countsOnWeekend: true,
       });
-      const providers = [
-        makeProvider("p1", "AB", {
+      const staff = [
+        makeStaff("p1", "AB", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
           availabilityRules: [0, 1, 2, 3, 4, 5, 6].map((d) => ({
             dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
           })),
         }),
-        makeProvider("p2", "CD", {
+        makeStaff("p2", "CD", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
           availabilityRules: [0, 1, 2, 3, 4, 5, 6].map((d) => ({
             dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
@@ -386,7 +386,7 @@ describe("autoSchedule", () => {
       const dates = ["2025-05-17", "2025-05-18"]; // Sat, Sun
       const result = runSchedule({
         dates,
-        providers,
+        staff,
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
           { shiftCode: "ORC", dayKey: "6", minCount: 1 },
@@ -395,30 +395,30 @@ describe("autoSchedule", () => {
       });
       const orcSuggestions = result.suggestions.filter((s) => s.code === "ORC");
       expect(orcSuggestions).toHaveLength(2);
-      expect(orcSuggestions[0].providerId).toBe(orcSuggestions[1].providerId);
+      expect(orcSuggestions[0].staffId).toBe(orcSuggestions[1].staffId);
     });
   });
 
-  describe("inactive / non-auto providers", () => {
-    it("skips inactive providers entirely", () => {
+  describe("inactive / non-auto staff", () => {
+    it("skips inactive staff entirely", () => {
       const result = runSchedule({
-        providers: [
-          makeProvider("p1", "AB"),
-          makeProvider("p2", "CD", { isActive: false }),
+        staff: [
+          makeStaff("p1", "AB"),
+          makeStaff("p2", "CD", { isActive: false }),
         ],
       });
-      const p2Suggestions = result.suggestions.filter((s) => s.providerId === "p2");
+      const p2Suggestions = result.suggestions.filter((s) => s.staffId === "p2");
       expect(p2Suggestions).toHaveLength(0);
     });
 
-    it("skips non-auto-scheduled providers", () => {
+    it("skips non-auto-scheduled staff", () => {
       const result = runSchedule({
-        providers: [
-          makeProvider("p1", "AB"),
-          makeProvider("p2", "CD", { isAutoScheduled: false }),
+        staff: [
+          makeStaff("p1", "AB"),
+          makeStaff("p2", "CD", { isAutoScheduled: false }),
         ],
       });
-      const p2Suggestions = result.suggestions.filter((s) => s.providerId === "p2");
+      const p2Suggestions = result.suggestions.filter((s) => s.staffId === "p2");
       expect(p2Suggestions).toHaveLength(0);
     });
   });
@@ -437,23 +437,23 @@ describe("autoSchedule", () => {
   });
 
   describe("shift eligibility rules", () => {
-    it("restricts provider to eligible days only via temporal rules", () => {
+    it("restricts staff to eligible days only via temporal rules", () => {
       const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true });
-      const providers = [
-        makeProvider("p1", "AB", {
+      const staff = [
+        makeStaff("p1", "AB", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
           shiftEligibilityRules: [
             { shiftTypeId: "st-orc", dayOfWeek: 1, type: "eligible", strength: "rule", pattern: "every" },
           ],
         }),
-        makeProvider("p2", "CD", {
+        makeStaff("p2", "CD", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
         }),
       ];
       const dates = weekdayDates("2025-05-12", 5); // Mon-Fri
       const result = runSchedule({
         dates,
-        providers,
+        staff,
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
           { shiftCode: "ORC", dayKey: "1", minCount: 1 },
@@ -465,7 +465,7 @@ describe("autoSchedule", () => {
       });
       // p1 has temporal rules for ORC: only Monday eligible
       // So p1 should only get ORC on Monday, p2 gets the rest
-      const p1Orc = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "ORC");
+      const p1Orc = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORC");
       const p1OrcDays = p1Orc.map((s) => new Date(s.date + "T12:00:00").getDay());
       for (const dow of p1OrcDays) {
         expect(dow).toBe(1); // Monday only
@@ -474,39 +474,39 @@ describe("autoSchedule", () => {
 
     it("falls back to static eligibility when no temporal rules exist", () => {
       const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true });
-      const providers = [
-        makeProvider("p1", "AB", {
+      const staff = [
+        makeStaff("p1", "AB", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
           shiftEligibilityRules: [], // empty = no temporal rules
         }),
       ];
       const result = runSchedule({
         dates: weekdayDates("2025-05-12", 5),
-        providers,
+        staff,
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [{ shiftCode: "ORC", dayKey: "1", minCount: 1 }],
       });
       // Should still assign ORC since static eligibility allows it
-      const p1Orc = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "ORC");
+      const p1Orc = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORC");
       expect(p1Orc.length).toBeGreaterThanOrEqual(1);
     });
   });
 
   describe("shift minimum targets", () => {
-    it("prioritizes provider below their minimum target", () => {
+    it("prioritizes staff below their minimum target", () => {
       const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true });
-      const providers = [
-        makeProvider("p1", "AB", {
+      const staff = [
+        makeStaff("p1", "AB", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
           shiftMinimumTargets: [{ shiftTypeId: "st-orc", minCount: 3, window: "pay_period" }],
         }),
-        makeProvider("p2", "CD", {
+        makeStaff("p2", "CD", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
         }),
       ];
       const result = runSchedule({
         dates: weekdayDates("2025-05-12", 5),
-        providers,
+        staff,
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
           { shiftCode: "ORC", dayKey: "1", minCount: 1 },
@@ -516,22 +516,22 @@ describe("autoSchedule", () => {
           { shiftCode: "ORC", dayKey: "5", minCount: 1 },
         ],
       });
-      const p1Orc = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "ORC");
+      const p1Orc = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORC");
       // p1 has min 3/PP so should get at least 3
       expect(p1Orc.length).toBeGreaterThanOrEqual(3);
     });
 
     it("warns when minimum cannot be met", () => {
       const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true });
-      const providers = [
-        makeProvider("p1", "AB", {
+      const staff = [
+        makeStaff("p1", "AB", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
           shiftMinimumTargets: [{ shiftTypeId: "st-orc", minCount: 10, window: "pay_period" }],
         }),
       ];
       const result = runSchedule({
         dates: weekdayDates("2025-05-12", 5),
-        providers,
+        staff,
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
           { shiftCode: "ORC", dayKey: "1", minCount: 1 },
@@ -548,7 +548,7 @@ describe("autoSchedule", () => {
 
   describe("maxCount enforcement", () => {
     it("caps assignments at maxCount per window", () => {
-      const p = makeProvider("p1", "AB", {
+      const p = makeStaff("p1", "AB", {
         eligibleShiftTypeIds: ["st-or", "st-off"],
         shiftMinimumTargets: [
           { shiftTypeId: "st-or", minCount: 0, maxCount: 2, window: "pay_period" as const },
@@ -556,7 +556,7 @@ describe("autoSchedule", () => {
       });
       const result = runSchedule({
         dates: weekdayDates("2025-05-12", 5),
-        providers: [p],
+        staff: [p],
         staffingRequirements: [
           { shiftCode: "OR", dayKey: "1", minCount: 1 },
           { shiftCode: "OR", dayKey: "2", minCount: 1 },
@@ -565,12 +565,12 @@ describe("autoSchedule", () => {
           { shiftCode: "OR", dayKey: "5", minCount: 1 },
         ],
       });
-      const orCount = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "OR").length;
+      const orCount = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "OR").length;
       expect(orCount).toBeLessThanOrEqual(2);
     });
 
     it("warns when maxCount is exceeded by existing assignments", () => {
-      const p = makeProvider("p1", "AB", {
+      const p = makeStaff("p1", "AB", {
         eligibleShiftTypeIds: ["st-or", "st-off"],
         shiftMinimumTargets: [
           { shiftTypeId: "st-or", minCount: 0, maxCount: 1, window: "pay_period" as const },
@@ -578,17 +578,17 @@ describe("autoSchedule", () => {
       });
       const result = runSchedule({
         dates: weekdayDates("2025-05-12", 5),
-        providers: [p],
+        staff: [p],
         existingAssignments: [
-          { providerId: "p1", date: "2025-05-12", shiftTypeId: "st-or", code: "OR", isLocked: false },
-          { providerId: "p1", date: "2025-05-13", shiftTypeId: "st-or", code: "OR", isLocked: false },
+          { staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or", code: "OR", isLocked: false },
+          { staffId: "p1", date: "2025-05-13", shiftTypeId: "st-or", code: "OR", isLocked: false },
         ],
       });
       expect(result.warnings.some((w) => w.includes("AB") && w.includes("max") && w.includes("OR"))).toBe(true);
     });
 
     it("caps standing commitments at maxCount", () => {
-      const p = makeProvider("p1", "AB", {
+      const p = makeStaff("p1", "AB", {
         eligibleShiftTypeIds: ["st-or", "st-off"],
         shiftMinimumTargets: [
           { shiftTypeId: "st-or", minCount: 0, maxCount: 2, window: "pay_period" as const },
@@ -596,17 +596,17 @@ describe("autoSchedule", () => {
       });
       const result = runSchedule({
         dates: weekdayDates("2025-05-12", 5),
-        providers: [p],
+        staff: [p],
         standingCommitments: [
-          { providerId: "p1", shiftTypeId: "st-or", dayOfWeek: null, frequency: "weekly" },
+          { staffId: "p1", shiftTypeId: "st-or", dayOfWeek: null, frequency: "weekly" },
         ],
       });
-      const orCount = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "OR").length;
+      const orCount = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "OR").length;
       expect(orCount).toBeLessThanOrEqual(2);
     });
 
     it("warns when fill-hours is capped by maxCount", () => {
-      const p = makeProvider("p1", "AB", {
+      const p = makeStaff("p1", "AB", {
         eligibleShiftTypeIds: ["st-or", "st-off"],
         shiftMinimumTargets: [
           { shiftTypeId: "st-or", minCount: 0, maxCount: 2, window: "pay_period" as const },
@@ -614,7 +614,7 @@ describe("autoSchedule", () => {
       });
       const result = runSchedule({
         dates: weekdayDates("2025-05-12", 5),
-        providers: [p],
+        staff: [p],
         payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
       });
       expect(result.warnings.some((w) => w.includes("AB") && w.includes("capped by max"))).toBe(true);
@@ -626,7 +626,7 @@ describe("autoSchedule", () => {
         countsOnWeekend: true,
         schedulePriority: 1,
       });
-      const p = makeProvider("p1", "AB", {
+      const p = makeStaff("p1", "AB", {
         eligibleShiftTypeIds: ["st-call", "st-off"],
         availabilityRules: [0, 1, 2, 3, 4, 5, 6].map((d) => ({
           dayOfWeek: d,
@@ -642,23 +642,23 @@ describe("autoSchedule", () => {
       const dates = ["2025-05-12", "2025-05-13", "2025-05-14", "2025-05-15", "2025-05-16", "2025-05-17", "2025-05-18"];
       const result = runSchedule({
         dates,
-        providers: [p],
+        staff: [p],
         shiftTypes: [CALL, OFF],
         staffingRequirements: [
           { shiftCode: "CALL", dayKey: "6", minCount: 1 },
           { shiftCode: "CALL", dayKey: "0", minCount: 1 },
         ],
       });
-      const callCount = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "CALL").length;
+      const callCount = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "CALL").length;
       expect(callCount).toBeLessThanOrEqual(1);
       expect(result.warnings.some((w) => w.includes("AB") && w.includes("capped by max"))).toBe(true);
     });
   });
 
   describe("min target proactive scheduling", () => {
-    it("assigns shifts to meet per-provider minimums even without staffing requirements", () => {
+    it("assigns shifts to meet per-staff minimums even without staffing requirements", () => {
       const ADM = makeShift("st-adm", "ADM", { schedulePriority: null });
-      const p = makeProvider("p1", "AB", {
+      const p = makeStaff("p1", "AB", {
         eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"],
         shiftMinimumTargets: [
           { shiftTypeId: "st-adm", minCount: 1, window: "pay_period" as const },
@@ -666,18 +666,18 @@ describe("autoSchedule", () => {
       });
       const result = runSchedule({
         dates: weekdayDates("2025-05-12", 5),
-        providers: [p],
+        staff: [p],
         shiftTypes: [OR, ADM, OFF],
         staffingRequirements: [],
       });
-      const admCount = result.suggestions.filter((s) => s.providerId === "p1" && s.code === "ADM").length;
+      const admCount = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "ADM").length;
       expect(admCount).toBeGreaterThanOrEqual(1);
       expect(result.suggestions.some((s) => s.code === "ADM" && s.step === "min-target")).toBe(true);
     });
 
     it("respects eligibility rules when placing min-target shifts", () => {
       const ADM = makeShift("st-adm", "ADM", { schedulePriority: null });
-      const p = makeProvider("p1", "AB", {
+      const p = makeStaff("p1", "AB", {
         eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"],
         shiftEligibilityRules: [
           { shiftTypeId: "st-adm", dayOfWeek: 5, type: "eligible" as const, strength: "rule" as const, pattern: "every" as const },
@@ -692,7 +692,7 @@ describe("autoSchedule", () => {
       });
       const result = runSchedule({
         dates: weekdayDates("2025-05-12", 5),
-        providers: [p],
+        staff: [p],
         shiftTypes: [OR, ADM, OFF],
         staffingRequirements: [],
       });
@@ -706,7 +706,7 @@ describe("autoSchedule", () => {
 
 // ─── schedule requests (approved constraints) ───
 //
-// Default runSchedule: 2 providers, OR fill shift, FTE target 40h ⇒ each provider
+// Default runSchedule: 2 staff, OR fill shift, FTE target 40h ⇒ each staff
 // is filled with OR on all 5 weekdays. These tests assert how an approved request
 // perturbs that baseline. Only approved requests exert force; pending/soft don't.
 
@@ -720,14 +720,14 @@ describe("autoSchedule — schedule requests", () => {
 
   function req(
     o: Partial<ScheduleRequestData> & {
-      providerId: string;
+      staffId: string;
       startDate: string;
       endDate: string;
       kind: ScheduleRequestData["kind"];
     }
   ): ScheduleRequestData {
     return {
-      id: `req-${o.providerId}-${o.startDate}-${o.kind}`,
+      id: `req-${o.staffId}-${o.startDate}-${o.kind}`,
       shiftTypeIds: [],
       leaveShiftTypeId: null,
       strength: "hard",
@@ -736,8 +736,8 @@ describe("autoSchedule — schedule requests", () => {
     };
   }
 
-  const worksOR = (r: AutoScheduleResult, providerId: string, date: string) =>
-    r.suggestions.some((s) => s.providerId === providerId && s.date === date && s.code === "OR");
+  const worksOR = (r: AutoScheduleResult, staffId: string, date: string) =>
+    r.suggestions.some((s) => s.staffId === staffId && s.date === date && s.code === "OR");
 
   it("control: without requests, p1 works OR every weekday", () => {
     const r = runSchedule({});
@@ -745,9 +745,9 @@ describe("autoSchedule — schedule requests", () => {
     expect(worksOR(r, "p1", "2025-05-13")).toBe(true);
   });
 
-  it("approved hard OFF keeps the provider off working shifts", () => {
+  it("approved hard OFF keeps the staff off working shifts", () => {
     const r = runSchedule({
-      scheduleRequests: [req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF" })],
+      scheduleRequests: [req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF" })],
     });
     expect(worksOR(r, "p1", "2025-05-12")).toBe(false);
     // The constraint is scoped to that one date — p1 still works the next day.
@@ -759,7 +759,7 @@ describe("autoSchedule — schedule requests", () => {
   it("approved hard NEGATE_SHIFT blocks only that shift on that date", () => {
     const r = runSchedule({
       scheduleRequests: [
-        req({ providerId: "p1", startDate: "2025-05-13", endDate: "2025-05-13", kind: "NEGATE_SHIFT", shiftTypeIds: ["st-or"] }),
+        req({ staffId: "p1", startDate: "2025-05-13", endDate: "2025-05-13", kind: "NEGATE_SHIFT", shiftTypeIds: ["st-or"] }),
       ],
     });
     expect(worksOR(r, "p1", "2025-05-13")).toBe(false);
@@ -770,10 +770,10 @@ describe("autoSchedule — schedule requests", () => {
     const r = runSchedule({
       shiftTypes: [OR, AL, OFF],
       scheduleRequests: [
-        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-13", kind: "LEAVE", leaveShiftTypeId: "st-al" }),
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-13", kind: "LEAVE", leaveShiftTypeId: "st-al" }),
       ],
     });
-    const leave = r.suggestions.filter((s) => s.providerId === "p1" && s.code === "AL");
+    const leave = r.suggestions.filter((s) => s.staffId === "p1" && s.code === "AL");
     expect(leave.map((s) => s.date).sort()).toEqual(["2025-05-12", "2025-05-13"]);
     expect(leave.every((s) => s.step === "request-leave")).toBe(true);
     // Leave days are not also filled with a working shift.
@@ -784,17 +784,17 @@ describe("autoSchedule — schedule requests", () => {
   it("warns (and skips) when an approved leave references an unknown shift type", () => {
     const r = runSchedule({
       scheduleRequests: [
-        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-missing" }),
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-missing" }),
       ],
     });
     expect(r.warnings.some((w) => w.includes("unknown shift type"))).toBe(true);
-    expect(r.suggestions.some((s) => s.providerId === "p1" && s.date === "2025-05-12" && s.step === "request-leave")).toBe(false);
+    expect(r.suggestions.some((s) => s.staffId === "p1" && s.date === "2025-05-12" && s.step === "request-leave")).toBe(false);
   });
 
   it("ignores pending requests — only approved exert force", () => {
     const r = runSchedule({
       scheduleRequests: [
-        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF", status: "pending" }),
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF", status: "pending" }),
       ],
     });
     expect(worksOR(r, "p1", "2025-05-12")).toBe(true);
@@ -803,7 +803,7 @@ describe("autoSchedule — schedule requests", () => {
   it("soft OFF advises only — it does not forbid working", () => {
     const r = runSchedule({
       scheduleRequests: [
-        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF", strength: "soft" }),
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF", strength: "soft" }),
       ],
     });
     expect(worksOR(r, "p1", "2025-05-12")).toBe(true);
@@ -811,8 +811,8 @@ describe("autoSchedule — schedule requests", () => {
 
   it("hard OFF overrides a standing commitment on the same date", () => {
     const r = runSchedule({
-      standingCommitments: [{ providerId: "p1", shiftTypeId: "st-or", dayOfWeek: null, frequency: "weekly" }],
-      scheduleRequests: [req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF" })],
+      standingCommitments: [{ staffId: "p1", shiftTypeId: "st-or", dayOfWeek: null, frequency: "weekly" }],
+      scheduleRequests: [req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF" })],
     });
     expect(worksOR(r, "p1", "2025-05-12")).toBe(false);
     // The standing commitment still applies on a day with no request.
@@ -827,14 +827,14 @@ describe("autoSchedule — schedule request preferences", () => {
 
   function req(
     o: Partial<ScheduleRequestData> & {
-      providerId: string;
+      staffId: string;
       startDate: string;
       endDate: string;
       kind: ScheduleRequestData["kind"];
     }
   ): ScheduleRequestData {
     return {
-      id: `req-${o.providerId}-${o.startDate}-${o.kind}-${o.strength ?? "hard"}`,
+      id: `req-${o.staffId}-${o.startDate}-${o.kind}-${o.strength ?? "hard"}`,
       shiftTypeIds: [],
       leaveShiftTypeId: null,
       strength: "hard",
@@ -843,44 +843,44 @@ describe("autoSchedule — schedule request preferences", () => {
     };
   }
 
-  const has = (r: AutoScheduleResult, providerId: string, date: string, code: string) =>
-    r.suggestions.some((s) => s.providerId === providerId && s.date === date && s.code === code);
+  const has = (r: AutoScheduleResult, staffId: string, date: string, code: string) =>
+    r.suggestions.some((s) => s.staffId === staffId && s.date === date && s.code === code);
 
   // ── hard REQUEST_SHIFT (forcing) ──
 
-  it("approved hard REQUEST_SHIFT pre-places the wanted shift for an eligible provider", () => {
-    const p1 = makeProvider("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"] });
+  it("approved hard REQUEST_SHIFT pre-places the wanted shift for an eligible staff", () => {
+    const p1 = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"] });
     const r = runSchedule({
-      providers: [p1, makeProvider("p2", "CD")],
+      staff: [p1, makeStaff("p2", "CD")],
       shiftTypes: [OR, ADM, OFF],
       scheduleRequests: [
-        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"] }),
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"] }),
       ],
     });
-    const adm = r.suggestions.find((s) => s.providerId === "p1" && s.date === "2025-05-12" && s.code === "ADM");
+    const adm = r.suggestions.find((s) => s.staffId === "p1" && s.date === "2025-05-12" && s.code === "ADM");
     expect(adm).toBeDefined();
     expect(adm!.step).toBe("request-shift");
   });
 
-  it("warns (and places nothing) when a hard REQUEST_SHIFT names a shift the provider can't do", () => {
+  it("warns (and places nothing) when a hard REQUEST_SHIFT names a shift the staff can't do", () => {
     const r = runSchedule({
-      // default providers are eligible only for OR/off, not ADM
+      // default staff are eligible only for OR/off, not ADM
       shiftTypes: [OR, ADM, OFF],
       scheduleRequests: [
-        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"] }),
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"] }),
       ],
     });
     expect(r.warnings.some((w) => w.includes("could not honor approved shift request"))).toBe(true);
     expect(has(r, "p1", "2025-05-12", "ADM")).toBe(false);
   });
 
-  // ── soft weighting in contested staffing (STEP 2 pickProvider) ──
+  // ── soft weighting in contested staffing (STEP 2 pickStaff) ──
 
   function contestedADM(overrides: Record<string, unknown>): AutoScheduleResult {
-    const p1 = makeProvider("p1", "AB", { eligibleShiftTypeIds: ["st-adm", "st-off"] });
-    const p2 = makeProvider("p2", "CD", { eligibleShiftTypeIds: ["st-adm", "st-off"] });
+    const p1 = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-adm", "st-off"] });
+    const p2 = makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-adm", "st-off"] });
     return runSchedule({
-      providers: [p1, p2],
+      staff: [p1, p2],
       shiftTypes: [ADM, OFF],
       dates: weekdayDates("2025-05-12", 1), // Monday 2025-05-12 only
       staffingRequirements: [{ shiftCode: "ADM", dayKey: "1", minCount: 1 }], // Mon needs 1
@@ -888,26 +888,26 @@ describe("autoSchedule — schedule request preferences", () => {
     });
   }
 
-  it("control: with no requests the first-ordered provider (p1) wins a contested shift", () => {
+  it("control: with no requests the first-ordered staff (p1) wins a contested shift", () => {
     const r = contestedADM({});
     expect(has(r, "p1", "2025-05-12", "ADM")).toBe(true);
     expect(has(r, "p2", "2025-05-12", "ADM")).toBe(false);
   });
 
-  it("soft REQUEST_SHIFT preference flips a tie toward the preferring provider", () => {
+  it("soft REQUEST_SHIFT preference flips a tie toward the preferring staff", () => {
     const r = contestedADM({
       scheduleRequests: [
-        req({ providerId: "p2", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"], strength: "soft" }),
+        req({ staffId: "p2", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"], strength: "soft" }),
       ],
     });
     expect(has(r, "p2", "2025-05-12", "ADM")).toBe(true);
     expect(has(r, "p1", "2025-05-12", "ADM")).toBe(false);
   });
 
-  it("soft NEGATE_SHIFT (avoid) pushes a contested shift onto the other provider", () => {
+  it("soft NEGATE_SHIFT (avoid) pushes a contested shift onto the other staff", () => {
     const r = contestedADM({
       scheduleRequests: [
-        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "NEGATE_SHIFT", shiftTypeIds: ["st-adm"], strength: "soft" }),
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "NEGATE_SHIFT", shiftTypeIds: ["st-adm"], strength: "soft" }),
       ],
     });
     expect(has(r, "p2", "2025-05-12", "ADM")).toBe(true);
@@ -917,18 +917,18 @@ describe("autoSchedule — schedule request preferences", () => {
   it("soft preference only tiebreaks — it never starves a hard minimum-target deficit", () => {
     // p1 must hit an ADM minimum (deficit), p2 merely prefers ADM. The hard
     // deficit outranks the soft preference, so p1 still gets it.
-    const p1 = makeProvider("p1", "AB", {
+    const p1 = makeStaff("p1", "AB", {
       eligibleShiftTypeIds: ["st-adm", "st-off"],
       shiftMinimumTargets: [{ shiftTypeId: "st-adm", minCount: 1, window: "pay_period" as const }],
     });
-    const p2 = makeProvider("p2", "CD", { eligibleShiftTypeIds: ["st-adm", "st-off"] });
+    const p2 = makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-adm", "st-off"] });
     const r = runSchedule({
-      providers: [p1, p2],
+      staff: [p1, p2],
       shiftTypes: [ADM, OFF],
       dates: weekdayDates("2025-05-12", 1),
       staffingRequirements: [{ shiftCode: "ADM", dayKey: "1", minCount: 1 }],
       scheduleRequests: [
-        req({ providerId: "p2", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"], strength: "soft" }),
+        req({ staffId: "p2", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"], strength: "soft" }),
       ],
     });
     expect(has(r, "p1", "2025-05-12", "ADM")).toBe(true);
@@ -940,14 +940,14 @@ describe("autoSchedule — schedule request preferences", () => {
   it("soft OFF steers the fill step to leave that day off when there is slack", () => {
     // FTE 0.8 ⇒ target 32h ⇒ 4 of 5 weekdays filled, 1 day off. The soft OFF on
     // Wed should make Wed the chosen day off (default off-day pick would be Mon).
-    const p1 = makeProvider("p1", "AB", { ftePercentage: 0.8 });
+    const p1 = makeStaff("p1", "AB", { ftePercentage: 0.8 });
     const r = runSchedule({
-      providers: [p1],
+      staff: [p1],
       shiftTypes: [OR, OFF],
       payPeriods: [{ startDate: "2025-05-12", endDate: "2025-05-16", targetHours: 40 }],
       dates: weekdayDates("2025-05-12", 5),
       scheduleRequests: [
-        req({ providerId: "p1", startDate: "2025-05-14", endDate: "2025-05-14", kind: "OFF", strength: "soft" }),
+        req({ staffId: "p1", startDate: "2025-05-14", endDate: "2025-05-14", kind: "OFF", strength: "soft" }),
       ],
     });
     expect(has(r, "p1", "2025-05-14", "OR")).toBe(false); // Wed off
@@ -956,9 +956,9 @@ describe("autoSchedule — schedule request preferences", () => {
   });
 
   it("control: without the soft OFF, the fill step's default day off is not Wed", () => {
-    const p1 = makeProvider("p1", "AB", { ftePercentage: 0.8 });
+    const p1 = makeStaff("p1", "AB", { ftePercentage: 0.8 });
     const r = runSchedule({
-      providers: [p1],
+      staff: [p1],
       shiftTypes: [OR, OFF],
       payPeriods: [{ startDate: "2025-05-12", endDate: "2025-05-16", targetHours: 40 }],
       dates: weekdayDates("2025-05-12", 5),
@@ -968,21 +968,21 @@ describe("autoSchedule — schedule request preferences", () => {
 
   // ── pre-placement respects isAutoScheduled ──
 
-  it("does not pre-place leave or wanted shifts for a non-auto-scheduled provider", () => {
-    // A provider scheduled manually (isAutoScheduled=false) is off-limits to the
+  it("does not pre-place leave or wanted shifts for a non-auto-scheduled staff", () => {
+    // A staff scheduled manually (isAutoScheduled=false) is off-limits to the
     // auto-scheduler entirely — even approved hard leave / shift requests.
-    const manual = makeProvider("p1", "AB", {
+    const manual = makeStaff("p1", "AB", {
       isAutoScheduled: false,
       eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"],
     });
     const r = runSchedule({
-      providers: [manual, makeProvider("p2", "CD")],
+      staff: [manual, makeStaff("p2", "CD")],
       shiftTypes: [OR, ADM, OFF],
       scheduleRequests: [
-        req({ providerId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-adm" }),
-        req({ providerId: "p1", startDate: "2025-05-13", endDate: "2025-05-13", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"] }),
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-adm" }),
+        req({ staffId: "p1", startDate: "2025-05-13", endDate: "2025-05-13", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"] }),
       ],
     });
-    expect(r.suggestions.some((s) => s.providerId === "p1")).toBe(false);
+    expect(r.suggestions.some((s) => s.staffId === "p1")).toBe(false);
   });
 });

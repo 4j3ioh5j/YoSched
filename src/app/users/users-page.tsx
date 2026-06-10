@@ -23,8 +23,8 @@ type User = {
   role: string;
   groupId?: string | null;
   group?: { name: string; level: number } | null;
-  providerId?: string | null;
-  provider?: { id: string; name: string; initials: string } | null;
+  staffId?: string | null;
+  staff?: { id: string; name: string; initials: string } | null;
   isActive: boolean;
   totpEnabled?: boolean;
   createdAt: string | Date;
@@ -36,7 +36,7 @@ type GroupOption = {
   level: number;
 };
 
-type ProviderOption = {
+type StaffOption = {
   id: string;
   name: string;
   initials: string;
@@ -54,7 +54,7 @@ export function UsersPage({
   currentUserId,
   currentGroupLevel,
   groups,
-  providers,
+  staff,
   canEditUsers,
   canViewGroups,
   canEditGroups,
@@ -66,7 +66,7 @@ export function UsersPage({
   currentUserId: string;
   currentGroupLevel: number;
   groups: GroupOption[];
-  providers: ProviderOption[];
+  staff: StaffOption[];
   canEditUsers: boolean;
   canViewGroups: boolean;
   canEditGroups: boolean;
@@ -81,13 +81,13 @@ export function UsersPage({
   const [users, setUsers] = useState(initialUsers);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId, providerId: "" });
+  const [form, setForm] = useState({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId, staffId: "" });
   const [error, setError] = useState("");
   const [trustDays, setTrustDays] = useState(initialTrustDays);
   const [savingTrust, setSavingTrust] = useState(false);
 
   const resetForm = useCallback(() => {
-    setForm({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId, providerId: "" });
+    setForm({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId, staffId: "" });
     setShowForm(false);
     setEditingId(null);
     setError("");
@@ -105,7 +105,7 @@ export function UsersPage({
     const endpoint = "/api/users";
 
     if (editingId) {
-      const body: Record<string, string> = { id: editingId, email: form.email, name: form.name, groupId: form.groupId, providerId: form.providerId };
+      const body: Record<string, string> = { id: editingId, email: form.email, name: form.name, groupId: form.groupId, staffId: form.staffId };
       if (form.password) body.password = form.password;
       const res = await fetch(endpoint, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) { setError((await res.json()).error); return; }
@@ -143,15 +143,15 @@ export function UsersPage({
   }
 
   function startEdit(user: User) {
-    setForm({ email: user.email, name: user.name, password: "", confirmPassword: "", groupId: user.groupId ?? defaultGroupId, providerId: user.providerId ?? "" });
+    setForm({ email: user.email, name: user.name, password: "", confirmPassword: "", groupId: user.groupId ?? defaultGroupId, staffId: user.staffId ?? "" });
     setEditingId(user.id);
     setShowForm(true);
   }
 
-  // Providers already linked to a different login — disabled in the dropdown so
+  // Staff already linked to a different login — disabled in the dropdown so
   // the admin doesn't pick one that the API would reject with a 409.
-  const takenProviderIds = new Set(
-    users.filter((u) => u.providerId && u.id !== editingId).map((u) => u.providerId as string)
+  const takenStaffIds = new Set(
+    users.filter((u) => u.staffId && u.id !== editingId).map((u) => u.staffId as string)
   );
 
   function canManageUser(user: User): boolean {
@@ -219,15 +219,15 @@ export function UsersPage({
                 ))}
               </select>
               <select
-                value={form.providerId}
-                onChange={(e) => setForm({ ...form, providerId: e.target.value })}
-                title="Link this login to a provider so they can enter their own schedule requests"
+                value={form.staffId}
+                onChange={(e) => setForm({ ...form, staffId: e.target.value })}
+                title="Link this login to a staff so they can enter their own schedule requests"
                 className="px-3 py-2 bg-slate-900 border border-slate-700 rounded text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="">— No linked provider —</option>
-                {providers.map((p) => (
-                  <option key={p.id} value={p.id} disabled={takenProviderIds.has(p.id)}>
-                    {p.name} ({p.initials}){takenProviderIds.has(p.id) ? " — linked" : ""}
+                <option value="">— No linked staff —</option>
+                {staff.map((p) => (
+                  <option key={p.id} value={p.id} disabled={takenStaffIds.has(p.id)}>
+                    {p.name} ({p.initials}){takenStaffIds.has(p.id) ? " — linked" : ""}
                   </option>
                 ))}
               </select>
@@ -297,7 +297,7 @@ export function UsersPage({
               <th className="py-2.5 px-3 font-medium">Name</th>
               <th className="py-2.5 px-3 font-medium">Email</th>
               <th className="py-2.5 px-3 font-medium">Group</th>
-              <th className="py-2.5 px-3 font-medium">Provider</th>
+              <th className="py-2.5 px-3 font-medium">Staff</th>
               <th className="py-2.5 px-3 font-medium">Status</th>
               <th className="py-2.5 px-3 font-medium">2FA</th>
               <th className="py-2.5 px-3 font-medium"></th>
@@ -317,8 +317,8 @@ export function UsersPage({
                     </span>
                   </td>
                   <td className="py-2.5 px-3 text-slate-400 truncate">
-                    {user.provider ? (
-                      <span title={user.provider.name}>{user.provider.name} <span className="text-slate-500">({user.provider.initials})</span></span>
+                    {user.staff ? (
+                      <span title={user.staff.name}>{user.staff.name} <span className="text-slate-500">({user.staff.initials})</span></span>
                     ) : (
                       <span className="text-slate-600">—</span>
                     )}

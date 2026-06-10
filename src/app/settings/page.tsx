@@ -19,7 +19,7 @@ export default async function Settings() {
     prisma.schedulingPreferences.findFirst(),
     prisma.employmentType.findMany({
       orderBy: { sortOrder: "asc" },
-      include: { _count: { select: { providers: true } }, defaultEligibleShifts: true, defaultAvailability: true },
+      include: { _count: { select: { staff: true } }, defaultEligibleShifts: true, defaultAvailability: true },
     }),
     prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.shiftFollowRule.findMany(),
@@ -100,7 +100,7 @@ export default async function Settings() {
             pattern: da.pattern,
           })),
           sortOrder: et.sortOrder,
-          providerCount: et._count.providers,
+          staffCount: et._count.staff,
         }))}
         equityFactors={equityFactors.map((f) => ({
           id: f.id,

@@ -7,10 +7,10 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
-// May 2026 schedule from PDF — provider columns in order
+// May 2026 schedule from PDF — staff columns in order
 const PROVIDERS = ["YA","CC","SC","BC","CD","RD","DH","SH","AH","CL","RM","LM","KO","AR","SR","SS","STa","KZ"];
 
-// Each row: [date, ...assignments per provider]
+// Each row: [date, ...assignments per staff]
 // Assignments not in our shift_types are mapped: CALL→CALL, UCLA→UCLA, CITC→CITC, QA→QA, TEL→TEL, RS→RS
 // Skip OTHER/CARD/ICU summary columns — those are handled separately
 const MAY: [string, ...string[]][] = [
@@ -60,10 +60,10 @@ async function main() {
   console.log("Cleared May assignments");
 
   // Build lookup maps
-  const providerMap = new Map<string, string>();
-  const allProviders = await prisma.provider.findMany();
-  for (const p of allProviders) {
-    providerMap.set(p.initials, p.id);
+  const staffMap = new Map<string, string>();
+  const allStaff = await prisma.staff.findMany();
+  for (const p of allStaff) {
+    staffMap.set(p.initials, p.id);
   }
 
   const shiftMap = new Map<string, string>();
@@ -105,11 +105,11 @@ async function main() {
       const code = assignments[i];
       if (!code) continue;
 
-      const providerId = providerMap.get(PROVIDERS[i]);
+      const staffId = staffMap.get(PROVIDERS[i]);
       const shiftTypeId = shiftMap.get(code);
 
-      if (!providerId) {
-        console.warn(`Provider not found: ${PROVIDERS[i]}`);
+      if (!staffId) {
+        console.warn(`Staff not found: ${PROVIDERS[i]}`);
         skipped++;
         continue;
       }
@@ -121,7 +121,7 @@ async function main() {
 
       await prisma.assignment.create({
         data: {
-          providerId,
+          staffId,
           date: new Date(date + "T00:00:00Z"),
           shiftTypeId,
           source: "imported",

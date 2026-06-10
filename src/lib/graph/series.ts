@@ -1,5 +1,5 @@
 /**
- * Series shaping for the statistics graphing pipeline — turns per-provider
+ * Series shaping for the statistics graphing pipeline — turns per-staff
  * metrics into chart-ready rows. Pure and unit-tested; the chart components
  * stay thin.
  *
@@ -7,7 +7,7 @@
  * Later slices add pie/heatmap/line shapers and route them through GraphSpec.
  */
 
-/** Minimum per-provider shape the bar series needs. */
+/** Minimum per-staff shape the bar series needs. */
 export type BarSeriesInput = {
   initials: string;
   holidayWorkCount: number;
@@ -15,11 +15,11 @@ export type BarSeriesInput = {
   ftePercentage: number;
 };
 
-/** A chart row: one provider, keyed by shift code (+ optional "Holidays"). */
+/** A chart row: one staff, keyed by shift code (+ optional "Holidays"). */
 export type BarSeriesRow = { initials: string } & Record<string, string | number>;
 
 /**
- * Build the per-provider shift-distribution bar series.
+ * Build the per-staff shift-distribution bar series.
  *
  * Reproduces the current OverviewCharts behavior exactly:
  * - sorted by initials (locale compare)
@@ -29,8 +29,8 @@ export type BarSeriesRow = { initials: string } & Record<string, string | number
  *   caller can skip rendering the chart.
  *
  * When `perFte` is set (the global `normalize: "fte"` transform), every count
- * is divided by the provider's FTE percentage, giving a per-1.0-FTE rate so a
- * part-time provider's load is comparable to a full-timer's. An FTE of 0 (or
+ * is divided by the staff's FTE percentage, giving a per-1.0-FTE rate so a
+ * part-time staff's load is comparable to a full-timer's. An FTE of 0 (or
  * missing) is treated as 1.0 to avoid divide-by-zero.
  */
 export function shapeBarSeries(
@@ -52,8 +52,8 @@ export function shapeBarSeries(
 }
 
 /* ------------------------------------------------------------------ *
- * Pie — department share by provider for an additive count metric. Each slice
- * is one provider sized by their value of the metric; the view turns the
+ * Pie — department share by staff for an additive count metric. Each slice
+ * is one staff sized by their value of the metric; the view turns the
  * values into shares. shiftCount sums the given (tracked) codes; hours/holidays
  * are the scalar totals. `perFte` divides by FTE (0-FTE -> 1.0) so the pie can
  * show share of per-1.0-FTE load. Zero/negative slices are dropped (a pie of
@@ -96,8 +96,8 @@ export function shapePie(
 }
 
 /* ------------------------------------------------------------------ *
- * Heatmap — one row per provider, each cell carrying a shift code's raw count
- * and the provider's FTE-normalized per-shift z-score (deviation); with
+ * Heatmap — one row per staff, each cell carrying a shift code's raw count
+ * and the staff's FTE-normalized per-shift z-score (deviation); with
  * `includeHolidays` a trailing "Holidays" cell (holidayWorkCount + holidayWork
  * dev) is appended. The view transposes this to shift codes (y) × staff (x) and
  * colors each cell from the deviation via `heatmapTempColor()`; this shaper
@@ -120,7 +120,7 @@ export type HeatmapCell = { code: string; count: number; deviation: number };
 export type HeatmapRow = { initials: string; cells: HeatmapCell[] };
 
 /* ------------------------------------------------------------------ *
- * Single-value metric — one value per provider. Covers a specific shift code
+ * Single-value metric — one value per staff. Covers a specific shift code
  * ("shift:CALL" -> that code's count), holidays/hours (scalar counts), and
  * desirability (the FTE-normalized z-score, sign-flipped to match the table so
  * higher = fewer undesirable shifts). `perFte` divides count metrics by FTE

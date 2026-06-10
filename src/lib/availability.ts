@@ -5,7 +5,7 @@ export type AvailabilityRule = {
   pattern: "every" | "pp_week_1" | "pp_week_2" | "every_n";
   cycleLength?: number | null;
   cycleOffset?: number | null;
-  conditionProviderId?: string | null;
+  conditionStaffId?: string | null;
   conditionType?: "working" | "not_working" | null;
 };
 
@@ -74,7 +74,7 @@ export function evaluateAvailability(
   rules: AvailabilityRule[],
   dateStr: string,
   payPeriods: PayPeriodRange[],
-  isProviderAssigned?: (providerId: string, date: string) => boolean
+  isStaffAssigned?: (staffId: string, date: string) => boolean
 ): { available: boolean; weight: number } {
   const dow = new Date(dateStr + "T12:00:00").getDay();
   const dayRules = rules.filter((r) => r.dayOfWeek === dow);
@@ -90,8 +90,8 @@ export function evaluateAvailability(
   for (const rule of dayRules) {
     if (!matchesPattern(rule, dateStr, payPeriods)) continue;
 
-    if (rule.conditionProviderId && rule.conditionType && isProviderAssigned) {
-      const assigned = isProviderAssigned(rule.conditionProviderId, dateStr);
+    if (rule.conditionStaffId && rule.conditionType && isStaffAssigned) {
+      const assigned = isStaffAssigned(rule.conditionStaffId, dateStr);
       if (rule.conditionType === "working" && !assigned) continue;
       if (rule.conditionType === "not_working" && assigned) continue;
     }
@@ -120,7 +120,7 @@ export function isBaseWorkDay(
       r.type === "available" &&
       r.strength === "rule" &&
       r.pattern === "every" &&
-      !r.conditionProviderId
+      !r.conditionStaffId
   );
 }
 
@@ -138,7 +138,7 @@ export function hasAdvancedRules(rules: AvailabilityRule[]): boolean {
       r.pattern !== "every" ||
       r.strength !== "rule" ||
       r.type !== "available" ||
-      r.conditionProviderId
+      r.conditionStaffId
   );
 }
 

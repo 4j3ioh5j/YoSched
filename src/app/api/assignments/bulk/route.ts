@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals } from "@/lib/request-sync";
 import { NextRequest, NextResponse } from "next/server";
 
-type BulkItem = { providerId: string; date: string };
+type BulkItem = { staffId: string; date: string };
 
 export async function PUT(req: NextRequest) {
   const { error, userId } = await getSession("schedule:edit");
@@ -19,21 +19,21 @@ export async function PUT(req: NextRequest) {
 
   const results = [];
   const skipped = [];
-  for (const { providerId, date } of cells) {
+  for (const { staffId, date } of cells) {
     const existing = await prisma.assignment.findUnique({
-      where: { providerId_date: { providerId, date: new Date(date + "T00:00:00Z") } },
+      where: { staffId_date: { staffId, date: new Date(date + "T00:00:00Z") } },
     });
     if (existing?.isLocked) {
-      skipped.push({ providerId, date, reason: "locked" });
+      skipped.push({ staffId, date, reason: "locked" });
       continue;
     }
     const a = await prisma.assignment.upsert({
       where: {
-        providerId_date: { providerId, date: new Date(date + "T00:00:00Z") },
+        staffId_date: { staffId, date: new Date(date + "T00:00:00Z") },
       },
       update: { shiftTypeId, source: "manual" },
       create: {
-        providerId,
+        staffId,
         date: new Date(date + "T00:00:00Z"),
         shiftTypeId,
         source: "manual",
@@ -42,7 +42,7 @@ export async function PUT(req: NextRequest) {
     });
     results.push({
       id: a.id,
-      providerId: a.providerId,
+      staffId: a.staffId,
       date,
       shiftTypeId: a.shiftTypeId,
       isLocked: a.isLocked,
@@ -52,7 +52,7 @@ export async function PUT(req: NextRequest) {
   }
 
   await syncRequestApprovals(
-    results.map((r) => ({ providerId: r.providerId, date: r.date })),
+    results.map((r) => ({ staffId: r.staffId, date: r.date })),
     userId
   );
 
@@ -70,21 +70,21 @@ export async function DELETE(req: NextRequest) {
 
   const skipped = [];
   const clearedCells: BulkItem[] = [];
-  for (const { providerId, date } of cells) {
+  for (const { staffId, date } of cells) {
     const existing = await prisma.assignment.findUnique({
-      where: { providerId_date: { providerId, date: new Date(date + "T00:00:00Z") } },
+      where: { staffId_date: { staffId, date: new Date(date + "T00:00:00Z") } },
     });
     if (existing?.isLocked) {
-      skipped.push({ providerId, date, reason: "locked" });
+      skipped.push({ staffId, date, reason: "locked" });
       continue;
     }
     await prisma.assignment.deleteMany({
       where: {
-        providerId,
+        staffId,
         date: new Date(date + "T00:00:00Z"),
       },
     });
-    clearedCells.push({ providerId, date });
+    clearedCells.push({ staffId, date });
   }
 
   await syncRequestApprovals(clearedCells, userId);

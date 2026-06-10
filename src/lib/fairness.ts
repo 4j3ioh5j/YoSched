@@ -1,5 +1,5 @@
 type Assignment = {
-  providerId: string;
+  staffId: string;
   date: Date | string;
   shiftType: {
     id: string;
@@ -12,7 +12,7 @@ type Assignment = {
   };
 };
 
-type Provider = {
+type Staff = {
   id: string;
   initials: string;
   ftePercentage: number;
@@ -32,7 +32,7 @@ type Holiday = {
 };
 
 export type FairnessMetrics = {
-  providerId: string;
+  staffId: string;
   initials: string;
   ftePercentage: number;
   desirabilityScore: number;
@@ -86,13 +86,13 @@ export type EquityFactor = {
 
 export function computeFairness({
   assignments,
-  providers,
+  staff,
   desirabilityWeights,
   holidays,
   equityFactors = [],
 }: {
   assignments: Assignment[];
-  providers: Provider[];
+  staff: Staff[];
   desirabilityWeights: DesirabilityWeight[];
   holidays: Holiday[];
   equityFactors?: EquityFactor[];
@@ -113,21 +113,21 @@ export function computeFairness({
     [...trackedShiftIds].map((id) => shiftIdToCode.get(id)).filter(Boolean) as string[]
   )].sort();
 
-  const byProvider = new Map<string, Assignment[]>();
+  const byStaff = new Map<string, Assignment[]>();
   for (const a of assignments) {
-    const arr = byProvider.get(a.providerId) || [];
+    const arr = byStaff.get(a.staffId) || [];
     arr.push(a);
-    byProvider.set(a.providerId, arr);
+    byStaff.set(a.staffId, arr);
   }
 
-  const providerFte = new Map<string, number>();
+  const staffFte = new Map<string, number>();
   const metrics: FairnessMetrics[] = [];
 
-  for (const p of providers) {
+  for (const p of staff) {
     if (!p.isActive || !p.isAutoScheduled) continue;
-    providerFte.set(p.id, p.ftePercentage || 1);
+    staffFte.set(p.id, p.ftePercentage || 1);
 
-    const pa = byProvider.get(p.id) || [];
+    const pa = byStaff.get(p.id) || [];
     let desirabilityScore = 0;
     let undesirableShiftCount = 0;
     let desirableShiftCount = 0;
@@ -168,7 +168,7 @@ export function computeFairness({
     }
 
     metrics.push({
-      providerId: p.id,
+      staffId: p.id,
       initials: p.initials,
       ftePercentage: p.ftePercentage,
       desirabilityScore,
@@ -200,42 +200,42 @@ export function computeFairness({
   }
 
   // FTE-normalized values for computing averages and deviations
-  function fteNorm(providerId: string, value: number): number {
-    const fte = providerFte.get(providerId) || 1;
+  function fteNorm(staffId: string, value: number): number {
+    const fte = staffFte.get(staffId) || 1;
     return value / fte;
   }
 
-  // Build per-provider eligible shift type sets
-  const providerEligible = new Map<string, Set<string> | null>();
-  for (const p of providers) {
+  // Build per-staff eligible shift type sets
+  const staffEligible = new Map<string, Set<string> | null>();
+  for (const p of staff) {
     if (!p.isActive || !p.isAutoScheduled) continue;
-    providerEligible.set(p.id, p.eligibleShiftTypeIds ? new Set(p.eligibleShiftTypeIds) : null);
+    staffEligible.set(p.id, p.eligibleShiftTypeIds ? new Set(p.eligibleShiftTypeIds) : null);
   }
 
-  // Opportunity-adjusted desirability: compute each provider's average using
+  // Opportunity-adjusted desirability: compute each staff's average using
   // only desirability weights for shift types they're eligible for. This way
-  // a provider who can't work desirable shifts isn't penalized for missing them.
-  const providerExpectedDes = new Map<string, number>();
+  // a staff who can't work desirable shifts isn't penalized for missing them.
+  const staffExpectedDes = new Map<string, number>();
   for (const m of metrics) {
-    const eligible = providerEligible.get(m.providerId);
+    const eligible = staffEligible.get(m.staffId);
     const relevantWeights = eligible
       ? desirabilityWeights.filter((dw) => eligible.has(dw.shiftTypeId))
       : desirabilityWeights;
     const avgWeight = relevantWeights.length > 0
       ? relevantWeights.reduce((s, dw) => s + dw.weight, 0) / relevantWeights.length
       : 0;
-    providerExpectedDes.set(m.providerId, avgWeight * fteNorm(m.providerId, m.totalWorkDays));
+    staffExpectedDes.set(m.staffId, avgWeight * fteNorm(m.staffId, m.totalWorkDays));
   }
 
-  const avgHoliday = metrics.reduce((s, m) => s + fteNorm(m.providerId, m.holidayWorkCount), 0) / n;
+  const avgHoliday = metrics.reduce((s, m) => s + fteNorm(m.staffId, m.holidayWorkCount), 0) / n;
 
   const perShiftAvg: Record<string, number> = {};
   for (const code of equityShiftCodes) {
-    perShiftAvg[code] = metrics.reduce((s, m) => s + fteNorm(m.providerId, m.shiftCounts[code] || 0), 0) / n;
+    perShiftAvg[code] = metrics.reduce((s, m) => s + fteNorm(m.staffId, m.shiftCounts[code] || 0), 0) / n;
   }
 
   // Global avg desirability still used for display
-  const avgDesirability = metrics.reduce((s, m) => s + fteNorm(m.providerId, m.desirabilityScore), 0) / n;
+  const avgDesirability = metrics.reduce((s, m) => s + fteNorm(m.staffId, m.desirabilityScore), 0) / n;
 
   const averages = {
     desirabilityScore: avgDesirability,
@@ -250,28 +250,28 @@ export function computeFairness({
     return Math.sqrt(variance) || 1;
   }
 
-  // Desirability deviations are relative to each provider's opportunity-adjusted
+  // Desirability deviations are relative to each staff's opportunity-adjusted
   // expected score, so stddev is computed from those residuals
   const desResiduals = metrics.map((m) => {
-    const normDes = fteNorm(m.providerId, m.desirabilityScore);
-    const expected = providerExpectedDes.get(m.providerId) ?? 0;
+    const normDes = fteNorm(m.staffId, m.desirabilityScore);
+    const expected = staffExpectedDes.get(m.staffId) ?? 0;
     return normDes - expected;
   });
   const desStd = stddev(desResiduals);
   const desMeanResidual = desResiduals.reduce((a, b) => a + b, 0) / (desResiduals.length || 1);
-  const holStd = stddev(metrics.map((m) => fteNorm(m.providerId, m.holidayWorkCount)));
+  const holStd = stddev(metrics.map((m) => fteNorm(m.staffId, m.holidayWorkCount)));
 
   const shiftStds: Record<string, number> = {};
   for (const code of equityShiftCodes) {
-    shiftStds[code] = stddev(metrics.map((m) => fteNorm(m.providerId, m.shiftCounts[code] || 0)));
+    shiftStds[code] = stddev(metrics.map((m) => fteNorm(m.staffId, m.shiftCounts[code] || 0)));
   }
 
   const deviations = new Map<string, FairnessDeviation>();
 
   for (const m of metrics) {
-    const normDes = fteNorm(m.providerId, m.desirabilityScore);
-    const normHol = fteNorm(m.providerId, m.holidayWorkCount);
-    const expectedDes = providerExpectedDes.get(m.providerId) ?? 0;
+    const normDes = fteNorm(m.staffId, m.desirabilityScore);
+    const normHol = fteNorm(m.staffId, m.holidayWorkCount);
+    const expectedDes = staffExpectedDes.get(m.staffId) ?? 0;
 
     // Negate: scoring above your opportunity-adjusted expectation = low burden
     const desirability = -((normDes - expectedDes) - desMeanResidual) / desStd;
@@ -287,22 +287,22 @@ export function computeFairness({
       overall += (factorWeights.get("holiday") ?? 0) * holidayWork;
     }
     for (const code of equityShiftCodes) {
-      const normCount = fteNorm(m.providerId, m.shiftCounts[code] || 0);
+      const normCount = fteNorm(m.staffId, m.shiftCounts[code] || 0);
       const dev = (normCount - perShiftAvg[code]) / shiftStds[code];
       perShift[code] = dev;
       overall += (factorWeights.get(`shift:${code}`) ?? 0) * dev;
     }
 
-    deviations.set(m.providerId, { desirability, holidayWork, perShift, overall });
+    deviations.set(m.staffId, { desirability, holidayWork, perShift, overall });
   }
 
   // Plain FTE-normalized z-scores (no opportunity adjustment) for display
-  const plainDesStd = stddev(metrics.map((m) => fteNorm(m.providerId, m.desirabilityScore)));
+  const plainDesStd = stddev(metrics.map((m) => fteNorm(m.staffId, m.desirabilityScore)));
   const displayDeviations = new Map<string, FairnessDeviation>();
 
   for (const m of metrics) {
-    const normDes = fteNorm(m.providerId, m.desirabilityScore);
-    const normHol = fteNorm(m.providerId, m.holidayWorkCount);
+    const normDes = fteNorm(m.staffId, m.desirabilityScore);
+    const normHol = fteNorm(m.staffId, m.holidayWorkCount);
 
     const desirability = -(normDes - avgDesirability) / plainDesStd;
     const holidayWork = (normHol - avgHoliday) / holStd;
@@ -313,13 +313,13 @@ export function computeFairness({
     if (hasDesirability) overall += (factorWeights.get("desirability") ?? 0) * desirability;
     if (hasHoliday) overall += (factorWeights.get("holiday") ?? 0) * holidayWork;
     for (const code of equityShiftCodes) {
-      const normCount = fteNorm(m.providerId, m.shiftCounts[code] || 0);
+      const normCount = fteNorm(m.staffId, m.shiftCounts[code] || 0);
       const dev = (normCount - perShiftAvg[code]) / shiftStds[code];
       perShift[code] = dev;
       overall += (factorWeights.get(`shift:${code}`) ?? 0) * dev;
     }
 
-    displayDeviations.set(m.providerId, { desirability, holidayWork, perShift, overall });
+    displayDeviations.set(m.staffId, { desirability, holidayWork, perShift, overall });
   }
 
   return { metrics, averages, trackedShiftCodes, equityShiftCodes, deviations, displayDeviations };

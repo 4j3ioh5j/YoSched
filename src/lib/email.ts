@@ -49,17 +49,17 @@ export function isEmailConfigured(c: EmailConfig | null | undefined): boolean {
 /** Build the confirmation email a requester gets on submit. All fields are
  *  pre-formatted by the caller (dates, description) so this stays pure/testable. */
 export function buildConfirmationEmail(args: {
-  providerName: string;
+  staffName: string;
   requestDescription: string; // e.g. "Off" / "AL leave" / "No ORC, ORL"
   dateRange: string; // e.g. "July 3, 2026" or "July 3 – July 5, 2026"
   flexible: boolean;
   submitted: string; // date + 24h time
   reference: string; // request id
 }): { subject: string; text: string } {
-  const { providerName, requestDescription, dateRange, flexible, submitted, reference } = args;
+  const { staffName, requestDescription, dateRange, flexible, submitted, reference } = args;
   const subject = `Schedule request received — ${requestDescription} (${dateRange})`;
   const text = [
-    `Hi ${providerName},`,
+    `Hi ${staffName},`,
     ``,
     `We've received your schedule request. It's now pending review by the scheduler.`,
     ``,

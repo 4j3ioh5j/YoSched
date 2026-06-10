@@ -44,7 +44,7 @@ function BarTip({ active, payload, label, unit }: {
 }
 
 /**
- * Single-value-per-provider bar for one metric (a specific shift code, holidays,
+ * Single-value-per-staff bar for one metric (a specific shift code, holidays,
  * hours, or the desirability z-score). Shaping is the pure `shapeMetricBar`;
  * this stays a thin view. The desirability metric is a signed z-score, so a
  * zero reference line is drawn for it.

@@ -26,7 +26,7 @@ const prisma = new PrismaClient({ adapter });
 
 const DRY_RUN = process.env.DRY_RUN === "1";
 
-// [date, provider, expected current (misimported) code] -> set to ICU
+// [date, staff, expected current (misimported) code] -> set to ICU
 const REPAIR: [string, string, string][] = [
   ["2026-03-19", "SH", "ADM"],
   ["2026-04-16", "SS", "OR"],
@@ -44,8 +44,8 @@ const REPAIR: [string, string, string][] = [
 async function main() {
   if (DRY_RUN) console.log("*** DRY RUN — no writes ***");
 
-  const providerMap = new Map<string, string>();
-  for (const p of await prisma.provider.findMany()) providerMap.set(p.initials, p.id);
+  const staffMap = new Map<string, string>();
+  for (const p of await prisma.staff.findMany()) staffMap.set(p.initials, p.id);
 
   const icu = await prisma.shiftType.findFirst({ where: { code: "ICU" } });
   if (!icu) throw new Error("ICU shift type not found");
@@ -55,10 +55,10 @@ async function main() {
   let repaired = 0, already = 0, skipped = 0;
 
   for (const [dateStr, initials, expected] of REPAIR) {
-    const providerId = providerMap.get(initials);
-    if (!providerId) { console.warn(`SKIP ${dateStr} ${initials}: provider not found`); skipped++; continue; }
+    const staffId = staffMap.get(initials);
+    if (!staffId) { console.warn(`SKIP ${dateStr} ${initials}: staff not found`); skipped++; continue; }
     const date = new Date(dateStr + "T00:00:00Z");
-    const existing = await prisma.assignment.findFirst({ where: { providerId, date } });
+    const existing = await prisma.assignment.findFirst({ where: { staffId, date } });
     const curCode = existing ? (codeById.get(existing.shiftTypeId) ?? "?") : null;
 
     if (curCode === "ICU") {

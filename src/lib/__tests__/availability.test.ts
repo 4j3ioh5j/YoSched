@@ -125,7 +125,7 @@ describe("evaluateAvailability", () => {
       const rules = [
         rule({
           dayOfWeek: 1,
-          conditionProviderId: "partner1",
+          conditionStaffId: "partner1",
           conditionType: "working",
         }),
       ];
@@ -139,7 +139,7 @@ describe("evaluateAvailability", () => {
       const rules = [
         rule({
           dayOfWeek: 1,
-          conditionProviderId: "partner1",
+          conditionStaffId: "partner1",
           conditionType: "working",
         }),
       ];
@@ -152,7 +152,7 @@ describe("evaluateAvailability", () => {
       const rules = [
         rule({
           dayOfWeek: 1,
-          conditionProviderId: "partner1",
+          conditionStaffId: "partner1",
           conditionType: "not_working",
         }),
       ];
@@ -183,7 +183,7 @@ describe("isBaseWorkDay", () => {
   });
 
   it("ignores conditional rules", () => {
-    const rules = [rule({ dayOfWeek: 1, conditionProviderId: "p1" })];
+    const rules = [rule({ dayOfWeek: 1, conditionStaffId: "p1" })];
     expect(isBaseWorkDay(rules, 1)).toBe(false);
   });
 
@@ -231,7 +231,7 @@ describe("hasAdvancedRules", () => {
   });
 
   it("returns true for conditional rules", () => {
-    const rules = [rule({ dayOfWeek: 1, conditionProviderId: "p1" })];
+    const rules = [rule({ dayOfWeek: 1, conditionStaffId: "p1" })];
     expect(hasAdvancedRules(rules)).toBe(true);
   });
 });

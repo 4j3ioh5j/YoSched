@@ -7,11 +7,11 @@
  * - Counts (shiftCount/hours/holidays) are additive, non-negative → bar, pie
  *   both work.
  * - shiftCount additionally has a per-shift-code breakdown → heatmap (the
- *   providers × codes equity grid) only makes sense for it.
+ *   staff × codes equity grid) only makes sense for it.
  * - The equity z-scores (desirability/equityDeviation) are signed and not
  *   additive → bar only (no pie share, no per-code heatmap).
  *
- * `radar` is the per-provider drill-down, not a panel chart, so it is not part
+ * `radar` is the per-staff drill-down, not a panel chart, so it is not part
  * of this matrix.
  */
 import type { GraphChart, GraphMetric } from "./spec";

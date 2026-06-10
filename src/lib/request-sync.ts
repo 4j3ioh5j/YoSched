@@ -6,7 +6,7 @@
 import { prisma } from "./prisma";
 import { isRequestSatisfied, reconcileApprovalAction, type RequestKind } from "./schedule-requests";
 
-type Cell = { providerId: string; date: string }; // date = "YYYY-MM-DD"
+type Cell = { staffId: string; date: string }; // date = "YYYY-MM-DD"
 
 const ymd = (d: Date): string => d.toISOString().slice(0, 10);
 
@@ -29,22 +29,22 @@ export async function syncRequestApprovals(
 ): Promise<void> {
   if (affected.length === 0) return;
 
-  const providerIds = [...new Set(affected.map((c) => c.providerId))];
+  const staffIds = [...new Set(affected.map((c) => c.staffId))];
   const dates = affected.map((c) => c.date);
   const winMin = dates.reduce((m, d) => (d < m ? d : m));
   const winMax = dates.reduce((m, d) => (d > m ? d : m));
 
-  // Only requests of an affected provider whose range overlaps a changed day can
+  // Only requests of an affected staff whose range overlaps a changed day can
   // have flipped — a request is unaffected if none of its days moved.
   const requests = await prisma.scheduleRequest.findMany({
     where: {
-      providerId: { in: providerIds },
+      staffId: { in: staffIds },
       status: { in: ["pending", "approved"] },
       startDate: { lte: new Date(winMax + "T00:00:00Z") },
       endDate: { gte: new Date(winMin + "T00:00:00Z") },
     },
     select: {
-      id: true, providerId: true, kind: true, shiftTypeIds: true,
+      id: true, staffId: true, kind: true, shiftTypeIds: true,
       leaveShiftTypeId: true, startDate: true, endDate: true,
       status: true, autoApproved: true,
     },
@@ -61,19 +61,19 @@ export async function syncRequestApprovals(
   const rangeMin = requests.reduce((m, r) => (r.startDate < m ? r.startDate : m), requests[0].startDate);
   const rangeMax = requests.reduce((m, r) => (r.endDate > m ? r.endDate : m), requests[0].endDate);
   const assignments = await prisma.assignment.findMany({
-    where: { providerId: { in: providerIds }, date: { gte: rangeMin, lte: rangeMax } },
-    select: { providerId: true, date: true, shiftTypeId: true },
+    where: { staffId: { in: staffIds }, date: { gte: rangeMin, lte: rangeMax } },
+    select: { staffId: true, date: true, shiftTypeId: true },
   });
-  const byProvider = new Map<string, Map<string, string>>();
+  const byStaff = new Map<string, Map<string, string>>();
   for (const a of assignments) {
-    let m = byProvider.get(a.providerId);
-    if (!m) { m = new Map(); byProvider.set(a.providerId, m); }
+    let m = byStaff.get(a.staffId);
+    if (!m) { m = new Map(); byStaff.set(a.staffId, m); }
     m.set(ymd(a.date), a.shiftTypeId);
   }
 
   const updates: Promise<unknown>[] = [];
   for (const r of requests) {
-    const dayMap = byProvider.get(r.providerId);
+    const dayMap = byStaff.get(r.staffId);
     const satisfied = isRequestSatisfied(
       {
         kind: r.kind as RequestKind,

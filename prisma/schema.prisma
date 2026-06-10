@@ -20,7 +20,7 @@ model User {
   passwordHash   String
   role           Role      @default(viewer)
   groupId        String?
-  providerId     String?   @unique // links this login to a Provider record (self-service requests)
+  staffId     String?   @unique // links this login to a Staff record (self-service requests)
   isActive       Boolean   @default(true)
   totpSecret     String?
   totpEnabled    Boolean   @default(false)
@@ -30,7 +30,7 @@ model User {
   updatedAt      DateTime  @updatedAt
 
   group Group? @relation(fields: [groupId], references: [id])
-  provider Provider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  staff Staff? @relation(fields: [staffId], references: [id], onDelete: SetNull)
 
   savedGraphViews SavedGraphView[]
 
@@ -96,10 +96,10 @@ model ShiftType {
 
   assignments         Assignment[]
   desirabilityWeights DesirabilityWeight[]
-  providerOverrides   ProviderShiftOverride[]
+  staffOverrides   StaffShiftOverride[]
   eligibleRoles       ShiftTypeRole[]
   standingCommitments StandingCommitment[]
-  eligibleProviders            ProviderEligibleShift[]
+  eligibleStaff            StaffEligibleShift[]
   defaultForEmploymentTypes    EmploymentTypeDefaultShift[]
   followRulesAsSource  ShiftFollowRule[] @relation("followRuleSource")
   followRulesAsAllowed ShiftFollowRule[] @relation("followRuleAllowed")
@@ -130,14 +130,14 @@ model EmploymentType {
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
-  providers                Provider[]
+  staff                Staff[]
   defaultEligibleShifts    EmploymentTypeDefaultShift[]
   defaultAvailability      EmploymentTypeDefaultAvailability[]
 
   @@map("employment_types")
 }
 
-model Provider {
+model Staff {
   id                    String   @id @default(cuid())
   name                  String
   email                 String?
@@ -159,54 +159,54 @@ model Provider {
 
   employmentType    EmploymentType         @relation(fields: [employmentTypeId], references: [id])
   assignments       Assignment[]
-  shiftOverrides    ProviderShiftOverride[]
+  shiftOverrides    StaffShiftOverride[]
   standingCommitments StandingCommitment[]
-  dayPreferences    ProviderDayPreference[]
-  eligibleShifts          ProviderEligibleShift[]
-  availabilityRules       AvailabilityRule[]     @relation("providerRules")
-  conditionedRules        AvailabilityRule[]     @relation("conditionProvider")
+  dayPreferences    StaffDayPreference[]
+  eligibleShifts          StaffEligibleShift[]
+  availabilityRules       AvailabilityRule[]     @relation("staffRules")
+  conditionedRules        AvailabilityRule[]     @relation("conditionStaff")
   shiftEligibilityRules   ShiftEligibilityRule[]
   shiftMinimumTargets     ShiftMinimumTarget[]
   scheduleRequests        ScheduleRequest[]
   loginUser               User?
 
-  @@map("providers")
+  @@map("staff")
 }
 
-model ProviderShiftOverride {
+model StaffShiftOverride {
   id          String @id @default(cuid())
-  providerId  String
+  staffId  String
   shiftTypeId String
   durationHrs Float
 
-  provider  Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
 
-  @@unique([providerId, shiftTypeId])
-  @@map("provider_shift_overrides")
+  @@unique([staffId, shiftTypeId])
+  @@map("staff_shift_overrides")
 }
 
-model ProviderDayPreference {
+model StaffDayPreference {
   id         String @id @default(cuid())
-  providerId String
+  staffId String
   dayOfWeek  Int    // 0=Sun..6=Sat
   preference String // e.g. "ORC" — preferred shift on this day
 
-  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
-  @@unique([providerId, dayOfWeek])
-  @@map("provider_day_preferences")
+  @@unique([staffId, dayOfWeek])
+  @@map("staff_day_preferences")
 }
 
 model StandingCommitment {
   id          String @id @default(cuid())
-  providerId  String
+  staffId  String
   shiftTypeId String
   dayOfWeek   Int?      // 0-6, null = any applicable day
   frequency   String    @default("weekly") // weekly, biweekly, monthly
   notes       String?
 
-  provider  Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
 
   @@map("standing_commitments")
@@ -310,7 +310,7 @@ model SchedulingPreferences {
   equityThresholdHigh   Float   @default(1.5)
   deviceTrustDays       Int     @default(30)
   dateFormat            String  @default("MMMM D, YYYY")
-  maxLeavePerDay        Int     @default(0) // soft cap on providers off per day; 0 = no cap
+  maxLeavePerDay        Int     @default(0) // soft cap on staff off per day; 0 = no cap
 
   @@map("scheduling_preferences")
 }
@@ -344,7 +344,7 @@ model EquityFactor {
 
 model Assignment {
   id          String   @id @default(cuid())
-  providerId  String
+  staffId  String
   date        DateTime @db.Date
   shiftTypeId String
   isLocked    Boolean  @default(false)
@@ -353,23 +353,23 @@ model Assignment {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  provider  Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
 
-  @@unique([providerId, date])
+  @@unique([staffId, date])
   @@map("assignments")
 }
 
-model ProviderEligibleShift {
+model StaffEligibleShift {
   id          String @id @default(cuid())
-  providerId  String
+  staffId  String
   shiftTypeId String
 
-  provider  Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
 
-  @@unique([providerId, shiftTypeId])
-  @@map("provider_eligible_shifts")
+  @@unique([staffId, shiftTypeId])
+  @@map("staff_eligible_shifts")
 }
 
 model EmploymentTypeDefaultShift {
@@ -386,18 +386,18 @@ model EmploymentTypeDefaultShift {
 
 model AvailabilityRule {
   id                  String  @id @default(cuid())
-  providerId          String
+  staffId          String
   dayOfWeek           Int     // 0=Sun..6=Sat
   type                String  @default("available") // "available" or "unavailable"
   strength            String  @default("rule") // "rule" or "preference"
   pattern             String  @default("every") // "every", "pp_week_1", "pp_week_2", "every_n"
   cycleLength         Int?    // for "every_n": 2=every other, 3=every third, etc.
   cycleOffset         Int?    // for "every_n": 0-indexed position in the cycle
-  conditionProviderId String?
+  conditionStaffId String?
   conditionType       String? // "working" or "not_working"
 
-  provider          Provider  @relation("providerRules", fields: [providerId], references: [id], onDelete: Cascade)
-  conditionProvider Provider? @relation("conditionProvider", fields: [conditionProviderId], references: [id], onDelete: SetNull)
+  staff          Staff  @relation("staffRules", fields: [staffId], references: [id], onDelete: Cascade)
+  conditionStaff Staff? @relation("conditionStaff", fields: [conditionStaffId], references: [id], onDelete: SetNull)
 
   @@map("availability_rules")
 }
@@ -432,7 +432,7 @@ model ShiftFollowRule {
 
 model ShiftEligibilityRule {
   id          String @id @default(cuid())
-  providerId  String
+  staffId  String
   shiftTypeId String
   dayOfWeek   Int
   type        String @default("eligible")
@@ -441,26 +441,26 @@ model ShiftEligibilityRule {
   cycleLength Int?
   cycleOffset Int?
 
-  provider  Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
 
-  @@index([providerId, shiftTypeId])
+  @@index([staffId, shiftTypeId])
   @@map("shift_eligibility_rules")
 }
 
 model ShiftMinimumTarget {
   id          String @id @default(cuid())
-  providerId  String
+  staffId  String
   shiftTypeId String
   minCount    Int
   maxCount    Int?
   window      String
   windowDays  Int?
 
-  provider  Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
 
-  @@unique([providerId, shiftTypeId, window])
+  @@unique([staffId, shiftTypeId, window])
   @@map("shift_minimum_targets")
 }
 
@@ -494,15 +494,15 @@ model ScheduleVersion {
   @@map("schedule_versions")
 }
 
-// A date-specific scheduling request for one provider (e.g. "off 7/4", "no ORC
+// A date-specific scheduling request for one staff (e.g. "off 7/4", "no ORC
 // or ORL next week", "AL 8/1–8/5"). Requests are the first dated, timestamped,
-// per-provider constraint with their own approval lifecycle. They feed BOTH the
+// per-staff constraint with their own approval lifecycle. They feed BOTH the
 // manual scheduler (as cell warnings) and auto-schedule (as candidate gates),
 // but only once status="approved" — pending requests render in the grid yet
 // exert zero scheduling force. receivedAt is the "received-date stamp".
 model ScheduleRequest {
   id           String    @id @default(cuid())
-  providerId   String
+  staffId   String
   startDate    DateTime  @db.Date // inclusive; single-date request => startDate==endDate
   endDate      DateTime  @db.Date // inclusive
   kind         String // OFF | LEAVE | NEGATE_SHIFT | REQUEST_SHIFT
@@ -511,7 +511,7 @@ model ScheduleRequest {
   strength     String    @default("hard") // hard (forbid/force) | soft (avoid/prefer)
   status       String    @default("pending") // pending | approved | declined | fulfilled | withdrawn
   autoApproved Boolean   @default(false) // approval derived from a satisfying assignment (auto-revertible); false = sticky human decision
-  source       String    @default("scheduler") // scheduler | provider | email
+  source       String    @default("scheduler") // scheduler | staff | email
   receivedAt   DateTime  @default(now()) // when the request came in (the stamp)
   approvedAt   DateTime?
   approvedBy   String? // user id/initials of the approver
@@ -519,10 +519,10 @@ model ScheduleRequest {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  provider        Provider   @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  staff        Staff   @relation(fields: [staffId], references: [id], onDelete: Cascade)
   leaveShiftType  ShiftType? @relation("requestLeaveShift", fields: [leaveShiftTypeId], references: [id], onDelete: SetNull)
 
-  @@index([providerId, startDate, endDate])
+  @@index([staffId, startDate, endDate])
   @@index([status])
   @@map("schedule_requests")
 }

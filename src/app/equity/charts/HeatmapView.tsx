@@ -5,9 +5,9 @@ import { shapeHeatmap, type HeatmapInput } from "@/lib/graph/series";
 import { heatmapTempColor, type EquityThresholds } from "@/lib/fairness";
 
 /**
- * Shift-codes × providers equity heatmap. Rows (y-axis) are the tracked shift
+ * Shift-codes × staff equity heatmap. Rows (y-axis) are the tracked shift
  * codes plus an optional "Holidays" row; columns (x-axis) are the staff. Each
- * cell shows the raw count, tinted by the provider's FTE-normalized per-shift
+ * cell shows the raw count, tinted by the staff's FTE-normalized per-shift
  * z-score via `heatmapTempColor()` — a yellow→red temperature ramp (yellow =
  * below average burden, red = above). The shaping/selection logic is the pure
  * `shapeHeatmap`; this component is the thin view + color mapping.
@@ -42,7 +42,7 @@ export function HeatmapView({
 
   if (categories.length === 0 || rows.length === 0) return null;
 
-  // First column holds the category label; one 3rem column per provider.
+  // First column holds the category label; one 3rem column per staff.
   const gridTemplateColumns = `5rem repeat(${rows.length}, 3rem)`;
 
   return (
@@ -54,7 +54,7 @@ export function HeatmapView({
 
         <div className="overflow-x-auto">
           <div className="inline-grid gap-px" style={{ gridTemplateColumns }}>
-            {/* header row — provider initials across the top */}
+            {/* header row — staff initials across the top */}
             <div className="h-8" />
             {rows.map((r) => (
               <div

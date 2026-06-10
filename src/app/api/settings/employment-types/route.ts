@@ -108,10 +108,10 @@ export async function DELETE(req: NextRequest) {
   const { id } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  const providerCount = await prisma.provider.count({ where: { employmentTypeId: id } });
-  if (providerCount > 0) {
+  const staffCount = await prisma.staff.count({ where: { employmentTypeId: id } });
+  if (staffCount > 0) {
     return NextResponse.json(
-      { error: `Cannot delete: ${providerCount} staff member(s) use this type` },
+      { error: `Cannot delete: ${staffCount} staff member(s) use this type` },
       { status: 409 },
     );
   }

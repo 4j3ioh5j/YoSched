@@ -11,11 +11,11 @@ export default async function Home() {
   const { error, permissions } = await getSession("schedule:view");
   if (error) redirect("/login");
   const canEdit = permissions!.includes("schedule:edit");
-  const [providers, shiftTypes, assignments, payPeriods, holidays, providerOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, currentVersions, scheduleRequests] =
+  const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, currentVersions, scheduleRequests] =
     await Promise.all([
-      prisma.provider.findMany({
-        // Active roster + any inactive provider that has assignments, so the grid
-        // can show historical providers as columns on the months they worked.
+      prisma.staff.findMany({
+        // Active roster + any inactive staff that has assignments, so the grid
+        // can show historical staff as columns on the months they worked.
         // computeFairness still gates on isActive && isAutoScheduled, so this does
         // not change the schedule's fairness badges.
         where: { OR: [{ isActive: true }, { assignments: { some: {} } }] },
@@ -28,7 +28,7 @@ export default async function Home() {
       }),
       prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
       prisma.holiday.findMany({ orderBy: { date: "asc" } }),
-      prisma.providerShiftOverride.findMany(),
+      prisma.staffShiftOverride.findMany(),
       prisma.staffingMinimum.findMany(),
       prisma.desirabilityWeight.findMany(),
       prisma.staffingRequirement.findMany(),
@@ -49,7 +49,7 @@ export default async function Home() {
 
   const fairness = computeFairness({
     assignments: assignments.map((a) => ({
-      providerId: a.providerId,
+      staffId: a.staffId,
       date: a.date.toISOString().split("T")[0],
       shiftType: {
         id: a.shiftType.id,
@@ -61,7 +61,7 @@ export default async function Home() {
         isOffShift: a.shiftType.isOffShift,
       },
     })),
-    providers: providers.map((p) => ({
+    staff: staff.map((p) => ({
       id: p.id,
       initials: p.initials,
       ftePercentage: p.ftePercentage ?? 1.0,
@@ -80,10 +80,10 @@ export default async function Home() {
 
   const fairnessData: Record<string, { metrics: (typeof fairness.metrics)[0]; deviation: { desirability: number; holidayWork: number; overall: number }; displayDeviation: { desirability: number; holidayWork: number; overall: number } }> = {};
   for (const m of fairness.metrics) {
-    const dev = fairness.deviations.get(m.providerId);
-    const disp = fairness.displayDeviations.get(m.providerId);
+    const dev = fairness.deviations.get(m.staffId);
+    const disp = fairness.displayDeviations.get(m.staffId);
     if (dev && disp) {
-      fairnessData[m.providerId] = { metrics: m, deviation: dev, displayDeviation: disp };
+      fairnessData[m.staffId] = { metrics: m, deviation: dev, displayDeviation: disp };
     }
   }
 
@@ -103,7 +103,7 @@ export default async function Home() {
 
       <ScheduleGrid
         canEdit={canEdit}
-        providers={providers.map((p) => ({
+        staff={staff.map((p) => ({
           id: p.id,
           initials: p.initials,
           name: p.name,
@@ -114,14 +114,14 @@ export default async function Home() {
             type: ar.type,
             strength: ar.strength,
             pattern: ar.pattern,
-            conditionProviderId: ar.conditionProviderId,
+            conditionStaffId: ar.conditionStaffId,
           })),
           isAutoScheduled: p.isAutoScheduled,
           isActive: p.isActive,
         }))}
         assignments={assignments.map((a) => ({
           id: a.id,
-          providerId: a.providerId,
+          staffId: a.staffId,
           date: a.date.toISOString().split("T")[0],
           shiftTypeId: a.shiftTypeId,
           isLocked: a.isLocked,
@@ -152,8 +152,8 @@ export default async function Home() {
           date: h.date.toISOString().split("T")[0],
           name: h.name,
         }))}
-        providerOverrides={providerOverrides.map((o) => ({
-          providerId: o.providerId,
+        staffOverrides={staffOverrides.map((o) => ({
+          staffId: o.staffId,
           shiftTypeId: o.shiftTypeId,
           durationHrs: o.durationHrs,
         }))}
@@ -190,7 +190,7 @@ export default async function Home() {
         }))}
         scheduleRequests={scheduleRequests.map((r) => ({
           id: r.id,
-          providerId: r.providerId,
+          staffId: r.staffId,
           startDate: r.startDate.toISOString().split("T")[0],
           endDate: r.endDate.toISOString().split("T")[0],
           kind: r.kind as "OFF" | "LEAVE" | "NEGATE_SHIFT" | "REQUEST_SHIFT",

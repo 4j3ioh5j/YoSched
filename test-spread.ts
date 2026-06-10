@@ -29,13 +29,13 @@ async function main() {
   }, endDate);
 
   const [
-    providers, shiftTypes, existingAssignments, holidays,
-    desirabilityWeights, standingCommitments, providerOverrides,
+    staff, shiftTypes, existingAssignments, holidays,
+    desirabilityWeights, standingCommitments, staffOverrides,
     dayPreferences, historicalAssignments, staffingRequirements,
-    schedulingPrefsRow, providerEligibleShifts, availabilityRules,
+    schedulingPrefsRow, staffEligibleShifts, availabilityRules,
     equityFactors, followRules,
   ] = await Promise.all([
-    prisma.provider.findMany({ where: { isActive: true } }),
+    prisma.staff.findMany({ where: { isActive: true } }),
     prisma.shiftType.findMany(),
     prisma.assignment.findMany({
       where: { date: { gte: new Date(effectiveStart + "T00:00:00Z"), lte: new Date(effectiveEnd + "T00:00:00Z") } },
@@ -44,15 +44,15 @@ async function main() {
     prisma.holiday.findMany(),
     prisma.desirabilityWeight.findMany(),
     prisma.standingCommitment.findMany(),
-    prisma.providerShiftOverride.findMany(),
-    prisma.providerDayPreference.findMany(),
+    prisma.staffShiftOverride.findMany(),
+    prisma.staffDayPreference.findMany(),
     prisma.assignment.findMany({
       where: { date: { lt: new Date(effectiveStart + "T00:00:00Z") } },
       include: { shiftType: true },
     }),
     prisma.staffingRequirement.findMany(),
     prisma.schedulingPreferences.findFirst(),
-    prisma.providerEligibleShift.findMany(),
+    prisma.staffEligibleShift.findMany(),
     prisma.availabilityRule.findMany(),
     prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.shiftFollowRule.findMany(),
@@ -62,15 +62,15 @@ async function main() {
   for (const st of shiftTypes) shiftCodeMap.set(st.id, st.code);
 
   const eligibilityMap = new Map<string, string[]>();
-  for (const pes of providerEligibleShifts) {
-    if (!eligibilityMap.has(pes.providerId)) eligibilityMap.set(pes.providerId, []);
-    eligibilityMap.get(pes.providerId)!.push(pes.shiftTypeId);
+  for (const pes of staffEligibleShifts) {
+    if (!eligibilityMap.has(pes.staffId)) eligibilityMap.set(pes.staffId, []);
+    eligibilityMap.get(pes.staffId)!.push(pes.shiftTypeId);
   }
 
   const rulesMap = new Map<string, typeof availabilityRules>();
   for (const ar of availabilityRules) {
-    if (!rulesMap.has(ar.providerId)) rulesMap.set(ar.providerId, []);
-    rulesMap.get(ar.providerId)!.push(ar);
+    if (!rulesMap.has(ar.staffId)) rulesMap.set(ar.staffId, []);
+    rulesMap.get(ar.staffId)!.push(ar);
   }
 
   const result = autoSchedule({
@@ -87,7 +87,7 @@ async function main() {
       }
       return dates;
     })(),
-    providers: providers.map((p) => ({
+    staff: staff.map((p) => ({
       id: p.id, initials: p.initials, ftePercentage: p.ftePercentage ?? 1.0,
       eligibleShiftTypeIds: eligibilityMap.get(p.id) ?? [],
       availabilityRules: (rulesMap.get(p.id) ?? []).map((ar) => ({
@@ -95,7 +95,7 @@ async function main() {
         strength: ar.strength as "rule" | "preference",
         pattern: ar.pattern as "every" | "pp_week_1" | "pp_week_2" | "every_n",
         cycleLength: ar.cycleLength, cycleOffset: ar.cycleOffset,
-        conditionProviderId: ar.conditionProviderId,
+        conditionStaffId: ar.conditionStaffId,
         conditionType: ar.conditionType as "working" | "not_working" | null,
       })),
       isActive: p.isActive, isAutoScheduled: p.isAutoScheduled,
@@ -111,7 +111,7 @@ async function main() {
       category: st.category, autoSchedulable: st.autoSchedulable,
     })),
     existingAssignments: existingAssignments.filter(a => a.isLocked).map((a) => ({
-      providerId: a.providerId, date: a.date.toISOString().split("T")[0],
+      staffId: a.staffId, date: a.date.toISOString().split("T")[0],
       shiftTypeId: a.shiftTypeId, code: shiftCodeMap.get(a.shiftTypeId) ?? "?", isLocked: a.isLocked,
     })),
     payPeriods: allPayPeriods.map((pp) => ({
@@ -124,17 +124,17 @@ async function main() {
       shiftTypeId: dw.shiftTypeId, dayOfWeek: dw.dayOfWeek, weight: dw.weight,
     })),
     standingCommitments: standingCommitments.map((sc) => ({
-      providerId: sc.providerId, shiftTypeId: sc.shiftTypeId,
+      staffId: sc.staffId, shiftTypeId: sc.shiftTypeId,
       dayOfWeek: sc.dayOfWeek, frequency: sc.frequency,
     })),
-    providerOverrides: providerOverrides.map((po) => ({
-      providerId: po.providerId, shiftTypeId: po.shiftTypeId, durationHrs: po.durationHrs,
+    staffOverrides: staffOverrides.map((po) => ({
+      staffId: po.staffId, shiftTypeId: po.shiftTypeId, durationHrs: po.durationHrs,
     })),
     dayPreferences: dayPreferences.map((dp) => ({
-      providerId: dp.providerId, dayOfWeek: dp.dayOfWeek, preference: dp.preference,
+      staffId: dp.staffId, dayOfWeek: dp.dayOfWeek, preference: dp.preference,
     })),
     historicalAssignments: historicalAssignments.map((a) => ({
-      providerId: a.providerId, date: a.date.toISOString().split("T")[0],
+      staffId: a.staffId, date: a.date.toISOString().split("T")[0],
       shiftTypeId: a.shiftTypeId, code: shiftCodeMap.get(a.shiftTypeId) ?? "?", isLocked: a.isLocked,
     })),
     staffingRequirements: staffingRequirements.map((sr) => ({
@@ -157,25 +157,25 @@ async function main() {
     })),
   });
 
-  // Show ORL/ORC/CALL placement per provider per PP
+  // Show ORL/ORC/CALL placement per staff per PP
   const ppList = allPayPeriods
     .map(pp => ({ start: pp.startDate.toISOString().split("T")[0], end: pp.endDate.toISOString().split("T")[0] }))
     .filter(pp => pp.end >= "2026-08-01" && pp.start <= "2026-08-31")
     .sort((a, b) => a.start.localeCompare(b.start));
 
-  const provMap = new Map(providers.map(p => [p.id, p.initials]));
+  const provMap = new Map(staff.map(p => [p.id, p.initials]));
   const hardShifts = new Set(["ORL", "ORC", "CALL"]);
 
   for (const pp of ppList) {
     console.log(`\n=== PP ${pp.start} to ${pp.end} ===`);
 
-    // Build grid per provider
-    const providerGrid = new Map<string, Map<string, string>>();
+    // Build grid per staff
+    const staffGrid = new Map<string, Map<string, string>>();
     for (const s of result.suggestions) {
       if (s.date < pp.start || s.date > pp.end) continue;
-      const initials = provMap.get(s.providerId) ?? s.providerId;
-      if (!providerGrid.has(initials)) providerGrid.set(initials, new Map());
-      providerGrid.get(initials)!.set(s.date, s.code);
+      const initials = provMap.get(s.staffId) ?? s.staffId;
+      if (!staffGrid.has(initials)) staffGrid.set(initials, new Map());
+      staffGrid.get(initials)!.set(s.date, s.code);
     }
 
     // Generate all dates in PP
@@ -189,8 +189,8 @@ async function main() {
 
     const dow = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
-    // Only show providers with ORL/ORC/CALL
-    for (const [initials, dateMap] of [...providerGrid.entries()].sort()) {
+    // Only show staff with ORL/ORC/CALL
+    for (const [initials, dateMap] of [...staffGrid.entries()].sort()) {
       const hasHard = [...dateMap.values()].some(c => hardShifts.has(c));
       if (!hasHard) continue;
 

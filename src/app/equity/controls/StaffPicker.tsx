@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { GraphStaffFilter } from "@/lib/graph/spec";
 
-export type StaffPickerProvider = {
+export type StaffPickerStaff = {
   id: string;
   initials: string;
   name: string;
@@ -13,36 +13,36 @@ export type StaffPickerProvider = {
 
 export function StaffPicker({
   value,
-  providers,
+  staff,
   onChange,
 }: {
   value: GraphStaffFilter;
-  providers: StaffPickerProvider[];
+  staff: StaffPickerStaff[];
   onChange: (s: GraphStaffFilter) => void;
 }) {
   const [showNames, setShowNames] = useState((value.names?.length ?? 0) > 0);
 
-  const employmentTypes = [...new Set(providers.map((p) => p.employmentTypeName))].sort();
+  const employmentTypes = [...new Set(staff.map((p) => p.employmentTypeName))].sort();
   const selectedNames = new Set(value.names ?? []);
 
-  // A provider is offerable when it satisfies the other active staff filters
+  // A staff is offerable when it satisfies the other active staff filters
   // (employment type + min FTE). The "By name" chips only show offerable
-  // providers, so the filters can't be combined into a contradictory (empty)
+  // staff, so the filters can't be combined into a contradictory (empty)
   // selection.
-  function matches(p: StaffPickerProvider, employmentType: string | null, minFtePct: number | null): boolean {
+  function matches(p: StaffPickerStaff, employmentType: string | null, minFtePct: number | null): boolean {
     if (employmentType && p.employmentTypeName !== employmentType) return false;
     if (minFtePct && minFtePct > 0 && p.ftePercentage < minFtePct) return false;
     return true;
   }
 
-  const visibleProviders = providers.filter((p) => matches(p, value.employmentType ?? null, value.minFtePct ?? null));
+  const visibleStaff = staff.filter((p) => matches(p, value.employmentType ?? null, value.minFtePct ?? null));
 
   // Drop already-picked names that no longer satisfy the filters, so the chip
   // count and the narrowed list stay consistent.
   function prunedNames(employmentType: string | null, minFtePct: number | null): string[] | undefined {
     if (!value.names) return value.names;
     return value.names.filter((id) => {
-      const p = providers.find((pp) => pp.id === id);
+      const p = staff.find((pp) => pp.id === id);
       return p ? matches(p, employmentType, minFtePct) : false;
     });
   }
@@ -114,7 +114,7 @@ export function StaffPicker({
 
       {showNames && (
         <div className="flex flex-wrap gap-1.5 pl-[72px]">
-          {visibleProviders.map((p) => {
+          {visibleStaff.map((p) => {
             const active = selectedNames.has(p.id);
             return (
               <button

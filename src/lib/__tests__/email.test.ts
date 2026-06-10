@@ -65,7 +65,7 @@ describe("isEmailConfigured", () => {
 
 describe("buildConfirmationEmail", () => {
   const msg = buildConfirmationEmail({
-    providerName: "Dr. Smith",
+    staffName: "Dr. Smith",
     requestDescription: "Off",
     dateRange: "July 3, 2026",
     flexible: false,
@@ -85,7 +85,7 @@ describe("buildConfirmationEmail", () => {
   });
   it("marks a flexible request as a preference", () => {
     const m = buildConfirmationEmail({
-      providerName: "X", requestDescription: "Avoid ORC", dateRange: "July 3, 2026",
+      staffName: "X", requestDescription: "Avoid ORC", dateRange: "July 3, 2026",
       flexible: true, submitted: "June 6, 2026 12:05", reference: "r1",
     });
     expect(m.text).toContain("(preference)");

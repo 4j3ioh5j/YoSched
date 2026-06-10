@@ -21,9 +21,9 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
   const session = await getSession(["statistics:view", "schedule:view"]);
   if (session.error) redirect("/");
   const canManageViews = session.permissions.includes("statistics:manage");
-  const [providers, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs, equityFactors, eligibilities, overrides] =
+  const [staff, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs, equityFactors, eligibilities, overrides] =
     await Promise.all([
-      prisma.provider.findMany({ orderBy: { sortOrder: "asc" }, include: { employmentType: true } }),
+      prisma.staff.findMany({ orderBy: { sortOrder: "asc" }, include: { employmentType: true } }),
       prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.assignment.findMany({ include: { shiftType: true } }),
       prisma.holiday.findMany({ orderBy: { date: "asc" } }),
@@ -31,22 +31,22 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
       prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
       prisma.schedulingPreferences.findFirst(),
       prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
-      prisma.providerEligibleShift.findMany(),
-      prisma.providerShiftOverride.findMany(),
+      prisma.staffEligibleShift.findMany(),
+      prisma.staffShiftOverride.findMany(),
     ]);
 
   const eligMap = new Map<string, string[]>();
   for (const e of eligibilities) {
-    const arr = eligMap.get(e.providerId) || [];
+    const arr = eligMap.get(e.staffId) || [];
     arr.push(e.shiftTypeId);
-    eligMap.set(e.providerId, arr);
+    eligMap.set(e.staffId, arr);
   }
 
   // The whole Statistics computation now runs client-side (computeStatsModel),
   // so the server ships the raw, serializable arrays it needs. This lets the
   // upcoming date-range/staff pickers recompute over a subset without a round trip.
   const raw: RawStatsData = {
-    providers: providers.map((p) => ({
+    staff: staff.map((p) => ({
       id: p.id,
       initials: p.initials,
       name: p.name,
@@ -57,7 +57,7 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
       eligibleShiftTypeIds: eligMap.get(p.id) ?? [],
     })),
     assignments: assignments.map((a) => ({
-      providerId: a.providerId,
+      staffId: a.staffId,
       shiftTypeId: a.shiftTypeId,
       date: a.date.toISOString().split("T")[0],
       shiftType: {
@@ -89,7 +89,7 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
       enabled: f.enabled,
     })),
     overrides: overrides.map((o) => ({
-      providerId: o.providerId,
+      staffId: o.staffId,
       shiftTypeId: o.shiftTypeId,
       durationHrs: o.durationHrs,
     })),

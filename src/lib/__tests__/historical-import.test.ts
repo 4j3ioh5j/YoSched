@@ -13,9 +13,9 @@ describe("findUnmappedTargets", () => {
     const res = findUnmappedTargets(
       rows,
       ["OR", "ICU", "PRE"], // existing codes (incl. the PRE remap target)
-      ["ST"], // existing providers
+      ["ST"], // existing staff
       ["CB"], // CB created by the seed
-      ["ADh", "JCS"], // new providers created by the seed
+      ["ADh", "JCS"], // new staff created by the seed
     );
     expect(res).toEqual({ codes: [], initials: [] });
   });
@@ -27,7 +27,7 @@ describe("findUnmappedTargets", () => {
     expect(res.initials).toEqual([]);
   });
 
-  it("flags a provider that is neither existing nor scheduled for creation", () => {
+  it("flags a staff that is neither existing nor scheduled for creation", () => {
     const res = findUnmappedTargets(rows, ["OR", "ICU", "PRE", "CB"], ["ST"], [], []);
     // ADh and JCS are not in existing and not in extras here
     expect(res.initials).toEqual(["ADh", "JCS"]);

@@ -3,12 +3,12 @@ import { assembleEquityModel, computeStatsModel, type AssembleShiftType, type Ra
 import type { FairnessSummary, FairnessMetrics, FairnessDeviation } from "../../fairness";
 
 const metric = (
-  providerId: string,
+  staffId: string,
   initials: string,
   ftePercentage: number,
   extra: Partial<FairnessMetrics> = {},
 ): FairnessMetrics => ({
-  providerId,
+  staffId,
   initials,
   ftePercentage,
   desirabilityScore: 0,
@@ -42,8 +42,8 @@ function fairness(
     averages: opts.averages ?? { desirabilityScore: 1.5, holidayWorkCount: 2, perShift: { CALL: 3 } },
     trackedShiftCodes: ["CALL"],
     equityShiftCodes: ["CALL"],
-    deviations: new Map(metrics.map((m) => [m.providerId, opts.deviations?.[m.providerId] ?? dev()])),
-    displayDeviations: new Map(metrics.map((m) => [m.providerId, opts.displayDeviations?.[m.providerId] ?? dev()])),
+    deviations: new Map(metrics.map((m) => [m.staffId, opts.deviations?.[m.staffId] ?? dev()])),
+    displayDeviations: new Map(metrics.map((m) => [m.staffId, opts.displayDeviations?.[m.staffId] ?? dev()])),
   };
 }
 
@@ -61,22 +61,22 @@ describe("assembleEquityModel — hours / weekend / override parity", () => {
       metric("p1", "AA", 1.0, { totalWorkDays: 3, totalLeaveDays: 1 }),
       metric("p2", "BB", 0.5, { totalWorkDays: 1, totalLeaveDays: 0 }),
     ]),
-    providers: [
+    staff: [
       { id: "p1", name: "Alice", isAutoScheduled: true, ftePercentage: 1.0, employmentTypeName: "FTE" },
       { id: "p2", name: "Bob", isAutoScheduled: false, ftePercentage: 0.5, employmentTypeName: "Fee Basis" },
     ],
     assignments: [
-      { providerId: "p1", shiftTypeId: "work", date: "2026-06-03", code: "WORK", isOffShift: false },
-      { providerId: "p1", shiftTypeId: "work", date: "2026-06-06", code: "WORK", isOffShift: false },
-      { providerId: "p1", shiftTypeId: "call", date: "2026-06-06", code: "CALL", isOffShift: false },
-      { providerId: "p2", shiftTypeId: "call", date: "2026-06-03", code: "CALL", isOffShift: false },
+      { staffId: "p1", shiftTypeId: "work", date: "2026-06-03", code: "WORK", isOffShift: false },
+      { staffId: "p1", shiftTypeId: "work", date: "2026-06-06", code: "WORK", isOffShift: false },
+      { staffId: "p1", shiftTypeId: "call", date: "2026-06-06", code: "CALL", isOffShift: false },
+      { staffId: "p2", shiftTypeId: "call", date: "2026-06-03", code: "CALL", isOffShift: false },
     ],
     shiftTypes: SHIFT_TYPES,
-    overrides: [{ providerId: "p1", shiftTypeId: "call", durationHrs: 30 }],
+    overrides: [{ staffId: "p1", shiftTypeId: "call", durationHrs: 30 }],
   });
 
-  const p1 = () => model.data.find((d) => d.providerId === "p1")!;
-  const p2 = () => model.data.find((d) => d.providerId === "p2")!;
+  const p1 = () => model.data.find((d) => d.staffId === "p1")!;
+  const p2 = () => model.data.find((d) => d.staffId === "p2")!;
 
   it("skips weekend hours for weekday-only shifts, keeps weekend-eligible ones, and applies overrides", () => {
     // p1: WORK Wed +10; WORK Sat skipped; CALL Sat override 30 => 40
@@ -110,7 +110,7 @@ describe("assembleEquityModel — hours / weekend / override parity", () => {
   });
 });
 
-describe("assembleEquityModel — provider mapping", () => {
+describe("assembleEquityModel — staff mapping", () => {
   it("maps name/employment/fte and wires both deviation maps through", () => {
     const model = assembleEquityModel({
       fairness: fairness(
@@ -120,7 +120,7 @@ describe("assembleEquityModel — provider mapping", () => {
           displayDeviations: { p1: dev({ desirability: 0.1, holidayWork: 0.2, overall: 0.9, perShift: { CALL: -0.4 } }) },
         },
       ),
-      providers: [{ id: "p1", name: "Alice", isAutoScheduled: true, ftePercentage: null, employmentTypeName: "FTE" }],
+      staff: [{ id: "p1", name: "Alice", isAutoScheduled: true, ftePercentage: null, employmentTypeName: "FTE" }],
       assignments: [],
       shiftTypes: SHIFT_TYPES,
       overrides: [],
@@ -137,12 +137,12 @@ describe("assembleEquityModel — provider mapping", () => {
 describe("computeStatsModel — full engine wiring", () => {
   it("runs computeFairness + assembleEquityModel from the raw payload", () => {
     const raw: RawStatsData = {
-      providers: [
+      staff: [
         { id: "p1", initials: "AA", name: "Alice", ftePercentage: 1.0, isActive: true, isAutoScheduled: true, employmentTypeName: "FTE", eligibleShiftTypeIds: [] },
       ],
       assignments: [
         {
-          providerId: "p1",
+          staffId: "p1",
           shiftTypeId: "call",
           date: "2026-06-03",
           shiftType: { id: "call", code: "CALL", defaultHours: 24, countsTowardFte: true, countsAsHolidayWork: true, isLeave: false, isOffShift: false },
@@ -156,16 +156,16 @@ describe("computeStatsModel — full engine wiring", () => {
     };
     const model = computeStatsModel(raw);
     expect(model.data).toHaveLength(1);
-    expect(model.data[0].providerId).toBe("p1");
+    expect(model.data[0].staffId).toBe("p1");
     expect(model.data[0].totalHours).toBe(24);
     expect(model.data[0].shiftTally).toEqual({ CALL: 1 });
     expect(model.dateRange).toEqual({ min: "2026-06-03", max: "2026-06-03" });
     expect(model.shiftCodes).toEqual(["CALL"]);
   });
 
-  it("excludes inactive / non-auto-scheduled providers (computeFairness gate)", () => {
+  it("excludes inactive / non-auto-scheduled staff (computeFairness gate)", () => {
     const raw: RawStatsData = {
-      providers: [
+      staff: [
         { id: "p1", initials: "AA", name: "Alice", ftePercentage: 1.0, isActive: false, isAutoScheduled: true, employmentTypeName: "FTE", eligibleShiftTypeIds: [] },
       ],
       assignments: [],
@@ -180,11 +180,11 @@ describe("computeStatsModel — full engine wiring", () => {
 });
 
 describe("assembleEquityModel — off-shift handling", () => {
-  it("excludes off shifts from tallies and hours but still emits the provider row", () => {
+  it("excludes off shifts from tallies and hours but still emits the staff row", () => {
     const model = assembleEquityModel({
       fairness: fairness([metric("p3", "CC", 1.0)]),
-      providers: [{ id: "p3", name: "Cara", isAutoScheduled: true, ftePercentage: 1.0, employmentTypeName: "FTE" }],
-      assignments: [{ providerId: "p3", shiftTypeId: "off", date: "2026-06-08", code: "OFF", isOffShift: true }],
+      staff: [{ id: "p3", name: "Cara", isAutoScheduled: true, ftePercentage: 1.0, employmentTypeName: "FTE" }],
+      assignments: [{ staffId: "p3", shiftTypeId: "off", date: "2026-06-08", code: "OFF", isOffShift: true }],
       shiftTypes: SHIFT_TYPES,
       overrides: [],
     });

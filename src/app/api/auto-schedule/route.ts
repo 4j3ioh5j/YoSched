@@ -40,18 +40,18 @@ export async function POST(req: NextRequest) {
     : endDate;
 
   const [
-    providers,
+    staff,
     shiftTypes,
     existingAssignments,
     holidays,
     desirabilityWeights,
     standingCommitments,
-    providerOverrides,
+    staffOverrides,
     dayPreferences,
     historicalAssignments,
     staffingRequirements,
     schedulingPrefsRow,
-    providerEligibleShifts,
+    staffEligibleShifts,
     availabilityRules,
     equityFactors,
     followRules,
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     shiftMinimumTargets,
     scheduleRequests,
   ] = await Promise.all([
-    prisma.provider.findMany({ where: { isActive: true } }),
+    prisma.staff.findMany({ where: { isActive: true } }),
     prisma.shiftType.findMany(),
     prisma.assignment.findMany({
       where: {
@@ -73,8 +73,8 @@ export async function POST(req: NextRequest) {
     prisma.holiday.findMany(),
     prisma.desirabilityWeight.findMany(),
     prisma.standingCommitment.findMany(),
-    prisma.providerShiftOverride.findMany(),
-    prisma.providerDayPreference.findMany(),
+    prisma.staffShiftOverride.findMany(),
+    prisma.staffDayPreference.findMany(),
     prisma.assignment.findMany({
       where: {
         date: { lt: new Date(effectiveStart + "T00:00:00Z") },
@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
     }),
     prisma.staffingRequirement.findMany(),
     prisma.schedulingPreferences.findFirst(),
-    prisma.providerEligibleShift.findMany(),
+    prisma.staffEligibleShift.findMany(),
     prisma.availabilityRule.findMany(),
     prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.shiftFollowRule.findMany(),
@@ -119,40 +119,40 @@ export async function POST(req: NextRequest) {
   for (const st of shiftTypes) shiftCodeMap.set(st.id, st.code);
 
   const eligibilityMap = new Map<string, string[]>();
-  for (const pes of providerEligibleShifts) {
-    if (!eligibilityMap.has(pes.providerId)) {
-      eligibilityMap.set(pes.providerId, []);
+  for (const pes of staffEligibleShifts) {
+    if (!eligibilityMap.has(pes.staffId)) {
+      eligibilityMap.set(pes.staffId, []);
     }
-    eligibilityMap.get(pes.providerId)!.push(pes.shiftTypeId);
+    eligibilityMap.get(pes.staffId)!.push(pes.shiftTypeId);
   }
 
   const rulesMap = new Map<string, typeof availabilityRules>();
   for (const ar of availabilityRules) {
-    if (!rulesMap.has(ar.providerId)) {
-      rulesMap.set(ar.providerId, []);
+    if (!rulesMap.has(ar.staffId)) {
+      rulesMap.set(ar.staffId, []);
     }
-    rulesMap.get(ar.providerId)!.push(ar);
+    rulesMap.get(ar.staffId)!.push(ar);
   }
 
   const eligRulesMap = new Map<string, typeof shiftEligibilityRules>();
   for (const er of shiftEligibilityRules) {
-    if (!eligRulesMap.has(er.providerId)) {
-      eligRulesMap.set(er.providerId, []);
+    if (!eligRulesMap.has(er.staffId)) {
+      eligRulesMap.set(er.staffId, []);
     }
-    eligRulesMap.get(er.providerId)!.push(er);
+    eligRulesMap.get(er.staffId)!.push(er);
   }
 
   const minTargetsMap = new Map<string, typeof shiftMinimumTargets>();
   for (const mt of shiftMinimumTargets) {
-    if (!minTargetsMap.has(mt.providerId)) {
-      minTargetsMap.set(mt.providerId, []);
+    if (!minTargetsMap.has(mt.staffId)) {
+      minTargetsMap.set(mt.staffId, []);
     }
-    minTargetsMap.get(mt.providerId)!.push(mt);
+    minTargetsMap.get(mt.staffId)!.push(mt);
   }
 
   const result = autoSchedule({
     dates,
-    providers: providers.map((p) => ({
+    staff: staff.map((p) => ({
       id: p.id,
       initials: p.initials,
       ftePercentage: p.ftePercentage ?? 1.0,
@@ -164,7 +164,7 @@ export async function POST(req: NextRequest) {
         pattern: ar.pattern as "every" | "pp_week_1" | "pp_week_2" | "every_n",
         cycleLength: ar.cycleLength,
         cycleOffset: ar.cycleOffset,
-        conditionProviderId: ar.conditionProviderId,
+        conditionStaffId: ar.conditionStaffId,
         conditionType: ar.conditionType as "working" | "not_working" | null,
       })),
       isActive: p.isActive,
@@ -206,7 +206,7 @@ export async function POST(req: NextRequest) {
       autoSchedulable: st.autoSchedulable,
     })),
     existingAssignments: existingAssignments.map((a) => ({
-      providerId: a.providerId,
+      staffId: a.staffId,
       date: a.date.toISOString().split("T")[0],
       shiftTypeId: a.shiftTypeId,
       code: shiftCodeMap.get(a.shiftTypeId) ?? "?",
@@ -226,23 +226,23 @@ export async function POST(req: NextRequest) {
       weight: dw.weight,
     })),
     standingCommitments: standingCommitments.map((sc) => ({
-      providerId: sc.providerId,
+      staffId: sc.staffId,
       shiftTypeId: sc.shiftTypeId,
       dayOfWeek: sc.dayOfWeek,
       frequency: sc.frequency,
     })),
-    providerOverrides: providerOverrides.map((po) => ({
-      providerId: po.providerId,
+    staffOverrides: staffOverrides.map((po) => ({
+      staffId: po.staffId,
       shiftTypeId: po.shiftTypeId,
       durationHrs: po.durationHrs,
     })),
     dayPreferences: dayPreferences.map((dp) => ({
-      providerId: dp.providerId,
+      staffId: dp.staffId,
       dayOfWeek: dp.dayOfWeek,
       preference: dp.preference,
     })),
     historicalAssignments: historicalAssignments.map((a) => ({
-      providerId: a.providerId,
+      staffId: a.staffId,
       date: a.date.toISOString().split("T")[0],
       shiftTypeId: a.shiftTypeId,
       code: shiftCodeMap.get(a.shiftTypeId) ?? "?",
@@ -275,7 +275,7 @@ export async function POST(req: NextRequest) {
     })),
     scheduleRequests: scheduleRequests.map((r) => ({
       id: r.id,
-      providerId: r.providerId,
+      staffId: r.staffId,
       startDate: r.startDate.toISOString().split("T")[0],
       endDate: r.endDate.toISOString().split("T")[0],
       kind: r.kind as ScheduleRequestData["kind"],
@@ -295,7 +295,7 @@ export async function PUT(req: NextRequest) {
   const body = await req.json();
   const { suggestions } = body as {
     suggestions: Array<{
-      providerId: string;
+      staffId: string;
       date: string;
       shiftTypeId: string;
     }>;
@@ -313,26 +313,26 @@ export async function PUT(req: NextRequest) {
   for (const s of suggestions) {
     const existing = await prisma.assignment.findUnique({
       where: {
-        providerId_date: {
-          providerId: s.providerId,
+        staffId_date: {
+          staffId: s.staffId,
           date: new Date(s.date + "T00:00:00Z"),
         },
       },
     });
     if (existing?.isLocked) {
-      skipped.push({ providerId: s.providerId, date: s.date, reason: "locked" });
+      skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" });
       continue;
     }
     const result = await prisma.assignment.upsert({
       where: {
-        providerId_date: {
-          providerId: s.providerId,
+        staffId_date: {
+          staffId: s.staffId,
           date: new Date(s.date + "T00:00:00Z"),
         },
       },
       update: { shiftTypeId: s.shiftTypeId, source: "auto" },
       create: {
-        providerId: s.providerId,
+        staffId: s.staffId,
         date: new Date(s.date + "T00:00:00Z"),
         shiftTypeId: s.shiftTypeId,
         source: "auto",
@@ -341,7 +341,7 @@ export async function PUT(req: NextRequest) {
     const st = stMap.get(result.shiftTypeId);
     applied.push({
       id: result.id,
-      providerId: result.providerId,
+      staffId: result.staffId,
       date: result.date.toISOString().split("T")[0],
       shiftTypeId: result.shiftTypeId,
       isLocked: result.isLocked,
@@ -351,7 +351,7 @@ export async function PUT(req: NextRequest) {
   }
 
   await syncRequestApprovals(
-    applied.map((a) => ({ providerId: a.providerId, date: a.date })),
+    applied.map((a) => ({ staffId: a.staffId, date: a.date })),
     userId
   );
 
@@ -386,7 +386,7 @@ export async function DELETE(req: NextRequest) {
     const st = stMap.get(a.shiftTypeId);
     return {
       id: a.id,
-      providerId: a.providerId,
+      staffId: a.staffId,
       date: a.date.toISOString().split("T")[0],
       shiftTypeId: a.shiftTypeId,
       isLocked: a.isLocked,
@@ -400,7 +400,7 @@ export async function DELETE(req: NextRequest) {
   });
 
   await syncRequestApprovals(
-    removed.map((a) => ({ providerId: a.providerId, date: a.date })),
+    removed.map((a) => ({ staffId: a.staffId, date: a.date })),
     userId
   );
 

@@ -7,7 +7,7 @@
 export type ImportRow = { date: string; initials: string; code: string };
 
 /**
- * Given the import rows and the codes / provider-initials that will exist after
+ * Given the import rows and the codes / staff-initials that will exist after
  * the seed ensures `extraCodes` / `extraInitials`, return everything referenced
  * by the data that still would NOT resolve. An empty result means the import can
  * proceed without leaving orphan setup rows.

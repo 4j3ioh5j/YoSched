@@ -12,7 +12,7 @@ const STATUSES = ["pending", "approved", "declined", "withdrawn", "fulfilled"] a
 
 type RequestRow = {
   id: string;
-  providerId: string;
+  staffId: string;
   kind: string;
   shiftTypeIds: string[];
   leaveShiftTypeId: string | null;
@@ -53,7 +53,7 @@ const placementOf = (r: RequestRow, offId: string | null): string | null =>
   );
 
 const coveredCells = (r: RequestRow) =>
-  eachDateInclusive(ymd(r.startDate), ymd(r.endDate)).map((date) => ({ providerId: r.providerId, date }));
+  eachDateInclusive(ymd(r.startDate), ymd(r.endDate)).map((date) => ({ staffId: r.staffId, date }));
 
 /** Dates of `r` whose request-placed shift is safe to clear when r is removed —
  *  excludes dates another still-approved request also resolves to the same shift,
@@ -63,7 +63,7 @@ async function datesToRelease(r: RequestRow, placement: string | null, offId: st
   const days = coveredCells(r).map((c) => c.date);
   const others = await prisma.scheduleRequest.findMany({
     where: {
-      providerId: r.providerId,
+      staffId: r.staffId,
       id: { not: r.id },
       status: "approved",
       startDate: { lte: new Date(days[days.length - 1] + "T00:00:00Z") },
@@ -119,7 +119,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       // place in one pass.
       const at = (date: string) => new Date(date + "T00:00:00Z");
       const existingCells = await prisma.assignment.findMany({
-        where: { providerId: existing.providerId, date: { in: cells.map((c) => at(c.date)) } },
+        where: { staffId: existing.staffId, date: { in: cells.map((c) => at(c.date)) } },
         select: { date: true, shiftTypeId: true, isLocked: true },
       });
       const byDate = new Map(existingCells.map((c) => [ymd(c.date), c]));
@@ -149,12 +149,12 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
       // Place the resolved shift on every covered, non-locked day. (Any locked day
       // that reached here already satisfies the request, so leave it as-is.)
-      for (const { providerId, date } of cells) {
+      for (const { staffId, date } of cells) {
         if (byDate.get(date)?.isLocked) continue;
         await prisma.assignment.upsert({
-          where: { providerId_date: { providerId, date: at(date) } },
+          where: { staffId_date: { staffId, date: at(date) } },
           update: { shiftTypeId: placement, source: "request" },
-          create: { providerId, date: at(date), shiftTypeId: placement, source: "request" },
+          create: { staffId, date: at(date), shiftTypeId: placement, source: "request" },
         });
       }
     }
@@ -179,7 +179,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     if (release.length > 0) {
       await prisma.assignment.deleteMany({
         where: {
-          providerId: existing.providerId,
+          staffId: existing.staffId,
           source: "request",
           isLocked: false,
           shiftTypeId: placement!,
@@ -220,7 +220,7 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   if (release.length > 0) {
     await prisma.assignment.deleteMany({
       where: {
-        providerId: existing.providerId,
+        staffId: existing.staffId,
         source: "request",
         isLocked: false,
         shiftTypeId: placement!,

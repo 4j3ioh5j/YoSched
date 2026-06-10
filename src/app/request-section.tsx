@@ -15,7 +15,7 @@ type ShiftType = {
 
 type Props = {
   shiftTypes: ShiftType[];
-  targetCount: number; // providers the request will apply to
+  targetCount: number; // staff the request will apply to
   onSave: (marks: PickerMarks) => void;
 };
 
@@ -77,7 +77,7 @@ export function RequestSection({ shiftTypes, targetCount, onSave }: Props) {
   return (
     <div className="border-t border-slate-700 mt-2 pt-1">
       <div className="text-[10px] font-semibold uppercase tracking-wider text-violet-300 px-1 py-0.5">
-        Request{targetCount > 1 ? ` · ${targetCount} providers` : ""}
+        Request{targetCount > 1 ? ` · ${targetCount} staff` : ""}
       </div>
 
       <div className="grid grid-cols-3 gap-0.5">

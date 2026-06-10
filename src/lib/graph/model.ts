@@ -1,8 +1,8 @@
 /**
  * assembleEquityModel — the pure assembly step of the Statistics page.
  *
- * Takes the `computeFairness` result plus the raw provider / assignment /
- * shift-type / override data and produces the per-provider rows, department
+ * Takes the `computeFairness` result plus the raw staff / assignment /
+ * shift-type / override data and produces the per-staff rows, department
  * averages, tracked shift codes, date range, and the full shift-code list that
  * the Statistics view renders. Extracted verbatim from the server page so the
  * hours (override + countsOnWeekend) and tally logic is one pure, unit-tested
@@ -20,7 +20,7 @@ export type Deviation = {
 };
 
 export type EquityRow = {
-  providerId: string;
+  staffId: string;
   initials: string;
   name: string;
   isAutoScheduled: boolean;
@@ -48,7 +48,7 @@ export type EquityAverages = {
   totalLeaveDays: number;
 };
 
-export type AssembleProvider = {
+export type AssembleStaff = {
   id: string;
   name: string;
   isAutoScheduled: boolean;
@@ -57,7 +57,7 @@ export type AssembleProvider = {
 };
 
 export type AssembleAssignment = {
-  providerId: string;
+  staffId: string;
   shiftTypeId: string;
   /** ISO date, YYYY-MM-DD */
   date: string;
@@ -73,7 +73,7 @@ export type AssembleShiftType = {
 };
 
 export type AssembleOverride = {
-  providerId: string;
+  staffId: string;
   shiftTypeId: string;
   durationHrs: number;
 };
@@ -88,28 +88,28 @@ export type EquityModel = {
 
 export function assembleEquityModel(input: {
   fairness: FairnessSummary;
-  providers: AssembleProvider[];
+  staff: AssembleStaff[];
   assignments: AssembleAssignment[];
   shiftTypes: AssembleShiftType[];
   overrides: AssembleOverride[];
 }): EquityModel {
-  const { fairness, providers, assignments, shiftTypes, overrides } = input;
+  const { fairness, staff, assignments, shiftTypes, overrides } = input;
 
-  // Per-provider shift-code tallies. Off shifts are skipped, but the provider
+  // Per-staff shift-code tallies. Off shifts are skipped, but the staff
   // entry is still created (matches the original loop ordering).
   const shiftTallies: Record<string, Record<string, number>> = {};
   for (const a of assignments) {
-    const pid = a.providerId;
+    const pid = a.staffId;
     if (!shiftTallies[pid]) shiftTallies[pid] = {};
     if (a.isOffShift) continue;
     shiftTallies[pid][a.code] = (shiftTallies[pid][a.code] || 0) + 1;
   }
 
-  // Total FTE-counted hours per provider, honoring per-provider shift-hour
+  // Total FTE-counted hours per staff, honoring per-staff shift-hour
   // overrides and the weekday-only (countsOnWeekend) rule.
-  const providerHours: Record<string, number> = {};
+  const staffHours: Record<string, number> = {};
   const overrideMap = new Map<string, number>();
-  for (const o of overrides) overrideMap.set(`${o.providerId}:${o.shiftTypeId}`, o.durationHrs);
+  for (const o of overrides) overrideMap.set(`${o.staffId}:${o.shiftTypeId}`, o.durationHrs);
   const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
   for (const a of assignments) {
     const st = stMap.get(a.shiftTypeId);
@@ -117,8 +117,8 @@ export function assembleEquityModel(input: {
     const dow = new Date(a.date + "T12:00:00").getDay();
     const isWknd = dow === 0 || dow === 6;
     if (isWknd && !st.countsOnWeekend) continue;
-    const hrs = overrideMap.get(`${a.providerId}:${a.shiftTypeId}`) ?? st.defaultHours;
-    providerHours[a.providerId] = (providerHours[a.providerId] || 0) + hrs;
+    const hrs = overrideMap.get(`${a.staffId}:${a.shiftTypeId}`) ?? st.defaultHours;
+    staffHours[a.staffId] = (staffHours[a.staffId] || 0) + hrs;
   }
 
   const dateRange = {
@@ -130,11 +130,11 @@ export function assembleEquityModel(input: {
       : "",
   };
 
-  const provById = new Map(providers.map((p) => [p.id, p]));
+  const provById = new Map(staff.map((p) => [p.id, p]));
   const data: EquityRow[] = fairness.metrics.map((m) => {
-    const dev = fairness.deviations.get(m.providerId)!;
-    const disp = fairness.displayDeviations.get(m.providerId)!;
-    const p = provById.get(m.providerId)!;
+    const dev = fairness.deviations.get(m.staffId)!;
+    const disp = fairness.displayDeviations.get(m.staffId)!;
+    const p = provById.get(m.staffId)!;
     return {
       ...m,
       deviation: {
@@ -153,8 +153,8 @@ export function assembleEquityModel(input: {
       isAutoScheduled: p.isAutoScheduled,
       ftePercentage: p.ftePercentage ?? 1.0,
       employmentTypeName: p.employmentTypeName,
-      totalHours: providerHours[m.providerId] || 0,
-      shiftTally: shiftTallies[m.providerId] || {},
+      totalHours: staffHours[m.staffId] || 0,
+      shiftTally: shiftTallies[m.staffId] || {},
     };
   });
 
@@ -192,7 +192,7 @@ export type RawShiftTypeRef = {
   isOffShift: boolean;
 };
 
-export type RawProvider = {
+export type RawStaff = {
   id: string;
   initials: string;
   name: string;
@@ -204,7 +204,7 @@ export type RawProvider = {
 };
 
 export type RawAssignment = {
-  providerId: string;
+  staffId: string;
   shiftTypeId: string;
   /** ISO date, YYYY-MM-DD */
   date: string;
@@ -214,7 +214,7 @@ export type RawAssignment = {
 export type RawDesirabilityWeight = { shiftTypeId: string; dayOfWeek: number; weight: number };
 
 export type RawStatsData = {
-  providers: RawProvider[];
+  staff: RawStaff[];
   assignments: RawAssignment[];
   shiftTypes: AssembleShiftType[];
   desirabilityWeights: RawDesirabilityWeight[];
@@ -226,7 +226,7 @@ export type RawStatsData = {
 export function computeStatsModel(raw: RawStatsData): EquityModel {
   const fairness = computeFairness({
     assignments: raw.assignments.map((a) => ({
-      providerId: a.providerId,
+      staffId: a.staffId,
       date: a.date,
       shiftType: {
         id: a.shiftType.id,
@@ -238,7 +238,7 @@ export function computeStatsModel(raw: RawStatsData): EquityModel {
         isOffShift: a.shiftType.isOffShift,
       },
     })),
-    providers: raw.providers.map((p) => ({
+    staff: raw.staff.map((p) => ({
       id: p.id,
       initials: p.initials,
       ftePercentage: p.ftePercentage ?? 1.0,
@@ -253,7 +253,7 @@ export function computeStatsModel(raw: RawStatsData): EquityModel {
 
   return assembleEquityModel({
     fairness,
-    providers: raw.providers.map((p) => ({
+    staff: raw.staff.map((p) => ({
       id: p.id,
       name: p.name,
       isAutoScheduled: p.isAutoScheduled,
@@ -261,7 +261,7 @@ export function computeStatsModel(raw: RawStatsData): EquityModel {
       employmentTypeName: p.employmentTypeName,
     })),
     assignments: raw.assignments.map((a) => ({
-      providerId: a.providerId,
+      staffId: a.staffId,
       shiftTypeId: a.shiftTypeId,
       date: a.date,
       code: a.shiftType.code,

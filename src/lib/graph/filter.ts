@@ -6,7 +6,7 @@
  *    genuinely recompute over the chosen time subset.
  *  - `filterStaff` (and `filterByMinFte`) runs AFTER compute, as a display
  *    filter — department-relative z-scores stay computed over everyone, then a
- *    subset of providers is shown. This preserves the original page behavior,
+ *    subset of staff is shown. This preserves the original page behavior,
  *    which filtered the computed rows by min-FTE.
  */
 import type { GraphDateRange, GraphStaffFilter } from "./spec";
@@ -55,14 +55,14 @@ export function filterAssignmentsByDate<T extends { date: string }>(
 }
 
 export type StaffRow = {
-  providerId: string;
+  staffId: string;
   employmentTypeName: string;
   ftePercentage: number;
 };
 
 /**
  * Composable staff display filter (AND semantics):
- *  - `names`: when non-empty, keep only those provider ids.
+ *  - `names`: when non-empty, keep only those staff ids.
  *  - `employmentType`: when set (non-null/non-empty), keep matching type.
  *  - `minFtePct`: when > 0, keep rows at/above the FTE threshold.
  * The `all` flag is advisory UI state and imposes no constraint here.
@@ -71,7 +71,7 @@ export function filterStaff<T extends StaffRow>(rows: T[], staff: GraphStaffFilt
   let out = rows;
   if (staff.names && staff.names.length > 0) {
     const ids = new Set(staff.names);
-    out = out.filter((r) => ids.has(r.providerId));
+    out = out.filter((r) => ids.has(r.staffId));
   }
   if (staff.employmentType) {
     out = out.filter((r) => r.employmentTypeName === staff.employmentType);

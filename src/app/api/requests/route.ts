@@ -7,7 +7,7 @@ import type { ScheduleRequest } from "@/generated/prisma/client";
 function serialize(r: ScheduleRequest) {
   return {
     id: r.id,
-    providerId: r.providerId,
+    staffId: r.staffId,
     startDate: r.startDate.toISOString().split("T")[0],
     endDate: r.endDate.toISOString().split("T")[0],
     kind: r.kind,
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
 
   const created = await prisma.scheduleRequest.create({
     data: {
-      providerId: v.providerId,
+      staffId: v.staffId,
       startDate: toDate(v.startDate),
       endDate: toDate(v.endDate),
       kind: v.kind,

@@ -32,7 +32,7 @@ type Deviation = {
 };
 
 type EquityRow = {
-  providerId: string;
+  staffId: string;
   initials: string;
   name: string;
   isAutoScheduled: boolean;
@@ -208,7 +208,7 @@ function StaffDetailPanel({ row, globalMaxDev, onClose, setTip }: {
   useEscape(onClose);
 
   // The radar always shows plain FTE-normalized z-scores (displayDeviation):
-  // each axis is the provider's deviation from the department average, in SDs.
+  // each axis is the staff's deviation from the department average, in SDs.
   // We plot a baseline-offset value so the whole chart stays positive for the
   // radial axis, and stash the real z-score (`z`) for the hover tooltip.
   const baseline = globalMaxDev + 0.5;
@@ -222,7 +222,7 @@ function StaffDetailPanel({ row, globalMaxDev, onClose, setTip }: {
     return items.map((d) => ({
       label: d.label,
       z: parseFloat(d.z.toFixed(2)),
-      provider: parseFloat((baseline + d.z).toFixed(2)),
+      staff: parseFloat((baseline + d.z).toFixed(2)),
       average: parseFloat(baseline.toFixed(2)),
     }));
   }, [row, baseline]);
@@ -285,7 +285,7 @@ function StaffDetailPanel({ row, globalMaxDev, onClose, setTip }: {
                   <PolarRadiusAxis tick={false} axisLine={false} domain={radarDomain} />
                   <Tooltip content={<RadarTooltipContent initials={row.initials} />} />
                   <Radar name="Dept Avg (0σ)" dataKey="average" stroke="#475569" fill="#475569" fillOpacity={0.1} strokeWidth={1.5} strokeDasharray="4 4" />
-                  <Radar name={row.initials} dataKey="provider" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} />
+                  <Radar name={row.initials} dataKey="staff" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={2} />
                   <Legend wrapperStyle={{ fontSize: 14 }} iconType="circle" iconSize={10} />
                 </RadarChart>
               </ResponsiveContainer>
@@ -362,7 +362,7 @@ function SortHeader({ label, sortId, className, title, sortKey, sortAsc, onSort,
 
 const COLUMN_FORMULAS: Record<string, string> = {
   desirability: "FTE-normalized z-score of undesirable shift burden.\n\nFormula: -(count / FTE - dept_mean) / std_dev\n\nPositive = fewer undesirable shifts than average.",
-  oppAdj: "Opportunity-adjusted desirability z-score. Only counts shift types the provider is eligible for.\n\nFormula: -(count / FTE - expected) / std_dev\n\nControls for providers who can't work certain shifts.",
+  oppAdj: "Opportunity-adjusted desirability z-score. Only counts shift types the staff is eligible for.\n\nFormula: -(count / FTE - expected) / std_dev\n\nControls for staff who can't work certain shifts.",
   holiday: "Holidays worked",
   hours: "Total FTE-counted hours",
   workDays: "Total work days",
@@ -418,7 +418,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
   const [sortAsc, setSortAsc] = useState(!showDesirability);
   const [showTallies, setShowTallies] = useState(false);
   const [showCharts, setShowCharts] = useState(true);
-  const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
+  const [selectedStaff, setSelectedStaff] = useState<string | null>(null);
 
   const filteredData = useMemo(() => filterStaff(data, spec.staff), [data, spec.staff]);
   const isFiltered = filteredData.length !== data.length;
@@ -427,7 +427,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
     [activeShiftCodes, trackedShiftCodes],
   );
 
-  const selectedRow = selectedProvider ? filteredData.find((d) => d.providerId === selectedProvider) : null;
+  const selectedRow = selectedStaff ? filteredData.find((d) => d.staffId === selectedStaff) : null;
 
   const globalMaxDev = useMemo(() => {
     let max = 0.5;
@@ -501,20 +501,20 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
           thresholds={equityThresholds}
           onSelect={(initials) => {
             const match = filteredData.find((d) => d.initials === initials);
-            if (match) setSelectedProvider(match.providerId);
+            if (match) setSelectedStaff(match.staffId);
           }}
           setTip={setTip}
         />
       );
     }
 
-    // Pie — department share by provider; valid for the count metrics.
+    // Pie — department share by staff; valid for the count metrics.
     if (spec.chart === "pie" && (metric === "shiftCount" || isCode || metric === "holidays" || metric === "hours")) {
       return <PieView data={filteredData} metric={metric} codes={codes} perFte={perFte} />;
     }
 
     // Bar / fallback. "All shifts" keeps the stacked-by-code distribution;
-    // every other metric is one value per provider.
+    // every other metric is one value per staff.
     if (metric === "shiftCount") {
       if (!(codes.length > 0 || showHoliday)) return null;
       return (
@@ -548,7 +548,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
           <div>
             <h2 className="text-lg font-semibold text-slate-100">Statistics</h2>
             <p className="text-sm text-slate-400 mt-1">
-              {formatIsoDate(dateRange.min, dateFmt)} to {formatIsoDate(dateRange.max, dateFmt)} — {isFiltered ? `${filteredData.length} of ${data.length}` : data.length} providers
+              {formatIsoDate(dateRange.min, dateFmt)} to {formatIsoDate(dateRange.max, dateFmt)} — {isFiltered ? `${filteredData.length} of ${data.length}` : data.length} staff
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -592,7 +592,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
           />
           <StaffPicker
             value={spec.staff}
-            providers={raw.providers.map((p) => ({
+            staff={raw.staff.map((p) => ({
               id: p.id,
               initials: p.initials,
               name: p.name,
@@ -610,7 +610,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
           />
           <ChartTypePicker value={spec.chart} metric={spec.metric} onChange={(chart) => setSpec((s) => ({ ...s, chart }))} />
           {isFiltered && (
-            <span className="text-xs text-slate-500 pl-[72px]">{filteredData.length} of {data.length} providers shown</span>
+            <span className="text-xs text-slate-500 pl-[72px]">{filteredData.length} of {data.length} staff shown</span>
           )}
         </div>
 
@@ -671,9 +671,9 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
                 {sorted.map((row) => {
                   return (
                     <tr
-                      key={row.providerId}
-                      className={`border-b border-slate-700/20 hover:bg-slate-800/40 transition-colors cursor-pointer ${selectedProvider === row.providerId ? "bg-blue-900/20" : ""}`}
-                      onClick={() => setSelectedProvider(row.providerId)}
+                      key={row.staffId}
+                      className={`border-b border-slate-700/20 hover:bg-slate-800/40 transition-colors cursor-pointer ${selectedStaff === row.staffId ? "bg-blue-900/20" : ""}`}
+                      onClick={() => setSelectedStaff(row.staffId)}
                     >
                       <td className="px-3 py-2.5">
                         <div className="flex items-center gap-2">
@@ -746,7 +746,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
         <StaffDetailPanel
           row={selectedRow}
           globalMaxDev={globalMaxDev}
-          onClose={() => setSelectedProvider(null)}
+          onClose={() => setSelectedStaff(null)}
           setTip={setTip}
         />
       )}

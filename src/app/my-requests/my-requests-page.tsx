@@ -9,7 +9,7 @@ type Status = "pending" | "approved" | "declined" | "withdrawn" | "fulfilled";
 
 type RequestRow = {
   id: string;
-  providerId: string;
+  staffId: string;
   startDate: string;
   endDate: string;
   kind: Kind;
@@ -25,7 +25,7 @@ type RequestRow = {
 
 type ShiftType = { id: string; code: string; name: string; isLeave: boolean; isOffShift: boolean };
 
-// The four provider-facing templates, mapped to request kinds. Keeps the provider
+// The four staff-facing templates, mapped to request kinds. Keeps the staff
 // out of freeform rambling — they pick a template, dates, and (sometimes) shifts.
 const TEMPLATES: { kind: Kind; label: string; hint: string }[] = [
   { kind: "OFF", label: "Time off", hint: "A day (or range) I can't work." },
@@ -47,13 +47,13 @@ function parseDate(s: string): Date {
 }
 
 export function MyRequestsPage({
-  providerName,
+  staffName,
   dateFormat,
   maxLeavePerDay,
   shiftTypes,
   initialRequests,
 }: {
-  providerName: string;
+  staffName: string;
   dateFormat: string;
   maxLeavePerDay: number;
   shiftTypes: ShiftType[];
@@ -89,7 +89,7 @@ export function MyRequestsPage({
   const isLeaveKind = kind === "OFF" || kind === "LEAVE";
 
   // Live leave-queue feedback: how many others are already away over the chosen
-  // range, and where this provider would stand. Debounced; counts only (the API
+  // range, and where this staff would stand. Debounced; counts only (the API
   // never returns identities). Cleared whenever the inputs can't produce one.
   useEffect(() => {
     if (!isLeaveKind || !startDate) {
@@ -202,7 +202,7 @@ export function MyRequestsPage({
       <div data-print-hide className="max-w-3xl mx-auto p-4 sm:p-6 space-y-6">
         <div>
           <h1 className="text-xl font-bold">My Requests</h1>
-          <p className="text-sm text-slate-400">Submitting as {providerName}.</p>
+          <p className="text-sm text-slate-400">Submitting as {staffName}.</p>
         </div>
 
         {/* ── New request form ── */}
@@ -387,7 +387,7 @@ export function MyRequestsPage({
       {receiptFor && (
         <Receipt
           request={receiptFor}
-          providerName={providerName}
+          staffName={staffName}
           describe={describe}
           dateRangeLabel={dateRangeLabel}
           submittedLabel={submittedLabel}
@@ -402,14 +402,14 @@ export function MyRequestsPage({
 // the rest of the page is hidden (data-print-hide) so only this prints.
 function Receipt({
   request,
-  providerName,
+  staffName,
   describe,
   dateRangeLabel,
   submittedLabel,
   onClose,
 }: {
   request: RequestRow;
-  providerName: string;
+  staffName: string;
   describe: (r: RequestRow) => string;
   dateRangeLabel: (r: { startDate: string; endDate: string }) => string;
   submittedLabel: (iso: string) => string;
@@ -424,8 +424,8 @@ function Receipt({
         </div>
         <dl className="text-sm space-y-2">
           <div className="flex justify-between gap-4">
-            <dt className="text-slate-500">Provider</dt>
-            <dd className="font-medium text-right">{providerName}</dd>
+            <dt className="text-slate-500">Staff</dt>
+            <dd className="font-medium text-right">{staffName}</dd>
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-slate-500">Request</dt>

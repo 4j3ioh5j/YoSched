@@ -9,7 +9,7 @@ type Ctx = { params: Promise<{ id: string }> };
 // relative to the previous version (the next-lower versionNumber in the same
 // month). The first version of a month is diffed against an empty schedule, so
 // every assignment shows as "added". Returns ID-based changes; the client
-// resolves provider initials and shift codes/colors from data it already holds.
+// resolves staff initials and shift codes/colors from data it already holds.
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const { error } = await getSession("schedule:view");
   if (error) return error;

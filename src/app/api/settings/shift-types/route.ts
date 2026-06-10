@@ -68,18 +68,18 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  const [activeProviders, employmentTypes] = await Promise.all([
-    prisma.provider.findMany({ where: { isActive: true }, select: { id: true } }),
+  const [activeStaff, employmentTypes] = await Promise.all([
+    prisma.staff.findMany({ where: { isActive: true }, select: { id: true } }),
     prisma.employmentType.findMany({ select: { id: true } }),
   ]);
   const eligibilityRows = [
-    ...activeProviders.map((p) => ({ providerId: p.id, shiftTypeId: created.id })),
+    ...activeStaff.map((p) => ({ staffId: p.id, shiftTypeId: created.id })),
   ];
   const defaultRows = [
     ...employmentTypes.map((et) => ({ employmentTypeId: et.id, shiftTypeId: created.id })),
   ];
   if (eligibilityRows.length > 0) {
-    await prisma.providerEligibleShift.createMany({ data: eligibilityRows });
+    await prisma.staffEligibleShift.createMany({ data: eligibilityRows });
   }
   if (defaultRows.length > 0) {
     await prisma.employmentTypeDefaultShift.createMany({ data: defaultRows });

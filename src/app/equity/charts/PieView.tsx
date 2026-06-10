@@ -18,7 +18,7 @@ function titleFor(metric: string): string {
 }
 
 /**
- * Department-share donut: one slice per provider sized by their value of the
+ * Department-share donut: one slice per staff sized by their value of the
  * chosen count metric. Shaping/sorting is the pure `shapePie`; this is the thin
  * view that assigns colors and renders the share tooltip.
  */

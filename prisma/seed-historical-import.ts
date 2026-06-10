@@ -4,7 +4,7 @@
  * Static data lives in `prisma/data/historical-2022-2025.json` (a flat list of
  * {date, initials, code}, already mapped + deduped — see handoff #108 and the
  * generator `prisma/data/parse-historical-xlsx.mjs`). This loader is intentionally
- * dumb: ensure the one new shift type (CB) and the 13 new providers exist, then
+ * dumb: ensure the one new shift type (CB) and the 13 new staff exist, then
  * bulk-insert the assignments.
  *
  * Idempotent for its date range: it clears existing assignments in [min,max] first.
@@ -25,7 +25,7 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
-// New providers to ensure exist (handoff #108). active+autoScheduled => in equity pool.
+// New staff to ensure exist (handoff #108). active+autoScheduled => in equity pool.
 const NEW_PROVIDERS: { initials: string; isActive: boolean }[] = [
   // active ICU staff — in equity pool
   { initials: "ADh", isActive: true },
@@ -52,7 +52,7 @@ async function main() {
   if (data.length === 0) throw new Error("historical data file is empty");
 
   // ---- PRE-FLIGHT (read-only): verify everything resolves BEFORE any writes ----
-  // This guarantees we never create CB / new providers and then bomb out on a
+  // This guarantees we never create CB / new staff and then bomb out on a
   // missing remap target (e.g. PRE), which would leave partial setup rows.
   const sl = await prisma.shiftType.findUnique({ where: { code: "SL" } });
   if (!sl) throw new Error("SL shift type not found — cannot clone CB");
@@ -60,26 +60,26 @@ async function main() {
   if (!fte) throw new Error("employment type 'empl_fte' not found");
 
   const existingShiftTypes = await prisma.shiftType.findMany();
-  const existingProviders = await prisma.provider.findMany();
+  const existingStaff = await prisma.staff.findMany();
   const unmapped = findUnmappedTargets(
     data,
     existingShiftTypes.map((s) => s.code),
-    existingProviders.map((p) => p.initials),
+    existingStaff.map((p) => p.initials),
     ["CB"], // the one shift type this seed creates
-    NEW_PROVIDERS.map((p) => p.initials), // the providers this seed creates
+    NEW_PROVIDERS.map((p) => p.initials), // the staff this seed creates
   );
   if (unmapped.codes.length || unmapped.initials.length) {
     throw new Error(
       "Pre-flight failed — the target database is missing remap targets, no rows written. " +
         `Missing shift codes: [${unmapped.codes.join(", ")}]; ` +
-        `missing provider initials: [${unmapped.initials.join(", ")}]`,
+        `missing staff initials: [${unmapped.initials.join(", ")}]`,
     );
   }
 
   const minDate = data.reduce((m, a) => (a.date < m ? a.date : m), data[0].date);
   const maxDate = data.reduce((m, a) => (a.date > m ? a.date : m), data[0].date);
   const maxShiftOrder = (await prisma.shiftType.aggregate({ _max: { sortOrder: true } }))._max.sortOrder ?? 0;
-  const maxProvOrder0 = (await prisma.provider.aggregate({ _max: { sortOrder: true } }))._max.sortOrder ?? 0;
+  const maxProvOrder0 = (await prisma.staff.aggregate({ _max: { sortOrder: true } }))._max.sortOrder ?? 0;
 
   // ---- ATOMIC: all mutations in one transaction; any failure rolls back fully ----
   const { created } = await prisma.$transaction(
@@ -105,10 +105,10 @@ async function main() {
         },
       });
 
-      // 2) Ensure the 13 new providers exist (FTE, 1.0, all auto-scheduled).
+      // 2) Ensure the 13 new staff exist (FTE, 1.0, all auto-scheduled).
       let order = maxProvOrder0;
       for (const np of NEW_PROVIDERS) {
-        await tx.provider.upsert({
+        await tx.staff.upsert({
           where: { initials: np.initials },
           update: {}, // never clobber an existing record's flags
           create: {
@@ -124,12 +124,12 @@ async function main() {
       }
 
       // 3) Build lookup maps from the now-complete set.
-      const providerMap = new Map((await tx.provider.findMany()).map((p) => [p.initials, p.id]));
+      const staffMap = new Map((await tx.staff.findMany()).map((p) => [p.initials, p.id]));
       const shiftMap = new Map((await tx.shiftType.findMany()).map((s) => [s.code, s.id]));
 
       // 4) Resolve rows (pre-flight already guarantees these all resolve).
       const rows = data.map((a) => ({
-        providerId: providerMap.get(a.initials)!,
+        staffId: staffMap.get(a.initials)!,
         date: new Date(a.date + "T00:00:00Z"),
         shiftTypeId: shiftMap.get(a.code)!,
         source: "imported",
@@ -157,7 +157,7 @@ async function main() {
   for (const a of data) byYear[a.date.slice(0, 4)] = (byYear[a.date.slice(0, 4)] || 0) + 1;
   console.log(`Inserted ${created} of ${data.length} assignments.`);
   console.log("By year:", byYear);
-  console.log(`New shift type: CB. New providers: ${NEW_PROVIDERS.map((p) => p.initials).join(", ")}`);
+  console.log(`New shift type: CB. New staff: ${NEW_PROVIDERS.map((p) => p.initials).join(", ")}`);
 }
 
 main()

@@ -5,9 +5,9 @@
  *
  * Rules (user-confirmed): OTHER bare->OR / Name(SHIFT)->SHIFT; CARD single
  * bare->CARD, multi-name bare->OR / Name(SHIFT)->SHIFT; name variants CWr->CW,
- * PNw->PN. PRECEDENCE: a specialty column wins over the provider's main column —
+ * PNw->PN. PRECEDENCE: a specialty column wins over the staff's main column —
  * so this OVERWRITES the main-grid value — but it NEVER overwrites a real ICU
- * (ICU is the top specialty, already reconciled). Most of these providers have
+ * (ICU is the top specialty, already reconciled). Most of these staff have
  * no main-grid column, so they are creates. Never deletes.
  *
  * Also applies ONE ICU-column correction missed by the earlier ICU backfill:
@@ -38,8 +38,8 @@ async function main() {
   if (DRY_RUN) console.log("*** DRY RUN — no writes ***");
   for (const r of ROWS) if (r.date < "2026-01-01" || r.date >= "2026-08-01") throw new Error(`out-of-scope date ${r.date}`);
 
-  const providerMap = new Map<string, string>();
-  for (const p of await prisma.provider.findMany()) providerMap.set(p.initials, p.id);
+  const staffMap = new Map<string, string>();
+  for (const p of await prisma.staff.findMany()) staffMap.set(p.initials, p.id);
   const shiftMap = new Map<string, string>(); const codeById = new Map<string, string>(); let icuId = "";
   for (const s of await prisma.shiftType.findMany()) { shiftMap.set(s.code, s.id); codeById.set(s.id, s.code); if (s.code === "ICU") icuId = s.id; }
 
@@ -47,12 +47,12 @@ async function main() {
   const log: string[] = [];
 
   for (const { date: dateStr, initials, code, col } of ROWS) {
-    const providerId = providerMap.get(initials);
+    const staffId = staffMap.get(initials);
     const shiftTypeId = shiftMap.get(code);
-    if (!providerId) { console.warn(`SKIP ${dateStr} ${initials}: provider not found`); skipped++; continue; }
+    if (!staffId) { console.warn(`SKIP ${dateStr} ${initials}: staff not found`); skipped++; continue; }
     if (!shiftTypeId) { console.warn(`SKIP ${dateStr} ${initials} ${code}: shift type not found`); skipped++; continue; }
     const date = new Date(dateStr + "T00:00:00Z");
-    const existing = await prisma.assignment.findFirst({ where: { providerId, date } });
+    const existing = await prisma.assignment.findFirst({ where: { staffId, date } });
 
     if (existing && existing.shiftTypeId === icuId) { preservedICU++; continue; }
     if (existing && existing.shiftTypeId === shiftTypeId) { unchanged++; continue; }
@@ -61,7 +61,7 @@ async function main() {
       if (!DRY_RUN) await prisma.assignment.update({ where: { id: existing.id }, data: { shiftTypeId, source: "imported" } });
       changed++; log.push(`CHANGE ${dateStr} ${initials} ${was} -> ${code} [${col}] (src ${existing.source})`);
     } else {
-      if (!DRY_RUN) await prisma.assignment.create({ data: { providerId, date, shiftTypeId, source: "imported" } });
+      if (!DRY_RUN) await prisma.assignment.create({ data: { staffId, date, shiftTypeId, source: "imported" } });
       created++;
     }
   }
@@ -69,10 +69,10 @@ async function main() {
   // ICU-column corrections — explicitly overwrite a wrong ICU.
   let icuFixed = 0;
   for (const { date: dateStr, initials, code } of ICU_CORRECTIONS) {
-    const providerId = providerMap.get(initials); const shiftTypeId = shiftMap.get(code);
-    if (!providerId || !shiftTypeId) { console.warn(`SKIP icu-fix ${dateStr} ${initials}`); continue; }
+    const staffId = staffMap.get(initials); const shiftTypeId = shiftMap.get(code);
+    if (!staffId || !shiftTypeId) { console.warn(`SKIP icu-fix ${dateStr} ${initials}`); continue; }
     const date = new Date(dateStr + "T00:00:00Z");
-    const existing = await prisma.assignment.findFirst({ where: { providerId, date } });
+    const existing = await prisma.assignment.findFirst({ where: { staffId, date } });
     if (existing && existing.shiftTypeId === icuId) {
       if (!DRY_RUN) await prisma.assignment.update({ where: { id: existing.id }, data: { shiftTypeId, source: "imported" } });
       icuFixed++; log.push(`ICU-FIX ${dateStr} ${initials} ICU -> ${code}`);

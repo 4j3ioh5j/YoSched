@@ -7,25 +7,25 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
-// Provider columns for Jan-Feb (includes CWa who left after Feb)
+// Staff columns for Jan-Feb (includes CWa who left after Feb)
 const PROVIDERS_JAN_FEB = ["YA","CC","SC","BC","CD","RD","DH","SH","AH","CL","RM","LM","KO","AR","SR","SS","STa","CWa","KZ"];
 
-// Provider columns for Mar-Jul (CWa gone)
+// Staff columns for Mar-Jul (CWa gone)
 const PROVIDERS_MAR_JUL = ["YA","CC","SC","BC","CD","RD","DH","SH","AH","CL","RM","LM","KO","AR","SR","SS","STa","KZ"];
 
 // OTHER column entries: "PN:CWr" means PN=OR,CWr=OR; "HC(AL)" means HC=AL; empty string means none
 // Format: "NAME" = default OR, "NAME(SHIFT)" = specific shift
 
-function parseOther(other: string): Array<{ provider: string; shift: string }> {
+function parseOther(other: string): Array<{ staff: string; shift: string }> {
   if (!other || other === "X" || other === "") return [];
-  const results: Array<{ provider: string; shift: string }> = [];
+  const results: Array<{ staff: string; shift: string }> = [];
   const parts = other.split(":");
   for (const part of parts) {
     const match = part.match(/^([A-Za-z]+)\(([A-Z]+)\)$/);
     if (match) {
-      results.push({ provider: match[1], shift: match[2] });
+      results.push({ staff: match[1], shift: match[2] });
     } else if (part.match(/^[A-Za-z]+$/)) {
-      results.push({ provider: part, shift: "OR" });
+      results.push({ staff: part, shift: "OR" });
     }
   }
   return results;
@@ -241,16 +241,16 @@ const JUL: [string, ...string[]][] = [
 // Months to seed (skip May — already in DB)
 const ALL_MONTHS: Array<{
   data: [string, ...string[]][];
-  providers: string[];
+  staff: string[];
   label: string;
 }> = [
-  { data: JAN, providers: PROVIDERS_JAN_FEB, label: "January" },
-  { data: FEB, providers: PROVIDERS_JAN_FEB, label: "February" },
-  { data: MAR, providers: PROVIDERS_MAR_JUL, label: "March" },
-  { data: APR, providers: PROVIDERS_MAR_JUL, label: "April" },
+  { data: JAN, staff: PROVIDERS_JAN_FEB, label: "January" },
+  { data: FEB, staff: PROVIDERS_JAN_FEB, label: "February" },
+  { data: MAR, staff: PROVIDERS_MAR_JUL, label: "March" },
+  { data: APR, staff: PROVIDERS_MAR_JUL, label: "April" },
   // May skipped — already seeded
-  { data: JUN, providers: PROVIDERS_MAR_JUL, label: "June" },
-  { data: JUL, providers: PROVIDERS_MAR_JUL, label: "July" },
+  { data: JUN, staff: PROVIDERS_MAR_JUL, label: "June" },
+  { data: JUL, staff: PROVIDERS_MAR_JUL, label: "July" },
 ];
 
 async function main() {
@@ -258,10 +258,10 @@ async function main() {
   const feeBasisType = await prisma.employmentType.findFirst({ where: { name: "Fee Basis" } });
   if (!fteType || !feeBasisType) throw new Error("Employment types not seeded — run main seed first");
 
-  // Ensure CWa provider exists (active Jan-Feb, departed after)
-  const existingCWa = await prisma.provider.findFirst({ where: { initials: "CWa" } });
+  // Ensure CWa staff exists (active Jan-Feb, departed after)
+  const existingCWa = await prisma.staff.findFirst({ where: { initials: "CWa" } });
   if (!existingCWa) {
-    await prisma.provider.create({
+    await prisma.staff.create({
       data: {
         initials: "CWa",
         name: "CWa",
@@ -273,13 +273,13 @@ async function main() {
         sortOrder: 18,
       },
     });
-    console.log("Created CWa provider (departed after Feb)");
+    console.log("Created CWa staff (departed after Feb)");
   }
 
-  // Ensure LS provider exists (appears in OTHER column occasionally)
-  const existingLS = await prisma.provider.findFirst({ where: { initials: "LS" } });
+  // Ensure LS staff exists (appears in OTHER column occasionally)
+  const existingLS = await prisma.staff.findFirst({ where: { initials: "LS" } });
   if (!existingLS) {
-    await prisma.provider.create({
+    await prisma.staff.create({
       data: {
         initials: "LS",
         name: "LS",
@@ -289,14 +289,14 @@ async function main() {
         sortOrder: 23,
       },
     });
-    console.log("Created LS provider (supplemental)");
+    console.log("Created LS staff (supplemental)");
   }
 
   // Build lookup maps
-  const providerMap = new Map<string, string>();
-  const allProviders = await prisma.provider.findMany();
-  for (const p of allProviders) {
-    providerMap.set(p.initials, p.id);
+  const staffMap = new Map<string, string>();
+  const allStaff = await prisma.staff.findMany();
+  for (const p of allStaff) {
+    staffMap.set(p.initials, p.id);
   }
 
   const shiftMap = new Map<string, string>();
@@ -305,7 +305,7 @@ async function main() {
     shiftMap.set(s.code, s.id);
   }
 
-  console.log(`Loaded ${providerMap.size} providers, ${shiftMap.size} shift types`);
+  console.log(`Loaded ${staffMap.size} staff, ${shiftMap.size} shift types`);
 
   let totalCreated = 0;
   let totalSkipped = 0;
@@ -333,29 +333,29 @@ async function main() {
       const date = row[0];
       const assignments = row.slice(1) as string[];
 
-      // Main provider columns
-      const providerCols = month.providers;
-      for (let i = 0; i < providerCols.length; i++) {
+      // Main staff columns
+      const staffCols = month.staff;
+      for (let i = 0; i < staffCols.length; i++) {
         const code = assignments[i];
         if (!code || code === "X") continue;
 
-        const providerId = providerMap.get(providerCols[i]);
+        const staffId = staffMap.get(staffCols[i]);
         const shiftTypeId = shiftMap.get(code);
 
-        if (!providerId) {
-          console.warn(`Provider not found: ${providerCols[i]} on ${date}`);
+        if (!staffId) {
+          console.warn(`Staff not found: ${staffCols[i]} on ${date}`);
           skipped++;
           continue;
         }
         if (!shiftTypeId) {
-          console.warn(`Shift type not found: ${code} (${providerCols[i]} on ${date})`);
+          console.warn(`Shift type not found: ${code} (${staffCols[i]} on ${date})`);
           skipped++;
           continue;
         }
 
         await prisma.assignment.create({
           data: {
-            providerId,
+            staffId,
             date: new Date(date + "T00:00:00Z"),
             shiftTypeId,
             source: "imported",
@@ -364,38 +364,38 @@ async function main() {
         created++;
       }
 
-      // OTHER column (last element in the row after provider columns)
-      const otherIdx = providerCols.length + 1; // +1 for date
+      // OTHER column (last element in the row after staff columns)
+      const otherIdx = staffCols.length + 1; // +1 for date
       const otherStr = row[otherIdx] || "";
       const otherAssignments = parseOther(otherStr);
       for (const oa of otherAssignments) {
-        const providerId = providerMap.get(oa.provider);
+        const staffId = staffMap.get(oa.staff);
         const shiftTypeId = shiftMap.get(oa.shift);
 
-        if (!providerId) {
-          console.warn(`OTHER provider not found: ${oa.provider} on ${date}`);
+        if (!staffId) {
+          console.warn(`OTHER staff not found: ${oa.staff} on ${date}`);
           skipped++;
           continue;
         }
         if (!shiftTypeId) {
-          console.warn(`OTHER shift not found: ${oa.shift} (${oa.provider} on ${date})`);
+          console.warn(`OTHER shift not found: ${oa.shift} (${oa.staff} on ${date})`);
           skipped++;
           continue;
         }
 
-        // Check for duplicate (provider might already have an assignment for this date)
+        // Check for duplicate (staff might already have an assignment for this date)
         const existing = await prisma.assignment.findFirst({
-          where: { providerId, date: new Date(date + "T00:00:00Z") },
+          where: { staffId, date: new Date(date + "T00:00:00Z") },
         });
         if (existing) {
-          console.warn(`Duplicate: ${oa.provider} already has assignment on ${date}, skipping OTHER entry`);
+          console.warn(`Duplicate: ${oa.staff} already has assignment on ${date}, skipping OTHER entry`);
           skipped++;
           continue;
         }
 
         await prisma.assignment.create({
           data: {
-            providerId,
+            staffId,
             date: new Date(date + "T00:00:00Z"),
             shiftTypeId,
             source: "imported",

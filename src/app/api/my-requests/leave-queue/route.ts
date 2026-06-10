@@ -3,14 +3,14 @@ import { getSession } from "@/lib/auth-guard";
 import { summarizeLeaveQueue, isValidDateStr, type LeaveQueueRequest } from "@/lib/schedule-requests";
 import { NextRequest, NextResponse } from "next/server";
 
-// Aggregate leave-queue feedback for the provider composing a request: how many
+// Aggregate leave-queue feedback for the staff composing a request: how many
 // OTHERS are already away over [start,end] and where they'd stand. Response is
-// COUNTS ONLY — never the other providers' identities.
+// COUNTS ONLY — never the other staff' identities.
 export async function GET(req: NextRequest) {
   const result = await getSession("requests:self");
   if (result.error) return result.error;
-  if (!result.providerId) {
-    return NextResponse.json({ error: "Not linked to a provider" }, { status: 403 });
+  if (!result.staffId) {
+    return NextResponse.json({ error: "Not linked to a staff" }, { status: 403 });
   }
 
   const start = req.nextUrl.searchParams.get("start") ?? "";
@@ -39,11 +39,11 @@ export async function GET(req: NextRequest) {
       startDate: { lte: new Date(end + "T00:00:00Z") },
       endDate: { gte: new Date(start + "T00:00:00Z") },
     },
-    select: { providerId: true, startDate: true, endDate: true, kind: true, status: true, receivedAt: true },
+    select: { staffId: true, startDate: true, endDate: true, kind: true, status: true, receivedAt: true },
   });
 
   const requests: LeaveQueueRequest[] = rows.map((r) => ({
-    providerId: r.providerId,
+    staffId: r.staffId,
     startDate: r.startDate.toISOString().split("T")[0],
     endDate: r.endDate.toISOString().split("T")[0],
     kind: r.kind as LeaveQueueRequest["kind"],
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
   // receivedAtIso=null: this is a not-yet-submitted request, so it queues last.
   const summary = summarizeLeaveQueue({
     requests,
-    providerId: result.providerId,
+    staffId: result.staffId,
     start,
     end,
     receivedAtIso: null,

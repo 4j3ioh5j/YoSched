@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   coversDate,
-  requestsForProviderDate,
+  requestsForStaffDate,
   foldRequestsForDate,
   hasActiveRequest,
   checkRequestConflict,
@@ -34,7 +34,7 @@ const codeOf = (id: string) => CODES[id] ?? id;
 function req(p: Partial<ScheduleRequestData>): ScheduleRequestData {
   return {
     id: p.id ?? "r1",
-    providerId: p.providerId ?? "P",
+    staffId: p.staffId ?? "P",
     startDate: p.startDate ?? "2026-07-04",
     endDate: p.endDate ?? p.startDate ?? "2026-07-04",
     kind: p.kind ?? "OFF",
@@ -64,19 +64,19 @@ describe("coversDate", () => {
   });
 });
 
-describe("requestsForProviderDate", () => {
+describe("requestsForStaffDate", () => {
   const reqs = [
-    req({ id: "a", providerId: "P", startDate: "2026-07-04" }),
-    req({ id: "b", providerId: "Q", startDate: "2026-07-04" }),
-    req({ id: "c", providerId: "P", startDate: "2026-07-10" }),
-    req({ id: "d", providerId: "P", startDate: "2026-07-04", status: "pending" }),
+    req({ id: "a", staffId: "P", startDate: "2026-07-04" }),
+    req({ id: "b", staffId: "Q", startDate: "2026-07-04" }),
+    req({ id: "c", staffId: "P", startDate: "2026-07-10" }),
+    req({ id: "d", staffId: "P", startDate: "2026-07-04", status: "pending" }),
   ];
-  it("returns only approved requests for the provider+date by default", () => {
-    const r = requestsForProviderDate(reqs, "P", "2026-07-04");
-    expect(r.map((x) => x.id)).toEqual(["a"]); // not b (other provider), c (other date), d (pending)
+  it("returns only approved requests for the staff+date by default", () => {
+    const r = requestsForStaffDate(reqs, "P", "2026-07-04");
+    expect(r.map((x) => x.id)).toEqual(["a"]); // not b (other staff), c (other date), d (pending)
   });
   it("includes pending requests when asked (grid display)", () => {
-    const r = requestsForProviderDate(reqs, "P", "2026-07-04", { includePending: true });
+    const r = requestsForStaffDate(reqs, "P", "2026-07-04", { includePending: true });
     expect(r.map((x) => x.id).sort()).toEqual(["a", "d"]);
   });
 
@@ -86,8 +86,8 @@ describe("requestsForProviderDate", () => {
       req({ id: "y", status: "withdrawn" }),
       req({ id: "z", status: "fulfilled" }),
     ];
-    expect(requestsForProviderDate(terminal, "P", "2026-07-04", { includePending: true })).toEqual([]);
-    expect(requestsForProviderDate(terminal, "P", "2026-07-04")).toEqual([]);
+    expect(requestsForStaffDate(terminal, "P", "2026-07-04", { includePending: true })).toEqual([]);
+    expect(requestsForStaffDate(terminal, "P", "2026-07-04")).toEqual([]);
   });
 });
 
@@ -206,7 +206,7 @@ describe("hasActiveRequest", () => {
 });
 
 describe("checkRequestConflict", () => {
-  const base = { providerId: "P", date: "2026-07-04", isOffShift: false, codeOf };
+  const base = { staffId: "P", date: "2026-07-04", isOffShift: false, codeOf };
 
   it("no assignment → no conflict", () => {
     const c = checkRequestConflict({
@@ -353,7 +353,7 @@ describe("isValidDateStr", () => {
 
 describe("validateRequestInput", () => {
   const ok = {
-    providerId: "P",
+    staffId: "P",
     startDate: "2026-07-04",
     endDate: "2026-07-04",
     kind: "OFF",
@@ -375,8 +375,8 @@ describe("validateRequestInput", () => {
     expect("value" in r && r.value.endDate).toBe("2026-07-04");
   });
 
-  it("rejects missing providerId", () => {
-    expect(validateRequestInput({ ...ok, providerId: "" })).toEqual({ error: "providerId required" });
+  it("rejects missing staffId", () => {
+    expect(validateRequestInput({ ...ok, staffId: "" })).toEqual({ error: "staffId required" });
   });
 
   it("rejects malformed/impossible dates (no 500 reaches prisma)", () => {
@@ -428,27 +428,27 @@ describe("validateRequestInput", () => {
 });
 
 describe("groupCellsIntoTargets", () => {
-  it("one target per provider spanning earliest→latest selected date", () => {
+  it("one target per staff spanning earliest→latest selected date", () => {
     const targets = groupCellsIntoTargets([
-      { providerId: "P", date: "2026-07-06" },
-      { providerId: "P", date: "2026-07-04" },
-      { providerId: "P", date: "2026-07-08" },
-      { providerId: "Q", date: "2026-07-05" },
+      { staffId: "P", date: "2026-07-06" },
+      { staffId: "P", date: "2026-07-04" },
+      { staffId: "P", date: "2026-07-08" },
+      { staffId: "Q", date: "2026-07-05" },
     ]);
     expect(targets).toEqual([
-      { providerId: "P", startDate: "2026-07-04", endDate: "2026-07-08" },
-      { providerId: "Q", startDate: "2026-07-05", endDate: "2026-07-05" },
+      { staffId: "P", startDate: "2026-07-04", endDate: "2026-07-08" },
+      { staffId: "Q", startDate: "2026-07-05", endDate: "2026-07-05" },
     ]);
   });
   it("single cell → single-date target", () => {
-    expect(groupCellsIntoTargets([{ providerId: "P", date: "2026-07-04" }])).toEqual([
-      { providerId: "P", startDate: "2026-07-04", endDate: "2026-07-04" },
+    expect(groupCellsIntoTargets([{ staffId: "P", date: "2026-07-04" }])).toEqual([
+      { staffId: "P", startDate: "2026-07-04", endDate: "2026-07-04" },
     ]);
   });
 });
 
 describe("buildRequestPayloads", () => {
-  const target = [{ providerId: "P", startDate: "2026-07-04", endDate: "2026-07-04" }];
+  const target = [{ staffId: "P", startDate: "2026-07-04", endDate: "2026-07-04" }];
 
   it("merges like-kind like-strength shift marks into one row", () => {
     const out = buildRequestPayloads(
@@ -500,17 +500,17 @@ describe("buildRequestPayloads", () => {
     expect(leaves.every((l) => l.strength === "hard")).toBe(true);
   });
 
-  it("applies every mark to every target (multi-provider)", () => {
+  it("applies every mark to every target (multi-staff)", () => {
     const out = buildRequestPayloads(
       { shiftMarks: [{ shiftTypeId: "orc", polarity: "negate", strength: "hard" }], offStrength: null, leaveShiftTypeIds: [] },
       [
-        { providerId: "P", startDate: "2026-07-04", endDate: "2026-07-04" },
-        { providerId: "Q", startDate: "2026-07-05", endDate: "2026-07-06" },
+        { staffId: "P", startDate: "2026-07-04", endDate: "2026-07-04" },
+        { staffId: "Q", startDate: "2026-07-05", endDate: "2026-07-06" },
       ]
     );
     expect(out).toHaveLength(2);
-    expect(out.map((p) => p.providerId).sort()).toEqual(["P", "Q"]);
-    expect(out.find((p) => p.providerId === "Q")).toMatchObject({ startDate: "2026-07-05", endDate: "2026-07-06" });
+    expect(out.map((p) => p.staffId).sort()).toEqual(["P", "Q"]);
+    expect(out.find((p) => p.staffId === "Q")).toMatchObject({ startDate: "2026-07-05", endDate: "2026-07-06" });
   });
 
   it("empty marks → no payloads", () => {
@@ -587,15 +587,15 @@ describe("requestCategory / summarizeCellRequests", () => {
 });
 
 describe("buildSelfRequestInput", () => {
-  it("forces providerId and source=provider, ignoring spoofed client values", () => {
+  it("forces staffId and source=staff, ignoring spoofed client values", () => {
     const out = buildSelfRequestInput(
-      { providerId: "someone-else", source: "scheduler", startDate: "2026-07-01", kind: "OFF" },
+      { staffId: "someone-else", source: "scheduler", startDate: "2026-07-01", kind: "OFF" },
       "me"
     );
     expect("value" in out).toBe(true);
     if ("value" in out) {
-      expect(out.value.providerId).toBe("me");
-      expect(out.value.source).toBe("provider");
+      expect(out.value.staffId).toBe("me");
+      expect(out.value.source).toBe("staff");
     }
   });
 
@@ -612,14 +612,14 @@ describe("buildSelfRequestInput", () => {
 
 describe("canWithdrawOwnRequest", () => {
   it("allows withdrawing your own pending request", () => {
-    expect(canWithdrawOwnRequest({ providerId: "me", status: "pending" }, "me")).toBe(true);
+    expect(canWithdrawOwnRequest({ staffId: "me", status: "pending" }, "me")).toBe(true);
   });
-  it("rejects another provider's request", () => {
-    expect(canWithdrawOwnRequest({ providerId: "other", status: "pending" }, "me")).toBe(false);
+  it("rejects another staff's request", () => {
+    expect(canWithdrawOwnRequest({ staffId: "other", status: "pending" }, "me")).toBe(false);
   });
   it("rejects a non-pending (already approved/declined) request", () => {
-    expect(canWithdrawOwnRequest({ providerId: "me", status: "approved" }, "me")).toBe(false);
-    expect(canWithdrawOwnRequest({ providerId: "me", status: "declined" }, "me")).toBe(false);
+    expect(canWithdrawOwnRequest({ staffId: "me", status: "approved" }, "me")).toBe(false);
+    expect(canWithdrawOwnRequest({ staffId: "me", status: "declined" }, "me")).toBe(false);
   });
   it("rejects a missing request", () => {
     expect(canWithdrawOwnRequest(null, "me")).toBe(false);
@@ -627,26 +627,26 @@ describe("canWithdrawOwnRequest", () => {
 });
 
 describe("summarizeLeaveQueue", () => {
-  function lr(o: Partial<LeaveQueueRequest> & { providerId: string; startDate: string; endDate: string }): LeaveQueueRequest {
+  function lr(o: Partial<LeaveQueueRequest> & { staffId: string; startDate: string; endDate: string }): LeaveQueueRequest {
     return { kind: "LEAVE", status: "approved", receivedAt: "2026-06-01T00:00:00.000Z", ...o };
   }
 
   it("returns null when nobody else is away in the range", () => {
     const out = summarizeLeaveQueue({
-      requests: [lr({ providerId: "me", startDate: "2026-07-03", endDate: "2026-07-03" })],
-      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
+      requests: [lr({ staffId: "me", startDate: "2026-07-03", endDate: "2026-07-03" })],
+      staffId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
     });
     expect(out).toBeNull();
   });
 
-  it("counts other providers' OFF and LEAVE, not the caller's own", () => {
+  it("counts other staff' OFF and LEAVE, not the caller's own", () => {
     const out = summarizeLeaveQueue({
       requests: [
-        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03", kind: "OFF" }),
-        lr({ providerId: "b", startDate: "2026-07-03", endDate: "2026-07-03", kind: "LEAVE" }),
-        lr({ providerId: "me", startDate: "2026-07-03", endDate: "2026-07-03" }),
+        lr({ staffId: "a", startDate: "2026-07-03", endDate: "2026-07-03", kind: "OFF" }),
+        lr({ staffId: "b", startDate: "2026-07-03", endDate: "2026-07-03", kind: "LEAVE" }),
+        lr({ staffId: "me", startDate: "2026-07-03", endDate: "2026-07-03" }),
       ],
-      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
+      staffId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
     });
     expect(out?.othersOnPeak).toBe(2);
   });
@@ -654,11 +654,11 @@ describe("summarizeLeaveQueue", () => {
   it("ignores non-leave kinds and inactive statuses", () => {
     const out = summarizeLeaveQueue({
       requests: [
-        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03", kind: "NEGATE_SHIFT" }),
-        lr({ providerId: "b", startDate: "2026-07-03", endDate: "2026-07-03", status: "declined" }),
-        lr({ providerId: "c", startDate: "2026-07-03", endDate: "2026-07-03", status: "withdrawn" }),
+        lr({ staffId: "a", startDate: "2026-07-03", endDate: "2026-07-03", kind: "NEGATE_SHIFT" }),
+        lr({ staffId: "b", startDate: "2026-07-03", endDate: "2026-07-03", status: "declined" }),
+        lr({ staffId: "c", startDate: "2026-07-03", endDate: "2026-07-03", status: "withdrawn" }),
       ],
-      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
+      staffId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
     });
     expect(out).toBeNull();
   });
@@ -666,10 +666,10 @@ describe("summarizeLeaveQueue", () => {
   it("a new request queues last (position = others + 1)", () => {
     const out = summarizeLeaveQueue({
       requests: [
-        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03" }),
-        lr({ providerId: "b", startDate: "2026-07-03", endDate: "2026-07-03" }),
+        lr({ staffId: "a", startDate: "2026-07-03", endDate: "2026-07-03" }),
+        lr({ staffId: "b", startDate: "2026-07-03", endDate: "2026-07-03" }),
       ],
-      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
+      staffId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
     });
     expect(out).toEqual({ peakDate: "2026-07-03", othersOnPeak: 2, positionOnPeak: 3 });
   });
@@ -677,39 +677,39 @@ describe("summarizeLeaveQueue", () => {
   it("an existing request ranks first-come by receivedAt", () => {
     const out = summarizeLeaveQueue({
       requests: [
-        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-01T00:00:00.000Z" }),
-        lr({ providerId: "b", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-10T00:00:00.000Z" }),
+        lr({ staffId: "a", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-01T00:00:00.000Z" }),
+        lr({ staffId: "b", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-10T00:00:00.000Z" }),
       ],
       // mine arrived between a and b → I'm #2 of 3
-      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: "2026-06-05T00:00:00.000Z",
+      staffId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: "2026-06-05T00:00:00.000Z",
     });
     expect(out?.positionOnPeak).toBe(2);
     expect(out?.othersOnPeak).toBe(2);
   });
 
-  it("counts distinct providers, not rows (duplicate overlapping requests = one person)", () => {
+  it("counts distinct staff, not rows (duplicate overlapping requests = one person)", () => {
     const out = summarizeLeaveQueue({
       requests: [
-        // provider a has TWO overlapping leave rows on the same date
-        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-02T00:00:00.000Z" }),
-        lr({ providerId: "a", startDate: "2026-07-01", endDate: "2026-07-05", kind: "OFF", receivedAt: "2026-06-08T00:00:00.000Z" }),
-        lr({ providerId: "b", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-04T00:00:00.000Z" }),
+        // staff a has TWO overlapping leave rows on the same date
+        lr({ staffId: "a", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-02T00:00:00.000Z" }),
+        lr({ staffId: "a", startDate: "2026-07-01", endDate: "2026-07-05", kind: "OFF", receivedAt: "2026-06-08T00:00:00.000Z" }),
+        lr({ staffId: "b", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-04T00:00:00.000Z" }),
       ],
-      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
+      staffId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
     });
     // a (counted once) + b = 2 distinct others, so a new request is #3 — not #4.
     expect(out?.othersOnPeak).toBe(2);
     expect(out?.positionOnPeak).toBe(3);
   });
 
-  it("ranks first-come by a provider's EARLIEST request when they have several", () => {
+  it("ranks first-come by a staff's EARLIEST request when they have several", () => {
     const out = summarizeLeaveQueue({
       requests: [
-        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-10T00:00:00.000Z" }),
-        lr({ providerId: "a", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-01T00:00:00.000Z" }),
+        lr({ staffId: "a", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-10T00:00:00.000Z" }),
+        lr({ staffId: "a", startDate: "2026-07-03", endDate: "2026-07-03", receivedAt: "2026-06-01T00:00:00.000Z" }),
       ],
       // a's earliest is 06-01 (before mine 06-05) → a is ahead → I'm #2
-      providerId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: "2026-06-05T00:00:00.000Z",
+      staffId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: "2026-06-05T00:00:00.000Z",
     });
     expect(out?.othersOnPeak).toBe(1);
     expect(out?.positionOnPeak).toBe(2);
@@ -718,11 +718,11 @@ describe("summarizeLeaveQueue", () => {
   it("reports the most-contended date across a range", () => {
     const out = summarizeLeaveQueue({
       requests: [
-        lr({ providerId: "a", startDate: "2026-07-01", endDate: "2026-07-05" }), // covers whole range
-        lr({ providerId: "b", startDate: "2026-07-03", endDate: "2026-07-03" }), // adds to the 3rd
-        lr({ providerId: "c", startDate: "2026-07-03", endDate: "2026-07-04" }),
+        lr({ staffId: "a", startDate: "2026-07-01", endDate: "2026-07-05" }), // covers whole range
+        lr({ staffId: "b", startDate: "2026-07-03", endDate: "2026-07-03" }), // adds to the 3rd
+        lr({ staffId: "c", startDate: "2026-07-03", endDate: "2026-07-04" }),
       ],
-      providerId: "me", start: "2026-07-01", end: "2026-07-05", receivedAtIso: null,
+      staffId: "me", start: "2026-07-01", end: "2026-07-05", receivedAtIso: null,
     });
     // 07-03 has a, b, c = 3 others (the peak)
     expect(out?.peakDate).toBe("2026-07-03");
