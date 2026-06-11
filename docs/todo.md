@@ -2,9 +2,11 @@
 
 ## Open
 
-- [ ] **Consolidate request modal Off + Leave tabs** — the request modal currently has separate "Off" and "Leave" tabs that should be merged into one. (Requested 2026-06-10.)
+_(none)_
 
 ## Done
+
+- [x] **Consolidate staff request form to Request/Avoid (OR semantics)** (`b000686`, PLAN #621→v2 #623 + REVIEW #625 BLOCK→#627 APPROVED, deployed 2026-06-11) — Dropped the Time off / Leave tabs; staff My Requests now has two categories, **Request a shift** and **Avoid a shift**, each with Work and Leave/Time-off chip groups (Request also offers the Off chip), multi-select. A Request bundles its picks into one `REQUEST_SHIFT` (**OR** — scheduling any one satisfies it); Avoid into one `NEGATE_SHIFT`. Soft toggle + leave-queue feedback kept. No schema change (kinds reused; admin picker + legacy OFF/LEAVE untouched). Backend: `foldRequestsForDate` `isAwayShift` predicate (soft away→`avoidWorking`), auto-scheduler STEP 0b places off/leave Requests authoritatively by `sortOrder`, leave-queue counts away `REQUEST_SHIFT`s. +11 tests. See handoff #147. ⚠️ A deleted scratch file had a hardcoded staging DB credential — **rotate it** (still in git history).
 
 - [x] **Sortable /users columns + per-login persisted sort** (`76665ff`, PLAN #613 + REVIEW #615 + amend #617 APPROVED, deployed 2026-06-11) — Click any reasonable `/users` header (Name, Email, Group, Staff, Status, 2FA; Actions excluded) to sort; re-click flips asc/desc; active column shows a ▲/▼ caret. **Group sorts by hierarchy** (`group.level`), not alphabetically. Sort persists **per login server-side** (follows the account across devices) via new `User.uiPreferences` JSON + self-service `PUT /api/account/preferences` (own-row-only, 400 on bad shape); SSR loader seeds the initial sort. Pure tested comparator `src/lib/users-sort.ts` (group→level, null email/staff to the end, 3-rank Status, stable name/id tiebreak, locale-pinned collator) + 11 tests. Save debounced 400ms. Migration `20260611103901`. See handoff #146.
 
