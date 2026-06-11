@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { canManageGroupLevel } from "@/lib/permissions";
+import { sortUsers, type UserSort, type UserSortColumn } from "@/lib/users-sort";
 import { GroupsSection } from "../settings/groups-section";
 
 type LoginLogEntry = {
@@ -46,6 +47,7 @@ const GROUP_BADGE: Record<string, string> = {
 
 export function UsersPage({
   initialUsers,
+  initialSort,
   currentUserId,
   currentGroupLevel,
   groups,
@@ -57,6 +59,7 @@ export function UsersPage({
   dateFormat: dateFormatProp,
 }: {
   initialUsers: User[];
+  initialSort: UserSort | null;
   currentUserId: string;
   currentGroupLevel: number;
   groups: GroupOption[];
@@ -74,6 +77,7 @@ export function UsersPage({
   const defaultGroupId = assignableGroups.find((g) => g.name === "Staff")?.id ?? assignableGroups[0]?.id ?? "";
 
   const [users, setUsers] = useState(initialUsers);
+  const [sort, setSort] = useState<UserSort | null>(initialSort);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId });
@@ -164,6 +168,51 @@ export function UsersPage({
     const userLevel = user.group?.level ?? 0;
     // At-or-below your level is manageable (peers included); only strictly-higher is not.
     return canManageGroupLevel(currentGroupLevel, userLevel);
+  }
+
+  // Persist the chosen sort to this login's server-side prefs, debounced so a flurry of
+  // header clicks coalesces into a single PUT carrying the final state (avoids a slow
+  // earlier save landing after a faster later one).
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
+
+  function handleSort(column: UserSortColumn) {
+    const next: UserSort =
+      sort?.column === column
+        ? { column, dir: sort.dir === "asc" ? "desc" : "asc" }
+        : { column, dir: "asc" };
+    setSort(next);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      fetch("/api/account/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usersTableSort: next }),
+      }).catch(() => {}); // best-effort; the sort still applies in-session if the save fails
+    }, 400);
+  }
+
+  // Apply the active sort for display without disturbing the canonical `users` state
+  // (edits/adds/deletes still operate on `users`). No sort → server's createdAt order.
+  const displayedUsers = sort ? sortUsers(users, sort) : users;
+
+  function sortHeader(column: UserSortColumn, label: string) {
+    const active = sort?.column === column;
+    return (
+      <th className="py-2.5 px-3 font-medium" aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}>
+        <button
+          type="button"
+          onClick={() => handleSort(column)}
+          className={`group inline-flex items-center gap-1 uppercase tracking-wider transition-colors hover:text-slate-200 ${active ? "text-slate-200" : ""}`}
+          title={`Sort by ${label}`}
+        >
+          {label}
+          <span className={`text-[9px] leading-none ${active ? "" : "opacity-0 group-hover:opacity-40"}`}>
+            {active ? (sort!.dir === "asc" ? "▲" : "▼") : "▲"}
+          </span>
+        </button>
+      </th>
+    );
   }
 
   return (
@@ -294,17 +343,17 @@ export function UsersPage({
           </colgroup>
           <thead>
             <tr className="text-left text-slate-400 border-b border-slate-800 text-xs uppercase tracking-wider">
-              <th className="py-2.5 px-3 font-medium">Name</th>
-              <th className="py-2.5 px-3 font-medium">Email</th>
-              <th className="py-2.5 px-3 font-medium">Group</th>
-              <th className="py-2.5 px-3 font-medium">Staff</th>
-              <th className="py-2.5 px-3 font-medium">Status</th>
-              <th className="py-2.5 px-3 font-medium">2FA</th>
+              {sortHeader("name", "Name")}
+              {sortHeader("email", "Email")}
+              {sortHeader("group", "Group")}
+              {sortHeader("staff", "Staff")}
+              {sortHeader("status", "Status")}
+              {sortHeader("totp", "2FA")}
               <th className="py-2.5 px-3 font-medium"></th>
             </tr>
           </thead>
           <tbody>
-            {users.map((user) => {
+            {displayedUsers.map((user) => {
               const gName = user.group?.name ?? "";
               const manageable = canManageUser(user);
               return (
