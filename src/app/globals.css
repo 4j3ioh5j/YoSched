@@ -220,6 +220,14 @@ input[type="checkbox"]:disabled {
     white-space: nowrap !important;
   }
 
+  /* Force the header initials and the date column to print SOLID BLACK. Their inner
+     <span>s carry on-screen slate/amber text-color classes that override the cell-level
+     color above, so they'd otherwise print gray — target the descendants explicitly. */
+  thead th, thead th *,
+  tbody td:first-child, tbody td:first-child * {
+    color: #000 !important;
+  }
+
   /* Scrollable container: no scroll */
   [class*="overflow-auto"], [class*="overflow-hidden"] {
     overflow: visible !important;
