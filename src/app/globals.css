@@ -229,7 +229,7 @@ input[type="checkbox"]:disabled {
     font-weight: 700 !important;
     color: #1e293b !important;
     white-space: nowrap !important;
-    font-size: 8px !important;
+    font-size: 8.5px !important;
   }
 
   /* Force the header initials and the date column to print SOLID BLACK. Their inner
