@@ -2,9 +2,11 @@
 
 ## Open
 
-- [ ] **Refresh the request-box (inbox) status after a schedule assignment honors/un-honors a request** — when an assignment is made on the schedule that satisfies (or breaks) a pending/approved request, the `/requests` inbox status should update to reflect it without a manual refresh. (Requested 2026-06-11.)
+_(none)_
 
 ## Done
+
+- [x] **Refresh the request-box (inbox) status after a schedule assignment honors/un-honors a request** (`873a9ce`, PLAN #657 + REVIEW #659 APPROVED, deployed 2026-06-11) — The `/requests` inbox loaded its list once into `useState(initial)` with no refresh path, so a schedule assignment honoring/un-honoring a request (backend already writes the new status via `syncRequestApprovals`) was invisible until a hard reload. Added SWR-revalidateOnFocus-style behavior, client-only (`requests-page.tsx`): `router.refresh()` on window `focus` + document `visibilitychange`→visible, debounced 200ms (coalesces the two events + catches a write finishing just after refocus), reusing the existing force-dynamic server loader (no new endpoint). Refreshed server props are adopted into state via a `useRef`-guarded effect that defers while a mutation is in flight and only advances the ref on actual adoption (so a refresh landing mid-mutation isn't lost — CR #658 warning). No schema/API/logic change. See handoff #151.
 
 - [x] **Collapse fee-basis staff into one "OTHER" print column** (`b19bf31`, PLAN #647 + REVIEW #649 APPROVED, deployed 2026-06-11) — Print-only: a single global Settings toggle (default ON) hides the individual fee-basis columns on the printout and shows one **OTHER** column with the comma-separated initials of fee-basis staff scheduled each day. On-screen grid unchanged. Which staff collapse is data-driven via `EmploymentType.collapsesIntoOther` (seeded ON for Fee Basis; runtime reads the flag, not the name) + global `SchedulingPreferences.collapseOtherOnPrint`. Pure `other-column.ts` helper + 4 tests; PP-summary rows stay aligned (blank OTHER cell). Migration `20260611131517`. See handoff #149.
 
