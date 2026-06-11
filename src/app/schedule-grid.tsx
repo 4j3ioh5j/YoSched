@@ -2088,6 +2088,7 @@ export function ScheduleGrid({
                       <td
                         key={p.id}
                         data-cell={cellKey}
+                        data-bold-cell={a && shiftTypeMap.get(a.shiftTypeId)?.boldOnSchedule ? "" : undefined}
                         className={[
                           `px-0.5 py-0.5 text-center border-slate-700/30 border relative ${canEdit ? "cursor-pointer" : "cursor-default"}`,
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",

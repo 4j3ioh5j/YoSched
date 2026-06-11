@@ -74,19 +74,19 @@ input[type="checkbox"]:disabled {
   /* Print header: bold-centered "YoSched" brand above the month/year */
   [data-print-title] {
     display: block !important;
-    font-size: 15px;
-    font-weight: 700;
-    text-align: center;
-    padding: 2px 0 6px;
-    color: black;
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    text-align: center !important;
+    padding: 2px 0 6px !important;
+    color: black !important;
   }
   [data-print-brand] {
-    display: block;
-    font-size: 22px;
-    font-weight: 800;
+    display: block !important;
+    font-size: 22px !important;
+    font-weight: 800 !important;
     letter-spacing: 0.01em;
-    text-align: center;
-    margin-bottom: 1px;
+    text-align: center !important;
+    margin-bottom: 1px !important;
   }
 
   /* Reset the grid container */
@@ -100,11 +100,33 @@ input[type="checkbox"]:disabled {
     height: auto !important;
   }
 
-  /* Table styling for print */
+  /* Table styling for print. table-layout:fixed + width:100% makes the grid fit the
+     page width intrinsically (columns compress to share 100%), so the browser does NOT
+     shrink-to-fit the whole table. That matters because the on-screen table is auto-layout
+     with per-column min-widths that, with many staff columns, far exceed the page — which
+     made every browser scale the print down, shrinking rows and rendering the bold text
+     invisible. Fixed layout removes that scaling so the row height and bold below apply at
+     full size. Cross-browser (no reliance on each browser's fit-to-width behavior). */
   table {
     width: 100% !important;
+    table-layout: fixed !important;
     border-collapse: collapse !important;
     font-size: 9px !important;
+  }
+  /* In fixed layout the columns take their FIRST-ROW widths, so the explicit
+     per-column widths (w-[88px]/w-[44px]/w-[32px]) AND min-widths must both be
+     overridden — otherwise their sum still overflows the page and the browser
+     shrinks the whole table again. width:auto lets fixed layout share 100% evenly. */
+  thead th, tbody td {
+    width: auto !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+  /* Keep the date column wide enough for "Wed 31"; the remaining columns split
+     the rest of the page width equally. */
+  thead th:first-child, tbody td:first-child {
+    width: 0.55in !important;
   }
 
   thead {
@@ -173,8 +195,9 @@ input[type="checkbox"]:disabled {
   }
 
   /* …and the cell holding a bolded shift gets a light shade so it stands out.
-     Placed after the weekend rule so it wins on a weekend cell too. */
-  tbody td:has([data-bold-print]) {
+     Stamped on the <td> itself (not :has) so it shades in every browser, not just
+     :has-capable ones. Placed after the weekend rule so it wins on a weekend cell too. */
+  tbody td[data-bold-cell] {
     background: #e6e6e6 !important;
   }
 
