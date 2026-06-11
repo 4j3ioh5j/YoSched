@@ -71,14 +71,22 @@ input[type="checkbox"]:disabled {
     display: none !important;
   }
 
-  /* Print header (month/year) */
+  /* Print header: bold-centered "YoSched" brand above the month/year */
   [data-print-title] {
     display: block !important;
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 700;
     text-align: center;
-    padding: 4px 0 8px;
+    padding: 2px 0 6px;
     color: black;
+  }
+  [data-print-brand] {
+    display: block;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    text-align: center;
+    margin-bottom: 1px;
   }
 
   /* Reset the grid container */
@@ -107,12 +115,14 @@ input[type="checkbox"]:disabled {
     background: #f1f5f9 !important;
   }
 
+  /* Column headers (staff initials) — bold for print legibility. */
   thead th {
     background: #f1f5f9 !important;
     color: #1e293b !important;
     border: 1px solid #cbd5e1 !important;
     padding: 3px 2px !important;
     position: static !important;
+    font-weight: 700 !important;
   }
 
   tbody tr {
@@ -120,11 +130,16 @@ input[type="checkbox"]:disabled {
     opacity: 1 !important;
   }
 
+  /* Fixed row height, sized so a full 31-day month fits one landscape page.
+     It's an absolute height (not a percentage), so a 28- or 30-day month keeps
+     the SAME cell height and simply leaves whitespace at the bottom — rows never
+     change size from month to month. */
   tbody td {
     border: 1px solid #cbd5e1 !important;
-    padding: 2px 1px !important;
+    padding: 1px 3px !important;
     background: white !important;
     position: static !important;
+    height: 0.19in !important;
   }
 
   /* Weekend row shading */
@@ -157,6 +172,12 @@ input[type="checkbox"]:disabled {
     font-weight: 700 !important;
   }
 
+  /* …and the cell holding a bolded shift gets a light shade so it stands out.
+     Placed after the weekend rule so it wins on a weekend cell too. */
+  tbody td:has([data-bold-print]) {
+    background: #e6e6e6 !important;
+  }
+
   /* Hide warning dots, drag handles */
   span[class*="rounded-full"][class*="absolute"] {
     display: none !important;
@@ -169,9 +190,9 @@ input[type="checkbox"]:disabled {
     color: #1e293b !important;
   }
 
-  /* Date column styling */
+  /* Date column styling — bold (day-of-week + date) for print legibility. */
   tbody td:first-child {
-    font-weight: 600 !important;
+    font-weight: 700 !important;
     color: #1e293b !important;
     white-space: nowrap !important;
   }

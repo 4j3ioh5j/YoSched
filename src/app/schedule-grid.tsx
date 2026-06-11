@@ -1712,8 +1712,9 @@ export function ScheduleGrid({
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Print-only title */}
+      {/* Print-only title: bold-centered "YoSched" brand above the month/year */}
       <div data-print-title className="hidden">
+        <span data-print-brand>YoSched</span>
         {MONTH_NAMES[viewMonth]} {viewYear}
       </div>
 
