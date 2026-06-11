@@ -198,6 +198,7 @@ export async function POST(req: NextRequest) {
       isLeave: st.isLeave,
       isOffShift: st.isOffShift,
       isFillShift: st.isFillShift,
+      sortOrder: st.sortOrder,
       schedulePriority: st.schedulePriority,
       weekendPaired: st.weekendPaired,
       ignoresWorkingDays: st.ignoresWorkingDays,

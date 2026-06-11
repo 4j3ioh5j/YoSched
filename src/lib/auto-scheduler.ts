@@ -28,6 +28,7 @@ export type ScheduleShiftType = {
   isLeave: boolean;
   isOffShift: boolean;
   isFillShift: boolean;
+  sortOrder: number; // configured display order; orders OR-request placement deterministically
   schedulePriority: number | null;
   weekendPaired: boolean;
   ignoresWorkingDays: boolean;
@@ -275,6 +276,13 @@ export function autoSchedule({
 
   const offShift = shiftTypes.find((st) => st.isOffShift);
 
+  // A shift is "away" (off or leave) — requesting one means time off, so a soft such
+  // request nudges the staff away from work (see foldRequestsForDate).
+  const isAwayShift = (id: string): boolean => {
+    const st = stById.get(id);
+    return !!st && (st.isLeave || st.isOffShift);
+  };
+
   // Approved schedule requests, folded per (staff, date) on demand and cached.
   // foldRequestsForDate already ignores non-approved requests, so only approved
   // ones exert scheduling force here. Empty list ⇒ the gates below are no-ops.
@@ -284,7 +292,7 @@ export function autoSchedule({
     const key = `${staffId}:${date}`;
     let folded = foldCache.get(key);
     if (!folded) {
-      folded = foldRequestsForDate(requestList, staffId, date);
+      folded = foldRequestsForDate(requestList, staffId, date, isAwayShift);
       foldCache.set(key, folded);
     }
     return folded;
@@ -651,15 +659,33 @@ export function autoSchedule({
         if (isAssigned(staff.id, date)) continue;
         const forced = foldFor(staff.id, date).forcedShiftIds;
         if (forced.size === 0) continue;
+        // Resolve the OR set deterministically by configured sortOrder (then code),
+        // not arbitrary id. A requested WORK shift is preferred when it's legal
+        // (eligible + available) so the staff works if they can; an Off/leave ("away")
+        // shift is the authoritative fallback — placed regardless of work-eligibility/
+        // availability, exactly like an approved leave (STEP 0a), since being granted
+        // time off isn't gated by working-day rules.
+        const candidates = [...forced]
+          .map((id) => stById.get(id))
+          .filter((st): st is ScheduleShiftType => !!st)
+          .sort((a, b) => a.sortOrder - b.sortOrder || a.code.localeCompare(b.code));
         let placed = false;
-        // Sorted for deterministic choice when several shifts are requested.
-        for (const wantedId of [...forced].sort()) {
-          const st = stById.get(wantedId);
-          if (!st || !eligSet?.has(st.id)) continue;
-          if (!isAvailable(staff, date, st)) continue;
+        // Pass 1: a legal work shift wins.
+        for (const st of candidates) {
+          if (st.isLeave || st.isOffShift) continue;
+          if (!eligSet?.has(st.id) || !isAvailable(staff, date, st)) continue;
           assign(staff.id, date, st, `Approved shift request: ${st.code}`, "request-shift", 1.0);
           placed = true;
           break;
+        }
+        // Pass 2: fall back to the first away shift, placed authoritatively.
+        if (!placed) {
+          for (const st of candidates) {
+            if (!st.isLeave && !st.isOffShift) continue;
+            assign(staff.id, date, st, `Approved shift request: ${st.code}`, "request-shift", 1.0);
+            placed = true;
+            break;
+          }
         }
         if (!placed) {
           warnings.push(`${staff.initials}: could not honor approved shift request on ${date} (ineligible or no legal slot)`);

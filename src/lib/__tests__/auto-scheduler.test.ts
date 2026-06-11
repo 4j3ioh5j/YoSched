@@ -35,6 +35,7 @@ function makeShift(id: string, code: string, overrides: Partial<ScheduleShiftTyp
     isLeave: false,
     isOffShift: false,
     isFillShift: false,
+    sortOrder: 0,
     schedulePriority: null,
     weekendPaired: false,
     ignoresWorkingDays: false,
@@ -984,5 +985,71 @@ describe("autoSchedule — schedule request preferences", () => {
       ],
     });
     expect(r.suggestions.some((s) => s.staffId === "p1")).toBe(false);
+  });
+
+  // ── REQUEST_SHIFT carrying off/leave shifts (consolidated staff form) ──
+  // Staff now ask for time off by requesting the Off/leave shift, so a REQUEST_SHIFT
+  // may carry an "away" shift the staff isn't work-eligible for. It must still place.
+  const ALr = makeShift("st-al", "AL", { isLeave: true, countsTowardFte: false, autoSchedulable: false, ignoresWorkingDays: true });
+  const SLr = makeShift("st-sl", "SL", { isLeave: true, countsTowardFte: false, autoSchedulable: false, ignoresWorkingDays: true, sortOrder: 21 });
+
+  it("hard REQUEST_SHIFT for a leave shift places it authoritatively (bypasses work-eligibility)", () => {
+    // p1 is NOT work-eligible for AL (leave), yet a request for it must place it,
+    // exactly as the old LEAVE kind did.
+    const p1 = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-off"] });
+    const r = runSchedule({
+      staff: [p1, makeStaff("p2", "CD")],
+      shiftTypes: [OR, ALr, OFF],
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-al"] }),
+      ],
+    });
+    const al = r.suggestions.find((s) => s.staffId === "p1" && s.date === "2025-05-12" && s.code === "AL");
+    expect(al).toBeDefined();
+    expect(al!.step).toBe("request-shift");
+    expect(has(r, "p1", "2025-05-12", "OR")).toBe(false); // not also given work
+  });
+
+  it("hard REQUEST_SHIFT mixing work + leave prefers the legal work shift (OR semantics)", () => {
+    // Wants ADM (work, eligible) OR AL (leave): the staff works if they can.
+    const p1 = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"] });
+    const r = runSchedule({
+      staff: [p1, makeStaff("p2", "CD")],
+      shiftTypes: [OR, ADM, ALr, OFF],
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm", "st-al"] }),
+      ],
+    });
+    expect(has(r, "p1", "2025-05-12", "ADM")).toBe(true);
+    expect(has(r, "p1", "2025-05-12", "AL")).toBe(false);
+  });
+
+  it("among requested work shifts, the lower sortOrder one wins (not arbitrary id)", () => {
+    const ORlo = makeShift("st-or", "OR", { sortOrder: 1, isFillShift: true, schedulePriority: 1 });
+    const ADMhi = makeShift("st-adm", "ADM", { sortOrder: 5, schedulePriority: 2 });
+    const p1 = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"] });
+    const r = runSchedule({
+      staff: [p1, makeStaff("p2", "CD")],
+      shiftTypes: [ORlo, ADMhi, OFF],
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm", "st-or"] }),
+      ],
+    });
+    expect(has(r, "p1", "2025-05-12", "OR")).toBe(true);
+    expect(has(r, "p1", "2025-05-12", "ADM")).toBe(false);
+  });
+
+  it("with only away shifts requested, the lower sortOrder away shift is placed", () => {
+    // AL sortOrder default 0, SL sortOrder 21 → AL wins regardless of id order.
+    const p1 = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-off"] });
+    const r = runSchedule({
+      staff: [p1, makeStaff("p2", "CD")],
+      shiftTypes: [OR, ALr, SLr, OFF],
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-sl", "st-al"] }),
+      ],
+    });
+    expect(has(r, "p1", "2025-05-12", "AL")).toBe(true);
+    expect(has(r, "p1", "2025-05-12", "SL")).toBe(false);
   });
 });

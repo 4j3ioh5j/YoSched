@@ -79,11 +79,16 @@ export function requestsForStaffDate<
   );
 }
 
-/** Collapse a staff's APPROVED requests on `date` into scheduling gates/weights. */
+/** Collapse a staff's APPROVED requests on `date` into scheduling gates/weights.
+ *  `isAwayShift(id)` tells whether a shift is an off/leave ("away") shift; pass it
+ *  so a SOFT REQUEST_SHIFT that wants an away shift also nudges the staff away from
+ *  work (== the old soft-OFF avoidWorking bias). Defaults to "nothing is away",
+ *  which leaves behavior byte-for-byte unchanged for callers that don't pass it. */
 export function foldRequestsForDate(
   requests: ScheduleRequestData[],
   staffId: string,
-  date: string
+  date: string,
+  isAwayShift: (shiftTypeId: string) => boolean = () => false
 ): FoldedRequests {
   const folded: FoldedRequests = {
     forbidWorking: false,
@@ -119,6 +124,11 @@ export function foldRequestsForDate(
         for (const id of r.shiftTypeIds) {
           (hard ? folded.forcedShiftIds : folded.preferredShiftIds).add(id);
         }
+        // A soft "I'd prefer Off / leave" (REQUEST_SHIFT covering an away shift)
+        // should still discourage giving this staff work, exactly as the old soft
+        // OFF did. Hard away needs no flag — it's placed authoritatively, which
+        // marks the cell assigned so work can't land there.
+        if (!hard && r.shiftTypeIds.some(isAwayShift)) folded.avoidWorking = true;
         break;
     }
   }
@@ -645,11 +655,12 @@ export function canWithdrawOwnRequest(
 
 // ---- Leave queue feedback -------------------------------------------------
 // "How many people already requested leave on this date, and where do I stand?"
-// OFF and LEAVE both mean "away" for queueing. Only live requests count (pending
-// or approved — declined/withdrawn don't hold a slot). Ordering is first-come by
+// A request means "away" for queueing when it's a legacy OFF/LEAVE, OR a
+// REQUEST_SHIFT that wants an off/leave ("away") shift — staff now ask for time
+// off by requesting the Off/leave shift. Only live requests count (pending or
+// approved — declined/withdrawn don't hold a slot). Ordering is first-come by
 // receivedAt. Everything here is COUNTS ONLY — never the other staff' names.
 
-const LEAVE_QUEUE_KINDS: ReadonlySet<RequestKind> = new Set<RequestKind>(["OFF", "LEAVE"]);
 const LEAVE_QUEUE_STATUSES: ReadonlySet<RequestStatus> = new Set<RequestStatus>(["pending", "approved"]);
 
 export type LeaveQueueRequest = {
@@ -657,6 +668,7 @@ export type LeaveQueueRequest = {
   startDate: string;
   endDate: string;
   kind: RequestKind;
+  shiftTypeIds: string[]; // REQUEST_SHIFT: needed to tell an "away" ask from a work ask
   status: RequestStatus;
   receivedAt: string; // ISO — first-come ordering
 };
@@ -667,8 +679,11 @@ export type LeaveQueueSummary = {
   positionOnPeak: number; // this staff's 1-based queue position on peakDate (first-come)
 };
 
-function isLeaveQueueRow(r: LeaveQueueRequest): boolean {
-  return LEAVE_QUEUE_KINDS.has(r.kind) && LEAVE_QUEUE_STATUSES.has(r.status);
+function isLeaveQueueRow(r: LeaveQueueRequest, isAwayShift: (shiftTypeId: string) => boolean): boolean {
+  if (!LEAVE_QUEUE_STATUSES.has(r.status)) return false;
+  if (r.kind === "OFF" || r.kind === "LEAVE") return true; // legacy "away" kinds
+  if (r.kind === "REQUEST_SHIFT") return r.shiftTypeIds.some(isAwayShift);
+  return false; // NEGATE_SHIFT never holds a leave slot
 }
 
 /** Summarize the leave queue a staff faces over an inclusive [start,end] range.
@@ -685,15 +700,17 @@ export function summarizeLeaveQueue({
   start,
   end,
   receivedAtIso,
+  isAwayShift = () => false,
 }: {
   requests: LeaveQueueRequest[];
   staffId: string;
   start: string;
   end: string;
   receivedAtIso: string | null;
+  isAwayShift?: (shiftTypeId: string) => boolean;
 }): LeaveQueueSummary | null {
   if (start > end) return null;
-  const others = requests.filter((r) => r.staffId !== staffId && isLeaveQueueRow(r));
+  const others = requests.filter((r) => r.staffId !== staffId && isLeaveQueueRow(r, isAwayShift));
 
   let best: LeaveQueueSummary | null = null;
   // Walk each date in the inclusive range (ISO date strings, lexical-safe).

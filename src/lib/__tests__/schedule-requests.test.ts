@@ -151,6 +151,57 @@ describe("foldRequestsForDate", () => {
     expect([...soft.preferredShiftIds]).toEqual(["call"]);
   });
 
+  it("soft REQUEST_SHIFT for an away (off/leave) shift also sets avoidWorking (== old soft OFF)", () => {
+    const isAway = (id: string) => id === "al" || id === "x";
+    const soft = foldRequestsForDate(
+      [req({ kind: "REQUEST_SHIFT", strength: "soft", shiftTypeIds: ["al"] })],
+      "P", "2026-07-04", isAway
+    );
+    expect(soft.avoidWorking).toBe(true);
+    expect([...soft.preferredShiftIds]).toEqual(["al"]);
+  });
+
+  it("soft REQUEST_SHIFT for work-only shifts does NOT set avoidWorking", () => {
+    const isAway = (id: string) => id === "al" || id === "x";
+    const soft = foldRequestsForDate(
+      [req({ kind: "REQUEST_SHIFT", strength: "soft", shiftTypeIds: ["orc"] })],
+      "P", "2026-07-04", isAway
+    );
+    expect(soft.avoidWorking).toBe(false);
+    expect([...soft.preferredShiftIds]).toEqual(["orc"]);
+  });
+
+  it("soft mixed work+away ask: prefers both AND avoids working (net work-bias pin)", () => {
+    // OR ask [ORC work + AL away]: requested work gets +1 (preferred) and -1 (avoidWorking)
+    // = net 0, while non-requested work gets only -1 — so the requested work shift stays
+    // favored over alternatives. Pins the intended OR behavior (see auto-scheduler requestBias).
+    const isAway = (id: string) => id === "al";
+    const soft = foldRequestsForDate(
+      [req({ kind: "REQUEST_SHIFT", strength: "soft", shiftTypeIds: ["orc", "al"] })],
+      "P", "2026-07-04", isAway
+    );
+    expect(soft.avoidWorking).toBe(true);
+    expect([...soft.preferredShiftIds].sort()).toEqual(["al", "orc"]);
+  });
+
+  it("hard REQUEST_SHIFT with an away shift leaves avoidWorking false (placed authoritatively)", () => {
+    const isAway = (id: string) => id === "al";
+    const hard = foldRequestsForDate(
+      [req({ kind: "REQUEST_SHIFT", shiftTypeIds: ["al"] })],
+      "P", "2026-07-04", isAway
+    );
+    expect(hard.avoidWorking).toBe(false);
+    expect([...hard.forcedShiftIds]).toEqual(["al"]);
+  });
+
+  it("without an isAwayShift predicate, away detection defaults off (back-compat)", () => {
+    const soft = foldRequestsForDate(
+      [req({ kind: "REQUEST_SHIFT", strength: "soft", shiftTypeIds: ["al"] })],
+      "P", "2026-07-04"
+    );
+    expect(soft.avoidWorking).toBe(false);
+  });
+
   it("pending requests exert NO force (approval gate)", () => {
     const folded = foldRequestsForDate(
       [req({ kind: "OFF", strength: "hard", status: "pending" })],
@@ -629,7 +680,7 @@ describe("canWithdrawOwnRequest", () => {
 
 describe("summarizeLeaveQueue", () => {
   function lr(o: Partial<LeaveQueueRequest> & { staffId: string; startDate: string; endDate: string }): LeaveQueueRequest {
-    return { kind: "LEAVE", status: "approved", receivedAt: "2026-06-01T00:00:00.000Z", ...o };
+    return { kind: "LEAVE", shiftTypeIds: [], status: "approved", receivedAt: "2026-06-01T00:00:00.000Z", ...o };
   }
 
   it("returns null when nobody else is away in the range", () => {
@@ -650,6 +701,30 @@ describe("summarizeLeaveQueue", () => {
       staffId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null,
     });
     expect(out?.othersOnPeak).toBe(2);
+  });
+
+  it("counts a REQUEST_SHIFT that covers an away (off/leave) shift — the new consolidated form", () => {
+    const isAwayShift = (id: string) => id === "al" || id === "x";
+    const out = summarizeLeaveQueue({
+      requests: [
+        lr({ staffId: "a", startDate: "2026-07-03", endDate: "2026-07-03", kind: "REQUEST_SHIFT", shiftTypeIds: ["al"] }),
+        lr({ staffId: "b", startDate: "2026-07-03", endDate: "2026-07-03", kind: "REQUEST_SHIFT", shiftTypeIds: ["x", "or"] }),
+        lr({ staffId: "me", startDate: "2026-07-03", endDate: "2026-07-03" }),
+      ],
+      staffId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null, isAwayShift,
+    });
+    expect(out?.othersOnPeak).toBe(2);
+  });
+
+  it("does NOT count a REQUEST_SHIFT for work-only shifts as away", () => {
+    const isAwayShift = (id: string) => id === "al";
+    const out = summarizeLeaveQueue({
+      requests: [
+        lr({ staffId: "a", startDate: "2026-07-03", endDate: "2026-07-03", kind: "REQUEST_SHIFT", shiftTypeIds: ["or", "orc"] }),
+      ],
+      staffId: "me", start: "2026-07-03", end: "2026-07-03", receivedAtIso: null, isAwayShift,
+    });
+    expect(out).toBeNull();
   });
 
   it("ignores non-leave kinds and inactive statuses", () => {

@@ -31,22 +31,33 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: `Date range too large (max ${MAX_SPAN_DAYS} days)` }, { status: 400 });
   }
 
-  // Only live OFF/LEAVE requests overlapping the window are relevant.
-  const rows = await prisma.scheduleRequest.findMany({
-    where: {
-      kind: { in: ["OFF", "LEAVE"] },
-      status: { in: ["pending", "approved"] },
-      startDate: { lte: new Date(end + "T00:00:00Z") },
-      endDate: { gte: new Date(start + "T00:00:00Z") },
-    },
-    select: { staffId: true, startDate: true, endDate: true, kind: true, status: true, receivedAt: true },
-  });
+  // Live "away" requests overlapping the window: legacy OFF/LEAVE, plus REQUEST_SHIFT
+  // (staff now ask for time off by requesting the Off/leave shift). The pure summarizer
+  // decides which REQUEST_SHIFT rows actually count via isAwayShift, so we must carry
+  // shiftTypeIds. The off/leave shift-id set is fetched once and passed as the predicate.
+  const [rows, awayShifts] = await Promise.all([
+    prisma.scheduleRequest.findMany({
+      where: {
+        kind: { in: ["OFF", "LEAVE", "REQUEST_SHIFT"] },
+        status: { in: ["pending", "approved"] },
+        startDate: { lte: new Date(end + "T00:00:00Z") },
+        endDate: { gte: new Date(start + "T00:00:00Z") },
+      },
+      select: { staffId: true, startDate: true, endDate: true, kind: true, shiftTypeIds: true, status: true, receivedAt: true },
+    }),
+    prisma.shiftType.findMany({
+      where: { OR: [{ isLeave: true }, { isOffShift: true }] },
+      select: { id: true },
+    }),
+  ]);
+  const awayShiftIds = new Set(awayShifts.map((s) => s.id));
 
   const requests: LeaveQueueRequest[] = rows.map((r) => ({
     staffId: r.staffId,
     startDate: r.startDate.toISOString().split("T")[0],
     endDate: r.endDate.toISOString().split("T")[0],
     kind: r.kind as LeaveQueueRequest["kind"],
+    shiftTypeIds: r.shiftTypeIds,
     status: r.status as LeaveQueueRequest["status"],
     receivedAt: r.receivedAt.toISOString(),
   }));
@@ -58,6 +69,7 @@ export async function GET(req: NextRequest) {
     start,
     end,
     receivedAtIso: null,
+    isAwayShift: (id) => awayShiftIds.has(id),
   });
 
   return NextResponse.json({ summary });

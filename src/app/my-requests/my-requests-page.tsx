@@ -25,13 +25,13 @@ type RequestRow = {
 
 type ShiftType = { id: string; code: string; name: string; isLeave: boolean; isOffShift: boolean };
 
-// The four staff-facing templates, mapped to request kinds. Keeps the staff
-// out of freeform rambling — they pick a template, dates, and (sometimes) shifts.
-const TEMPLATES: { kind: Kind; label: string; hint: string }[] = [
-  { kind: "OFF", label: "Time off", hint: "A day (or range) I can't work." },
-  { kind: "LEAVE", label: "Leave", hint: "Vacation, sick, etc. — pick the leave type." },
+// Two staff-facing categories. Each lets the staff click any number of shifts from
+// the Work and Leave/Time-off groups (Request also offers the Off chip). "Request"
+// is OR — scheduling any one of the picked shifts satisfies it.
+type FormCategory = "REQUEST_SHIFT" | "NEGATE_SHIFT";
+const CATEGORIES: { kind: FormCategory; label: string; hint: string }[] = [
+  { kind: "REQUEST_SHIFT", label: "Request a shift", hint: "Shift(s) I'd like — work, a leave type, or the day off. Scheduling any one of them satisfies the request." },
   { kind: "NEGATE_SHIFT", label: "Avoid a shift", hint: "Please don't assign me these shift(s)." },
-  { kind: "REQUEST_SHIFT", label: "Request a shift", hint: "I'd like to work these shift(s)." },
 ];
 
 const STATUS_BADGE: Record<Status, string> = {
@@ -67,12 +67,16 @@ export function MyRequestsPage({
 
   const leaveShifts = useMemo(() => shiftTypes.filter((s) => s.isLeave), [shiftTypes]);
   const workShifts = useMemo(() => shiftTypes.filter((s) => !s.isLeave && !s.isOffShift), [shiftTypes]);
+  const offShift = useMemo(() => shiftTypes.find((s) => s.isOffShift) ?? null, [shiftTypes]);
+  const isAwayId = useMemo(() => {
+    const away = new Set(shiftTypes.filter((s) => s.isLeave || s.isOffShift).map((s) => s.id));
+    return (id: string) => away.has(id);
+  }, [shiftTypes]);
 
   const [requests, setRequests] = useState(initialRequests);
-  const [kind, setKind] = useState<Kind>("OFF");
+  const [kind, setKind] = useState<FormCategory>("REQUEST_SHIFT");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [leaveShiftTypeId, setLeaveShiftTypeId] = useState("");
   const [shiftTypeIds, setShiftTypeIds] = useState<string[]>([]);
   const [flexible, setFlexible] = useState(false);
   const [notes, setNotes] = useState("");
@@ -81,18 +85,20 @@ export function MyRequestsPage({
   const [receiptFor, setReceiptFor] = useState<RequestRow | null>(null);
   const [queue, setQueue] = useState<LeaveQueueSummary | null>(null);
 
-  const needsShifts = kind === "NEGATE_SHIFT" || kind === "REQUEST_SHIFT";
-  const needsLeave = kind === "LEAVE";
-  // Leave is inherently firm; the flexible toggle only applies to the others.
-  const showFlexible = kind !== "LEAVE";
-  // The queue feedback only makes sense for "away" requests (time off / leave).
-  const isLeaveKind = kind === "OFF" || kind === "LEAVE";
+  const isRequest = kind === "REQUEST_SHIFT";
+  // Time-off / leave chips: leave types, plus the Off shift in the Request category.
+  const awayChoices = useMemo(
+    () => (isRequest && offShift ? [...leaveShifts, offShift] : leaveShifts),
+    [isRequest, offShift, leaveShifts]
+  );
+  // The queue feedback only makes sense when this is an "away" ask (off/leave picked).
+  const requestingAway = isRequest && shiftTypeIds.some(isAwayId);
 
   // Live leave-queue feedback: how many others are already away over the chosen
   // range, and where this staff would stand. Debounced; counts only (the API
   // never returns identities). Cleared whenever the inputs can't produce one.
   useEffect(() => {
-    if (!isLeaveKind || !startDate) {
+    if (!requestingAway || !startDate) {
       setQueue(null);
       return;
     }
@@ -109,22 +115,20 @@ export function MyRequestsPage({
       }
     }, 350);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [isLeaveKind, startDate, endDate]);
+  }, [requestingAway, startDate, endDate]);
 
   function resetForm() {
     setStartDate("");
     setEndDate("");
-    setLeaveShiftTypeId("");
     setShiftTypeIds([]);
     setFlexible(false);
     setNotes("");
     setError("");
   }
 
-  function pickKind(k: Kind) {
+  function pickKind(k: FormCategory) {
     setKind(k);
-    setLeaveShiftTypeId("");
-    setShiftTypeIds([]);
+    setShiftTypeIds([]); // selections don't carry across categories
     setError("");
   }
 
@@ -136,17 +140,16 @@ export function MyRequestsPage({
     setError("");
     if (!startDate) return setError("Pick a start date.");
     if (endDate && endDate < startDate) return setError("End date can't be before the start date.");
-    if (needsLeave && !leaveShiftTypeId) return setError("Pick which leave type.");
-    if (needsShifts && shiftTypeIds.length === 0) return setError("Pick at least one shift.");
+    if (shiftTypeIds.length === 0) return setError("Pick at least one shift.");
 
     setSubmitting(true);
     const body = {
       kind,
       startDate,
       endDate: endDate || startDate,
-      leaveShiftTypeId: needsLeave ? leaveShiftTypeId : null,
-      shiftTypeIds: needsShifts ? shiftTypeIds : [],
-      strength: showFlexible && flexible ? "soft" : "hard",
+      leaveShiftTypeId: null,
+      shiftTypeIds,
+      strength: flexible ? "soft" : "hard",
       notes: notes.trim() || null,
     };
     const res = await fetch("/api/my-requests", {
@@ -209,20 +212,17 @@ export function MyRequestsPage({
         <div className="p-4 rounded border border-slate-700 bg-slate-900 space-y-4">
           <h2 className="text-sm font-medium text-slate-300">New request</h2>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {TEMPLATES.map((t) => {
-              const disabled = t.kind === "LEAVE" && leaveShifts.length === 0;
+          <div className="grid grid-cols-2 gap-2">
+            {CATEGORIES.map((t) => {
               const active = kind === t.kind;
               return (
                 <button
                   key={t.kind}
-                  disabled={disabled}
                   onClick={() => pickKind(t.kind)}
-                  title={disabled ? "No leave types are configured" : t.hint}
+                  title={t.hint}
                   className={[
                     "px-3 py-2 rounded border text-sm text-left transition-colors",
                     active ? "border-blue-500 bg-blue-600/20 text-blue-200" : "border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500",
-                    disabled ? "opacity-40 cursor-not-allowed" : "",
                   ].join(" ")}
                 >
                   {t.label}
@@ -230,7 +230,7 @@ export function MyRequestsPage({
               );
             })}
           </div>
-          <p className="text-xs text-slate-500 -mt-2">{TEMPLATES.find((t) => t.kind === kind)?.hint}</p>
+          <p className="text-xs text-slate-500 -mt-2">{CATEGORIES.find((t) => t.kind === kind)?.hint}</p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="text-sm">
@@ -254,7 +254,7 @@ export function MyRequestsPage({
             </label>
           </div>
 
-          {isLeaveKind && queue && (() => {
+          {requestingAway && queue && (() => {
             // The new request queues last, so positionOnPeak is also the total off
             // that day if it's granted. Over the soft cap → warn, never block.
             const overCap = maxLeavePerDay > 0 && queue.positionOnPeak > maxLeavePerDay;
@@ -272,55 +272,49 @@ export function MyRequestsPage({
             );
           })()}
 
-          {needsLeave && (
-            <label className="block text-sm">
-              <span className="block text-xs text-slate-400 mb-1">Leave type</span>
-              <select
-                value={leaveShiftTypeId}
-                onChange={(e) => setLeaveShiftTypeId(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">— Pick leave type —</option>
-                {leaveShifts.map((s) => (
-                  <option key={s.id} value={s.id}>{s.code} — {s.name}</option>
-                ))}
-              </select>
-            </label>
-          )}
-
-          {needsShifts && (
-            <div className="text-sm">
-              <span className="block text-xs text-slate-400 mb-1">
-                {kind === "NEGATE_SHIFT" ? "Shift(s) to avoid" : "Shift(s) wanted"}
-              </span>
-              <div className="flex flex-wrap gap-2">
-                {workShifts.map((s) => {
-                  const on = shiftTypeIds.includes(s.id);
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() => toggleShift(s.id)}
-                      className={[
-                        "px-2.5 py-1 rounded border text-xs transition-colors",
-                        on ? "border-blue-500 bg-blue-600/20 text-blue-200" : "border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500",
-                      ].join(" ")}
-                      title={s.name}
-                    >
-                      {s.code}
-                    </button>
-                  );
-                })}
-                {workShifts.length === 0 && <span className="text-xs text-slate-500">No shifts configured.</span>}
+          {(() => {
+            // Click any number across both groups; the picks become one request
+            // (REQUEST_SHIFT = "any one is fine", NEGATE_SHIFT = "none of these").
+            const chip = (s: ShiftType) => {
+              const on = shiftTypeIds.includes(s.id);
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => toggleShift(s.id)}
+                  className={[
+                    "px-2.5 py-1 rounded border text-xs transition-colors",
+                    on ? "border-blue-500 bg-blue-600/20 text-blue-200" : "border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500",
+                  ].join(" ")}
+                  title={s.name}
+                >
+                  {s.code}
+                </button>
+              );
+            };
+            return (
+              <div className="space-y-3 text-sm">
+                <div>
+                  <span className="block text-xs text-slate-400 mb-1">Work shifts</span>
+                  <div className="flex flex-wrap gap-2">
+                    {workShifts.map(chip)}
+                    {workShifts.length === 0 && <span className="text-xs text-slate-500">No work shifts configured.</span>}
+                  </div>
+                </div>
+                <div>
+                  <span className="block text-xs text-slate-400 mb-1">{isRequest ? "Time off / leave" : "Leave"}</span>
+                  <div className="flex flex-wrap gap-2">
+                    {awayChoices.map(chip)}
+                    {awayChoices.length === 0 && <span className="text-xs text-slate-500">No leave types configured.</span>}
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
-          {showFlexible && (
-            <label className="flex items-center gap-2 text-sm text-slate-300">
-              <input type="checkbox" checked={flexible} onChange={(e) => setFlexible(e.target.checked)} className="accent-blue-500" />
-              I&apos;m flexible — treat this as a preference, not a firm request.
-            </label>
-          )}
+          <label className="flex items-center gap-2 text-sm text-slate-300">
+            <input type="checkbox" checked={flexible} onChange={(e) => setFlexible(e.target.checked)} className="accent-blue-500" />
+            I&apos;m flexible — treat this as a preference, not a firm request.
+          </label>
 
           <label className="block text-sm">
             <span className="block text-xs text-slate-400 mb-1">Note <span className="text-slate-600">(optional)</span></span>
