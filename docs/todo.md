@@ -2,7 +2,10 @@
 
 ## Open
 
-_(none)_
+- [ ] **Multi-editor schedule coordination — Presence + conflict-detection** (approved 2026-06-11; 3 slices, correctness-first). With two `schedule:edit` users, edits were silent last-write-wins per cell and each grid sat stale. Plan (chose presence + conflict-detection over hard cell-locking):
+  - [x] **Slice 1 — grid focus/visibility revalidation** (`4ea4037`, deployed 2026-06-11) — the grid pulls in another editor's persisted changes on tab-back; idle-guarded so it never clobbers an open picker / in-flight save / drag. See handoff #152.
+  - [ ] **Slice 2 — optimistic conflict-detection** — reuse the existing `Assignment.updatedAt` token (no migration); writes carry the last-seen token, server returns 409 + current value on a stale write, client offers "changed underneath you — overwrite?".
+  - [ ] **Slice 3 — presence** — `SchedulePresence` table + ~5s heartbeat poll (TTL-reaped); page banner of active editors + per-cell focus outline. Advisory.
 
 ## Done
 
