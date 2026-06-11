@@ -123,10 +123,10 @@ input[type="checkbox"]:disabled {
     overflow: hidden !important;
     text-overflow: ellipsis !important;
   }
-  /* Keep the date column wide enough for "Wed 31"; the remaining columns split
-     the rest of the page width equally. */
+  /* Keep the date column wide enough for the full "Mon Jun 16"-style label; the
+     remaining columns split the rest of the page width equally. */
   thead th:first-child, tbody td:first-child {
-    width: 0.55in !important;
+    width: 0.72in !important;
   }
 
   thead {
@@ -223,11 +223,13 @@ input[type="checkbox"]:disabled {
     color: #1e293b !important;
   }
 
-  /* Date column styling — bold (day-of-week + date) for print legibility. */
+  /* Date column styling — bold (day-of-week + date) for print legibility. Slightly
+     smaller font so the full "Mon Jun 16" label fits without truncating. */
   tbody td:first-child {
     font-weight: 700 !important;
     color: #1e293b !important;
     white-space: nowrap !important;
+    font-size: 8px !important;
   }
 
   /* Force the header initials and the date column to print SOLID BLACK. Their inner

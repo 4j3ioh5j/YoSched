@@ -1962,7 +1962,7 @@ export function ScheduleGrid({
               })}
               {showOtherColumn && (
                 <th data-other-col className="hidden px-1 py-1 text-center text-xs font-medium border-b border-slate-700">
-                  OTHER
+                  FB
                 </th>
               )}
               {dedicatedColumns.map((st) => (
