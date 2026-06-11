@@ -133,6 +133,7 @@ export default async function Home() {
           date: a.date.toISOString().split("T")[0],
           shiftTypeId: a.shiftTypeId,
           isLocked: a.isLocked,
+          updatedAt: a.updatedAt.toISOString(),
           code: shiftCodeMap[a.shiftTypeId] ?? "?",
           color: shiftColorMap[a.shiftTypeId] ?? "#6b7280",
         }))}

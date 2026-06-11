@@ -4,6 +4,11 @@ import { getSession } from "@/lib/auth-guard";
 import { autoSchedule } from "@/lib/auto-scheduler";
 import { type ScheduleRequestData } from "@/lib/schedule-requests";
 import { syncRequestApprovals } from "@/lib/request-sync";
+import { parseAssignmentBase, classifyCasFailure, conflictItem } from "@/lib/assignment-conflict";
+
+function isUniqueViolation(e: unknown): boolean {
+  return !!e && typeof e === "object" && (e as { code?: string }).code === "P2002";
+}
 
 export async function POST(req: NextRequest) {
   const { error } = await getSession("schedule:auto");
@@ -287,19 +292,27 @@ export async function POST(req: NextRequest) {
     })),
   });
 
-  return NextResponse.json(result);
+  // Attach, per suggestion, the concurrency token of the cell it was computed
+  // against (or null if that cell was empty), so applying later can CAS against
+  // exactly that state and skip suggestions that another editor has since changed.
+  const tokenByCell = new Map(
+    existingAssignments.map((a) => [`${a.staffId}:${a.date.toISOString().split("T")[0]}`, a.updatedAt.toISOString()]),
+  );
+  const withTokens = {
+    ...result,
+    suggestions: result.suggestions.map((s) => ({ ...s, baseUpdatedAt: tokenByCell.get(`${s.staffId}:${s.date}`) ?? null })),
+  };
+
+  return NextResponse.json(withTokens);
 }
 
 export async function PUT(req: NextRequest) {
   const { error, userId } = await getSession("schedule:auto");
   if (error) return error;
   const body = await req.json();
-  const { suggestions } = body as {
-    suggestions: Array<{
-      staffId: string;
-      date: string;
-      shiftTypeId: string;
-    }>;
+  const { suggestions, force } = body as {
+    suggestions: Array<{ staffId: string; date: string; shiftTypeId: string; baseUpdatedAt?: string | null }>;
+    force?: boolean;
   };
 
   if (!suggestions?.length) {
@@ -309,46 +322,70 @@ export async function PUT(req: NextRequest) {
   const shiftTypes = await prisma.shiftType.findMany();
   const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
 
-  const applied = [];
-  const skipped = [];
-  for (const s of suggestions) {
-    const existing = await prisma.assignment.findUnique({
-      where: {
-        staffId_date: {
-          staffId: s.staffId,
-          date: new Date(s.date + "T00:00:00Z"),
-        },
-      },
-    });
-    if (existing?.isLocked) {
-      skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" });
-      continue;
-    }
-    const result = await prisma.assignment.upsert({
-      where: {
-        staffId_date: {
-          staffId: s.staffId,
-          date: new Date(s.date + "T00:00:00Z"),
-        },
-      },
-      update: { shiftTypeId: s.shiftTypeId, source: "auto" },
-      create: {
-        staffId: s.staffId,
-        date: new Date(s.date + "T00:00:00Z"),
-        shiftTypeId: s.shiftTypeId,
-        source: "auto",
-      },
-    });
-    const st = stMap.get(result.shiftTypeId);
-    applied.push({
-      id: result.id,
-      staffId: result.staffId,
-      date: result.date.toISOString().split("T")[0],
-      shiftTypeId: result.shiftTypeId,
-      isLocked: result.isLocked,
+  type Row = { id: string; staffId: string; date: Date; shiftTypeId: string; isLocked: boolean; updatedAt: Date };
+  const fmt = (a: Row, date: string) => {
+    const st = stMap.get(a.shiftTypeId);
+    return {
+      id: a.id,
+      staffId: a.staffId,
+      date,
+      shiftTypeId: a.shiftTypeId,
+      isLocked: a.isLocked,
+      updatedAt: a.updatedAt.toISOString(),
       code: st?.code ?? "?",
       color: st?.color ?? "#6b7280",
+    };
+  };
+
+  const applied = [];
+  const skipped = [];
+  const conflicts = [];
+  for (const s of suggestions) {
+    const base = parseAssignmentBase(s, { batchForce: force === true });
+    if (base.kind === "invalid") return NextResponse.json({ error: `${s.staffId}/${s.date}: ${base.message}` }, { status: 400 });
+    const dateObj = new Date(s.date + "T00:00:00Z");
+
+    // Legacy/force: upsert as before (lock still blocks).
+    if (base.kind === "legacy" || base.kind === "force") {
+      const existing = await prisma.assignment.findUnique({ where: { staffId_date: { staffId: s.staffId, date: dateObj } } });
+      if (existing?.isLocked) { skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" }); continue; }
+      const result = await prisma.assignment.upsert({
+        where: { staffId_date: { staffId: s.staffId, date: dateObj } },
+        update: { shiftTypeId: s.shiftTypeId, source: "auto" },
+        create: { staffId: s.staffId, date: dateObj, shiftTypeId: s.shiftTypeId, source: "auto" },
+      });
+      applied.push(fmt(result, s.date));
+      continue;
+    }
+
+    // The suggestion's cell was empty at generation: create, P2002 = filled since.
+    if (base.base === null) {
+      try {
+        const created = await prisma.assignment.create({ data: { staffId: s.staffId, date: dateObj, shiftTypeId: s.shiftTypeId, source: "auto" } });
+        applied.push(fmt(created, s.date));
+      } catch (e) {
+        if (!isUniqueViolation(e)) throw e;
+        const current = await prisma.assignment.findUnique({ where: { staffId_date: { staffId: s.staffId, date: dateObj } } });
+        if (current?.isLocked) skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" });
+        else conflicts.push(conflictItem(s.staffId, s.date, current ? fmt(current, s.date) : null));
+      }
+      continue;
+    }
+
+    // The suggestion's cell held a specific assignment at generation: only apply if
+    // it still does (another editor hasn't changed it since).
+    const r = await prisma.assignment.updateMany({
+      where: { staffId: s.staffId, date: dateObj, updatedAt: base.base, isLocked: false },
+      data: { shiftTypeId: s.shiftTypeId, source: "auto" },
     });
+    if (r.count === 1) {
+      const fresh = await prisma.assignment.findUnique({ where: { staffId_date: { staffId: s.staffId, date: dateObj } } });
+      applied.push(fmt(fresh!, s.date));
+      continue;
+    }
+    const current = await prisma.assignment.findUnique({ where: { staffId_date: { staffId: s.staffId, date: dateObj } } });
+    if (classifyCasFailure(current) === "locked") skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" });
+    else conflicts.push(conflictItem(s.staffId, s.date, current ? fmt(current, s.date) : null));
   }
 
   await syncRequestApprovals(
@@ -356,7 +393,7 @@ export async function PUT(req: NextRequest) {
     userId
   );
 
-  return NextResponse.json({ applied, skipped });
+  return NextResponse.json({ applied, skipped, conflicts });
 }
 
 export async function DELETE(req: NextRequest) {
@@ -391,6 +428,7 @@ export async function DELETE(req: NextRequest) {
       date: a.date.toISOString().split("T")[0],
       shiftTypeId: a.shiftTypeId,
       isLocked: a.isLocked,
+      updatedAt: a.updatedAt.toISOString(),
       code: st?.code ?? "?",
       color: st?.color ?? "#6b7280",
     };

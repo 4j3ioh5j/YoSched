@@ -55,6 +55,10 @@ type AssignmentData = {
   isLocked: boolean;
   code: string;
   color: string;
+  // Optimistic-concurrency token (Assignment.updatedAt, ISO). Optional for now —
+  // Slice 2a serializes it from the server; Slice 2b wires the client to send it
+  // back on writes for conflict detection.
+  updatedAt?: string;
 };
 
 type ShiftType = {
