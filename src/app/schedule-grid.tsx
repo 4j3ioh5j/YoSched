@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
 import { buildAlerts, groupAlertsByDate } from "@/lib/alerts";
@@ -530,6 +531,78 @@ export function ScheduleGrid({
   const redoStack = useRef<UndoEntry[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // --- Multi-editor revalidation (Slice 1) -----------------------------------
+  // The grid seeds its server-data state once and never re-syncs, so a second
+  // schedule:edit user's changes stay invisible until a hard reload. Mirror the
+  // /requests fix (handoff #151): refresh on focus/visibility, then adopt the
+  // refreshed server props — but ONLY while the local editor is idle, so we never
+  // clobber an open picker, an in-flight save, or a drag.
+  const router = useRouter();
+
+  // Adopt the refreshed server arrays when their identity changes (page.tsx builds
+  // NEW arrays each render → a real router.refresh() changes identity; the
+  // hydration render keeps the same ref → no spurious reset). Deferred while the
+  // editor is mid-interaction; the refs are NOT advanced when deferring, so a
+  // refresh that lands mid-edit is adopted once they settle (CR #658 pattern).
+  const adoptedAssignmentsRef = useRef(initialAssignments);
+  const adoptedRequestsRef = useRef(scheduleRequests);
+  const adoptedVersionsRef = useRef(currentVersions);
+  // Bumped when a drag-select ends (mouseup only flips a ref, which wouldn't
+  // re-run this effect) so a refresh deferred mid-drag is re-checked immediately
+  // rather than waiting for the next dep change (CR #664).
+  const [adoptTick, setAdoptTick] = useState(0);
+  useEffect(() => {
+    const propsChanged =
+      initialAssignments !== adoptedAssignmentsRef.current ||
+      scheduleRequests !== adoptedRequestsRef.current ||
+      currentVersions !== adoptedVersionsRef.current;
+    if (!propsChanged) return;
+    // Defer while the editor is interacting; refs stay put so this re-runs and
+    // adopts once the interaction clears (all guards are in the dep list, except
+    // dragSelecting which is a ref paired with adoptTick below). autoLoading guards
+    // against an in-flight auto-schedule whose response would otherwise repopulate
+    // suggestions computed against pre-refresh data (CR #664).
+    if (picker !== null || saving !== null || dragSource !== null || autoLoading || dragSelecting.current) return;
+
+    adoptedAssignmentsRef.current = initialAssignments;
+    adoptedRequestsRef.current = scheduleRequests;
+    adoptedVersionsRef.current = currentVersions;
+    setLocalAssignments(initialAssignments);
+    setLocalRequests(scheduleRequests);
+    // currentVersionMap is server-derived too (CR #662): rebuild it so the version
+    // footer + monthModified reflect another editor's save/restore.
+    setCurrentVersionMap(new Map(currentVersions.map((v) => [`${v.year}-${v.month}`, v])));
+    // Auto-schedule suggestions were computed against the pre-refresh assignment
+    // set; clear them so "Accept All" can't apply stale recommendations over the
+    // newly visible work (CR #662). Real conflict detection arrives in Slice 2.
+    setAutoSuggestions(null);
+    setAutoWarnings([]);
+    setAutoStats(null);
+    // Prior undo/redo ops reference pre-refresh state; replaying them would corrupt.
+    undoStack.current = [];
+    redoStack.current = [];
+  }, [initialAssignments, scheduleRequests, currentVersions, picker, saving, dragSource, autoLoading, adoptTick]);
+
+  // Revalidate on focus/visibility (SWR revalidateOnFocus-style): when an editor
+  // returns to this tab, pull fresh server state. Debounced so focus +
+  // visibilitychange (which fire together) coalesce into one refresh, and the short
+  // trailing delay also catches a write that finishes just after the tab refocuses.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (document.visibilityState !== "visible") return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => router.refresh(), 200);
+    };
+    document.addEventListener("visibilitychange", scheduleRefresh);
+    window.addEventListener("focus", scheduleRefresh);
+    return () => {
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", scheduleRefresh);
+      window.removeEventListener("focus", scheduleRefresh);
+    };
+  }, [router]);
+
   const dates = useMemo(
     () => getMonthDateRange(viewYear, viewMonth, payPeriods),
     [viewYear, viewMonth, payPeriods],
@@ -986,7 +1059,12 @@ export function ScheduleGrid({
 
   useEffect(() => {
     function onMouseUp() {
-      dragSelecting.current = false;
+      // Only re-render (to re-check deferred adoption) when a drag-select was
+      // actually in progress — not on every click. (CR #664)
+      if (dragSelecting.current) {
+        dragSelecting.current = false;
+        setAdoptTick((t) => t + 1);
+      }
     }
     document.addEventListener("mouseup", onMouseUp);
     return () => document.removeEventListener("mouseup", onMouseUp);
