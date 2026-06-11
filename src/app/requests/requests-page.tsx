@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { describeRequest, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
 import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 
@@ -47,6 +48,46 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const df = (dfProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
+  const router = useRouter();
+
+  // Adopt fresh server data after a router.refresh() (below) or any navigation
+  // that re-runs the force-dynamic loader. useState(initial) freezes the first
+  // array, so without this the inbox never reflects status changes made elsewhere
+  // — e.g. a schedule assignment honoring/un-honoring a request (the backend
+  // already writes the new status via syncRequestApprovals). page.tsx builds a NEW
+  // requests array every render, so a changed identity means genuinely fresh data
+  // (the hydration render keeps the same ref → no spurious reset). Defer adoption
+  // while a mutation is in flight so it can't clobber an optimistic row; crucially
+  // we DON'T advance adoptedRef until we actually adopt, so a refresh that lands
+  // mid-mutation isn't lost — busyId in the deps re-runs this once it clears.
+  const adoptedRef = useRef(initial);
+  useEffect(() => {
+    if (initial === adoptedRef.current) return;
+    if (busyId) return; // a mutation is in flight; adopt once it settles
+    adoptedRef.current = initial;
+    setRequests(initial);
+  }, [initial, busyId]);
+
+  // Revalidate on focus/visibility (SWR revalidateOnFocus-style): when the admin
+  // assigns on the schedule page and returns to this tab, pull fresh status with no
+  // manual reload. Debounced so focus + visibilitychange — which fire together —
+  // coalesce into a single refresh; the short trailing delay also catches an
+  // assignment write that finishes just after the tab refocuses.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (document.visibilityState !== "visible") return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => router.refresh(), 200);
+    };
+    document.addEventListener("visibilitychange", scheduleRefresh);
+    window.addEventListener("focus", scheduleRefresh);
+    return () => {
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", scheduleRefresh);
+      window.removeEventListener("focus", scheduleRefresh);
+    };
+  }, [router]);
 
   const codeOf = (id: string) => shiftCode[id] ?? id;
   // Date-only (for the requested start/end @db.Date values).
