@@ -2,7 +2,8 @@
 
 ## Open
 
-_(none)_
+### Possibilities (not committed)
+- [ ] **Collapse fee-basis staff into one "FB" print column** — the printed schedule is *width-bound*: with one column per staff, many columns force the browser to shrink the whole grid (the real cause behind the small rows / faint bold). A settings toggle could print all fee-basis staff as a **single "FB" column** showing a comma-separated list of the initials scheduled that day (how it worked pre-YoSched). Far fewer columns → no width-scaling → bold/row-height/title all render at full size with no CSS fighting. Mechanically close to the existing **dedicated-column** feature (per-shift initials list); here it's a per-employment-type collapse. Kept as a possibility (raised 2026-06-11); revisit if the `table-layout:fixed` width-fit (commit `7f2d23b`) isn't enough on its own.
 
 ## Done
 
