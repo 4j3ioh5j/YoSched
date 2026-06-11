@@ -2,8 +2,8 @@
 
 ## Open
 
-### Possibilities (not committed)
-- [ ] **Collapse fee-basis staff into one "FB" print column** — the printed schedule is *width-bound*: with one column per staff, many columns force the browser to shrink the whole grid (the real cause behind the small rows / faint bold). A settings toggle could print all fee-basis staff as a **single "FB" column** showing a comma-separated list of the initials scheduled that day (how it worked pre-YoSched). Far fewer columns → no width-scaling → bold/row-height/title all render at full size with no CSS fighting. Mechanically close to the existing **dedicated-column** feature (per-shift initials list); here it's a per-employment-type collapse. Kept as a possibility (raised 2026-06-11); revisit if the `table-layout:fixed` width-fit (commit `7f2d23b`) isn't enough on its own.
+- [ ] **Collapse fee-basis staff into one "OTHER" print column** — the printed schedule is width-bound (one column per staff → browser shrinks the whole grid → cramped). Decided 2026-06-11: a **single global settings toggle (default ON)** that, **on print only**, hides the individual fee-basis staff columns and shows one **OTHER** column listing the comma-separated initials of the fee-basis staff scheduled each day (pre-YoSched layout). On-screen grid stays one editable column per person. Mechanically close to the existing dedicated-column feature. In progress.
+- [ ] **Refresh the request-box (inbox) status after a schedule assignment honors/un-honors a request** — when an assignment is made on the schedule that satisfies (or breaks) a pending/approved request, the `/requests` inbox status should update to reflect it without a manual refresh. (Requested 2026-06-11.)
 
 ## Done
 

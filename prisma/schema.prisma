@@ -119,6 +119,7 @@ model ShiftTypeRole {
 model EmploymentType {
   id                     String   @id @default(cuid())
   name                   String   @unique
+  collapsesIntoOther     Boolean  @default(false) // staff of this type collapse into the single "OTHER" print column
   defaultIsAutoScheduled Boolean  @default(true)
   defaultFtePercentage   Float    @default(1.0)
   sortOrder              Int      @default(0)
@@ -305,6 +306,7 @@ model SchedulingPreferences {
   deviceTrustDays       Int     @default(30)
   dateFormat            String  @default("MMMM D, YYYY")
   maxLeavePerDay        Int     @default(0) // soft cap on staff off per day; 0 = no cap
+  collapseOtherOnPrint  Boolean @default(true) // print: collapse collapsesIntoOther staff into one "OTHER" column
 
   @@map("scheduling_preferences")
 }

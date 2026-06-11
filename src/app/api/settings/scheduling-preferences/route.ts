@@ -19,7 +19,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, collapseOtherOnPrint } = body;
 
   const prefs = await prisma.schedulingPreferences.upsert({
     where: { id: "default" },
@@ -30,6 +30,7 @@ export async function PUT(req: NextRequest) {
       ...(typeof deviceTrustDays === "number" && deviceTrustDays >= 1 && deviceTrustDays <= 365 && { deviceTrustDays: Math.floor(deviceTrustDays) }),
       ...(typeof dateFormat === "string" && isValidDateFormat(dateFormat) && { dateFormat }),
       ...(typeof maxLeavePerDay === "number" && maxLeavePerDay >= 0 && maxLeavePerDay <= 999 && { maxLeavePerDay: Math.floor(maxLeavePerDay) }),
+      ...(typeof collapseOtherOnPrint === "boolean" && { collapseOtherOnPrint }),
     },
     create: {
       id: "default",
@@ -37,6 +38,9 @@ export async function PUT(req: NextRequest) {
       prefer4DayWeekends: prefer4DayWeekends ?? true,
       preferSequentialOff: preferSequentialOff ?? true,
       ...(typeof dateFormat === "string" && isValidDateFormat(dateFormat) && { dateFormat }),
+      // Preserve an explicit false on first write; omit otherwise so the schema
+      // default (true) applies. (Do NOT use `?? true` — that would re-enable it.)
+      ...(typeof collapseOtherOnPrint === "boolean" && { collapseOtherOnPrint }),
     },
   });
 

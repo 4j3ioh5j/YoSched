@@ -54,8 +54,8 @@ async function main() {
   });
   const feeBasisType = await prisma.employmentType.upsert({
     where: { name: "Fee Basis" },
-    update: {},
-    create: { name: "Fee Basis", defaultIsAutoScheduled: false, defaultFtePercentage: 0, sortOrder: 1 },
+    update: { collapsesIntoOther: true },
+    create: { name: "Fee Basis", collapsesIntoOther: true, defaultIsAutoScheduled: false, defaultFtePercentage: 0, sortOrder: 1 },
   });
   console.log("Seeded 2 employment types");
 

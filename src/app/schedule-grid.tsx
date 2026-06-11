@@ -9,6 +9,7 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
+import { otherColumnInitials } from "@/lib/other-column";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
 
@@ -39,6 +40,7 @@ type Staff = {
   name: string;
   ftePercentage: number;
   employmentTypeName: string;
+  collapsesIntoOther: boolean;
   availabilityRules: AvailabilityRuleData[];
   isAutoScheduled: boolean;
   isActive: boolean;
@@ -145,6 +147,7 @@ type Props = {
   dateFormat?: string;
   currentVersions?: CurrentVersionMeta[];
   scheduleRequests?: GridRequest[];
+  collapseOtherOnPrint?: boolean;
 };
 
 // The current (last saved/restored) version for a calendar month. snapshotHash
@@ -334,6 +337,7 @@ export function ScheduleGrid({
   dateFormat: dateFormatProp,
   currentVersions = [],
   scheduleRequests = [],
+  collapseOtherOnPrint = true,
 }: Props) {
   const dateFormat = (dateFormatProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
   const today = new Date();
@@ -582,6 +586,24 @@ export function ScheduleGrid({
     }
     return map;
   }, [localAssignments]);
+
+  // "OTHER" print column: staff flagged collapsesIntoOther are hidden as individual
+  // columns in print and listed together here. Print-only — the on-screen grid keeps a
+  // column per person for editing. otherColInitials maps each date to the initials of
+  // those scheduled (a non-off assignment) that day.
+  const otherStaff = useMemo(
+    () => (collapseOtherOnPrint ? visibleStaff.filter((p) => p.collapsesIntoOther) : []),
+    [collapseOtherOnPrint, visibleStaff],
+  );
+  const showOtherColumn = otherStaff.length > 0;
+  const otherColInitials = useMemo(
+    () =>
+      otherColumnInitials(otherStaff, dates, (staffId, date) => {
+        const a = assignmentMap.get(`${staffId}:${date}`);
+        return !!a && !offShiftTypeIds.has(a.shiftTypeId);
+      }),
+    [otherStaff, dates, assignmentMap, offShiftTypeIds],
+  );
 
   const shiftTypeMap = useMemo(() => {
     const map = new Map<string, ShiftType>();
@@ -1918,6 +1940,7 @@ export function ScheduleGrid({
                 return (
                   <th
                     key={p.id}
+                    data-print-collapse={collapseOtherOnPrint && p.collapsesIntoOther ? "" : undefined}
                     className="px-1 py-1 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer"
                     style={isActiveCol || hoverCol === p.id ? { backgroundColor: "rgba(29,78,216,0.7)" } : undefined}
                     onClick={() => setActiveCol(activeCol === p.id ? null : p.id)}
@@ -1937,6 +1960,11 @@ export function ScheduleGrid({
                   </th>
                 );
               })}
+              {showOtherColumn && (
+                <th data-other-col className="hidden px-1 py-1 text-center text-xs font-medium border-b border-slate-700">
+                  OTHER
+                </th>
+              )}
               {dedicatedColumns.map((st) => (
                 <th
                   key={`ded-h-${st.id}`}
@@ -1988,6 +2016,7 @@ export function ScheduleGrid({
                       return (
                         <td
                           key={p.id}
+                          data-print-collapse={collapseOtherOnPrint && p.collapsesIntoOther ? "" : undefined}
                           className="px-0 py-1 text-center border-slate-600/50 border border-y-indigo-500/60"
                           onMouseEnter={(e) => showTip(setTooltip, `${p.initials}: ${hours}hrs / ${target}hrs target (${diffLabel})`, e)}
                           onMouseLeave={() => setTooltip(null)}
@@ -1998,6 +2027,11 @@ export function ScheduleGrid({
                         </td>
                       );
                     })}
+                    {/* Blank OTHER cell keeps the PP-summary row column-aligned with the day
+                        rows in print (where the individual fee-basis columns are hidden). */}
+                    {showOtherColumn && (
+                      <td data-other-col className="hidden border-slate-600/50 border border-y-indigo-500/60" />
+                    )}
                     {dedicatedColumns.length > 0 && (
                       <td colSpan={dedicatedColumns.length} className="border-l border-slate-600 border-y border-y-indigo-500/60" />
                     )}
@@ -2089,6 +2123,7 @@ export function ScheduleGrid({
                         key={p.id}
                         data-cell={cellKey}
                         data-bold-cell={a && shiftTypeMap.get(a.shiftTypeId)?.boldOnSchedule ? "" : undefined}
+                        data-print-collapse={collapseOtherOnPrint && p.collapsesIntoOther ? "" : undefined}
                         className={[
                           `px-0.5 py-0.5 text-center border-slate-700/30 border relative ${canEdit ? "cursor-pointer" : "cursor-default"}`,
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
@@ -2165,6 +2200,17 @@ export function ScheduleGrid({
                       </td>
                     );
                   })}
+                  {showOtherColumn && (
+                    <td
+                      data-other-col
+                      className={[
+                        "hidden px-0.5 py-0.5 text-center text-[10px] font-semibold leading-tight break-words border-l border-slate-700",
+                        isNewPP ? "border-t-2 border-t-indigo-500" : "",
+                      ].join(" ")}
+                    >
+                      {(otherColInitials[date] ?? []).join(", ")}
+                    </td>
+                  )}
                   {dedicatedColumns.map((st, di) => {
                     const inits = dedicatedColumnInitialsData[di]?.[date] ?? [];
                     return (

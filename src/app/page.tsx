@@ -116,6 +116,7 @@ export default async function Home() {
           name: p.name,
           ftePercentage: p.ftePercentage ?? 1.0,
           employmentTypeName: p.employmentType.name,
+          collapsesIntoOther: p.employmentType.collapsesIntoOther,
           availabilityRules: p.availabilityRules.map((ar) => ({
             dayOfWeek: ar.dayOfWeek,
             type: ar.type,
@@ -188,6 +189,7 @@ export default async function Home() {
           shiftCodes: c.shiftCodes,
         }))}
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
+        collapseOtherOnPrint={schedPrefs?.collapseOtherOnPrint ?? true}
         currentVersions={currentVersions.map((v) => ({
           year: v.year,
           month: v.month,

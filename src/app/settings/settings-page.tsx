@@ -67,6 +67,7 @@ type SchedulingPrefs = {
   preferSequentialOff: boolean;
   dateFormat: string;
   maxLeavePerDay: number;
+  collapseOtherOnPrint: boolean;
 };
 
 type DefaultAvailabilityRule = {
@@ -1846,6 +1847,7 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
     { key: "prefer3DayWeekends", label: "Prefer 3-day weekends", description: "Place days off adjacent to weekends when possible" },
     { key: "prefer4DayWeekends", label: "Prefer 4-day weekends", description: "Cluster two days off next to a weekend for longer breaks" },
     { key: "preferSequentialOff", label: "Prefer sequential days off", description: "Group days off together rather than scattering them through the week" },
+    { key: "collapseOtherOnPrint", label: "Collapse fee-basis staff on the printed schedule", description: "Print fee-basis staff as one \"OTHER\" column listing the initials scheduled each day (fewer columns → fits the page better). The on-screen grid is unchanged." },
   ];
 
   const [leapStatus, setLeapStatus] = useState<SaveStatus>("idle");
