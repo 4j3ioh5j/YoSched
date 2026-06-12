@@ -6,7 +6,9 @@
   - [x] **Slice 1 — grid focus/visibility revalidation** (`4ea4037`, deployed 2026-06-11) — the grid pulls in another editor's persisted changes on tab-back; idle-guarded so it never clobbers an open picker / in-flight save / drag. See handoff #152.
   - [~] **Slice 2 — optimistic conflict-detection** — reuse the existing `Assignment.updatedAt` token (no migration); writes carry the last-seen token, server returns 409 + current value on a stale write, client offers "changed underneath you — overwrite?".
     - [x] **2a (server CAS)** (`3a43197`, deployed 2026-06-11) — atomic compare-and-swap across all grid-driven write paths (assignments/bulk/auto-schedule); 409 `{staffId,date,current}`; pure helper + 15 tests; ships dormant/backward-compat. See handoff #153.
-    - [ ] **2b (client)** — grid sends `baseUpdatedAt` per write, folds the server token back into state, and shows the 409 conflict dialog (Overwrite/Keep-theirs; bulk "Overwrite all"). DECISION: attribution "(by name)" needs an additive `updatedBy` column (migration) else dialog says "someone else". Also fold CR #674-W1 (make `force` keep `isLocked:false` atomic).
+    - [~] **2b — optimistic conflict UI** (name attribution chosen)
+      - [x] **2b-server** (`1982b8e`, deployed 2026-06-11) — `updatedBy` migration + stamping (6 routes) + private/batched name resolution in 409s + atomic force/swap locks. See handoff #154.
+      - [ ] **2b-client** — grid sends `baseUpdatedAt` per write, folds the server token back, and on 409 reverts + shows the conflict dialog (Overwrite=force / Keep-theirs; bulk/auto "Overwrite all"). Revert BOTH swap sides on a swap 409 (CR #682); prune the undo entry for a conflicted cell (CR #676).
   - [ ] **Slice 3 — presence** — `SchedulePresence` table + ~5s heartbeat poll (TTL-reaped); page banner of active editors + per-cell focus outline. Advisory.
 
 ## Done
