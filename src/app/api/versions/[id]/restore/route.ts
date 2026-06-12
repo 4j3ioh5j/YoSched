@@ -21,7 +21,7 @@ const LIST_SELECT = {
 // its saved snapshot. The current month state is auto-backed-up to a new version
 // first so nothing is ever lost, then the target version is marked current.
 export async function POST(_req: NextRequest, { params }: Ctx) {
-  const { error, userId } = await getSession("schedule:edit");
+  const { error } = await getSession("schedule:edit");
   if (error) return error;
   const { id } = await params;
 
@@ -74,7 +74,6 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
             isLocked: s.isLocked,
             source: s.source,
             notes: s.notes,
-            updatedBy: userId,
           })),
         });
       }

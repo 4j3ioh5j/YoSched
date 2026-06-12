@@ -153,8 +153,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         if (byDate.get(date)?.isLocked) continue;
         await prisma.assignment.upsert({
           where: { staffId_date: { staffId, date: at(date) } },
-          update: { shiftTypeId: placement, source: "request", updatedBy: result.userId },
-          create: { staffId, date: at(date), shiftTypeId: placement, source: "request", updatedBy: result.userId },
+          update: { shiftTypeId: placement, source: "request" },
+          create: { staffId, date: at(date), shiftTypeId: placement, source: "request" },
         });
       }
     }

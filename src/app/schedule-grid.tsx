@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
 import { buildAlerts, groupAlertsByDate } from "@/lib/alerts";
@@ -13,7 +12,6 @@ import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { otherColumnInitials } from "@/lib/other-column";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
-import { describeConflict, conflictTitle } from "@/lib/conflict-format";
 
 // A schedule request as delivered to the grid (pure-module shape + display stamp).
 type GridRequest = ScheduleRequestData & { receivedAt: string };
@@ -56,10 +54,6 @@ type AssignmentData = {
   isLocked: boolean;
   code: string;
   color: string;
-  // Optimistic-concurrency token (Assignment.updatedAt, ISO). Optional for now —
-  // Slice 2a serializes it from the server; Slice 2b wires the client to send it
-  // back on writes for conflict detection.
-  updatedAt?: string;
 };
 
 type ShiftType = {
@@ -354,15 +348,6 @@ export function ScheduleGrid({
   const [requestError, setRequestError] = useState<string | null>(null);
   const [picker, setPicker] = useState<PickerState>(null);
   const [saving, setSaving] = useState<string | null>(null);
-  // --- Conflict detection (Slice 2b) -----------------------------------------
-  // When a write loses the optimistic-concurrency check the server reports the
-  // cell(s) that changed underneath us; we revert to the live value and offer to
-  // overwrite. `current` is the live AssignmentData + updater name, or null if the
-  // cell is now empty.
-  type ConflictCurrent = AssignmentData & { updatedByName: string | null };
-  type ConflictHit = { staffId: string; date: string; current: ConflictCurrent | null };
-  const [conflictModal, setConflictModal] = useState<{ items: ConflictHit[]; onOverwrite: () => void } | null>(null);
-  const [conflictError, setConflictError] = useState<string | null>(null);
   const [dragSource, setDragSource] = useState<{ staffId: string; date: string } | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [activeRow, setActiveRow] = useState<string | null>(null);
@@ -544,78 +529,6 @@ export function ScheduleGrid({
   const undoStack = useRef<UndoEntry[]>([]);
   const redoStack = useRef<UndoEntry[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  // --- Multi-editor revalidation (Slice 1) -----------------------------------
-  // The grid seeds its server-data state once and never re-syncs, so a second
-  // schedule:edit user's changes stay invisible until a hard reload. Mirror the
-  // /requests fix (handoff #151): refresh on focus/visibility, then adopt the
-  // refreshed server props — but ONLY while the local editor is idle, so we never
-  // clobber an open picker, an in-flight save, or a drag.
-  const router = useRouter();
-
-  // Adopt the refreshed server arrays when their identity changes (page.tsx builds
-  // NEW arrays each render → a real router.refresh() changes identity; the
-  // hydration render keeps the same ref → no spurious reset). Deferred while the
-  // editor is mid-interaction; the refs are NOT advanced when deferring, so a
-  // refresh that lands mid-edit is adopted once they settle (CR #658 pattern).
-  const adoptedAssignmentsRef = useRef(initialAssignments);
-  const adoptedRequestsRef = useRef(scheduleRequests);
-  const adoptedVersionsRef = useRef(currentVersions);
-  // Bumped when a drag-select ends (mouseup only flips a ref, which wouldn't
-  // re-run this effect) so a refresh deferred mid-drag is re-checked immediately
-  // rather than waiting for the next dep change (CR #664).
-  const [adoptTick, setAdoptTick] = useState(0);
-  useEffect(() => {
-    const propsChanged =
-      initialAssignments !== adoptedAssignmentsRef.current ||
-      scheduleRequests !== adoptedRequestsRef.current ||
-      currentVersions !== adoptedVersionsRef.current;
-    if (!propsChanged) return;
-    // Defer while the editor is interacting; refs stay put so this re-runs and
-    // adopts once the interaction clears (all guards are in the dep list, except
-    // dragSelecting which is a ref paired with adoptTick below). autoLoading guards
-    // against an in-flight auto-schedule whose response would otherwise repopulate
-    // suggestions computed against pre-refresh data (CR #664).
-    if (picker !== null || saving !== null || dragSource !== null || autoLoading || dragSelecting.current) return;
-
-    adoptedAssignmentsRef.current = initialAssignments;
-    adoptedRequestsRef.current = scheduleRequests;
-    adoptedVersionsRef.current = currentVersions;
-    setLocalAssignments(initialAssignments);
-    setLocalRequests(scheduleRequests);
-    // currentVersionMap is server-derived too (CR #662): rebuild it so the version
-    // footer + monthModified reflect another editor's save/restore.
-    setCurrentVersionMap(new Map(currentVersions.map((v) => [`${v.year}-${v.month}`, v])));
-    // Auto-schedule suggestions were computed against the pre-refresh assignment
-    // set; clear them so "Accept All" can't apply stale recommendations over the
-    // newly visible work (CR #662). Real conflict detection arrives in Slice 2.
-    setAutoSuggestions(null);
-    setAutoWarnings([]);
-    setAutoStats(null);
-    // Prior undo/redo ops reference pre-refresh state; replaying them would corrupt.
-    undoStack.current = [];
-    redoStack.current = [];
-  }, [initialAssignments, scheduleRequests, currentVersions, picker, saving, dragSource, autoLoading, adoptTick]);
-
-  // Revalidate on focus/visibility (SWR revalidateOnFocus-style): when an editor
-  // returns to this tab, pull fresh server state. Debounced so focus +
-  // visibilitychange (which fire together) coalesce into one refresh, and the short
-  // trailing delay also catches a write that finishes just after the tab refocuses.
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const scheduleRefresh = () => {
-      if (document.visibilityState !== "visible") return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => router.refresh(), 200);
-    };
-    document.addEventListener("visibilitychange", scheduleRefresh);
-    window.addEventListener("focus", scheduleRefresh);
-    return () => {
-      if (timer) clearTimeout(timer);
-      document.removeEventListener("visibilitychange", scheduleRefresh);
-      window.removeEventListener("focus", scheduleRefresh);
-    };
-  }, [router]);
 
   const dates = useMemo(
     () => getMonthDateRange(viewYear, viewMonth, payPeriods),
@@ -1073,12 +986,7 @@ export function ScheduleGrid({
 
   useEffect(() => {
     function onMouseUp() {
-      // Only re-render (to re-check deferred adoption) when a drag-select was
-      // actually in progress — not on every click. (CR #664)
-      if (dragSelecting.current) {
-        dragSelecting.current = false;
-        setAdoptTick((t) => t + 1);
-      }
+      dragSelecting.current = false;
     }
     document.addEventListener("mouseup", onMouseUp);
     return () => document.removeEventListener("mouseup", onMouseUp);
@@ -1100,146 +1008,7 @@ export function ScheduleGrid({
     redoStack.current = [];
   }
 
-  // Auto-dismiss the conflict error toast.
-  useEffect(() => {
-    if (!conflictError) return;
-    const t = setTimeout(() => setConflictError(null), 5000);
-    return () => clearTimeout(t);
-  }, [conflictError]);
-
-  // --- Conflict helpers (Slice 2b) -------------------------------------------
-  const JSON_HEADERS = { "Content-Type": "application/json" };
-  // The cell's last-seen token (the base for a write), or null if it was empty.
-  const tokenFor = (staffId: string, date: string) => assignmentMap.get(`${staffId}:${date}`)?.updatedAt ?? null;
-
-  // Fold the server's saved rows (which carry a fresh updatedAt) back in so the
-  // next edit's base self-heals.
-  function foldApplied(rows: AssignmentData[]) {
-    setLocalAssignments((prev) => {
-      const keys = new Set(rows.map((s) => `${s.staffId}:${s.date}`));
-      return [...prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`)), ...rows];
-    });
-  }
-
-  // Undo an optimistic write that the server hard-refused (a lock 400, or a bulk
-  // `skipped`), so a refused cell never lingers as if it succeeded (CR #686).
-  function revertCell(staffId: string, date: string, prev: AssignmentData | null) {
-    setLocalAssignments((p) => {
-      const filtered = p.filter((a) => !(a.staffId === staffId && a.date === date));
-      return prev ? [...filtered, prev] : filtered;
-    });
-  }
-  function revertToPrior(cells: { staffId: string; date: string }[], prior: Map<string, AssignmentData | null>) {
-    const keys = new Set(cells.map((c) => `${c.staffId}:${c.date}`));
-    setLocalAssignments((p) => {
-      const filtered = p.filter((a) => !keys.has(`${a.staffId}:${a.date}`));
-      const restored = cells.map((c) => prior.get(`${c.staffId}:${c.date}`) ?? null).filter((x): x is AssignmentData => !!x);
-      return [...filtered, ...restored];
-    });
-  }
-
-  // Replace each conflicted cell with the server's current value (or remove it if
-  // now empty) so the grid shows DB truth, and prune those cells from the most
-  // recent undo group so Undo can't replay the abandoned write (CR #676).
-  // `pruneCells` defaults to the conflicted cells, but a swap must prune BOTH of its
-  // undo ops even when only one side conflicted, or Undo would replay half the swap
-  // (CR #688).
-  function openConflicts(items: ConflictHit[], onOverwrite: () => void, pruneCells?: { staffId: string; date: string }[]) {
-    setLocalAssignments((prev) => {
-      const keys = new Set(items.map((i) => `${i.staffId}:${i.date}`));
-      const restored = items.map((i) => i.current).filter((c): c is ConflictCurrent => c !== null);
-      return [...prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`)), ...restored];
-    });
-    const top = undoStack.current[undoStack.current.length - 1];
-    if (top) {
-      const keys = new Set((pruneCells ?? items).map((i) => `${i.staffId}:${i.date}`));
-      const remaining = top.filter((op) => !keys.has(`${op.staffId}:${op.date}`));
-      if (remaining.length === 0) undoStack.current.pop();
-      else undoStack.current[undoStack.current.length - 1] = remaining;
-    }
-    setConflictModal({ items, onOverwrite });
-  }
-
-  // Force-retry variants — re-issue the write with force:true. force overrides the
-  // conflict but not a lock (which returns 400), so surface that without leaving the
-  // grid stuck (CR #684).
-  async function forcePutSingle(staffId: string, date: string, shiftTypeId: string) {
-    setSaving(`${staffId}:${date}`);
-    try {
-      const res = await fetch("/api/assignments", { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ staffId, date, shiftTypeId, force: true }) });
-      if (res.ok) foldApplied([await res.json()]);
-      else setConflictError("Couldn't overwrite — the cell may be locked.");
-    } catch { setConflictError("Overwrite failed."); }
-    finally { setConflictModal(null); setSaving(null); }
-  }
-  async function forceDeleteSingle(staffId: string, date: string) {
-    setSaving(`${staffId}:${date}`);
-    try {
-      const res = await fetch("/api/assignments", { method: "DELETE", headers: JSON_HEADERS, body: JSON.stringify({ staffId, date, force: true }) });
-      if (res.ok) setLocalAssignments((prev) => prev.filter((a) => !(a.staffId === staffId && a.date === date)));
-      else setConflictError("Couldn't clear — the cell may be locked.");
-    } catch { setConflictError("Clear failed."); }
-    finally { setConflictModal(null); setSaving(null); }
-  }
-  async function forceBulkPut(cells: { staffId: string; date: string }[], shiftTypeId: string) {
-    setSaving("bulk");
-    try {
-      const res = await fetch("/api/assignments/bulk", { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ cells: cells.map((c) => ({ staffId: c.staffId, date: c.date })), shiftTypeId, force: true }) });
-      if (res.ok) {
-        const { applied, skipped } = await res.json();
-        foldApplied(applied);
-        if (skipped && skipped.length > 0) setConflictError("Some cells are locked and were not changed.");
-      } else setConflictError("Couldn't overwrite some cells.");
-    } catch { setConflictError("Overwrite failed."); }
-    finally { setConflictModal(null); setSaving(null); }
-  }
-  async function forceBulkDelete(cells: { staffId: string; date: string }[]) {
-    setSaving("bulk");
-    try {
-      const res = await fetch("/api/assignments/bulk", { method: "DELETE", headers: JSON_HEADERS, body: JSON.stringify({ cells: cells.map((c) => ({ staffId: c.staffId, date: c.date })), force: true }) });
-      if (res.ok) {
-        // Only remove what actually cleared — a cell locked since (skipped) stays.
-        const { skipped } = (await res.json()) as { skipped?: { staffId: string; date: string }[] };
-        const skippedKeys = new Set((skipped ?? []).map((s) => `${s.staffId}:${s.date}`));
-        const removeKeys = new Set(cells.filter((c) => !skippedKeys.has(`${c.staffId}:${c.date}`)).map((c) => `${c.staffId}:${c.date}`));
-        setLocalAssignments((prev) => prev.filter((a) => !removeKeys.has(`${a.staffId}:${a.date}`)));
-        if (skipped && skipped.length > 0) setConflictError("Some cells are locked and were not cleared.");
-      } else setConflictError("Couldn't clear some cells.");
-    } catch { setConflictError("Clear failed."); }
-    finally { setConflictModal(null); setSaving(null); }
-  }
-  async function forceSwap(fromStaffId: string, fromDate: string, toStaffId: string, toDate: string) {
-    setSaving(`${fromStaffId}:${fromDate}`);
-    try {
-      const res = await fetch("/api/assignments", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ action: "swap", from: { staffId: fromStaffId, date: fromDate }, to: { staffId: toStaffId, date: toDate }, force: true }) });
-      if (res.ok) {
-        const result = await res.json();
-        setLocalAssignments((prev) => {
-          const next = prev.filter((a) => !(a.staffId === fromStaffId && a.date === fromDate) && !(a.staffId === toStaffId && a.date === toDate));
-          if (result.moved) next.push(result.moved);
-          if (result.swapped) next.push(result.swapped);
-          return next;
-        });
-      } else {
-        setConflictError("Couldn't move — a cell may be locked.");
-        router.refresh();
-      }
-    } catch { setConflictError("Move failed."); }
-    finally { setConflictModal(null); setSaving(null); }
-  }
-  async function forceAutoApply(suggestions: { staffId: string; date: string; shiftTypeId: string }[]) {
-    setAutoLoading(true);
-    try {
-      const res = await fetch("/api/auto-schedule", { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ suggestions, force: true }) });
-      if (res.ok) { const data = await res.json(); foldApplied((data.applied ?? []) as AssignmentData[]); }
-      else setConflictError("Couldn't apply some suggestions.");
-    } catch { setConflictError("Apply failed."); }
-    finally { setConflictModal(null); setAutoLoading(false); }
-  }
-
   async function applyAssignment(staffId: string, date: string, assignment: AssignmentData | null) {
-    const base = tokenFor(staffId, date);
-    const prevCell = assignmentMap.get(`${staffId}:${date}`) ?? null;
     setSaving(`${staffId}:${date}`);
     if (assignment) {
       setLocalAssignments((prev) => {
@@ -1250,36 +1019,23 @@ export function ScheduleGrid({
         const res = await fetch("/api/assignments", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ staffId, date, shiftTypeId: assignment.shiftTypeId, baseUpdatedAt: base }),
+          body: JSON.stringify({ staffId, date, shiftTypeId: assignment.shiftTypeId }),
         });
-        if (res.status === 409) {
-          const { conflict } = await res.json();
-          openConflicts([conflict], () => forcePutSingle(staffId, date, assignment.shiftTypeId));
-        } else if (res.ok) {
-          const saved = await res.json();
-          setLocalAssignments((prev) =>
-            prev.map((a) => (a.staffId === staffId && a.date === date ? saved : a)),
-          );
-        } else {
-          revertCell(staffId, date, prevCell); // hard refusal (e.g. locked) — undo optimistic
-        }
+        const saved = await res.json();
+        setLocalAssignments((prev) =>
+          prev.map((a) => (a.staffId === staffId && a.date === date ? saved : a)),
+        );
       } catch { /* optimistic stays */ }
     } else {
       setLocalAssignments((prev) =>
         prev.filter((a) => !(a.staffId === staffId && a.date === date)),
       );
       try {
-        const res = await fetch("/api/assignments", {
+        await fetch("/api/assignments", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ staffId, date, baseUpdatedAt: base }),
+          body: JSON.stringify({ staffId, date }),
         });
-        if (res.status === 409) {
-          const { conflict } = await res.json();
-          openConflicts([conflict], () => forceDeleteSingle(staffId, date));
-        } else if (!res.ok) {
-          revertCell(staffId, date, prevCell); // hard refusal (e.g. locked) — restore the cell
-        }
       } catch { /* optimistic stays */ }
     }
     setSaving(null);
@@ -1375,17 +1131,17 @@ export function ScheduleGrid({
   }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleStaff, hotkeyMap, selection, showMonthPicker]);
 
   const hotkeyAssign = useCallback(async (st: ShiftType) => {
-    const cells: { staffId: string; date: string; baseUpdatedAt?: string | null }[] = [];
+    const cells: { staffId: string; date: string }[] = [];
     if (selection.size > 0) {
       for (const key of selection) {
         if (assignmentMap.get(key)?.isLocked) continue;
         const [pid, d] = key.split(":");
-        cells.push({ staffId: pid, date: d, baseUpdatedAt: tokenFor(pid, d) });
+        cells.push({ staffId: pid, date: d });
       }
     } else if (activeCol && activeRow) {
       const existing = assignmentMap.get(`${activeCol}:${activeRow}`);
       if (existing?.isLocked) return;
-      cells.push({ staffId: activeCol, date: activeRow, baseUpdatedAt: tokenFor(activeCol, activeRow) });
+      cells.push({ staffId: activeCol, date: activeRow });
     }
     if (cells.length === 0) return;
 
@@ -1425,19 +1181,17 @@ export function ScheduleGrid({
     });
 
     try {
-      const prior = new Map(cells.map((c) => [`${c.staffId}:${c.date}`, assignmentMap.get(`${c.staffId}:${c.date}`) ?? null] as const));
       const res = await fetch("/api/assignments/bulk", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cells, shiftTypeId: st.id }),
       });
       if (res.ok) {
-        const { applied, skipped, conflicts } = await res.json() as { applied: AssignmentData[]; skipped?: { staffId: string; date: string }[]; conflicts?: ConflictHit[] };
-        foldApplied(applied);
-        if (skipped && skipped.length > 0) revertToPrior(skipped, prior); // locked → undo optimistic
-        if (conflicts && conflicts.length > 0) openConflicts(conflicts, () => forceBulkPut(conflicts, st.id));
-      } else {
-        revertToPrior(cells, prior);
+        const { applied } = await res.json() as { applied: AssignmentData[] };
+        setLocalAssignments((prev) => {
+          const savedKeys = new Set(applied.map((s) => `${s.staffId}:${s.date}`));
+          return [...prev.filter((a) => !savedKeys.has(`${a.staffId}:${a.date}`)), ...applied];
+        });
       }
     } catch { /* optimistic stays */ }
     setSaving(null);
@@ -1452,15 +1206,15 @@ export function ScheduleGrid({
     if (!st) return;
 
     // Determine cells to assign: selection or single cell
-    const cells: { staffId: string; date: string; baseUpdatedAt?: string | null }[] = [];
+    const cells: { staffId: string; date: string }[] = [];
     if (selection.size > 0) {
       for (const key of selection) {
         if (assignmentMap.get(key)?.isLocked) continue;
         const [pid, d] = key.split(":");
-        cells.push({ staffId: pid, date: d, baseUpdatedAt: tokenFor(pid, d) });
+        cells.push({ staffId: pid, date: d });
       }
     } else {
-      cells.push({ staffId: picker.staffId, date: picker.date, baseUpdatedAt: tokenFor(picker.staffId, picker.date) });
+      cells.push({ staffId: picker.staffId, date: picker.date });
     }
     if (cells.length === 0) { setPicker(null); return; }
 
@@ -1503,39 +1257,29 @@ export function ScheduleGrid({
     });
 
     try {
-      const prior = new Map(cells.map((c) => [`${c.staffId}:${c.date}`, assignmentMap.get(`${c.staffId}:${c.date}`) ?? null] as const));
       if (cells.length === 1) {
-        const { staffId, date, baseUpdatedAt } = cells[0];
+        const { staffId, date } = cells[0];
         const res = await fetch("/api/assignments", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ staffId, date, shiftTypeId, baseUpdatedAt: baseUpdatedAt ?? null }),
+          body: JSON.stringify({ staffId, date, shiftTypeId }),
         });
-        if (res.status === 409) {
-          const { conflict } = await res.json();
-          openConflicts([conflict], () => forcePutSingle(staffId, date, shiftTypeId));
-        } else if (res.ok) {
-          const saved = await res.json();
-          setLocalAssignments((prev) =>
-            prev.map((a) => (a.staffId === staffId && a.date === date ? saved : a)),
-          );
-        } else {
-          revertCell(staffId, date, prior.get(`${staffId}:${date}`) ?? null);
-        }
+        const saved = await res.json();
+        setLocalAssignments((prev) =>
+          prev.map((a) => (a.staffId === staffId && a.date === date ? saved : a)),
+        );
       } else {
         const res = await fetch("/api/assignments/bulk", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cells, shiftTypeId }),
         });
-        if (res.ok) {
-          const { applied: saved, skipped, conflicts }: { applied: AssignmentData[]; skipped?: { staffId: string; date: string }[]; conflicts?: ConflictHit[] } = await res.json();
-          foldApplied(saved);
-          if (skipped && skipped.length > 0) revertToPrior(skipped, prior); // locked → undo optimistic
-          if (conflicts && conflicts.length > 0) openConflicts(conflicts, () => forceBulkPut(conflicts, shiftTypeId));
-        } else {
-          revertToPrior(cells, prior);
-        }
+        const { applied: saved }: { applied: AssignmentData[] } = await res.json();
+        setLocalAssignments((prev) => {
+          const keys = new Set(saved.map((s) => `${s.staffId}:${s.date}`));
+          const filtered = prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`));
+          return [...filtered, ...saved];
+        });
       }
     } catch {
       // Revert temps on failure
@@ -1551,20 +1295,20 @@ export function ScheduleGrid({
 
     // Explicit target (Delete key) always clears just that cell;
     // selection path only used from picker (no target)
-    const cells: { staffId: string; date: string; baseUpdatedAt?: string | null }[] = [];
+    const cells: { staffId: string; date: string }[] = [];
     if (!target && selection.size > 0) {
       for (const key of selection) {
         const a = assignmentMap.get(key);
         if (a && !a.isLocked) {
           const [pid, d] = key.split(":");
-          cells.push({ staffId: pid, date: d, baseUpdatedAt: a.updatedAt ?? null });
+          cells.push({ staffId: pid, date: d });
         }
       }
     } else if (anchor) {
       const key = `${anchor.staffId}:${anchor.date}`;
       const a = assignmentMap.get(key);
       if (a && !a.isLocked) {
-        cells.push({ ...anchor, baseUpdatedAt: a.updatedAt ?? null });
+        cells.push(anchor);
       }
     }
 
@@ -1591,32 +1335,18 @@ export function ScheduleGrid({
     );
 
     try {
-      const prior = new Map(cells.map((c) => [`${c.staffId}:${c.date}`, assignmentMap.get(`${c.staffId}:${c.date}`) ?? null] as const));
       if (cells.length === 1) {
-        const res = await fetch("/api/assignments", {
+        await fetch("/api/assignments", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(cells[0]),
         });
-        if (res.status === 409) {
-          const { conflict } = await res.json();
-          openConflicts([conflict], () => forceDeleteSingle(cells[0].staffId, cells[0].date));
-        } else if (!res.ok) {
-          revertCell(cells[0].staffId, cells[0].date, prior.get(`${cells[0].staffId}:${cells[0].date}`) ?? null); // locked → restore
-        }
       } else {
-        const res = await fetch("/api/assignments/bulk", {
+        await fetch("/api/assignments/bulk", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cells }),
         });
-        if (res.ok) {
-          const { skipped, conflicts } = (await res.json()) as { skipped?: { staffId: string; date: string }[]; conflicts?: ConflictHit[] };
-          if (skipped && skipped.length > 0) revertToPrior(skipped, prior); // locked → restore the cleared cell
-          if (conflicts && conflicts.length > 0) openConflicts(conflicts, () => forceBulkDelete(conflicts));
-        } else {
-          revertToPrior(cells, prior);
-        }
       }
     } catch {
       window.location.reload();
@@ -1764,50 +1494,24 @@ export function ScheduleGrid({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "swap",
-          from: { staffId: fromStaffId, date: fromDate, baseUpdatedAt: fromA.updatedAt ?? null },
-          to: { staffId: toStaffId, date: toDate, baseUpdatedAt: toA?.updatedAt ?? null },
+          from: { staffId: fromStaffId, date: fromDate },
+          to: { staffId: toStaffId, date: toDate },
         }),
       });
-      if (res.status === 409) {
-        // The swap rolled back server-side; the 409 names only the failed side(s).
-        // Restore BOTH optimistic sides from the pre-swap snapshot (CR #682), then
-        // openConflicts overlays the accurate current for the named side(s), and a
-        // refresh resyncs the unnamed side from the DB (CR #684).
-        const { conflicts } = (await res.json()) as { conflicts: ConflictHit[] };
-        setLocalAssignments((prev) => {
-          const next = prev.filter((a) => !(a.staffId === fromStaffId && a.date === fromDate) && !(a.staffId === toStaffId && a.date === toDate));
-          if (fromA) next.push(fromA);
-          if (toA) next.push(toA);
-          return next;
-        });
-        openConflicts(conflicts, () => forceSwap(fromStaffId, fromDate, toStaffId, toDate), [
-          { staffId: fromStaffId, date: fromDate },
-          { staffId: toStaffId, date: toDate },
-        ]);
-        router.refresh();
-      } else if (res.ok) {
-        const result = await res.json();
-        setLocalAssignments((prev) => {
-          const next = prev.filter(
-            (a) => (!a.id.startsWith("temp-")
-              || (a.staffId !== fromStaffId && a.staffId !== toStaffId))
-              && !(a.staffId === toStaffId && a.date === toDate)
-              && !(a.staffId === fromStaffId && a.date === fromDate)
-          );
-          if (result.moved) next.push(result.moved);
-          if (result.swapped) next.push(result.swapped);
-          return next;
-        });
-      } else {
-        // Hard refusal (e.g. a cell locked since the drag) — undo the optimistic swap.
-        setLocalAssignments((prev) => {
-          const next = prev.filter((a) => !(a.staffId === fromStaffId && a.date === fromDate) && !(a.staffId === toStaffId && a.date === toDate));
-          if (fromA) next.push(fromA);
-          if (toA) next.push(toA);
-          return next;
-        });
-        setConflictError("Couldn't move — a cell may be locked.");
-      }
+      if (!res.ok) throw new Error("Swap failed");
+      const result = await res.json();
+
+      setLocalAssignments((prev) => {
+        const next = prev.filter(
+          (a) => (!a.id.startsWith("temp-")
+            || (a.staffId !== fromStaffId && a.staffId !== toStaffId))
+            && !(a.staffId === toStaffId && a.date === toDate)
+            && !(a.staffId === fromStaffId && a.date === fromDate)
+        );
+        if (result.moved) next.push(result.moved);
+        if (result.swapped) next.push(result.swapped);
+        return next;
+      });
     } catch {
       window.location.reload();
     } finally {
@@ -1905,10 +1609,7 @@ export function ScheduleGrid({
         body: JSON.stringify({ suggestions: autoSuggestions }),
       });
       const data = await res.json();
-      const applied: AssignmentData[] = data.applied ?? [];
-      const conflicts: ConflictHit[] = data.conflicts ?? [];
-      // Map each suggested cell to its intended shift so a force-retry can re-apply.
-      const wanted = new Map(autoSuggestions.map((s) => [`${s.staffId}:${s.date}`, s.shiftTypeId]));
+      const applied: AssignmentData[] = data.applied;
 
       const undoOps: UndoOp[] = applied.map((a) => ({
         staffId: a.staffId,
@@ -1927,13 +1628,6 @@ export function ScheduleGrid({
       setAutoSuggestions(null);
       setAutoWarnings([]);
       setAutoStats(null);
-
-      if (conflicts.length > 0) {
-        const retry = conflicts
-          .map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId: wanted.get(`${c.staffId}:${c.date}`) }))
-          .filter((s): s is { staffId: string; date: string; shiftTypeId: string } => !!s.shiftTypeId);
-        openConflicts(conflicts, () => forceAutoApply(retry));
-      }
     } catch (e) {
       console.error("Apply failed:", e);
     } finally {
@@ -2719,58 +2413,6 @@ export function ScheduleGrid({
                 : 1
             }
           />
-        </div>
-      )}
-
-      {/* Conflict dialog (Slice 2b) — a write lost the concurrency check */}
-      {conflictModal && (
-        <div
-          data-print-hide
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setConflictModal(null)}
-        >
-          <div onClick={(e) => e.stopPropagation()} className="bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-5 w-[440px] max-w-[90vw]">
-            <h2 className="text-base font-bold text-slate-100 mb-1">{conflictTitle(conflictModal.items.length)}</h2>
-            <p className="text-sm text-slate-400 mb-3">
-              {conflictModal.items.length === 1
-                ? "Someone else changed this cell while you were editing — your change was not applied."
-                : "Someone else changed these cells while you were editing; non-conflicting changes were saved."}
-            </p>
-            <ul className="text-sm text-slate-200 mb-4 max-h-48 overflow-auto space-y-1">
-              {conflictModal.items.map((it) => (
-                <li key={`${it.staffId}:${it.date}`} className="flex items-start gap-1.5">
-                  <span aria-hidden className="text-amber-400">⚠</span>
-                  <span>
-                    {describeConflict({
-                      staff: staffInitialsMap.get(it.staffId) ?? "—",
-                      date: formatDate(parseDate(it.date), dateFormat),
-                      code: it.current?.code ?? null,
-                      by: it.current?.updatedByName ?? null,
-                    })}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setConflictModal(null)} className="px-3 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600 text-slate-200">
-                {conflictModal.items.length === 1 ? "Keep theirs" : "Dismiss"}
-              </button>
-              <button onClick={conflictModal.onOverwrite} className="px-3 py-1.5 text-sm rounded bg-amber-700 hover:bg-amber-600 text-amber-50 font-medium">
-                {conflictModal.items.length === 1 ? "Overwrite" : "Overwrite all"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {conflictError && (
-        <div
-          data-print-hide
-          role="alert"
-          onClick={() => setConflictError(null)}
-          className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-red-900/90 border border-red-500/50 text-red-100 text-sm px-4 py-2 rounded shadow-lg cursor-pointer"
-        >
-          {conflictError} <span className="text-red-300 ml-2">✕</span>
         </div>
       )}
 
