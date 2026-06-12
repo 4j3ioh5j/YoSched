@@ -3,6 +3,7 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
+import { PENDING_REQUEST_MODES, type PendingRequestMode } from "@/lib/schedule-requests";
 
 const CanEditContext = createContext(true);
 function useCanEdit() { return useContext(CanEditContext); }
@@ -68,6 +69,7 @@ type SchedulingPrefs = {
   dateFormat: string;
   maxLeavePerDay: number;
   collapseOtherOnPrint: boolean;
+  pendingRequestMode: PendingRequestMode;
 };
 
 type DefaultAvailabilityRule = {
@@ -1850,6 +1852,32 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
     { key: "collapseOtherOnPrint", label: "Collapse fee-basis staff on the printed schedule", description: "Print fee-basis staff as one \"OTHER\" column listing the initials scheduled each day (fewer columns → fits the page better). The on-screen grid is unchanged." },
   ];
 
+  const [modeStatus, setModeStatus] = useState<SaveStatus>("idle");
+  async function saveMode(value: PendingRequestMode) {
+    const prev = prefs.pendingRequestMode;
+    setPrefs((p) => ({ ...p, pendingRequestMode: value }));
+    setModeStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pendingRequestMode: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setModeStatus("saved");
+      setTimeout(() => setModeStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, pendingRequestMode: prev }));
+      setModeStatus("error");
+    }
+  }
+
+  const MODE_LABELS: Record<PendingRequestMode, { label: string; hint: string }> = {
+    off: { label: "Only approved", hint: "Ignore pending requests entirely" },
+    soft: { label: "As preferences", hint: "Honor pending as soft nudges (never hard blocks)" },
+    full: { label: "Full strength", hint: "Honor pending exactly like approved requests" },
+  };
+
   const [leapStatus, setLeapStatus] = useState<SaveStatus>("idle");
   async function saveMaxLeave(value: number) {
     const prev = prefs.maxLeavePerDay;
@@ -1923,6 +1951,36 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
             onBlur={(e) => canEdit && saveMaxLeave(Math.max(0, Math.min(999, parseInt(e.target.value) || 0)))}
             className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 text-center focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
           />
+        </div>
+
+        <div className="pt-2 border-t border-slate-700/50">
+          <div className="text-sm font-medium text-slate-200">Pending requests in the auto-schedule</div>
+          <div className="text-xs text-slate-400">
+            How unapproved (pending) staff requests affect generated schedules. Approved requests always apply at their declared strength. Conflicts and rule breaks are always flagged.
+            {modeStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
+            {modeStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
+            {modeStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
+          </div>
+          <div className="grid grid-cols-3 gap-2 mt-3">
+            {PENDING_REQUEST_MODES.map((mode) => (
+              <button
+                key={mode}
+                onClick={() => canEdit && saveMode(mode)}
+                disabled={!canEdit}
+                title={MODE_LABELS[mode].hint}
+                className={[
+                  "flex flex-col items-start px-3 py-2 rounded-lg border text-left transition-colors",
+                  prefs.pendingRequestMode === mode
+                    ? "bg-blue-600/20 border-blue-500 text-blue-300"
+                    : "bg-slate-700/30 border-slate-600/50 text-slate-300 hover:border-slate-500",
+                  !canEdit ? "opacity-60 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                <span className="text-sm font-medium">{MODE_LABELS[mode].label}</span>
+                <span className="text-[11px] text-slate-500 mt-0.5">{MODE_LABELS[mode].hint}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </section>

@@ -2,7 +2,7 @@ import { computeFairness, type FairnessSummary, type EquityFactor } from "./fair
 import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule, type PayPeriodRange } from "./availability";
 import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter, isRecoveryOnly } from "./follow-rules";
 import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
-import { foldRequestsForDate, type ScheduleRequestData, type FoldedRequests } from "./schedule-requests";
+import { foldRequestsForDate, detectRequestConflicts, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode } from "./schedule-requests";
 
 export type ScheduleStaff = {
   id: string;
@@ -92,6 +92,8 @@ type SchedulingPreferences = {
   sequentialOffWeight: number;
   threeDayWeekendWeight: number;
   fourDayWeekendWeight: number;
+  pendingRequestMode?: PendingRequestMode; // how to treat PENDING requests; default "off"
+  maxLeavePerDay?: number; // soft cap on staff away per day; 0/undefined = no cap (warn-only)
 };
 
 export type Suggestion = {
@@ -283,16 +285,18 @@ export function autoSchedule({
     return !!st && (st.isLeave || st.isOffShift);
   };
 
-  // Approved schedule requests, folded per (staff, date) on demand and cached.
-  // foldRequestsForDate already ignores non-approved requests, so only approved
-  // ones exert scheduling force here. Empty list ⇒ the gates below are no-ops.
+  // Schedule requests, folded per (staff, date) on demand and cached. `pendingMode`
+  // decides whether PENDING (unapproved) requests exert force: "off" = approved-only
+  // (the request list may still contain pending rows — fold ignores them); "soft" =
+  // pending forced to soft; "full" = pending at declared strength. Empty list ⇒ no-op.
   const requestList = scheduleRequests ?? [];
+  const pendingMode: PendingRequestMode = schedulingPreferences.pendingRequestMode ?? "off";
   const foldCache = new Map<string, FoldedRequests>();
   function foldFor(staffId: string, date: string): FoldedRequests {
     const key = `${staffId}:${date}`;
     let folded = foldCache.get(key);
     if (!folded) {
-      folded = foldRequestsForDate(requestList, staffId, date, isAwayShift);
+      folded = foldRequestsForDate(requestList, staffId, date, isAwayShift, pendingMode);
       foldCache.set(key, folded);
     }
     return folded;
@@ -623,6 +627,30 @@ export function autoSchedule({
 
   const fillShift = shiftTypes.find((st) => st.isFillShift) ?? null;
 
+  // ── Flag contradictory requests (advisory) ──
+  // Surface logically impossible request combinations on a (staff, date) — e.g. a
+  // hard OFF together with a hard request to work — so the scheduler doesn't silently
+  // pick one. Reads the same folds the steps below use (so it honors pendingMode: a
+  // pending-soft request can't raise a hard conflict, and an "off"-mode pending
+  // request isn't considered at all). Never blocks placement; only pushes warnings.
+  if (requestList.length > 0) {
+    const isWorkingShift = (id: string) => !isAwayShift(id);
+    const codeOf = (id: string) => stById.get(id)?.code ?? id;
+    const flaggedCells = new Set<string>();
+    for (const staff of activeStaff) {
+      for (const date of dates) {
+        const cellKey = `${staff.id}:${date}`;
+        if (flaggedCells.has(cellKey)) continue;
+        const folded = foldFor(staff.id, date);
+        if (folded.contributing.length === 0) continue;
+        flaggedCells.add(cellKey);
+        for (const msg of detectRequestConflicts(folded, isWorkingShift, codeOf)) {
+          warnings.push(`${staff.initials} ${date}: ${msg}`);
+        }
+      }
+    }
+  }
+
   // ── STEP 0: Pre-place approved leave requests ──
   // An approved hard LEAVE request pre-places its specific leave shift, exactly
   // like an approved absence. It only fills empty / unlocked-off cells (assign()
@@ -637,7 +665,7 @@ export function autoSchedule({
         if (!leaveShiftId) continue;
         const leaveSt = stById.get(leaveShiftId);
         if (!leaveSt) {
-          warnings.push(`${staff.initials}: approved leave on ${date} references an unknown shift type`);
+          warnings.push(`${staff.initials}: leave request on ${date} references an unknown shift type`);
           continue;
         }
         assign(staff.id, date, leaveSt, `Approved leave request: ${leaveSt.code}`, "request-leave", 1.0);
@@ -688,7 +716,13 @@ export function autoSchedule({
           }
         }
         if (!placed) {
-          warnings.push(`${staff.initials}: could not honor approved shift request on ${date} (ineligible or no legal slot)`);
+          // Name pending vs approved when unambiguous (all contributing hard
+          // REQUEST_SHIFTs share a status); stay generic when mixed.
+          const reqs = foldFor(staff.id, date).contributing.filter((c) => c.kind === "REQUEST_SHIFT" && c.effective === "hard");
+          const label = reqs.length > 0 && reqs.every((c) => c.status === "pending") ? "pending "
+            : reqs.length > 0 && reqs.every((c) => c.status === "approved") ? "approved "
+            : "";
+          warnings.push(`${staff.initials}: could not honor ${label}shift request on ${date} (ineligible or no legal slot)`);
         }
       }
     }
@@ -1383,6 +1417,49 @@ export function autoSchedule({
         }
         if (target.maxCount != null && assigned.length > target.maxCount) {
           warnings.push(`${staff.initials}: ${assigned.length}/${target.maxCount} max ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
+        }
+      }
+    }
+  }
+
+  // ── Flag rule breaks caused by HONORING away requests (advisory) ──
+  // Pre-placing an approved/honored leave or off shift is authoritative — it bypasses
+  // availability and can push a day past its soft leave cap or strand a staffing
+  // requirement. Surface both so the scheduler doesn't honor a request into a silently
+  // broken day. Scoped to dates that actually carry a request-honored away placement
+  // (step "request-leave", or "request-shift" landing on an off/leave shift).
+  if (requestList.length > 0) {
+    const requestAwayByDate = new Map<string, Set<string>>();
+    for (const s of suggestions) {
+      if (s.step !== "request-leave" && s.step !== "request-shift") continue;
+      if (!isAwayShift(s.shiftTypeId)) continue;
+      let set = requestAwayByDate.get(s.date);
+      if (!set) { set = new Set(); requestAwayByDate.set(s.date, set); }
+      set.add(s.staffId);
+    }
+
+    const maxLeavePerDay = schedulingPreferences.maxLeavePerDay ?? 0;
+    for (const [date, awaySet] of requestAwayByDate) {
+      // (a) soft leave cap: count EVERY away assignment on the day, not just honored ones.
+      if (maxLeavePerDay > 0) {
+        let awayTotal = 0;
+        for (const [k, v] of grid.entries()) {
+          if (k.endsWith(`:${date}`) && isAwayShift(v.shiftTypeId)) awayTotal++;
+        }
+        if (awayTotal > maxLeavePerDay) {
+          warnings.push(`${date}: ${awayTotal} staff away exceeds the soft leave limit of ${maxLeavePerDay} (honoring away requests)`);
+        }
+      }
+      // (b) staffing minimum stranded because an eligible staff was honored away.
+      for (const st of shiftTypes) {
+        if (st.isOffShift || st.isLeave) continue;
+        const required = getRequiredCount(st, date);
+        if (required <= 0) continue;
+        const assigned = countAssigned(st.code, date);
+        if (assigned >= required) continue;
+        const eligIds = new Set(eligibleStaff(st, date).map((p) => p.id));
+        if ([...awaySet].some((id) => eligIds.has(id))) {
+          warnings.push(`${date}: honoring away requests left ${st.code} below its required minimum (${assigned}/${required})`);
         }
       }
     }

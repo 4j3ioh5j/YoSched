@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { SettingsPage } from "./settings-page";
 import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
+import { parsePendingRequestMode } from "@/lib/schedule-requests";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +34,7 @@ export default async function Settings() {
     dateFormat: schedulingPrefsRow?.dateFormat ?? "MMMM D, YYYY",
     maxLeavePerDay: schedulingPrefsRow?.maxLeavePerDay ?? 0,
     collapseOtherOnPrint: schedulingPrefsRow?.collapseOtherOnPrint ?? true,
+    pendingRequestMode: parsePendingRequestMode(schedulingPrefsRow?.pendingRequestMode),
   };
 
   return (

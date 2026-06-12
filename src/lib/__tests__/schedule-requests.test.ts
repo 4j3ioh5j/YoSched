@@ -23,6 +23,11 @@ import {
   reconcileApprovalAction,
   releasableDates,
   isRequestVisibleToViewer,
+  isPendingRequestMode,
+  parsePendingRequestMode,
+  detectRequestConflicts,
+  PENDING_REQUEST_MODES,
+  DEFAULT_PENDING_REQUEST_MODE,
   type LeaveQueueRequest,
   type ScheduleRequestData,
 } from "../schedule-requests";
@@ -1055,5 +1060,160 @@ describe("isRequestVisibleToViewer", () => {
     const opts = { canViewAll: false, viewerStaffId: null };
     expect(isRequestVisibleToViewer(req({ staffId: "other", status: "approved" }), opts)).toBe(true);
     expect(isRequestVisibleToViewer(req({ staffId: "other", status: "pending" }), opts)).toBe(false);
+  });
+});
+
+describe("pendingRequestMode parsing", () => {
+  it("isPendingRequestMode accepts only the three valid modes (strict, for writes)", () => {
+    for (const m of PENDING_REQUEST_MODES) expect(isPendingRequestMode(m)).toBe(true);
+    for (const bad of ["", "FULL", "none", "approved", null, undefined, 1, {}]) {
+      expect(isPendingRequestMode(bad)).toBe(false);
+    }
+  });
+
+  it("parsePendingRequestMode is lenient (for reads): unknown/null → default", () => {
+    expect(DEFAULT_PENDING_REQUEST_MODE).toBe("full");
+    expect(parsePendingRequestMode("off")).toBe("off");
+    expect(parsePendingRequestMode("soft")).toBe("soft");
+    expect(parsePendingRequestMode("full")).toBe("full");
+    expect(parsePendingRequestMode("garbage")).toBe("full");
+    expect(parsePendingRequestMode(null)).toBe("full");
+    expect(parsePendingRequestMode(undefined)).toBe("full");
+  });
+});
+
+describe("foldRequestsForDate — pendingRequestMode", () => {
+  const pendingHardOff = () => req({ id: "p1", kind: "OFF", strength: "hard", status: "pending" });
+  const pendingHardWant = () =>
+    req({ id: "p2", kind: "REQUEST_SHIFT", strength: "hard", status: "pending", shiftTypeIds: ["orc"] });
+
+  it("off mode (default): pending exerts no force, contributes nothing", () => {
+    const folded = foldRequestsForDate([pendingHardOff(), pendingHardWant()], "P", "2026-07-04");
+    expect(folded.forbidWorking).toBe(false);
+    expect([...folded.forcedShiftIds]).toEqual([]);
+    expect(folded.contributing).toHaveLength(0);
+  });
+
+  it("full mode: pending hard applies at declared strength (forbidWorking + forced)", () => {
+    const folded = foldRequestsForDate([pendingHardOff(), pendingHardWant()], "P", "2026-07-04", () => false, "full");
+    expect(folded.forbidWorking).toBe(true);
+    expect([...folded.forcedShiftIds]).toEqual(["orc"]);
+    // provenance records EFFECTIVE strength = hard and the pending status
+    expect(folded.contributing.map((c) => [c.id, c.status, c.effective])).toEqual([
+      ["p1", "pending", "hard"],
+      ["p2", "pending", "hard"],
+    ]);
+  });
+
+  it("soft mode: pending hard is DOWNGRADED to soft (avoidWorking + preferred, no hard buckets)", () => {
+    const folded = foldRequestsForDate([pendingHardOff(), pendingHardWant()], "P", "2026-07-04", () => false, "soft");
+    expect(folded.forbidWorking).toBe(false);
+    expect(folded.avoidWorking).toBe(true);
+    expect([...folded.forcedShiftIds]).toEqual([]);
+    expect([...folded.preferredShiftIds]).toEqual(["orc"]);
+    expect(folded.contributing.every((c) => c.effective === "soft")).toBe(true);
+    // declared strength is preserved for audit even though effective was downgraded
+    expect(folded.contributing.map((c) => c.declaredStrength)).toEqual(["hard", "hard"]);
+  });
+
+  it("APPROVED requests keep declared strength even in soft mode (only pending downgrades)", () => {
+    const approvedHardOff = req({ kind: "OFF", strength: "hard", status: "approved" });
+    const folded = foldRequestsForDate([approvedHardOff], "P", "2026-07-04", () => false, "soft");
+    expect(folded.forbidWorking).toBe(true);
+    expect(folded.contributing[0].effective).toBe("hard");
+  });
+
+  it("soft mode: a pending LEAVE does NOT authoritatively pre-place — becomes preferred + avoidWorking", () => {
+    const pendingLeave = req({ kind: "LEAVE", strength: "hard", status: "pending", leaveShiftTypeId: "al" });
+    const folded = foldRequestsForDate([pendingLeave], "P", "2026-07-04", (id) => id === "al", "soft");
+    expect(folded.leaveShiftTypeId).toBeNull();
+    expect([...folded.preferredShiftIds]).toEqual(["al"]);
+    expect(folded.avoidWorking).toBe(true);
+  });
+
+  it("full mode: a pending LEAVE pre-places like an approved one", () => {
+    const pendingLeave = req({ kind: "LEAVE", strength: "hard", status: "pending", leaveShiftTypeId: "al" });
+    const folded = foldRequestsForDate([pendingLeave], "P", "2026-07-04", () => false, "full");
+    expect(folded.leaveShiftTypeId).toBe("al");
+  });
+});
+
+describe("detectRequestConflicts", () => {
+  const isWorking = (id: string) => id !== "off" && id !== "al";
+
+  it("flags a hard OFF together with a hard request to work", () => {
+    const folded = foldRequestsForDate(
+      [req({ id: "a", kind: "OFF", strength: "hard" }), req({ id: "b", kind: "REQUEST_SHIFT", strength: "hard", shiftTypeIds: ["orc"] })],
+      "P", "2026-07-04", () => false, "full",
+    );
+    const msgs = detectRequestConflicts(folded, isWorking, codeOf);
+    expect(msgs.some((m) => m.includes("hard OFF") && m.includes("ORC"))).toBe(true);
+  });
+
+  it("flags the same shift both requested and hard-excluded", () => {
+    const folded = foldRequestsForDate(
+      [req({ id: "a", kind: "REQUEST_SHIFT", strength: "hard", shiftTypeIds: ["orc"] }), req({ id: "b", kind: "NEGATE_SHIFT", strength: "hard", shiftTypeIds: ["orc"] })],
+      "P", "2026-07-04", () => false, "full",
+    );
+    const msgs = detectRequestConflicts(folded, isWorking, codeOf);
+    expect(msgs.some((m) => m.includes("ORC") && m.includes("exclude"))).toBe(true);
+  });
+
+  it("flags a hard leave together with a hard request to work", () => {
+    const folded = foldRequestsForDate(
+      [req({ id: "a", kind: "LEAVE", strength: "hard", leaveShiftTypeId: "al" }), req({ id: "b", kind: "REQUEST_SHIFT", strength: "hard", shiftTypeIds: ["orc"] })],
+      "P", "2026-07-04", () => false, "full",
+    );
+    const msgs = detectRequestConflicts(folded, isWorking, codeOf);
+    expect(msgs.some((m) => m.includes("leave") && m.includes("ORC"))).toBe(true);
+  });
+
+  it("phrases the conflict as 'pending' when a pending request drives a hard bucket", () => {
+    const folded = foldRequestsForDate(
+      [req({ id: "a", kind: "OFF", strength: "hard", status: "approved" }), req({ id: "b", kind: "REQUEST_SHIFT", strength: "hard", status: "pending", shiftTypeIds: ["orc"] })],
+      "P", "2026-07-04", () => false, "full",
+    );
+    const msgs = detectRequestConflicts(folded, isWorking, codeOf);
+    expect(msgs.some((m) => m.includes("pending"))).toBe(true);
+  });
+
+  it("a downgraded pending-soft request raises NO hard conflict (effective strength)", () => {
+    // In soft mode the pending hard 'want ORC' is downgraded → not a hard conflict with the approved OFF.
+    const folded = foldRequestsForDate(
+      [req({ id: "a", kind: "OFF", strength: "hard", status: "approved" }), req({ id: "b", kind: "REQUEST_SHIFT", strength: "hard", status: "pending", shiftTypeIds: ["orc"] })],
+      "P", "2026-07-04", () => false, "soft",
+    );
+    expect(detectRequestConflicts(folded, isWorking, codeOf)).toEqual([]);
+  });
+
+  it("no conflicts for a clean single request", () => {
+    const folded = foldRequestsForDate([req({ kind: "REQUEST_SHIFT", strength: "hard", shiftTypeIds: ["orc"] })], "P", "2026-07-04", () => false, "full");
+    expect(detectRequestConflicts(folded, isWorking, codeOf)).toEqual([]);
+  });
+
+  it("flags two DISTINCT hard work requests with disjoint options (only one placeable)", () => {
+    const folded = foldRequestsForDate(
+      [req({ id: "a", kind: "REQUEST_SHIFT", strength: "hard", shiftTypeIds: ["orc"] }), req({ id: "b", kind: "REQUEST_SHIFT", strength: "hard", shiftTypeIds: ["call"] })],
+      "P", "2026-07-04", () => false, "full",
+    );
+    const msgs = detectRequestConflicts(folded, isWorking, codeOf);
+    expect(msgs.some((m) => m.includes("only one can be placed") && m.includes("ORC") && m.includes("CALL"))).toBe(true);
+  });
+
+  it("does NOT flag a single OR request listing several work shifts (any one satisfies it)", () => {
+    const folded = foldRequestsForDate(
+      [req({ id: "a", kind: "REQUEST_SHIFT", strength: "hard", shiftTypeIds: ["orc", "call"] })],
+      "P", "2026-07-04", () => false, "full",
+    );
+    expect(detectRequestConflicts(folded, isWorking, codeOf).some((m) => m.includes("only one can be placed"))).toBe(false);
+  });
+
+  it("does NOT flag two hard work requests that SHARE a satisfiable shift", () => {
+    const folded = foldRequestsForDate(
+      [req({ id: "a", kind: "REQUEST_SHIFT", strength: "hard", shiftTypeIds: ["orc", "call"] }), req({ id: "b", kind: "REQUEST_SHIFT", strength: "hard", shiftTypeIds: ["call"] })],
+      "P", "2026-07-04", () => false, "full",
+    );
+    // CALL satisfies both → no "only one can be placed" conflict.
+    expect(detectRequestConflicts(folded, isWorking, codeOf).some((m) => m.includes("only one can be placed"))).toBe(false);
   });
 });

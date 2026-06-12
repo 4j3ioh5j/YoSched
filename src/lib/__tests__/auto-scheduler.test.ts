@@ -825,6 +825,7 @@ describe("autoSchedule — schedule requests", () => {
 
 describe("autoSchedule — schedule request preferences", () => {
   const ADM = makeShift("st-adm", "ADM", { schedulePriority: 2 });
+  const AL = makeShift("st-al", "AL", { isLeave: true });
 
   function req(
     o: Partial<ScheduleRequestData> & {
@@ -863,6 +864,106 @@ describe("autoSchedule — schedule request preferences", () => {
     expect(adm!.step).toBe("request-shift");
   });
 
+  // ── pendingRequestMode: honoring PENDING (unapproved) requests ──
+
+  it("full mode: a PENDING hard REQUEST_SHIFT is pre-placed just like an approved one", () => {
+    const p1 = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"] });
+    const r = runSchedule({
+      staff: [p1, makeStaff("p2", "CD")],
+      shiftTypes: [OR, ADM, OFF],
+      schedulingPreferences: { ...defaultPrefs, pendingRequestMode: "full" },
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"], status: "pending" }),
+      ],
+    });
+    expect(has(r, "p1", "2025-05-12", "ADM")).toBe(true);
+  });
+
+  it("off mode (default): the same PENDING request is ignored", () => {
+    const p1 = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"] });
+    const r = runSchedule({
+      staff: [p1, makeStaff("p2", "CD")],
+      shiftTypes: [OR, ADM, OFF],
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"], status: "pending" }),
+      ],
+    });
+    expect(has(r, "p1", "2025-05-12", "ADM")).toBe(false);
+  });
+
+  it("full mode: a PENDING hard OFF forbids working", () => {
+    const r = runSchedule({
+      schedulingPreferences: { ...defaultPrefs, pendingRequestMode: "full" },
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF", status: "pending" }),
+      ],
+    });
+    expect(has(r, "p1", "2025-05-12", "OR")).toBe(false);
+  });
+
+  it("soft mode: a PENDING hard OFF is downgraded — it advises but does not forbid working", () => {
+    const r = runSchedule({
+      schedulingPreferences: { ...defaultPrefs, pendingRequestMode: "soft" },
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF", status: "pending" }),
+      ],
+    });
+    expect(has(r, "p1", "2025-05-12", "OR")).toBe(true);
+  });
+
+  it("full mode: flags contradictory requests (hard OFF + hard request to work) in warnings", () => {
+    const p1 = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"] });
+    const r = runSchedule({
+      staff: [p1, makeStaff("p2", "CD")],
+      shiftTypes: [OR, ADM, OFF],
+      schedulingPreferences: { ...defaultPrefs, pendingRequestMode: "full" },
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF" }),
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"], status: "pending" }),
+      ],
+    });
+    expect(r.warnings.some((w) => w.includes("AB") && w.includes("2025-05-12") && w.includes("conflicts"))).toBe(true);
+  });
+
+  // ── rule-break-on-honor warnings ──
+
+  it("warns when honoring away requests pushes a date past the soft leave limit", () => {
+    const r = runSchedule({
+      shiftTypes: [OR, AL, OFF],
+      schedulingPreferences: { ...defaultPrefs, maxLeavePerDay: 1 },
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-al" }),
+        req({ staffId: "p2", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-al" }),
+      ],
+    });
+    expect(r.warnings.some((w) => w.includes("2025-05-12") && w.includes("soft leave limit"))).toBe(true);
+  });
+
+  it("does not warn about the leave limit when the cap is 0 (no cap)", () => {
+    const r = runSchedule({
+      shiftTypes: [OR, AL, OFF],
+      schedulingPreferences: { ...defaultPrefs, maxLeavePerDay: 0 },
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-al" }),
+        req({ staffId: "p2", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-al" }),
+      ],
+    });
+    expect(r.warnings.some((w) => w.includes("soft leave limit"))).toBe(false);
+  });
+
+  it("warns when honoring an away request strands a staffing minimum", () => {
+    const p1 = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-al", "st-off"] });
+    const r = runSchedule({
+      staff: [p1],
+      shiftTypes: [OR, AL, OFF],
+      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }], // 2025-05-12 is a Monday (dow 1)
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-al" }),
+      ],
+    });
+    expect(r.warnings.some((w) => w.includes("2025-05-12") && w.includes("OR") && w.includes("below its required minimum"))).toBe(true);
+  });
+
   it("warns (and places nothing) when a hard REQUEST_SHIFT names a shift the staff can't do", () => {
     const r = runSchedule({
       // default staff are eligible only for OR/off, not ADM
@@ -871,8 +972,35 @@ describe("autoSchedule — schedule request preferences", () => {
         req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"] }),
       ],
     });
+    // An approved request that can't be placed names "approved".
     expect(r.warnings.some((w) => w.includes("could not honor approved shift request"))).toBe(true);
     expect(has(r, "p1", "2025-05-12", "ADM")).toBe(false);
+  });
+
+  it("names 'pending' on the could-not-honor warning for an unhonored pending request", () => {
+    const r = runSchedule({
+      shiftTypes: [OR, ADM, OFF], // default staff not eligible for ADM
+      schedulingPreferences: { ...defaultPrefs, pendingRequestMode: "full" },
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"], status: "pending" }),
+      ],
+    });
+    expect(r.warnings.some((w) => w.includes("could not honor pending shift request"))).toBe(true);
+  });
+
+  it("flags two distinct hard work requests that can't both be placed (only one fits the cell)", () => {
+    const p1 = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"] });
+    const r = runSchedule({
+      staff: [p1, makeStaff("p2", "CD")],
+      shiftTypes: [OR, ADM, OFF],
+      schedulingPreferences: { ...defaultPrefs, pendingRequestMode: "full" },
+      scheduleRequests: [
+        // two SEPARATE hard requests for different work shifts on the same day → only one placeable
+        req({ id: "rq-or", staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-or"] }),
+        req({ id: "rq-adm", staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"] }),
+      ],
+    });
+    expect(r.warnings.some((w) => w.includes("AB") && w.includes("2025-05-12") && w.includes("only one can be placed"))).toBe(true);
   });
 
   // ── soft weighting in contested staffing (STEP 2 pickStaff) ──

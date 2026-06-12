@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { autoSchedule } from "@/lib/auto-scheduler";
-import { type ScheduleRequestData } from "@/lib/schedule-requests";
+import { parsePendingRequestMode, type ScheduleRequestData } from "@/lib/schedule-requests";
 import { syncRequestApprovals } from "@/lib/request-sync";
 
 export async function POST(req: NextRequest) {
@@ -89,12 +89,13 @@ export async function POST(req: NextRequest) {
     prisma.shiftFollowRule.findMany(),
     prisma.shiftEligibilityRule.findMany(),
     prisma.shiftMinimumTarget.findMany(),
-    // Approved requests overlapping the (effective) scheduling window. Overlap =
-    // req.startDate <= windowEnd AND req.endDate >= windowStart. Only approved
-    // requests exert scheduling force.
+    // Approved + pending requests overlapping the (effective) scheduling window.
+    // Overlap = req.startDate <= windowEnd AND req.endDate >= windowStart. We always
+    // load pending too; the scheduler's `pendingRequestMode` decides whether pending
+    // requests exert force (and at what strength) — in "off" mode they're ignored.
     prisma.scheduleRequest.findMany({
       where: {
-        status: "approved",
+        status: { in: ["approved", "pending"] },
         startDate: { lte: new Date(effectiveEnd + "T00:00:00Z") },
         endDate: { gte: new Date(effectiveStart + "T00:00:00Z") },
       },
@@ -261,6 +262,9 @@ export async function POST(req: NextRequest) {
       sequentialOffWeight: schedulingPrefsRow?.sequentialOffWeight ?? 2,
       threeDayWeekendWeight: schedulingPrefsRow?.threeDayWeekendWeight ?? 5,
       fourDayWeekendWeight: schedulingPrefsRow?.fourDayWeekendWeight ?? 8,
+      // Lenient parse: a missing/legacy/corrupt stored value falls back to the default.
+      pendingRequestMode: parsePendingRequestMode(schedulingPrefsRow?.pendingRequestMode),
+      maxLeavePerDay: schedulingPrefsRow?.maxLeavePerDay ?? 0,
     },
     equityFactors: equityFactors.map((f) => ({
       factorType: f.factorType,

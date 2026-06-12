@@ -20,9 +20,32 @@ export type RequestStrength = "hard" | "soft";
 export type RequestStatus = "pending" | "approved" | "declined" | "fulfilled" | "withdrawn";
 export type RequestSource = "scheduler" | "staff" | "email";
 
+// How the auto-scheduler treats PENDING (unapproved) requests:
+//   "off"  — ignore pending; only approved requests exert force (pre-#147 behavior).
+//   "soft" — honor pending, but force every pending request to SOFT (a preference /
+//            bias, never a hard block); approving promotes it to its declared strength.
+//   "full" — honor pending at its declared strength, exactly like an approved request.
+// Approved requests always use their declared strength regardless of mode.
+export type PendingRequestMode = "off" | "soft" | "full";
+
 export const REQUEST_KINDS: readonly RequestKind[] = ["OFF", "LEAVE", "NEGATE_SHIFT", "REQUEST_SHIFT"];
 export const REQUEST_STRENGTHS: readonly RequestStrength[] = ["hard", "soft"];
 export const REQUEST_SOURCES: readonly RequestSource[] = ["scheduler", "staff", "email"];
+export const PENDING_REQUEST_MODES: readonly PendingRequestMode[] = ["off", "soft", "full"];
+export const DEFAULT_PENDING_REQUEST_MODE: PendingRequestMode = "full";
+
+/** STRICT membership check — use this to VALIDATE a user write (reject anything else
+ *  with a 400). Do NOT use parsePendingRequestMode() for writes: it coerces unknown
+ *  input to the default, which would silently turn a bad write into "full". */
+export function isPendingRequestMode(v: unknown): v is PendingRequestMode {
+  return typeof v === "string" && (PENDING_REQUEST_MODES as readonly string[]).includes(v);
+}
+
+/** LENIENT parse for PERSISTED reads — an unknown / null / legacy value falls back to
+ *  the default so a corrupt stored value can never crash the scheduler. Reads only. */
+export function parsePendingRequestMode(v: unknown): PendingRequestMode {
+  return isPendingRequestMode(v) ? v : DEFAULT_PENDING_REQUEST_MODE;
+}
 
 export type ScheduleRequestData = {
   id: string;
@@ -36,7 +59,23 @@ export type ScheduleRequestData = {
   status: RequestStatus;
 };
 
-// The collapsed effect of a staff's approved requests on a single date.
+// One request that contributed to a fold, plus the strength it was applied at AFTER
+// any pending→soft downgrade. Conflict flagging reads `effective` (NOT the request's
+// declared strength) so a downgraded pending-soft request is never reported as a hard
+// conflict, and `status` so a warning can name it "pending" vs "approved".
+export type ContributingRequest = {
+  id: string;
+  kind: RequestKind;
+  status: RequestStatus;
+  declaredStrength: RequestStrength;
+  effective: RequestStrength; // strength actually applied to the fold buckets
+  shiftTypeIds: string[];
+  leaveShiftTypeId: string | null;
+};
+
+// The collapsed effect of a staff's in-scope requests on a single date. Every hard
+// bucket below already reflects EFFECTIVE strength (a downgraded pending-soft request
+// lands in the soft bucket), so consumers can trust the buckets directly.
 export type FoldedRequests = {
   forbidWorking: boolean; // hard OFF — cannot take any working (non-off) shift
   avoidWorking: boolean; // soft OFF — prefer not to work
@@ -45,7 +84,8 @@ export type FoldedRequests = {
   avoidedShiftIds: Set<string>; // soft NEGATE_SHIFT — down-weight these
   forcedShiftIds: Set<string>; // hard REQUEST_SHIFT — staff wants one of these
   preferredShiftIds: Set<string>; // soft REQUEST_SHIFT — up-weight these
-  requestIds: string[]; // the approved requests that contributed (for badge/audit)
+  requestIds: string[]; // the requests that contributed (for badge/audit)
+  contributing: ContributingRequest[]; // provenance for conflict flagging (see above)
 };
 
 export type RequestConflict = {
@@ -70,25 +110,33 @@ export function requestsForStaffDate<
   requests: T[],
   staffId: string,
   date: string,
-  opts: { includePending?: boolean } = {}
+  opts: { includePending?: boolean; statuses?: RequestStatus[] } = {}
 ): T[] {
-  const visible: RequestStatus[] = opts.includePending ? ["approved", "pending"] : ["approved"];
+  const visible: RequestStatus[] = opts.statuses ?? (opts.includePending ? ["approved", "pending"] : ["approved"]);
   return requests.filter(
     (r) =>
       r.staffId === staffId && coversDate(r, date) && visible.includes(r.status)
   );
 }
 
-/** Collapse a staff's APPROVED requests on `date` into scheduling gates/weights.
+/** Collapse a staff's in-scope requests on `date` into scheduling gates/weights.
+ *
  *  `isAwayShift(id)` tells whether a shift is an off/leave ("away") shift; pass it
  *  so a SOFT REQUEST_SHIFT that wants an away shift also nudges the staff away from
- *  work (== the old soft-OFF avoidWorking bias). Defaults to "nothing is away",
- *  which leaves behavior byte-for-byte unchanged for callers that don't pass it. */
+ *  work (== the old soft-OFF avoidWorking bias).
+ *
+ *  `mode` controls whether PENDING (unapproved) requests are folded in:
+ *    "off"  (default) — approved-only, declared strength. Byte-for-byte the old
+ *                       behavior, so callers that don't pass `mode` are unaffected.
+ *    "soft" — approved + pending; pending requests are forced to SOFT.
+ *    "full" — approved + pending; pending requests use their declared strength.
+ *  Approved requests always use their declared strength. */
 export function foldRequestsForDate(
   requests: ScheduleRequestData[],
   staffId: string,
   date: string,
-  isAwayShift: (shiftTypeId: string) => boolean = () => false
+  isAwayShift: (shiftTypeId: string) => boolean = () => false,
+  mode: PendingRequestMode = "off"
 ): FoldedRequests {
   const folded: FoldedRequests = {
     forbidWorking: false,
@@ -99,20 +147,45 @@ export function foldRequestsForDate(
     forcedShiftIds: new Set(),
     preferredShiftIds: new Set(),
     requestIds: [],
+    contributing: [],
   };
 
-  for (const r of requestsForStaffDate(requests, staffId, date)) {
+  const statuses: RequestStatus[] = mode === "off" ? ["approved"] : ["approved", "pending"];
+
+  for (const r of requestsForStaffDate(requests, staffId, date, { statuses })) {
+    // A pending request is downgraded to soft only in "soft" mode; approved requests
+    // and "full" mode keep the declared strength.
+    const declaredHard = r.strength === "hard";
+    const downgraded = r.status === "pending" && mode === "soft";
+    const hard = declaredHard && !downgraded;
+
     folded.requestIds.push(r.id);
-    const hard = r.strength === "hard";
+    folded.contributing.push({
+      id: r.id,
+      kind: r.kind,
+      status: r.status,
+      declaredStrength: r.strength,
+      effective: hard ? "hard" : "soft",
+      shiftTypeIds: r.shiftTypeIds,
+      leaveShiftTypeId: r.leaveShiftTypeId,
+    });
+
     switch (r.kind) {
       case "OFF":
         if (hard) folded.forbidWorking = true;
         else folded.avoidWorking = true;
         break;
       case "LEAVE":
-        // Leave is inherently hard: pre-place the leave shift. First approved wins.
-        if (r.leaveShiftTypeId && !folded.leaveShiftTypeId) {
-          folded.leaveShiftTypeId = r.leaveShiftTypeId;
+        // A hard LEAVE pre-places its leave shift authoritatively (first one wins). A
+        // downgraded (pending-soft) LEAVE can't claim the cell, so it becomes a
+        // preference toward the leave shift plus an avoid-working nudge instead.
+        if (r.leaveShiftTypeId) {
+          if (hard) {
+            if (!folded.leaveShiftTypeId) folded.leaveShiftTypeId = r.leaveShiftTypeId;
+          } else {
+            folded.preferredShiftIds.add(r.leaveShiftTypeId);
+            folded.avoidWorking = true;
+          }
         }
         break;
       case "NEGATE_SHIFT":
@@ -134,6 +207,58 @@ export function foldRequestsForDate(
   }
 
   return folded;
+}
+
+/** Flag logically contradictory requests folded onto one (staff, date) so the
+ *  auto-scheduler can surface them (advisory — it never blocks placement). Reads the
+ *  EFFECTIVE strength baked into the buckets, so a downgraded pending-soft request can
+ *  never raise a hard conflict; `status` provenance only adjusts the wording. The
+ *  caller prefixes the staff/date. `isWorkingShift(id)` = a non-away (real work) shift. */
+export function detectRequestConflicts(
+  folded: FoldedRequests,
+  isWorkingShift: (shiftTypeId: string) => boolean,
+  codeOf: (shiftTypeId: string) => string = (id) => id
+): string[] {
+  const msgs: string[] = [];
+  const forced = [...folded.forcedShiftIds];
+  const hardForcedWorking = forced.filter(isWorkingShift);
+  const overlap = forced.filter((id) => folded.forbiddenShiftIds.has(id));
+
+  // Did a PENDING request land in a hard bucket here? (only shapes the phrasing)
+  const tag = folded.contributing.some((c) => c.effective === "hard" && c.status === "pending")
+    ? "pending "
+    : "";
+
+  // (a) a hard OFF and a hard request to actually work.
+  if (folded.forbidWorking && hardForcedWorking.length > 0) {
+    msgs.push(`hard OFF conflicts with a ${tag}request to work ${hardForcedWorking.map(codeOf).join("/")}`);
+  }
+  // (b) the same shift both requested and hard-excluded.
+  if (overlap.length > 0) {
+    msgs.push(`${tag}request to work ${overlap.map(codeOf).join("/")} also has a hard request to exclude it`);
+  }
+  // (c) a hard leave pre-placement and a hard request to work the same day.
+  if (folded.leaveShiftTypeId && hardForcedWorking.length > 0) {
+    msgs.push(`hard leave (${codeOf(folded.leaveShiftTypeId)}) conflicts with a ${tag}request to work ${hardForcedWorking.map(codeOf).join("/")}`);
+  }
+  // (d) two+ DISTINCT hard REQUEST_SHIFT work requests that no single placement can
+  // satisfy (no working shift common to all). A cell holds one shift, so STEP 0b
+  // places just the first sorted candidate and the rest are silently dropped — flag
+  // it. A single OR request (one entry listing several shifts) is fine: it stays one
+  // contributing entry, so this needs ≥2 distinct requests with disjoint work options.
+  const hardWorkReqs = folded.contributing.filter(
+    (c) => c.kind === "REQUEST_SHIFT" && c.effective === "hard" && c.shiftTypeIds.some(isWorkingShift)
+  );
+  if (hardWorkReqs.length >= 2) {
+    const workSets = hardWorkReqs.map((c) => new Set(c.shiftTypeIds.filter(isWorkingShift)));
+    const common = [...workSets[0]].filter((id) => workSets.every((s) => s.has(id)));
+    if (common.length === 0) {
+      const dtag = hardWorkReqs.some((c) => c.status === "pending") ? "pending " : "";
+      const opts = hardWorkReqs.map((c) => c.shiftTypeIds.filter(isWorkingShift).map(codeOf).join("/")).join(" and ");
+      msgs.push(`multiple ${dtag}hard requests to work different shifts (${opts}) — only one can be placed`);
+    }
+  }
+  return msgs;
 }
 
 /** Short human label for a request — grid badge tooltip / picker summary.

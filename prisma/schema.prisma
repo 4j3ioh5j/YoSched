@@ -307,6 +307,7 @@ model SchedulingPreferences {
   dateFormat            String  @default("MMMM D, YYYY")
   maxLeavePerDay        Int     @default(0) // soft cap on staff off per day; 0 = no cap
   collapseOtherOnPrint  Boolean @default(true) // print: collapse collapsesIntoOther staff into one "OTHER" column
+  pendingRequestMode    String  @default("full") // auto-scheduler handling of PENDING (unapproved) requests: "off" | "soft" | "full"
 
   @@map("scheduling_preferences")
 }
