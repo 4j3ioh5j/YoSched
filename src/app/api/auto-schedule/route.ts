@@ -5,6 +5,7 @@ import { autoSchedule } from "@/lib/auto-scheduler";
 import { type ScheduleRequestData } from "@/lib/schedule-requests";
 import { syncRequestApprovals } from "@/lib/request-sync";
 import { parseAssignmentBase, classifyCasFailure, conflictItem } from "@/lib/assignment-conflict";
+import { resolveUpdaterNames, updaterName } from "@/lib/assignment-attribution";
 
 function isUniqueViolation(e: unknown): boolean {
   return !!e && typeof e === "object" && (e as { code?: string }).code === "P2002";
@@ -322,7 +323,7 @@ export async function PUT(req: NextRequest) {
   const shiftTypes = await prisma.shiftType.findMany();
   const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
 
-  type Row = { id: string; staffId: string; date: Date; shiftTypeId: string; isLocked: boolean; updatedAt: Date };
+  type Row = { id: string; staffId: string; date: Date; shiftTypeId: string; isLocked: boolean; updatedAt: Date; updatedBy: string | null };
   const fmt = (a: Row, date: string) => {
     const st = stMap.get(a.shiftTypeId);
     return {
@@ -339,35 +340,59 @@ export async function PUT(req: NextRequest) {
 
   const applied = [];
   const skipped = [];
-  const conflicts = [];
+  const conflictRows: { staffId: string; date: string; row: Row | null }[] = [];
   for (const s of suggestions) {
     const base = parseAssignmentBase(s, { batchForce: force === true });
     if (base.kind === "invalid") return NextResponse.json({ error: `${s.staffId}/${s.date}: ${base.message}` }, { status: 400 });
     const dateObj = new Date(s.date + "T00:00:00Z");
+    const write = { shiftTypeId: s.shiftTypeId, source: "auto", updatedBy: userId };
 
-    // Legacy/force: upsert as before (lock still blocks).
-    if (base.kind === "legacy" || base.kind === "force") {
+    // Legacy: upsert as before (lock pre-check).
+    if (base.kind === "legacy") {
       const existing = await prisma.assignment.findUnique({ where: { staffId_date: { staffId: s.staffId, date: dateObj } } });
       if (existing?.isLocked) { skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" }); continue; }
       const result = await prisma.assignment.upsert({
         where: { staffId_date: { staffId: s.staffId, date: dateObj } },
-        update: { shiftTypeId: s.shiftTypeId, source: "auto" },
-        create: { staffId: s.staffId, date: dateObj, shiftTypeId: s.shiftTypeId, source: "auto" },
+        update: write,
+        create: { staffId: s.staffId, date: dateObj, ...write },
       });
       applied.push(fmt(result, s.date));
+      continue;
+    }
+
+    // Force: atomic-on-lock overwrite (CR #676 force-only).
+    if (base.kind === "force") {
+      const upd = await prisma.assignment.updateMany({ where: { staffId: s.staffId, date: dateObj, isLocked: false }, data: write });
+      if (upd.count === 1) {
+        const fresh = await prisma.assignment.findUnique({ where: { staffId_date: { staffId: s.staffId, date: dateObj } } });
+        applied.push(fmt(fresh!, s.date));
+        continue;
+      }
+      const current = await prisma.assignment.findUnique({ where: { staffId_date: { staffId: s.staffId, date: dateObj } } });
+      if (current) { skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" }); continue; }
+      try {
+        const created = await prisma.assignment.create({ data: { staffId: s.staffId, date: dateObj, ...write } });
+        applied.push(fmt(created, s.date));
+      } catch (e) {
+        if (!isUniqueViolation(e)) throw e;
+        const upd2 = await prisma.assignment.updateMany({ where: { staffId: s.staffId, date: dateObj, isLocked: false }, data: write });
+        if (upd2.count !== 1) { skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" }); continue; }
+        const fresh = await prisma.assignment.findUnique({ where: { staffId_date: { staffId: s.staffId, date: dateObj } } });
+        applied.push(fmt(fresh!, s.date));
+      }
       continue;
     }
 
     // The suggestion's cell was empty at generation: create, P2002 = filled since.
     if (base.base === null) {
       try {
-        const created = await prisma.assignment.create({ data: { staffId: s.staffId, date: dateObj, shiftTypeId: s.shiftTypeId, source: "auto" } });
+        const created = await prisma.assignment.create({ data: { staffId: s.staffId, date: dateObj, ...write } });
         applied.push(fmt(created, s.date));
       } catch (e) {
         if (!isUniqueViolation(e)) throw e;
         const current = await prisma.assignment.findUnique({ where: { staffId_date: { staffId: s.staffId, date: dateObj } } });
         if (current?.isLocked) skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" });
-        else conflicts.push(conflictItem(s.staffId, s.date, current ? fmt(current, s.date) : null));
+        else conflictRows.push({ staffId: s.staffId, date: s.date, row: current });
       }
       continue;
     }
@@ -376,7 +401,7 @@ export async function PUT(req: NextRequest) {
     // it still does (another editor hasn't changed it since).
     const r = await prisma.assignment.updateMany({
       where: { staffId: s.staffId, date: dateObj, updatedAt: base.base, isLocked: false },
-      data: { shiftTypeId: s.shiftTypeId, source: "auto" },
+      data: write,
     });
     if (r.count === 1) {
       const fresh = await prisma.assignment.findUnique({ where: { staffId_date: { staffId: s.staffId, date: dateObj } } });
@@ -385,13 +410,16 @@ export async function PUT(req: NextRequest) {
     }
     const current = await prisma.assignment.findUnique({ where: { staffId_date: { staffId: s.staffId, date: dateObj } } });
     if (classifyCasFailure(current) === "locked") skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" });
-    else conflicts.push(conflictItem(s.staffId, s.date, current ? fmt(current, s.date) : null));
+    else conflictRows.push({ staffId: s.staffId, date: s.date, row: current });
   }
 
   await syncRequestApprovals(
     applied.map((a) => ({ staffId: a.staffId, date: a.date })),
     userId
   );
+
+  const names = await resolveUpdaterNames(conflictRows.map((c) => c.row?.updatedBy));
+  const conflicts = conflictRows.map((c) => conflictItem(c.staffId, c.date, c.row ? { ...fmt(c.row, c.date), updatedByName: updaterName(c.row.updatedBy, names) } : null));
 
   return NextResponse.json({ applied, skipped, conflicts });
 }

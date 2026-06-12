@@ -348,6 +348,10 @@ model Assignment {
   notes       String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  // Acting user's id on the last write. Plain nullable column (NOT a FK) so
+  // deleting a user never blocks assignment history. Resolved to a NAME only in
+  // schedule:edit conflict payloads — never exposed in normal responses/props.
+  updatedBy   String?
 
   staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
