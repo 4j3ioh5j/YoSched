@@ -198,12 +198,8 @@ input[type="checkbox"]:disabled {
     display: none !important;
   }
 
-  /* "OTHER" column: in print, hide the individual collapsed (fee-basis) staff columns
-     and reveal the single OTHER column (Tailwind-hidden on screen). Both header and
-     body cells carry the attributes, so columns stay aligned across every row. */
-  [data-print-collapse] {
-    display: none !important;
-  }
+  /* Aggregate (additional) columns are Tailwind-hidden on screen; reveal them in print.
+     Header and body cells both carry the attribute, so columns stay aligned every row. */
   [data-other-col] {
     display: table-cell !important;
   }

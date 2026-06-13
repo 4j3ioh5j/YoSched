@@ -12,6 +12,7 @@ import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { otherColumnInitials } from "@/lib/other-column";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
+import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
 
@@ -43,7 +44,6 @@ type Staff = {
   ftePercentage: number;
   employmentTypeId: string;
   employmentTypeName: string;
-  collapsesIntoOther: boolean;
   availabilityRules: AvailabilityRuleData[];
   isAutoScheduled: boolean;
   isActive: boolean;
@@ -148,10 +148,10 @@ type Props = {
   followRules?: FollowRuleRow[];
   countColumns?: { label: string; shiftCodes: string[] }[];
   printColumnRules?: PrintRule[];
+  printAggregateColumns?: AggregateColumn[];
   dateFormat?: string;
   currentVersions?: CurrentVersionMeta[];
   scheduleRequests?: GridRequest[];
-  collapseOtherOnPrint?: boolean;
 };
 
 // The current (last saved/restored) version for a calendar month. snapshotHash
@@ -339,10 +339,10 @@ export function ScheduleGrid({
   followRules,
   countColumns = [],
   printColumnRules = [],
+  printAggregateColumns = [],
   dateFormat: dateFormatProp,
   currentVersions = [],
   scheduleRequests = [],
-  collapseOtherOnPrint = true,
 }: Props) {
   const dateFormat = (dateFormatProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
   const today = new Date();
@@ -597,24 +597,6 @@ export function ScheduleGrid({
     return map;
   }, [localAssignments]);
 
-  // "OTHER" print column: staff flagged collapsesIntoOther are hidden as individual
-  // columns in print and listed together here. Print-only — the on-screen grid keeps a
-  // column per person for editing. otherColInitials maps each date to the initials of
-  // those scheduled (a non-off assignment) that day.
-  const otherStaff = useMemo(
-    () => (collapseOtherOnPrint ? visibleStaff.filter((p) => p.collapsesIntoOther) : []),
-    [collapseOtherOnPrint, visibleStaff],
-  );
-  const showOtherColumn = otherStaff.length > 0;
-  const otherColInitials = useMemo(
-    () =>
-      otherColumnInitials(otherStaff, dates, (staffId, date) => {
-        const a = assignmentMap.get(`${staffId}:${date}`);
-        return !!a && !offShiftTypeIds.has(a.shiftTypeId);
-      }),
-    [otherStaff, dates, assignmentMap, offShiftTypeIds],
-  );
-
   const shiftTypeMap = useMemo(() => {
     const map = new Map<string, ShiftType>();
     for (const st of shiftTypes) map.set(st.id, st);
@@ -834,16 +816,21 @@ export function ScheduleGrid({
     );
   }, [dedicatedColumns, dates, staff, assignmentMap, suggestionMap]);
 
-  // Print-only: staff whose individual column must be HIDDEN from the printed
-  // schedule because they match no enabled print-column rule. Empty when there are
-  // no enabled rules (print everyone — today's behavior). On-screen the grid still
-  // shows every staff; only print stamps `data-print-rule-hide` on these columns.
-  // Shift codes are gathered from REAL assignments in the displayed dates (print
-  // reflects the committed schedule, so suggestions are excluded).
-  const printHiddenIds = useMemo(() => {
+  // Print-only column model. Computes, for the printed schedule:
+  //   - hiddenIds: staff whose individual column is hidden — they match no enabled
+  //     print-column rule, OR they're CLAIMED by an aggregate column with
+  //     suppressMembers (folded together so the grid stamps one `data-print-rule-hide`).
+  //   - aggregateColumns: the configurable aggregate columns (replacing the old
+  //     hardcoded "FB" column), each with per-date member initials. Only columns that
+  //     have a scheduled member on an in-month day are kept (skip-empty over the
+  //     PRINTED period — so the seeded default "Other" adds nothing when empty).
+  // On-screen the grid still shows every staff; this only affects print. Shift codes
+  // are gathered from REAL assignments in the printed (in-month) dates.
+  const { printHiddenIds, printAggColumns } = useMemo(() => {
     // Only scan dates the printed page actually shows — the grid's `dates` include
     // leading/trailing outside-month padding rows that print CSS hides, so a shift
-    // landing only in a padding day must NOT make a staff's column print.
+    // landing only in a padding day must NOT make a staff's column print, nor make an
+    // aggregate column appear.
     const inMonth = dates.filter((d) => d >= firstOfMonth && d <= lastOfMonth);
     const codesByStaff = new Map<string, Set<string>>();
     for (const p of visibleStaff) {
@@ -859,19 +846,38 @@ export function ScheduleGrid({
     for (const st of shiftTypes) {
       kindByCode.set(st.code, st.isOffShift ? "off" : st.isLeave ? "leave" : "work");
     }
-    const visIds = printVisibleStaffIds(
-      visibleStaff.map((p) => ({
-        id: p.id,
-        employmentTypeId: p.employmentTypeId,
-        ftePercentage: p.ftePercentage,
-      })),
-      printColumnRules,
-      codesByStaff,
-      kindByCode,
-    );
-    if (!visIds) return new Set<string>(); // no enabled rules → hide nothing
-    return new Set(visibleStaff.filter((p) => !visIds.has(p.id)).map((p) => p.id));
-  }, [printColumnRules, visibleStaff, dates, assignmentMap, firstOfMonth, lastOfMonth, shiftTypes]);
+    const visStaff = visibleStaff.map((p) => ({
+      id: p.id,
+      employmentTypeId: p.employmentTypeId,
+      ftePercentage: p.ftePercentage,
+    }));
+    const visIds = printVisibleStaffIds(visStaff, printColumnRules, codesByStaff, kindByCode);
+
+    // Aggregate columns: membership + which individual columns they suppress.
+    const agg = computeAggregateColumns(visStaff, visIds, printAggregateColumns, codesByStaff, kindByCode);
+
+    // Hidden = not rule-visible (visIds null = everyone visible) ∪ suppressed-by-aggregate.
+    const hiddenIds = visIds
+      ? new Set(visibleStaff.filter((p) => !visIds.has(p.id)).map((p) => p.id))
+      : new Set<string>();
+    for (const id of agg.suppressedIndividualIds) hiddenIds.add(id);
+
+    // Per-column day initials over ALL dates (cells must align with every grid row),
+    // but only keep columns with a scheduled member on an in-month day (skip-empty).
+    const initialsById = new Map(visibleStaff.map((p) => [p.id, p.initials]));
+    const printAggColumns = agg.columns
+      .map((c) => {
+        const memberStaff = c.memberIds.map((id) => ({ id, initials: initialsById.get(id) ?? "" }));
+        const initialsByDate = otherColumnInitials(memberStaff, dates, (staffId, date) => {
+          const a = assignmentMap.get(`${staffId}:${date}`);
+          return !!a && !offShiftTypeIds.has(a.shiftTypeId);
+        });
+        return { label: c.label, initialsByDate };
+      })
+      .filter((c) => inMonth.some((d) => (c.initialsByDate[d]?.length ?? 0) > 0));
+
+    return { printHiddenIds: hiddenIds, printAggColumns };
+  }, [printColumnRules, printAggregateColumns, visibleStaff, dates, assignmentMap, firstOfMonth, lastOfMonth, shiftTypes, offShiftTypeIds]);
 
   // Drop column focus + selection when the visible column set may change (month
   // change / Show-all toggle), so focus and selection rectangles never point at
@@ -2117,7 +2123,6 @@ export function ScheduleGrid({
                 return (
                   <th
                     key={p.id}
-                    data-print-collapse={collapseOtherOnPrint && p.collapsesIntoOther ? "" : undefined}
                     data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
                     className="px-1 py-1 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer"
                     style={isActiveCol || hoverCol === p.id ? { backgroundColor: "rgba(29,78,216,0.7)" } : undefined}
@@ -2138,11 +2143,17 @@ export function ScheduleGrid({
                   </th>
                 );
               })}
-              {showOtherColumn && (
-                <th data-other-col className="hidden px-1 py-1 text-center text-xs font-medium border-b border-slate-700">
-                  FB
+              {/* Aggregate (additional) columns — print-only (hidden on screen, revealed
+                  in print via data-other-col). Replace the old hardcoded "FB" column. */}
+              {printAggColumns.map((c, ci) => (
+                <th
+                  key={`agg-h-${ci}`}
+                  data-other-col
+                  className="hidden px-1 py-1 text-center text-xs font-medium border-b border-l border-slate-700"
+                >
+                  {c.label}
                 </th>
-              )}
+              ))}
               {dedicatedColumns.map((st) => (
                 <th
                   key={`ded-h-${st.id}`}
@@ -2195,7 +2206,6 @@ export function ScheduleGrid({
                       return (
                         <td
                           key={p.id}
-                          data-print-collapse={collapseOtherOnPrint && p.collapsesIntoOther ? "" : undefined}
                           data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
                           className="px-0 py-1 text-center border-slate-600/50 border border-y-indigo-500/60"
                           onMouseEnter={(e) => showTip(setTooltip, `${p.initials}: ${hours}hrs / ${target}hrs target (${diffLabel})`, e)}
@@ -2207,11 +2217,11 @@ export function ScheduleGrid({
                         </td>
                       );
                     })}
-                    {/* Blank OTHER cell keeps the PP-summary row column-aligned with the day
-                        rows in print (where the individual fee-basis columns are hidden). */}
-                    {showOtherColumn && (
-                      <td data-other-col className="hidden border-slate-600/50 border border-y-indigo-500/60" />
-                    )}
+                    {/* Blank aggregate-column cells keep the PP-summary row aligned with the
+                        day rows in print. */}
+                    {printAggColumns.map((c, ci) => (
+                      <td key={`agg-pp-${ci}`} data-other-col className="hidden border-slate-600/50 border border-y-indigo-500/60" />
+                    ))}
                     {dedicatedColumns.length > 0 && (
                       <td colSpan={dedicatedColumns.length} className="border-l border-slate-600 border-y border-y-indigo-500/60" />
                     )}
@@ -2303,7 +2313,6 @@ export function ScheduleGrid({
                         key={p.id}
                         data-cell={cellKey}
                         data-bold-cell={a && shiftTypeMap.get(a.shiftTypeId)?.boldOnSchedule ? "" : undefined}
-                        data-print-collapse={collapseOtherOnPrint && p.collapsesIntoOther ? "" : undefined}
                         data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
                         className={[
                           `px-0.5 py-0.5 text-center border-slate-700/30 border relative ${canEdit ? "cursor-pointer" : "cursor-default"}`,
@@ -2381,17 +2390,18 @@ export function ScheduleGrid({
                       </td>
                     );
                   })}
-                  {showOtherColumn && (
+                  {printAggColumns.map((c, ci) => (
                     <td
+                      key={`agg-b-${ci}`}
                       data-other-col
                       className={[
                         "hidden px-0.5 py-0.5 text-center text-[10px] font-semibold leading-tight break-words border-l border-slate-700",
                         isNewPP ? "border-t-2 border-t-indigo-500" : "",
                       ].join(" ")}
                     >
-                      {(otherColInitials[date] ?? []).join(", ")}
+                      {(c.initialsByDate[date] ?? []).join(", ")}
                     </td>
-                  )}
+                  ))}
                   {dedicatedColumns.map((st, di) => {
                     const inits = dedicatedColumnInitialsData[di]?.[date] ?? [];
                     const isEditing = canEdit && dedEdit?.shiftTypeId === st.id && dedEdit?.date === date;

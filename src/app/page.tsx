@@ -4,7 +4,7 @@ import { ScheduleGrid } from "./schedule-grid";
 import { NavHeader } from "./nav-header";
 import { getSession } from "@/lib/auth-guard";
 import { isRequestVisibleToViewer } from "@/lib/schedule-requests";
-import { effectiveConditions } from "@/lib/print-column-visibility";
+import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +19,7 @@ export default async function Home() {
   // Approved requests are honored as real shifts (the published schedule) and stay
   // visible to all — they're not "viewing a request" any more than seeing a shift.
   const canViewAllRequests = permissions!.includes("requests:view");
-  const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, printColumnRules, currentVersions, scheduleRequests] =
+  const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, printColumnRules, printAggregateColumns, currentVersions, scheduleRequests] =
     await Promise.all([
       prisma.staff.findMany({
         // Active roster + any inactive staff that has assignments, so the grid
@@ -45,6 +45,7 @@ export default async function Home() {
       prisma.shiftFollowRule.findMany(),
       prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.printColumnRule.findMany({ orderBy: { sortOrder: "asc" } }),
+      prisma.printAggregateColumn.findMany({ orderBy: { sortOrder: "asc" } }),
       // Current saved version per month (metadata only) so the grid footer can
       // show the version number and detect live drift via snapshotHash.
       prisma.scheduleVersion.findMany({
@@ -119,7 +120,6 @@ export default async function Home() {
           ftePercentage: p.ftePercentage ?? 1.0,
           employmentTypeId: p.employmentTypeId,
           employmentTypeName: p.employmentType.name,
-          collapsesIntoOther: p.employmentType.collapsesIntoOther,
           availabilityRules: p.availabilityRules.map((ar) => ({
             dayOfWeek: ar.dayOfWeek,
             type: ar.type,
@@ -199,8 +199,17 @@ export default async function Home() {
           maxFtePercentage: r.maxFtePercentage,
           conditions: effectiveConditions(r.conditions, r.shiftCodes, r.shiftMatch),
         }))}
+        printAggregateColumns={printAggregateColumns.map((c) => ({
+          label: c.label,
+          enabled: c.enabled,
+          isOther: c.isOther,
+          suppressMembers: c.suppressMembers,
+          employmentTypeIds: c.employmentTypeIds,
+          minFtePercentage: c.minFtePercentage,
+          maxFtePercentage: c.maxFtePercentage,
+          conditions: coerceConditions(c.conditions),
+        }))}
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
-        collapseOtherOnPrint={schedPrefs?.collapseOtherOnPrint ?? true}
         currentVersions={currentVersions.map((v) => ({
           year: v.year,
           month: v.month,
