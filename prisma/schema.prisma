@@ -497,6 +497,35 @@ model PrintColumnRule {
   @@map("print_column_rules")
 }
 
+// A configurable AGGREGATE column on the printed schedule: instead of one column per
+// staff, it lists (per day) the initials of the staff who match its rule and are
+// scheduled that day. Replaces the old hardcoded "FB" collapse column. Reuses the same
+// rule shape as PrintColumnRule (employmentTypeIds / FTE bounds / conditions). Two
+// column-level extras:
+//   - suppressMembers: when true, a member's individual column is hidden in print
+//     (the aggregate "claims" them); when false, the member appears both individually
+//     and in this column.
+//   - isOther: marks the singleton residual catch-all column — it has NO rule and lists
+//     staff who appear in no other printed column (individual or aggregate). Exactly one
+//     isOther row exists (seeded), cannot be deleted, only renamed/enabled.
+// Print-only: the on-screen grid is unaffected. See print-aggregate-columns.ts.
+model PrintAggregateColumn {
+  id                String   @id @default(cuid())
+  label             String
+  sortOrder         Int      @default(0)
+  enabled           Boolean  @default(true)
+  suppressMembers   Boolean  @default(true) // hide members' individual columns in print
+  isOther           Boolean  @default(false) // the residual catch-all (no rule); singleton
+  employmentTypeIds String[] @default([]) // empty = any employment type
+  minFtePercentage  Float? // null = no lower bound
+  maxFtePercentage  Float? // null = no upper bound
+  // Shift conditions (ANDed): same shape as PrintColumnRule.conditions. Ignored for the
+  // isOther column. See print-column-visibility.ts for the condition semantics.
+  conditions        Json     @default("[]")
+
+  @@map("print_aggregate_columns")
+}
+
 // A saved snapshot of one calendar month's assignments. Versions are scoped per
 // (year, month) — `month` is 0-based to match the grid's viewMonth (0=Jan..11=Dec).
 // versionNumber auto-increments within each (year, month). At most one version per

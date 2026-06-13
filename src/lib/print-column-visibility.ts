@@ -111,9 +111,19 @@ function conditionMatches(
   return c.quantifier === "has_none" ? !any : any; // default: has_any
 }
 
-function matchesRule(
+/** The subset of a rule used for matching a staff (no mode/enabled). Lets the
+ *  aggregate-column helper reuse this matcher with its own column type. */
+export type RuleMatchable = Pick<
+  PrintRule,
+  "employmentTypeIds" | "minFtePercentage" | "maxFtePercentage" | "conditions"
+>;
+
+/** Does this staff satisfy a rule's employment-type filter, FTE bounds, and ALL of
+ *  its (ANDed) shift conditions? Exported so the aggregate-column helper can reuse
+ *  the exact same matching as the individual-column visibility. */
+export function staffMatchesRule(
   staff: PrintVisStaff,
-  rule: PrintRule,
+  rule: RuleMatchable,
   codes: Set<string>,
   kindByCode: ReadonlyMap<string, ShiftKind>,
 ): boolean {
@@ -164,9 +174,9 @@ export function printVisibleStaffIds(
   for (const p of staff) {
     const codes = codesByStaff.get(p.id) ?? empty;
     const included =
-      includes.length === 0 || includes.some((rule) => matchesRule(p, rule, codes, kindByCode));
+      includes.length === 0 || includes.some((rule) => staffMatchesRule(p, rule, codes, kindByCode));
     if (!included) continue;
-    if (excludes.some((rule) => matchesRule(p, rule, codes, kindByCode))) continue;
+    if (excludes.some((rule) => staffMatchesRule(p, rule, codes, kindByCode))) continue;
     visible.add(p.id);
   }
   return visible;
