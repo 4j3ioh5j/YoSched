@@ -9,6 +9,7 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
+import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { otherColumnInitials } from "@/lib/other-column";
 import { printVisibleStaffIds, type PrintRule } from "@/lib/print-column-visibility";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
@@ -389,6 +390,11 @@ export function ScheduleGrid({
   const [selectionAnchor, setSelectionAnchor] = useState<{ staffId: string; date: string } | null>(null);
 
   const [showMonthPicker, setShowMonthPicker] = useState(false);
+  // Reverse dedicated-column entry: which dedicated cell is being edited (by
+  // shift type + date) and its in-progress text. Null when not editing.
+  const [dedEdit, setDedEdit] = useState<{ shiftTypeId: string; date: string } | null>(null);
+  const [dedEditValue, setDedEditValue] = useState("");
+  const dedCancelRef = useRef(false); // set when Escape cancels a dedicated-cell edit
   // "Show all staff" override (past months only) — not persisted, default off.
   const [showAllStaff, setShowAllStaff] = useState(false);
   const [showPPRows, setShowPPRows] = useState(() => {
@@ -835,10 +841,14 @@ export function ScheduleGrid({
   // Shift codes are gathered from REAL assignments in the displayed dates (print
   // reflects the committed schedule, so suggestions are excluded).
   const printHiddenIds = useMemo(() => {
+    // Only scan dates the printed page actually shows — the grid's `dates` include
+    // leading/trailing outside-month padding rows that print CSS hides, so a shift
+    // landing only in a padding day must NOT make a staff's column print.
+    const inMonth = dates.filter((d) => d >= firstOfMonth && d <= lastOfMonth);
     const codesByStaff = new Map<string, Set<string>>();
     for (const p of visibleStaff) {
       const set = new Set<string>();
-      for (const date of dates) {
+      for (const date of inMonth) {
         const a = assignmentMap.get(`${p.id}:${date}`);
         if (a?.code) set.add(a.code);
       }
@@ -855,7 +865,7 @@ export function ScheduleGrid({
     );
     if (!visIds) return new Set<string>(); // no enabled rules → hide nothing
     return new Set(visibleStaff.filter((p) => !visIds.has(p.id)).map((p) => p.id));
-  }, [printColumnRules, visibleStaff, dates, assignmentMap]);
+  }, [printColumnRules, visibleStaff, dates, assignmentMap, firstOfMonth, lastOfMonth]);
 
   // Drop column focus + selection when the visible column set may change (month
   // change / Show-all toggle), so focus and selection rectangles never point at
@@ -1074,6 +1084,127 @@ export function ScheduleGrid({
     setSaving(null);
   }
 
+  // Response-checked single-cell write for reverse dedicated-column entry. Unlike
+  // applyAssignment (used by the keyboard/picker/drag paths, which keep the
+  // optimistic value even on a failed request), this reverts to `prev` when the
+  // server rejects the write — so a locked/raced 400 never leaves stale local
+  // state. Returns whether the write committed.
+  async function applyAssignmentChecked(
+    staffId: string,
+    date: string,
+    next: AssignmentData | null,
+    prev: AssignmentData | null,
+  ): Promise<boolean> {
+    setLocalAssignments((cur) => {
+      const filtered = cur.filter((a) => !(a.staffId === staffId && a.date === date));
+      return next ? [...filtered, next] : filtered;
+    });
+    try {
+      let res: Response;
+      if (next) {
+        res = await fetch("/api/assignments", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ staffId, date, shiftTypeId: next.shiftTypeId }),
+        });
+      } else {
+        res = await fetch("/api/assignments", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ staffId, date }),
+        });
+      }
+      if (!res.ok) throw new Error(`write failed: ${res.status}`);
+      if (next) {
+        const saved = await res.json();
+        setLocalAssignments((cur) =>
+          cur.map((a) => (a.staffId === staffId && a.date === date ? saved : a)),
+        );
+      }
+      return true;
+    } catch {
+      // Revert this cell to its prior value (the optimistic change did not stick).
+      setLocalAssignments((cur) => {
+        const filtered = cur.filter((a) => !(a.staffId === staffId && a.date === date));
+        return prev ? [...filtered, prev] : filtered;
+      });
+      return false;
+    }
+  }
+
+  // Reverse dedicated-column entry: parse initials typed into a dedicated column's
+  // cell and assign that shift to the named staff for the date (the inverse of the
+  // normal "assign ICU → initials appear in the ICU column" flow). Additions assign
+  // the shift; initials removed from the cell delete that staff's assignment ONLY
+  // when it is this dedicated shift. Conflicts (a different, unlocked real shift)
+  // ask Replace/Skip per cell; locked cells are never touched.
+  async function handleDedicatedEntry(shiftTypeId: string, date: string, raw: string) {
+    const st = shiftTypeMap.get(shiftTypeId);
+    if (!st) return;
+
+    const { resolved, unknown } = resolveInitials(raw, staff);
+    if (unknown.length > 0) {
+      window.alert(`Unknown initials (no matching staff): ${unknown.join(", ")}`);
+    }
+    const resolvedIds = new Set(resolved.map((r) => r.id));
+
+    // Who currently holds this dedicated shift on this date (REAL assignments only).
+    const currentIds = new Set<string>();
+    for (const p of staff) {
+      if (assignmentMap.get(`${p.id}:${date}`)?.code === st.code) currentIds.add(p.id);
+    }
+
+    const initialsOf = (id: string) => staff.find((p) => p.id === id)?.initials ?? id;
+    const ops: UndoOp[] = [];
+    setSaving(`ded-${shiftTypeId}:${date}`);
+
+    // Additions: staff named in the entry who don't already hold this shift.
+    for (const r of resolved) {
+      if (currentIds.has(r.id)) continue;
+      const existing = assignmentMap.get(`${r.id}:${date}`) ?? null;
+      if (existing?.isLocked) {
+        window.alert(`${initialsOf(r.id)} is locked on ${formatDate(parseDate(date), dateFormat)} — skipped.`);
+        continue;
+      }
+      if (existing && existing.code !== st.code) {
+        const ok = window.confirm(
+          `${initialsOf(r.id)} already has ${existing.code} on ${formatDate(parseDate(date), dateFormat)}. Replace with ${st.code}?`,
+        );
+        if (!ok) continue;
+      }
+      const next: AssignmentData = {
+        id: `temp-${r.id}:${date}`,
+        staffId: r.id,
+        date,
+        shiftTypeId,
+        isLocked: false,
+        code: st.code,
+        color: st.color,
+      };
+      if (await applyAssignmentChecked(r.id, date, next, existing)) {
+        ops.push({ staffId: r.id, date, prev: existing, next });
+      }
+    }
+
+    // Removals: staff dropped from the entry — delete only if their current cell
+    // is THIS dedicated shift and not locked (never clobber another shift).
+    for (const id of currentIds) {
+      if (resolvedIds.has(id)) continue;
+      const existing = assignmentMap.get(`${id}:${date}`) ?? null;
+      if (!existing || existing.code !== st.code) continue;
+      if (existing.isLocked) {
+        window.alert(`${initialsOf(id)} is locked on ${formatDate(parseDate(date), dateFormat)} — not removed.`);
+        continue;
+      }
+      if (await applyAssignmentChecked(id, date, null, existing)) {
+        ops.push({ staffId: id, date, prev: existing, next: null });
+      }
+    }
+
+    if (ops.length > 0) pushUndo(ops);
+    setSaving(null);
+  }
+
   async function handleUndo() {
     const group = undoStack.current.pop();
     if (!group) return;
@@ -1096,6 +1227,13 @@ export function ScheduleGrid({
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      // Ignore grid shortcuts while typing in a field (e.g. the dedicated-column
+      // initials input, version comment) — otherwise letters/Delete/arrows would
+      // hit the active cell instead of the input the user is focused on.
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) {
+        return;
+      }
       if (showMonthPicker) {
         if (e.key === "Escape") setShowMonthPicker(false);
         return;
@@ -2249,18 +2387,51 @@ export function ScheduleGrid({
                   )}
                   {dedicatedColumns.map((st, di) => {
                     const inits = dedicatedColumnInitialsData[di]?.[date] ?? [];
+                    const isEditing = canEdit && dedEdit?.shiftTypeId === st.id && dedEdit?.date === date;
+                    const isDedSaving = saving === `ded-${st.id}:${date}`;
                     return (
                       <td
                         key={`ded-${st.id}`}
                         className={[
                           "px-0.5 py-0.5 text-center text-[11px] font-mono font-semibold leading-tight break-words border-l border-slate-700",
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
+                          canEdit && !isEditing ? "cursor-text hover:bg-slate-700/30" : "",
                         ].join(" ")}
                         style={{ color: st.color }}
-                        onMouseEnter={inits.length ? (e) => showTip(setTooltip, `${st.code}: ${inits.join(", ")}`, e) : undefined}
-                        onMouseLeave={inits.length ? () => setTooltip(null) : undefined}
+                        title={canEdit && !isEditing ? `Type initials to assign ${st.code}` : undefined}
+                        onMouseEnter={!isEditing && inits.length ? (e) => showTip(setTooltip, `${st.code}: ${inits.join(", ")}`, e) : undefined}
+                        onMouseLeave={!isEditing && inits.length ? () => setTooltip(null) : undefined}
+                        onClick={canEdit && !isEditing ? () => {
+                          setTooltip(null);
+                          setDedEditValue(inits.join(", "));
+                          setDedEdit({ shiftTypeId: st.id, date });
+                        } : undefined}
                       >
-                        {inits.join(", ")}
+                        {isEditing ? (
+                          <input
+                            autoFocus
+                            value={dedEditValue}
+                            onChange={(e) => setDedEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+                              else if (e.key === "Escape") { e.preventDefault(); dedCancelRef.current = true; e.currentTarget.blur(); }
+                            }}
+                            onBlur={() => {
+                              const cur = dedEdit;
+                              const raw = dedEditValue;
+                              setDedEdit(null);
+                              setDedEditValue("");
+                              if (dedCancelRef.current) { dedCancelRef.current = false; return; }
+                              if (cur) void handleDedicatedEntry(cur.shiftTypeId, cur.date, raw);
+                            }}
+                            className="w-full bg-slate-900 text-slate-100 text-center text-[11px] font-mono rounded px-0.5 outline-none ring-1 ring-blue-400"
+                            style={{ color: st.color }}
+                          />
+                        ) : isDedSaving ? (
+                          <span className="text-slate-600">…</span>
+                        ) : (
+                          inits.join(", ")
+                        )}
                       </td>
                     );
                   })}
