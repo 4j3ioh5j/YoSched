@@ -13,17 +13,19 @@
  *   - A named column with suppressMembers = true hides its members' individual columns
  *     in print (it "claims" them); with suppressMembers = false the member shows both
  *     individually and in the column.
- *   - The OTHER column (isOther = true, singleton) has no rule. It holds the residual:
- *     staff who appear in NO other printed column — i.e. who have no printed individual
+ *   - A CATCH-ALL column (isOther = true) has no rule. It holds the residual: staff
+ *     who appear in NO other printed column — i.e. who have no printed individual
  *     column AND belong to no named column. Crucially this is computed against the
  *     FINAL individual-visible set (after suppression), so a staff claimed by a
- *     suppressing named column is counted as "appearing" there, not in Other.
+ *     suppressing named column is counted as "appearing" there, not in the catch-all.
+ *     Catch-all is a per-column flag, not a singleton: there may be zero, one, or
+ *     several (multiple catch-all columns simply each list the same residual).
  *
  * `individualVisible` is the set of staff whose individual column would print per the
  * PrintColumnRule visibility helper (null = everyone). Disabled columns are ignored.
  *
  * The grid skips rendering any returned column with no members (over the printed
- * period), so an enabled-but-empty column — including the seeded default Other — adds
+ * period), so an enabled-but-empty column — including the default catch-all — adds
  * nothing to the printout.
  *
  * Kept DB/React-free so it is unit-testable in isolation.
@@ -57,7 +59,7 @@ export function computeAggregateColumns(
 ): AggregateColumnResult {
   const enabled = columns.filter((c) => c.enabled);
   const named = enabled.filter((c) => !c.isOther);
-  const other = enabled.find((c) => c.isOther) ?? null;
+  const hasCatchAll = enabled.some((c) => c.isOther);
   const empty = new Set<string>();
 
   // First-match-wins: each staff joins at most one named column.
@@ -80,10 +82,11 @@ export function computeAggregateColumns(
   const printsIndividually = (id: string) =>
     (individualVisible === null || individualVisible.has(id)) && !suppressedIndividualIds.has(id);
 
-  // Other = staff appearing in no other printed column: no printed individual column
-  // AND not a member of any named column.
+  // Catch-all residual = staff appearing in no other printed column: no printed
+  // individual column AND not a member of any named column. Computed once and shared
+  // by every catch-all column (there may be zero, one, or several).
   const otherMembers: string[] = [];
-  if (other) {
+  if (hasCatchAll) {
     for (const p of staff) {
       if (!printsIndividually(p.id) && !memberOfNamed.has(p.id)) otherMembers.push(p.id);
     }

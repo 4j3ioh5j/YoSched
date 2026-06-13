@@ -3,10 +3,6 @@ import { getSession } from "@/lib/auth-guard";
 import { coerceConditions } from "@/lib/print-column-visibility";
 import { NextRequest, NextResponse } from "next/server";
 
-// Stable id for the singleton residual "Other" column (matches the migration seed)
-// so it stays identifiable across replace-all saves.
-const OTHER_ID = "aggcol_other_default";
-
 export async function GET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
@@ -42,41 +38,39 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "columns must be an array" }, { status: 400 });
   }
 
-  // Singleton invariant: exactly one residual "Other" (isOther) column must exist —
-  // it cannot be deleted or duplicated. Enforced server-side, not just in the UI.
-  const otherCount = (columns as ColumnInput[]).filter((c) => c?.isOther === true).length;
-  if (otherCount !== 1) {
-    return NextResponse.json(
-      { error: "exactly one isOther (residual 'Other') column is required" },
-      { status: 400 },
-    );
-  }
+  // No singleton constraint: a "catch-all" (isOther) column is just an ordinary column
+  // with the residual flag set. There may be zero, one, or several. Catch-all columns
+  // are still SANITIZED on write — they carry no rule (the residual = "staff in no
+  // other column"), so any rule fields in the payload are cleared. Non-object entries
+  // (e.g. a stray null) are dropped rather than throwing.
+  const data = (columns as unknown[])
+    .filter((c): c is ColumnInput => !!c && typeof c === "object")
+    .map((c, i) => {
+      const isOther = c.isOther === true;
+      return {
+        label: typeof c.label === "string" ? c.label : isOther ? "Other" : "",
+        sortOrder: i,
+        enabled: c.enabled !== false,
+        // A catch-all column has no rule and no suppression — neutralize regardless of payload.
+        suppressMembers: isOther ? false : c.suppressMembers !== false,
+        isOther,
+        employmentTypeIds: isOther
+          ? []
+          : Array.isArray(c.employmentTypeIds)
+            ? c.employmentTypeIds.filter((x) => typeof x === "string")
+            : [],
+        minFtePercentage: isOther ? null : num(c.minFtePercentage),
+        maxFtePercentage: isOther ? null : num(c.maxFtePercentage),
+        conditions: isOther ? [] : coerceConditions(c.conditions),
+      };
+    });
 
   await prisma.$transaction(async (tx) => {
     await tx.printAggregateColumn.deleteMany();
-    await tx.printAggregateColumn.createMany({
-      data: (columns as ColumnInput[]).map((c, i) => {
-        const isOther = c.isOther === true;
-        return {
-          // Keep the stable seed id for the singleton Other.
-          ...(isOther ? { id: OTHER_ID } : {}),
-          label: typeof c.label === "string" ? c.label : isOther ? "Other" : "",
-          sortOrder: i,
-          enabled: c.enabled !== false,
-          // The Other column carries no rule and no suppression — neutralize regardless of payload.
-          suppressMembers: isOther ? false : c.suppressMembers !== false,
-          isOther,
-          employmentTypeIds: isOther
-            ? []
-            : Array.isArray(c.employmentTypeIds)
-              ? c.employmentTypeIds.filter((x) => typeof x === "string")
-              : [],
-          minFtePercentage: isOther ? null : num(c.minFtePercentage),
-          maxFtePercentage: isOther ? null : num(c.maxFtePercentage),
-          conditions: isOther ? [] : coerceConditions(c.conditions),
-        };
-      }),
-    });
+    // createMany throws on an empty data array — skip it when all columns were removed.
+    if (data.length > 0) {
+      await tx.printAggregateColumn.createMany({ data });
+    }
   });
 
   const result = await prisma.printAggregateColumn.findMany({ orderBy: { sortOrder: "asc" } });

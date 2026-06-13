@@ -203,6 +203,19 @@ input[type="checkbox"]:disabled {
   [data-other-col] {
     display: table-cell !important;
   }
+  /* Aggregate column TITLES are user-named and can be any length. Show the full title
+     on ONE line and let the COLUMN grow WIDER to fit it (rather than wrapping/taller):
+     --agg-col-w (set inline per column from the title length) overrides the generic
+     width:auto, and nowrap keeps it single-line. The attribute selector outranks the
+     generic `thead th` width rule. Header cells only — body initials keep their compact
+     break-words behavior within the resulting column width. */
+  thead th[data-other-col] {
+    width: var(--agg-col-w, auto) !important;
+    white-space: nowrap !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    vertical-align: bottom !important;
+  }
 
   /* Shift codes: crisp black-on-white letters, no colored badge, constant size */
   tbody td [data-shift-code] {

@@ -2144,11 +2144,14 @@ export function ScheduleGrid({
                 );
               })}
               {/* Aggregate (additional) columns — print-only (hidden on screen, revealed
-                  in print via data-other-col). Replace the old hardcoded "FB" column. */}
+                  in print via data-other-col). Replace the old hardcoded "FB" column.
+                  --agg-col-w sizes the (table-layout:fixed) column to fit the full title
+                  on one line, so a long title widens the column rather than wrapping. */}
               {printAggColumns.map((c, ci) => (
                 <th
                   key={`agg-h-${ci}`}
                   data-other-col
+                  style={{ "--agg-col-w": `calc(${Math.max(c.label.length, 3)}ch + 12px)` } as React.CSSProperties}
                   className="hidden px-1 py-1 text-center text-xs font-medium border-b border-l border-slate-700"
                 >
                   {c.label}

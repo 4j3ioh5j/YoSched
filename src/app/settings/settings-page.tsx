@@ -2862,8 +2862,9 @@ type EditAggCol = {
 // Configurable AGGREGATE columns on the printed schedule (the replacement for the old
 // hardcoded "FB" column). Each named column lists, per day, the initials of the staff
 // matching its rule who are scheduled that day; suppressMembers hides those staff's own
-// columns. The singleton "Other" (isOther) catch-all has no rule, can't be deleted, and
-// is pinned last.
+// columns. A column with the "Catch-all" (isOther) flag has no rule and lists the
+// residual — staff who appear in no other column. Catch-all is just a per-column toggle:
+// columns are otherwise identical and all freely editable / movable / deletable.
 function AdditionalColumnsSection({
   initial,
   shiftTypes,
@@ -2898,22 +2899,12 @@ function AdditionalColumnsSection({
     setCols(cols.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
   }
   function addCol() {
-    // Insert a new named column just before the Other column so Other stays last.
-    const newCol: EditAggCol = { label: "", enabled: true, isOther: false, suppressMembers: true, employmentTypeIds: [], minFtePercentage: null, maxFtePercentage: null, conditions: [] };
-    const otherIdx = cols.findIndex((c) => c.isOther);
-    if (otherIdx === -1) { setCols([...cols, newCol]); return; }
-    const next = [...cols];
-    next.splice(otherIdx, 0, newCol);
-    setCols(next);
+    setCols([...cols, { label: "", enabled: true, isOther: false, suppressMembers: true, employmentTypeIds: [], minFtePercentage: null, maxFtePercentage: null, conditions: [] }]);
   }
-  function removeCol(idx: number) {
-    if (cols[idx].isOther) return; // singleton catch-all can't be deleted
-    setCols(cols.filter((_, i) => i !== idx));
-  }
+  function removeCol(idx: number) { setCols(cols.filter((_, i) => i !== idx)); }
   function move(idx: number, dir: -1 | 1) {
     const j = idx + dir;
     if (j < 0 || j >= cols.length) return;
-    if (cols[idx].isOther || cols[j].isOther) return; // keep Other pinned last
     const next = [...cols];
     [next[idx], next[j]] = [next[j], next[idx]];
     setCols(next);
@@ -2944,12 +2935,20 @@ function AdditionalColumnsSection({
     <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
       <SectionHeader
         title="Additional Printed Columns"
-        description="Extra aggregate columns for the printed schedule. Each lists, per day, the initials of the staff matching its rule who are scheduled that day. 'Suppress members' hides those staff's own individual columns in print (otherwise they appear both places). The 'Other' column is the catch-all — it lists everyone who appears in no other column; it can't be deleted and is always last. A column with no one to show that month is hidden automatically. Print-only — the on-screen grid is unchanged."
+        description="Extra aggregate columns for the printed schedule. Each lists, per day, the initials of the staff matching its rule who are scheduled that day. 'Suppress members' hides those staff's own individual columns in print (otherwise they appear both places). Tick 'Catch-all' to make a column the residual — it lists everyone who appears in no other column (no rule of its own). A column with no one to show that month is hidden automatically. Print-only — the on-screen grid is unchanged."
         status={status}
       />
 
       <div className="space-y-3">
-        {cols.map((col, idx) => (
+        {cols.map((col, idx) => {
+          // A non-catch-all column with no selector at all matches EVERY staff — flag it
+          // so the admin doesn't accidentally sweep everyone into one column.
+          const hasSelector =
+            col.employmentTypeIds.length > 0 ||
+            col.minFtePercentage != null ||
+            col.maxFtePercentage != null ||
+            col.conditions.some((c) => c.categories.length > 0 || c.codes.length > 0);
+          return (
           <div key={idx} className="bg-slate-900/50 rounded p-3 border border-slate-700 space-y-2">
             <div className="flex items-center gap-2 flex-wrap">
               <label className="flex items-center gap-1 text-xs text-slate-400">
@@ -2957,28 +2956,38 @@ function AdditionalColumnsSection({
                 On
               </label>
               <input type="text" disabled={!canEdit} value={col.label} onChange={(e) => update(idx, { label: e.target.value })} placeholder="Column name" className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-sm border border-slate-600 flex-1 min-w-32 disabled:opacity-50" />
-              {col.isOther ? (
-                <span className="text-[11px] text-indigo-300 bg-indigo-500/15 border border-indigo-500/30 rounded px-1.5 py-0.5" title="Catch-all: lists staff who appear in no other column. Cannot be deleted.">catch-all</span>
-              ) : (
+              <label className="flex items-center gap-1 text-xs text-slate-400" title="Catch-all: this column lists everyone who appears in no other column. It has no rule of its own.">
+                <input type="checkbox" disabled={!canEdit} checked={col.isOther} onChange={(e) => update(idx, { isOther: e.target.checked })} />
+                Catch-all
+              </label>
+              {!col.isOther && (
                 <label className="flex items-center gap-1 text-xs text-slate-400" title="Hide these staff's individual columns in print (otherwise they appear both individually and in this column)">
                   <input type="checkbox" disabled={!canEdit} checked={col.suppressMembers} onChange={(e) => update(idx, { suppressMembers: e.target.checked })} />
                   Suppress members
                 </label>
               )}
-              {canEdit && !col.isOther && (
+              {canEdit && (
                 <span className="flex items-center gap-1">
                   <button onClick={() => move(idx, -1)} disabled={idx === 0} className="text-slate-500 hover:text-slate-300 disabled:opacity-30 text-xs" title="Move up">▲</button>
-                  <button onClick={() => move(idx, 1)} disabled={idx >= cols.length - 1 || !!cols[idx + 1]?.isOther} className="text-slate-500 hover:text-slate-300 disabled:opacity-30 text-xs" title="Move down">▼</button>
+                  <button onClick={() => move(idx, 1)} disabled={idx === cols.length - 1} className="text-slate-500 hover:text-slate-300 disabled:opacity-30 text-xs" title="Move down">▼</button>
                   <button onClick={() => removeCol(idx)} className="text-slate-500 hover:text-red-400 text-sm ml-1">×</button>
                 </span>
               )}
             </div>
 
-            {!col.isOther && (
-              <RuleFieldsEditor value={col} onChange={(patch) => update(idx, patch)} employmentTypes={employmentTypes} allCodes={allCodes} canEdit={canEdit} />
+            {col.isOther ? (
+              <p className="text-[11px] text-slate-500 italic">Catch-all — lists staff who appear in no other column (no rule).</p>
+            ) : (
+              <>
+                <RuleFieldsEditor value={col} onChange={(patch) => update(idx, patch)} employmentTypes={employmentTypes} allCodes={allCodes} canEdit={canEdit} />
+                {col.enabled && !hasSelector && (
+                  <p className="text-[11px] text-amber-400/90">No rule set — this column matches <strong>all staff</strong>. Add an employment type, FTE bound, or shift condition, or tick Catch-all.</p>
+                )}
+              </>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {canEdit && (

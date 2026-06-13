@@ -106,6 +106,25 @@ describe("computeAggregateColumns", () => {
     expect(res.columns.map((c) => c.label)).toEqual(["Other", "FB"]);
   });
 
+  it("zero catch-all columns: no residual column is produced", () => {
+    const staff = [fte("a"), fb("b")];
+    // b excluded from individual columns, but no catch-all → b appears nowhere.
+    const cols = [col({ label: "FB", employmentTypeIds: ["feebasis"], suppressMembers: false })];
+    const res = computeAggregateColumns(staff, new Set(["a"]), cols, noCodes, kindByCode);
+    expect(res.columns.map((c) => c.label)).toEqual(["FB"]);
+    expect(res.columns.some((c) => c.isOther)).toBe(false);
+  });
+
+  it("multiple catch-all columns: each shows the same residual", () => {
+    const staff = [fte("a"), fb("b")];
+    const cols = [other({ label: "Other A" }), other({ label: "Other B" })];
+    const res = computeAggregateColumns(staff, new Set(["a"]), cols, noCodes, kindByCode);
+    expect(res.columns).toEqual([
+      { label: "Other A", isOther: true, memberIds: ["b"] },
+      { label: "Other B", isOther: true, memberIds: ["b"] },
+    ]);
+  });
+
   it("matches shift conditions via the shared rule matcher", () => {
     const staff = [fte("a"), fte("b")];
     const codes = new Map<string, Set<string>>([["a", new Set(["ICU"])], ["b", new Set(["OR"])]]);
