@@ -136,6 +136,18 @@ input[type="checkbox"]:disabled {
     width: 0.72in !important;
   }
 
+  /* Dedicated shift columns (ICU/CARD/…) carry a multi-letter CODE as their header,
+     so the equal-share width + ellipsis truncated them ("CARD" → "CA…"). Give them a
+     fixed width that fits the code and let the text show in full. The attribute
+     selector outranks the generic `thead th`/`tbody td` rules above, so this width and
+     the no-truncate overrides win; staff/count columns still split the remaining width. */
+  th[data-print-ded], td[data-print-ded] {
+    width: 0.48in !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: nowrap !important;
+  }
+
   thead {
     position: static !important;
   }
@@ -247,10 +259,16 @@ input[type="checkbox"]:disabled {
     color: #000 !important;
   }
 
-  /* Scrollable container: no scroll */
+  /* Scrollable container: no scroll, and span the FULL page width. On screen the
+     grid div carries an inline width:calc(100% - alertWidth) to leave room for the
+     alerts sidebar; that sidebar is data-print-hide, but the inline width would
+     otherwise persist in print and leave whitespace on the right. Forcing 100%
+     (wins over the inline style, which has no !important) makes the grid — and the
+     width:100% table inside it — use the entire page width. */
   [class*="overflow-auto"], [class*="overflow-hidden"] {
     overflow: visible !important;
     height: auto !important;
+    width: 100% !important;
   }
 
   /* Version footer: print at the bottom of the schedule in black on white */
