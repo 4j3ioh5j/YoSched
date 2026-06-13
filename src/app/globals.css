@@ -71,6 +71,13 @@ input[type="checkbox"]:disabled {
     display: none !important;
   }
 
+  /* Print-column rules: hide the individual columns of staff who match no enabled
+     rule. Stamped on the header th, the PP-summary cell, and every day cell so the
+     whole column collapses and the remaining columns stay aligned. */
+  [data-print-rule-hide] {
+    display: none !important;
+  }
+
   /* Print header: bold-centered "YoSched" brand above the month/year */
   [data-print-title] {
     display: block !important;

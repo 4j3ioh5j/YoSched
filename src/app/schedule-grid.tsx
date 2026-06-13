@@ -10,6 +10,7 @@ import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT 
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { otherColumnInitials } from "@/lib/other-column";
+import { printVisibleStaffIds, type PrintRule } from "@/lib/print-column-visibility";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
 
@@ -39,6 +40,7 @@ type Staff = {
   initials: string;
   name: string;
   ftePercentage: number;
+  employmentTypeId: string;
   employmentTypeName: string;
   collapsesIntoOther: boolean;
   availabilityRules: AvailabilityRuleData[];
@@ -144,6 +146,7 @@ type Props = {
   };
   followRules?: FollowRuleRow[];
   countColumns?: { label: string; shiftCodes: string[] }[];
+  printColumnRules?: PrintRule[];
   dateFormat?: string;
   currentVersions?: CurrentVersionMeta[];
   scheduleRequests?: GridRequest[];
@@ -334,6 +337,7 @@ export function ScheduleGrid({
   fairnessAverages,
   followRules,
   countColumns = [],
+  printColumnRules = [],
   dateFormat: dateFormatProp,
   currentVersions = [],
   scheduleRequests = [],
@@ -823,6 +827,35 @@ export function ScheduleGrid({
       }),
     );
   }, [dedicatedColumns, dates, staff, assignmentMap, suggestionMap]);
+
+  // Print-only: staff whose individual column must be HIDDEN from the printed
+  // schedule because they match no enabled print-column rule. Empty when there are
+  // no enabled rules (print everyone — today's behavior). On-screen the grid still
+  // shows every staff; only print stamps `data-print-rule-hide` on these columns.
+  // Shift codes are gathered from REAL assignments in the displayed dates (print
+  // reflects the committed schedule, so suggestions are excluded).
+  const printHiddenIds = useMemo(() => {
+    const codesByStaff = new Map<string, Set<string>>();
+    for (const p of visibleStaff) {
+      const set = new Set<string>();
+      for (const date of dates) {
+        const a = assignmentMap.get(`${p.id}:${date}`);
+        if (a?.code) set.add(a.code);
+      }
+      if (set.size > 0) codesByStaff.set(p.id, set);
+    }
+    const visIds = printVisibleStaffIds(
+      visibleStaff.map((p) => ({
+        id: p.id,
+        employmentTypeId: p.employmentTypeId,
+        ftePercentage: p.ftePercentage,
+      })),
+      printColumnRules,
+      codesByStaff,
+    );
+    if (!visIds) return new Set<string>(); // no enabled rules → hide nothing
+    return new Set(visibleStaff.filter((p) => !visIds.has(p.id)).map((p) => p.id));
+  }, [printColumnRules, visibleStaff, dates, assignmentMap]);
 
   // Drop column focus + selection when the visible column set may change (month
   // change / Show-all toggle), so focus and selection rectangles never point at
@@ -1941,6 +1974,7 @@ export function ScheduleGrid({
                   <th
                     key={p.id}
                     data-print-collapse={collapseOtherOnPrint && p.collapsesIntoOther ? "" : undefined}
+                    data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
                     className="px-1 py-1 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer"
                     style={isActiveCol || hoverCol === p.id ? { backgroundColor: "rgba(29,78,216,0.7)" } : undefined}
                     onClick={() => setActiveCol(activeCol === p.id ? null : p.id)}
@@ -2017,6 +2051,7 @@ export function ScheduleGrid({
                         <td
                           key={p.id}
                           data-print-collapse={collapseOtherOnPrint && p.collapsesIntoOther ? "" : undefined}
+                          data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
                           className="px-0 py-1 text-center border-slate-600/50 border border-y-indigo-500/60"
                           onMouseEnter={(e) => showTip(setTooltip, `${p.initials}: ${hours}hrs / ${target}hrs target (${diffLabel})`, e)}
                           onMouseLeave={() => setTooltip(null)}
@@ -2124,6 +2159,7 @@ export function ScheduleGrid({
                         data-cell={cellKey}
                         data-bold-cell={a && shiftTypeMap.get(a.shiftTypeId)?.boldOnSchedule ? "" : undefined}
                         data-print-collapse={collapseOtherOnPrint && p.collapsesIntoOther ? "" : undefined}
+                        data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
                         className={[
                           `px-0.5 py-0.5 text-center border-slate-700/30 border relative ${canEdit ? "cursor-pointer" : "cursor-default"}`,
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",

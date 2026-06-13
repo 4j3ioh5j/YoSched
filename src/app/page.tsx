@@ -18,7 +18,7 @@ export default async function Home() {
   // Approved requests are honored as real shifts (the published schedule) and stay
   // visible to all — they're not "viewing a request" any more than seeing a shift.
   const canViewAllRequests = permissions!.includes("requests:view");
-  const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, currentVersions, scheduleRequests] =
+  const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, printColumnRules, currentVersions, scheduleRequests] =
     await Promise.all([
       prisma.staff.findMany({
         // Active roster + any inactive staff that has assignments, so the grid
@@ -43,6 +43,7 @@ export default async function Home() {
       prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.shiftFollowRule.findMany(),
       prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } }),
+      prisma.printColumnRule.findMany({ orderBy: { sortOrder: "asc" } }),
       // Current saved version per month (metadata only) so the grid footer can
       // show the version number and detect live drift via snapshotHash.
       prisma.scheduleVersion.findMany({
@@ -115,6 +116,7 @@ export default async function Home() {
           initials: p.initials,
           name: p.name,
           ftePercentage: p.ftePercentage ?? 1.0,
+          employmentTypeId: p.employmentTypeId,
           employmentTypeName: p.employmentType.name,
           collapsesIntoOther: p.employmentType.collapsesIntoOther,
           availabilityRules: p.availabilityRules.map((ar) => ({
@@ -187,6 +189,15 @@ export default async function Home() {
         countColumns={countColumns.map((c) => ({
           label: c.label,
           shiftCodes: c.shiftCodes,
+        }))}
+        printColumnRules={printColumnRules.map((r) => ({
+          enabled: r.enabled,
+          mode: r.mode,
+          employmentTypeIds: r.employmentTypeIds,
+          minFtePercentage: r.minFtePercentage,
+          maxFtePercentage: r.maxFtePercentage,
+          shiftCodes: r.shiftCodes,
+          shiftMatch: r.shiftMatch,
         }))}
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
         collapseOtherOnPrint={schedPrefs?.collapseOtherOnPrint ?? true}

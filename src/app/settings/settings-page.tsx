@@ -107,6 +107,18 @@ type FollowRuleData = {
   mode: string;
 };
 
+type PrintColumnRuleData = {
+  id: string;
+  label: string;
+  enabled: boolean;
+  mode: string; // "include" | "exclude"
+  employmentTypeIds: string[];
+  minFtePercentage: number | null;
+  maxFtePercentage: number | null;
+  shiftCodes: string[];
+  shiftMatch: string; // "any" | "all"
+};
+
 type Props = {
   shiftTypes: ShiftType[];
   staffingReqs: StaffingReq[];
@@ -119,6 +131,7 @@ type Props = {
   shiftCodes: string[];
   followRules: FollowRuleData[];
   countColumns: { id: string; label: string; shiftCodes: string[] }[];
+  printColumnRules: PrintColumnRuleData[];
   canEdit?: boolean;
 };
 
@@ -2539,9 +2552,248 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
   );
 }
 
+// ─── Print Column Rules Section ─────────────────────────────────────────────
+
+type EditPrintRule = {
+  label: string;
+  enabled: boolean;
+  mode: string;
+  employmentTypeIds: string[];
+  minFtePercentage: number | null;
+  maxFtePercentage: number | null;
+  shiftCodes: string[];
+  shiftMatch: string;
+};
+
+function PrintColumnRulesSection({
+  initial,
+  shiftTypes,
+  employmentTypes,
+}: {
+  initial: PrintColumnRuleData[];
+  shiftTypes: ShiftType[];
+  employmentTypes: EmploymentTypeData[];
+}) {
+  const canEdit = useCanEdit();
+  const [rules, setRules] = useState<EditPrintRule[]>(
+    initial.map((r) => ({
+      label: r.label,
+      enabled: r.enabled,
+      mode: r.mode === "exclude" ? "exclude" : "include",
+      employmentTypeIds: [...r.employmentTypeIds],
+      minFtePercentage: r.minFtePercentage,
+      maxFtePercentage: r.maxFtePercentage,
+      shiftCodes: [...r.shiftCodes],
+      shiftMatch: r.shiftMatch === "all" ? "all" : "any",
+    })),
+  );
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const allCodes = shiftTypes.filter((st) => !st.isOffShift).map((st) => st.code);
+  const empName = (id: string) => employmentTypes.find((e) => e.id === id)?.name ?? id;
+  const fteId = employmentTypes.find((e) => e.name.toUpperCase() === "FTE")?.id;
+  const fbId = employmentTypes.find((e) => /fee|fb|basis/i.test(e.name))?.id;
+
+  // FTE % shown to the user as a whole-number percentage; stored as a fraction
+  // (1.0 = 100%) to match Staff.ftePercentage and the visibility helper.
+  const pctVal = (f: number | null) => (f == null ? "" : String(Math.round(f * 100)));
+  const parsePct = (s: string): number | null => {
+    const t = s.trim();
+    if (t === "") return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n / 100 : null;
+  };
+
+  function update(idx: number, patch: Partial<EditPrintRule>) {
+    setRules(rules.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  }
+  function addRule(rule: EditPrintRule) {
+    setRules([...rules, rule]);
+  }
+  function removeRule(idx: number) {
+    setRules(rules.filter((_, i) => i !== idx));
+  }
+  function move(idx: number, dir: -1 | 1) {
+    const j = idx + dir;
+    if (j < 0 || j >= rules.length) return;
+    const next = [...rules];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setRules(next);
+  }
+  function addEmp(idx: number, id: string) {
+    update(idx, { employmentTypeIds: [...rules[idx].employmentTypeIds, id] });
+  }
+  function removeEmp(idx: number, id: string) {
+    update(idx, { employmentTypeIds: rules[idx].employmentTypeIds.filter((x) => x !== id) });
+  }
+  function addCode(idx: number, code: string) {
+    update(idx, { shiftCodes: [...rules[idx].shiftCodes, code] });
+  }
+  function removeCode(idx: number, code: string) {
+    update(idx, { shiftCodes: rules[idx].shiftCodes.filter((c) => c !== code) });
+  }
+
+  function blank(): EditPrintRule {
+    return { label: "", enabled: true, mode: "include", employmentTypeIds: [], minFtePercentage: null, maxFtePercentage: null, shiftCodes: [], shiftMatch: "any" };
+  }
+  function addPreset(kind: string) {
+    switch (kind) {
+      case "all-fte":
+        addRule({ ...blank(), label: "All FTEs", employmentTypeIds: fteId ? [fteId] : [] });
+        break;
+      case "fte-pct":
+        addRule({ ...blank(), label: "FTEs ≥ 50%", employmentTypeIds: fteId ? [fteId] : [], minFtePercentage: 0.5 });
+        break;
+      case "fte-or":
+        addRule({ ...blank(), label: "FTEs w/ ORC/ORL/OR/CARD", employmentTypeIds: fteId ? [fteId] : [], shiftCodes: ["ORC", "ORL", "OR", "CARD"].filter((c) => allCodes.includes(c)), shiftMatch: "any" });
+        break;
+      case "fee-basis":
+        addRule({ ...blank(), label: "Fee-basis", employmentTypeIds: fbId ? [fbId] : [] });
+        break;
+      case "with-shift":
+        addRule({ ...blank(), label: "With shift…", shiftMatch: "any" });
+        break;
+    }
+  }
+
+  async function save() {
+    setStatus("saving");
+    try {
+      const res = await fetch("/api/settings/print-column-rules", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rules }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch {
+      setStatus("error");
+    }
+  }
+
+  return (
+    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
+      <SectionHeader
+        title="Printed Schedule Columns"
+        description="Rules deciding which staff get their own column when printing. Rules combine: include rules pick who prints (no include rules = everyone), then exclude rules remove matches. No rules = print everyone. Print-only — the on-screen grid always shows all staff."
+        status={status}
+      />
+
+      <div className="space-y-3">
+        {rules.map((rule, idx) => (
+          <div key={idx} className="bg-slate-900/50 rounded p-3 border border-slate-700 space-y-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="flex items-center gap-1 text-xs text-slate-400">
+                <input type="checkbox" disabled={!canEdit} checked={rule.enabled} onChange={(e) => update(idx, { enabled: e.target.checked })} />
+                On
+              </label>
+              <select
+                disabled={!canEdit}
+                value={rule.mode}
+                onChange={(e) => update(idx, { mode: e.target.value })}
+                className="bg-slate-700 text-slate-200 rounded px-1.5 py-1 text-xs border border-slate-600 disabled:opacity-50"
+                title="Include = print matching staff; Exclude = print everyone except matching staff"
+              >
+                <option value="include">Include</option>
+                <option value="exclude">Exclude</option>
+              </select>
+              <input
+                type="text"
+                disabled={!canEdit}
+                value={rule.label}
+                onChange={(e) => update(idx, { label: e.target.value })}
+                placeholder="Rule name"
+                className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-sm border border-slate-600 flex-1 min-w-32 disabled:opacity-50"
+              />
+              {canEdit && (
+                <span className="flex items-center gap-1">
+                  <button onClick={() => move(idx, -1)} disabled={idx === 0} className="text-slate-500 hover:text-slate-300 disabled:opacity-30 text-xs" title="Move up">▲</button>
+                  <button onClick={() => move(idx, 1)} disabled={idx === rules.length - 1} className="text-slate-500 hover:text-slate-300 disabled:opacity-30 text-xs" title="Move down">▼</button>
+                  <button onClick={() => removeRule(idx)} className="text-slate-500 hover:text-red-400 text-sm ml-1">×</button>
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-slate-500 w-20">Emp. types:</span>
+              {rule.employmentTypeIds.map((id) => (
+                <span key={id} className="inline-flex items-center gap-0.5 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-xs border border-slate-600">
+                  {empName(id)}
+                  {canEdit && <button onClick={() => removeEmp(idx, id)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>}
+                </span>
+              ))}
+              {rule.employmentTypeIds.length === 0 && <span className="text-xs text-slate-600 italic">any</span>}
+              {canEdit && (
+                <select value="" onChange={(e) => { if (e.target.value) addEmp(idx, e.target.value); }} className="bg-slate-700 text-slate-400 rounded px-1 py-0.5 text-xs border border-slate-600">
+                  <option value="">+ add</option>
+                  {employmentTypes.filter((et) => !rule.employmentTypeIds.includes(et.id)).map((et) => (
+                    <option key={et.id} value={et.id}>{et.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-slate-500 w-20">FTE %:</span>
+              <input type="number" min={0} disabled={!canEdit} value={pctVal(rule.minFtePercentage)} onChange={(e) => update(idx, { minFtePercentage: parsePct(e.target.value) })} placeholder="min" className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-xs border border-slate-600 w-16 disabled:opacity-50" />
+              <span className="text-xs text-slate-500">to</span>
+              <input type="number" min={0} disabled={!canEdit} value={pctVal(rule.maxFtePercentage)} onChange={(e) => update(idx, { maxFtePercentage: parsePct(e.target.value) })} placeholder="max" className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-xs border border-slate-600 w-16 disabled:opacity-50" />
+              <span className="text-xs text-slate-600 italic">blank = no bound</span>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-slate-500 w-20">Shifts:</span>
+              {rule.shiftCodes.map((code) => (
+                <span key={code} className="inline-flex items-center gap-0.5 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-xs border border-slate-600">
+                  {code}
+                  {canEdit && <button onClick={() => removeCode(idx, code)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>}
+                </span>
+              ))}
+              {canEdit && (
+                <select value="" onChange={(e) => { if (e.target.value) addCode(idx, e.target.value); }} className="bg-slate-700 text-slate-400 rounded px-1 py-0.5 text-xs border border-slate-600">
+                  <option value="">+ add</option>
+                  {allCodes.filter((c) => !rule.shiftCodes.includes(c)).map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              )}
+              {rule.shiftCodes.length > 1 && (
+                <select disabled={!canEdit} value={rule.shiftMatch} onChange={(e) => update(idx, { shiftMatch: e.target.value })} className="bg-slate-700 text-slate-300 rounded px-1 py-0.5 text-xs border border-slate-600 disabled:opacity-50" title="Match any of the shifts, or require all of them">
+                  <option value="any">match any</option>
+                  <option value="all">match all</option>
+                </select>
+              )}
+            </div>
+          </div>
+        ))}
+        {rules.length === 0 && <p className="text-xs text-slate-500 italic">No rules — the printed schedule shows every staff member.</p>}
+      </div>
+
+      {canEdit && (
+        <>
+          <div className="flex items-center gap-2 mt-4 flex-wrap">
+            <span className="text-xs text-slate-500">Presets:</span>
+            <button onClick={() => addPreset("all-fte")} className="text-xs text-blue-400 hover:text-blue-300 border border-slate-600 rounded px-1.5 py-0.5">All FTEs</button>
+            <button onClick={() => addPreset("fte-pct")} className="text-xs text-blue-400 hover:text-blue-300 border border-slate-600 rounded px-1.5 py-0.5">FTEs ≥ %</button>
+            <button onClick={() => addPreset("fte-or")} className="text-xs text-blue-400 hover:text-blue-300 border border-slate-600 rounded px-1.5 py-0.5">FTEs w/ OR shifts</button>
+            <button onClick={() => addPreset("fee-basis")} className="text-xs text-blue-400 hover:text-blue-300 border border-slate-600 rounded px-1.5 py-0.5">Fee-basis</button>
+            <button onClick={() => addPreset("with-shift")} className="text-xs text-blue-400 hover:text-blue-300 border border-slate-600 rounded px-1.5 py-0.5">Anyone with shift…</button>
+          </div>
+          <div className="flex items-center gap-3 mt-3">
+            <button onClick={() => addRule(blank())} className="text-xs text-blue-400 hover:text-blue-300">+ Add blank rule</button>
+            <button onClick={save} disabled={status === "saving"} className="ml-auto px-3 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
+              {status === "saving" ? "Saving..." : "Save"}
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, countColumns: initialCountColumns, canEdit = true }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, canEdit = true }: Props) {
   const undo = useUndo();
   const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
 
@@ -2558,6 +2810,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} shiftTypes={shiftTypes} />
         <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
+        <PrintColumnRulesSection initial={initialPrintColumnRules} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />

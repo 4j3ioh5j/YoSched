@@ -11,7 +11,7 @@ export default async function Settings() {
   const { error, permissions } = await getSession("settings:view");
   if (error) redirect("/");
   const canEditSettings = permissions!.includes("settings:edit");
-  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors, followRules, countColumns] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors, followRules, countColumns, printColumnRules] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
@@ -25,6 +25,7 @@ export default async function Settings() {
     prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.shiftFollowRule.findMany(),
     prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.printColumnRule.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
 
   const schedulingPrefs = {
@@ -126,6 +127,17 @@ export default async function Settings() {
           id: c.id,
           label: c.label,
           shiftCodes: c.shiftCodes,
+        }))}
+        printColumnRules={printColumnRules.map((r) => ({
+          id: r.id,
+          label: r.label,
+          enabled: r.enabled,
+          mode: r.mode,
+          employmentTypeIds: r.employmentTypeIds,
+          minFtePercentage: r.minFtePercentage,
+          maxFtePercentage: r.maxFtePercentage,
+          shiftCodes: r.shiftCodes,
+          shiftMatch: r.shiftMatch,
         }))}
         canEdit={canEditSettings}
       />

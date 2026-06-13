@@ -474,6 +474,25 @@ model CountColumn {
   @@map("count_columns")
 }
 
+// A rule deciding which staff get their own column on the PRINTED schedule.
+// Rules combine as a union (OR): a staff column prints if it matches ANY enabled
+// rule. Zero enabled rules => print everyone (backward compatible). Print-only —
+// the on-screen grid always shows every staff so they remain schedulable.
+model PrintColumnRule {
+  id                String   @id @default(cuid())
+  label             String
+  sortOrder         Int      @default(0)
+  enabled           Boolean  @default(true)
+  mode              String   @default("include") // "include" (print matching) | "exclude" (print everyone EXCEPT matching)
+  employmentTypeIds String[] @default([]) // empty = any employment type
+  minFtePercentage  Float? // null = no lower bound
+  maxFtePercentage  Float? // null = no upper bound
+  shiftCodes        String[] @default([]) // empty = no shift requirement
+  shiftMatch        String   @default("any") // "any" (>=1 of codes that period) | "all"
+
+  @@map("print_column_rules")
+}
+
 // A saved snapshot of one calendar month's assignments. Versions are scoped per
 // (year, month) — `month` is 0-based to match the grid's viewMonth (0=Jan..11=Dec).
 // versionNumber auto-increments within each (year, month). At most one version per
