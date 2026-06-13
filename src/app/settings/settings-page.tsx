@@ -2616,9 +2616,6 @@ function PrintColumnRulesSection({
   const [status, setStatus] = useState<SaveStatus>("idle");
   const allCodes = shiftTypes.map((st) => st.code); // includes leave + off (X) so conditions can target them
   const empName = (id: string) => employmentTypes.find((e) => e.id === id)?.name ?? id;
-  const fteId = employmentTypes.find((e) => e.name.toUpperCase() === "FTE")?.id;
-  const fbId = employmentTypes.find((e) => /fee|fb|basis/i.test(e.name))?.id;
-  const orCodes = ["ORC", "ORL", "OR", "CARD"].filter((c) => allCodes.includes(c));
 
   // FTE % shown as a whole-number percentage; stored as a fraction (1.0 = 100%)
   // to match Staff.ftePercentage and the visibility helper.
@@ -2671,31 +2668,6 @@ function PrintColumnRulesSection({
 
   function blank(): EditPrintRule {
     return { label: "", enabled: true, mode: "include", employmentTypeIds: [], minFtePercentage: null, maxFtePercentage: null, conditions: [] };
-  }
-  function addPreset(kind: string) {
-    switch (kind) {
-      case "all-fte":
-        addRule({ ...blank(), label: "All FTEs", employmentTypeIds: fteId ? [fteId] : [] });
-        break;
-      case "fte-pct":
-        addRule({ ...blank(), label: "FTEs ≥ 50%", employmentTypeIds: fteId ? [fteId] : [], minFtePercentage: 0.5 });
-        break;
-      case "fte-or":
-        addRule({ ...blank(), label: "FTEs w/ ORC/ORL/OR/CARD", employmentTypeIds: fteId ? [fteId] : [], conditions: [blankCond({ quantifier: "has_any", codes: orCodes })] });
-        break;
-      case "fee-basis":
-        addRule({ ...blank(), label: "Fee-basis", employmentTypeIds: fbId ? [fbId] : [] });
-        break;
-      case "only-icu-card":
-        addRule({ ...blank(), label: "No work except ICU/CARD", conditions: [blankCond({ quantifier: "has_none", categories: ["work"], except: ["ICU", "CARD"].filter((c) => allCodes.includes(c)) })] });
-        break;
-      case "any-work-leave":
-        addRule({ ...blank(), label: "Any work or leave", conditions: [blankCond({ quantifier: "has_any", categories: ["work", "leave"] })] });
-        break;
-      case "with-shift":
-        addRule({ ...blank(), label: "Any work shift", conditions: [blankCond({ quantifier: "has_any", categories: ["work"] })] });
-        break;
-    }
   }
 
   async function save() {
@@ -2829,24 +2801,12 @@ function PrintColumnRulesSection({
       </div>
 
       {canEdit && (
-        <>
-          <div className="flex items-center gap-2 mt-4 flex-wrap">
-            <span className="text-xs text-slate-500">Presets:</span>
-            <button onClick={() => addPreset("all-fte")} className="text-xs text-blue-400 hover:text-blue-300 border border-slate-600 rounded px-1.5 py-0.5">All FTEs</button>
-            <button onClick={() => addPreset("fte-pct")} className="text-xs text-blue-400 hover:text-blue-300 border border-slate-600 rounded px-1.5 py-0.5">FTEs ≥ %</button>
-            <button onClick={() => addPreset("fte-or")} className="text-xs text-blue-400 hover:text-blue-300 border border-slate-600 rounded px-1.5 py-0.5">FTEs w/ OR shifts</button>
-            <button onClick={() => addPreset("fee-basis")} className="text-xs text-blue-400 hover:text-blue-300 border border-slate-600 rounded px-1.5 py-0.5">Fee-basis</button>
-            <button onClick={() => addPreset("only-icu-card")} className="text-xs text-blue-400 hover:text-blue-300 border border-slate-600 rounded px-1.5 py-0.5">No work except ICU/CARD</button>
-            <button onClick={() => addPreset("any-work-leave")} className="text-xs text-blue-400 hover:text-blue-300 border border-slate-600 rounded px-1.5 py-0.5">Any work or leave</button>
-            <button onClick={() => addPreset("with-shift")} className="text-xs text-blue-400 hover:text-blue-300 border border-slate-600 rounded px-1.5 py-0.5">Any work shift</button>
-          </div>
-          <div className="flex items-center gap-3 mt-3">
-            <button onClick={() => addRule(blank())} className="text-xs text-blue-400 hover:text-blue-300">+ Add blank rule</button>
-            <button onClick={save} disabled={status === "saving"} className="ml-auto px-3 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
-              {status === "saving" ? "Saving..." : "Save"}
-            </button>
-          </div>
-        </>
+        <div className="flex items-center gap-3 mt-4">
+          <button onClick={() => addRule(blank())} className="text-xs text-blue-400 hover:text-blue-300">+ Add rule</button>
+          <button onClick={save} disabled={status === "saving"} className="ml-auto px-3 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
+            {status === "saving" ? "Saving..." : "Save"}
+          </button>
+        </div>
       )}
     </section>
   );
