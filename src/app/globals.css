@@ -130,6 +130,16 @@ input[type="checkbox"]:disabled {
     overflow: hidden !important;
     text-overflow: ellipsis !important;
   }
+  /* Center every cell's content both ways. Table cells default to
+     vertical-align:baseline, so in the fixed-height rows the text otherwise sits low
+     instead of centered — force middle. Horizontal center applies to every column
+     (including the date label) so the printed grid reads uniformly. Inner shift-code /
+     label elements are block-level but inherit text-align:center, so their text centers
+     within the cell. */
+  thead th, tbody td {
+    vertical-align: middle !important;
+    text-align: center !important;
+  }
   /* Keep the date column wide enough for the full "Mon Jun 16"-style label; the
      remaining columns split the rest of the page width equally. */
   thead th:first-child, tbody td:first-child {
@@ -214,7 +224,6 @@ input[type="checkbox"]:disabled {
     white-space: nowrap !important;
     overflow: visible !important;
     text-overflow: clip !important;
-    vertical-align: bottom !important;
   }
 
   /* Shift codes: crisp black-on-white letters, no colored badge, constant size */
