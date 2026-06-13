@@ -2516,7 +2516,7 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
 
   return (
     <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
-      <SectionHeader title="Count Columns" description="Define columns that count staff per day on the schedule grid." status={status} />
+      <SectionHeader title="Count Columns on Printed Schedule" description="Define columns that count staff per day on the schedule grid." status={status} />
 
       <div className="space-y-3">
         {columns.map((col, idx) => (
@@ -2807,7 +2807,7 @@ function PrintColumnRulesSection({
   return (
     <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
       <SectionHeader
-        title="Printed Schedule Columns"
+        title="Staff Columns on Printed Schedule"
         description="Rules deciding which staff get their own column when printing. Include rules pick who prints (no include rules = everyone); exclude rules then remove matches. A rule's shift conditions are ALL required (AND). No rules = print everyone. Print-only — the on-screen grid always shows all staff."
         status={status}
       />
@@ -2934,7 +2934,7 @@ function AdditionalColumnsSection({
   return (
     <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
       <SectionHeader
-        title="Additional Printed Columns"
+        title="Additional Columns on Printed Schedule"
         description="Extra aggregate columns for the printed schedule. Each lists, per day, the initials of the staff matching its rule who are scheduled that day. 'Suppress members' hides those staff's own individual columns in print (otherwise they appear both places). Tick 'Catch-all' to make a column the residual — it lists everyone who appears in no other column (no rule of its own). A column with no one to show that month is hidden automatically. Print-only — the on-screen grid is unchanged."
         status={status}
       />
@@ -3020,9 +3020,9 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} initialFollowRules={initialFollowRules} />
         <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} shiftTypes={shiftTypes} />
         <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
-        <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
         <PrintColumnRulesSection initial={initialPrintColumnRules} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
         <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
+        <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
