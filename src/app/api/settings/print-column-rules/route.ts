@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
+import { coerceConditions } from "@/lib/print-column-visibility";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET() {
@@ -17,8 +18,7 @@ type RuleInput = {
   employmentTypeIds?: string[];
   minFtePercentage?: number | null;
   maxFtePercentage?: number | null;
-  shiftCodes?: string[];
-  shiftMatch?: string;
+  conditions?: unknown;
 };
 
 /** Coerce a value to a finite number or null (rejects NaN/strings/±Infinity). */
@@ -51,10 +51,8 @@ export async function PUT(req: NextRequest) {
             : [],
           minFtePercentage: num(r.minFtePercentage),
           maxFtePercentage: num(r.maxFtePercentage),
-          shiftCodes: Array.isArray(r.shiftCodes)
-            ? r.shiftCodes.filter((x) => typeof x === "string")
-            : [],
-          shiftMatch: r.shiftMatch === "all" ? "all" : "any",
+          // New rules use `conditions`; legacy columns are left at defaults.
+          conditions: coerceConditions(r.conditions),
         })),
       });
     }

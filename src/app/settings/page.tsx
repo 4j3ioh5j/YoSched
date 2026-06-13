@@ -3,6 +3,7 @@ import { SettingsPage } from "./settings-page";
 import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
 import { parsePendingRequestMode } from "@/lib/schedule-requests";
+import { effectiveConditions } from "@/lib/print-column-visibility";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -136,8 +137,7 @@ export default async function Settings() {
           employmentTypeIds: r.employmentTypeIds,
           minFtePercentage: r.minFtePercentage,
           maxFtePercentage: r.maxFtePercentage,
-          shiftCodes: r.shiftCodes,
-          shiftMatch: r.shiftMatch,
+          conditions: effectiveConditions(r.conditions, r.shiftCodes, r.shiftMatch),
         }))}
         canEdit={canEditSettings}
       />

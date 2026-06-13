@@ -11,7 +11,7 @@ import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { otherColumnInitials } from "@/lib/other-column";
-import { printVisibleStaffIds, type PrintRule } from "@/lib/print-column-visibility";
+import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
 
@@ -854,6 +854,11 @@ export function ScheduleGrid({
       }
       if (set.size > 0) codesByStaff.set(p.id, set);
     }
+    // Code → kind (work | leave | off) for category-based shift conditions.
+    const kindByCode = new Map<string, ShiftKind>();
+    for (const st of shiftTypes) {
+      kindByCode.set(st.code, st.isOffShift ? "off" : st.isLeave ? "leave" : "work");
+    }
     const visIds = printVisibleStaffIds(
       visibleStaff.map((p) => ({
         id: p.id,
@@ -862,10 +867,11 @@ export function ScheduleGrid({
       })),
       printColumnRules,
       codesByStaff,
+      kindByCode,
     );
     if (!visIds) return new Set<string>(); // no enabled rules → hide nothing
     return new Set(visibleStaff.filter((p) => !visIds.has(p.id)).map((p) => p.id));
-  }, [printColumnRules, visibleStaff, dates, assignmentMap, firstOfMonth, lastOfMonth]);
+  }, [printColumnRules, visibleStaff, dates, assignmentMap, firstOfMonth, lastOfMonth, shiftTypes]);
 
   // Drop column focus + selection when the visible column set may change (month
   // change / Show-all toggle), so focus and selection rectangles never point at

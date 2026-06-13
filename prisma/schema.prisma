@@ -487,8 +487,12 @@ model PrintColumnRule {
   employmentTypeIds String[] @default([]) // empty = any employment type
   minFtePercentage  Float? // null = no lower bound
   maxFtePercentage  Float? // null = no upper bound
-  shiftCodes        String[] @default([]) // empty = no shift requirement
-  shiftMatch        String   @default("any") // "any" (>=1 of codes that period) | "all"
+  shiftCodes        String[] @default([]) // legacy single shift selector — superseded by `conditions`; kept for back-compat synth
+  shiftMatch        String   @default("any") // legacy "any" | "all" — superseded by `conditions`
+  // Shift conditions (ANDed): each is { quantifier: has_any|has_none|has_all,
+  // categories: (work|leave|off)[], codes: string[], except: string[] }. Expresses
+  // e.g. "no work shift except ICU/CARD" or "any work or leave". See print-column-visibility.ts.
+  conditions        Json     @default("[]")
 
   @@map("print_column_rules")
 }
