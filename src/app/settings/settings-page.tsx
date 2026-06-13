@@ -125,6 +125,18 @@ type PrintColumnRuleData = {
   conditions: PrintShiftCondition[];
 };
 
+type PrintAggregateColumnData = {
+  id: string;
+  label: string;
+  enabled: boolean;
+  isOther: boolean;
+  suppressMembers: boolean;
+  employmentTypeIds: string[];
+  minFtePercentage: number | null;
+  maxFtePercentage: number | null;
+  conditions: PrintShiftCondition[];
+};
+
 type Props = {
   shiftTypes: ShiftType[];
   staffingReqs: StaffingReq[];
@@ -138,6 +150,7 @@ type Props = {
   followRules: FollowRuleData[];
   countColumns: { id: string; label: string; shiftCodes: string[] }[];
   printColumnRules: PrintColumnRuleData[];
+  printAggregateColumns: PrintAggregateColumnData[];
   canEdit?: boolean;
 };
 
@@ -2586,6 +2599,144 @@ const QUANTS: { key: string; label: string }[] = [
   { key: "has_all", label: "Has all of" },
 ];
 
+// FTE % shown as a whole-number percentage; stored as a fraction (1.0 = 100%) to
+// match Staff.ftePercentage and the visibility helper.
+const pctVal = (f: number | null) => (f == null ? "" : String(Math.round(f * 100)));
+const parsePct = (s: string): number | null => {
+  const t = s.trim();
+  if (t === "") return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n / 100 : null;
+};
+
+// The match fields shared by an individual-column rule and an aggregate-column rule.
+type RuleFields = {
+  employmentTypeIds: string[];
+  minFtePercentage: number | null;
+  maxFtePercentage: number | null;
+  conditions: EditCondition[];
+};
+
+// Shared editor for a rule's match fields (employment types + FTE bounds + shift
+// conditions). Used by both Printed Schedule Columns (which staff get their own
+// column) and Additional Columns (aggregate-column membership) — identical matching
+// semantics, so the editor is factored out rather than duplicated.
+function RuleFieldsEditor({
+  value,
+  onChange,
+  employmentTypes,
+  allCodes,
+  canEdit,
+}: {
+  value: RuleFields;
+  onChange: (patch: Partial<RuleFields>) => void;
+  employmentTypes: EmploymentTypeData[];
+  allCodes: string[];
+  canEdit: boolean;
+}) {
+  const empName = (id: string) => employmentTypes.find((e) => e.id === id)?.name ?? id;
+  const conds = value.conditions;
+  const setConds = (c: EditCondition[]) => onChange({ conditions: c });
+  const addCond = () => setConds([...conds, { quantifier: "has_any", categories: [], codes: [], except: [] }]);
+  const removeCond = (ci: number) => setConds(conds.filter((_, j) => j !== ci));
+  const updateCond = (ci: number, patch: Partial<EditCondition>) =>
+    setConds(conds.map((c, j) => (j === ci ? { ...c, ...patch } : c)));
+  const toggleCat = (ci: number, cat: string) => {
+    const c = conds[ci];
+    updateCond(ci, { categories: c.categories.includes(cat) ? c.categories.filter((x) => x !== cat) : [...c.categories, cat] });
+  };
+  const addListItem = (ci: number, field: "codes" | "except", code: string) => {
+    const c = conds[ci];
+    if (c[field].includes(code)) return;
+    updateCond(ci, { [field]: [...c[field], code] });
+  };
+  const removeListItem = (ci: number, field: "codes" | "except", code: string) => {
+    const c = conds[ci];
+    updateCond(ci, { [field]: c[field].filter((x) => x !== code) });
+  };
+  const addEmp = (id: string) => onChange({ employmentTypeIds: [...value.employmentTypeIds, id] });
+  const removeEmp = (id: string) => onChange({ employmentTypeIds: value.employmentTypeIds.filter((x) => x !== id) });
+
+  // Chip + add-dropdown for a condition's codes/except lists.
+  function codeChips(ci: number, field: "codes" | "except", label: string) {
+    const c = conds[ci];
+    return (
+      <div className="flex items-center gap-1 flex-wrap">
+        <span className="text-[11px] text-slate-500">{label}</span>
+        {c[field].map((code) => (
+          <span key={code} className="inline-flex items-center gap-0.5 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-[11px] border border-slate-600">
+            {code}
+            {canEdit && <button onClick={() => removeListItem(ci, field, code)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>}
+          </span>
+        ))}
+        {canEdit && (
+          <select value="" onChange={(e) => { if (e.target.value) addListItem(ci, field, e.target.value); }} className="bg-slate-700 text-slate-400 rounded px-1 py-0.5 text-[11px] border border-slate-600">
+            <option value="">+</option>
+            {allCodes.filter((x) => !c[field].includes(x)).map((x) => <option key={x} value={x}>{x}</option>)}
+          </select>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-slate-500 w-20">Emp. types:</span>
+        {value.employmentTypeIds.map((id) => (
+          <span key={id} className="inline-flex items-center gap-0.5 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-xs border border-slate-600">
+            {empName(id)}
+            {canEdit && <button onClick={() => removeEmp(id)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>}
+          </span>
+        ))}
+        {value.employmentTypeIds.length === 0 && <span className="text-xs text-slate-600 italic">any</span>}
+        {canEdit && (
+          <select value="" onChange={(e) => { if (e.target.value) addEmp(e.target.value); }} className="bg-slate-700 text-slate-400 rounded px-1 py-0.5 text-xs border border-slate-600">
+            <option value="">+ add</option>
+            {employmentTypes.filter((et) => !value.employmentTypeIds.includes(et.id)).map((et) => <option key={et.id} value={et.id}>{et.name}</option>)}
+          </select>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-slate-500 w-20">FTE %:</span>
+        <input type="number" min={0} disabled={!canEdit} value={pctVal(value.minFtePercentage)} onChange={(e) => onChange({ minFtePercentage: parsePct(e.target.value) })} placeholder="min" className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-xs border border-slate-600 w-16 disabled:opacity-50" />
+        <span className="text-xs text-slate-500">to</span>
+        <input type="number" min={0} disabled={!canEdit} value={pctVal(value.maxFtePercentage)} onChange={(e) => onChange({ maxFtePercentage: parsePct(e.target.value) })} placeholder="max" className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-xs border border-slate-600 w-16 disabled:opacity-50" />
+        <span className="text-xs text-slate-600 italic">blank = no bound</span>
+      </div>
+
+      <div className="space-y-1.5">
+        <span className="text-xs text-slate-500">Shift conditions {conds.length > 1 && <span className="text-slate-600">(all required)</span>}:</span>
+        {conds.map((c, ci) => (
+          <div key={ci} className="flex items-start gap-2 flex-wrap bg-slate-800/60 rounded px-2 py-1.5 border border-slate-700">
+            <select disabled={!canEdit} value={c.quantifier} onChange={(e) => updateCond(ci, { quantifier: e.target.value })} className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-[11px] border border-slate-600 disabled:opacity-50">
+              {QUANTS.map((q) => <option key={q.key} value={q.key}>{q.label}</option>)}
+            </select>
+            {c.quantifier !== "has_all" && (
+              <span className="flex items-center gap-1">
+                {CATS.map((cat) => {
+                  const on = c.categories.includes(cat.key);
+                  return (
+                    <button key={cat.key} disabled={!canEdit} onClick={() => toggleCat(ci, cat.key)} className={`text-[11px] rounded px-1.5 py-0.5 border ${on ? "bg-blue-600 text-white border-blue-500" : "bg-slate-700 text-slate-400 border-slate-600"} disabled:opacity-50`}>
+                      {cat.label}
+                    </button>
+                  );
+                })}
+              </span>
+            )}
+            {codeChips(ci, "codes", c.quantifier === "has_all" ? "shifts:" : "+shifts:")}
+            {c.quantifier !== "has_all" && c.categories.length > 0 && codeChips(ci, "except", "except:")}
+            {canEdit && <button onClick={() => removeCond(ci)} className="text-slate-500 hover:text-red-400 text-sm ml-auto">×</button>}
+          </div>
+        ))}
+        {conds.length === 0 && <span className="text-[11px] text-slate-600 italic">no shift condition (any staff of the above type/FTE)</span>}
+        {canEdit && <button onClick={addCond} className="text-[11px] text-blue-400 hover:text-blue-300">+ Add condition</button>}
+      </div>
+    </>
+  );
+}
+
 function PrintColumnRulesSection({
   initial,
   shiftTypes,
@@ -2614,17 +2765,6 @@ function PrintColumnRulesSection({
   );
   const [status, setStatus] = useState<SaveStatus>("idle");
   const allCodes = shiftTypes.map((st) => st.code); // includes leave + off (X) so conditions can target them
-  const empName = (id: string) => employmentTypes.find((e) => e.id === id)?.name ?? id;
-
-  // FTE % shown as a whole-number percentage; stored as a fraction (1.0 = 100%)
-  // to match Staff.ftePercentage and the visibility helper.
-  const pctVal = (f: number | null) => (f == null ? "" : String(Math.round(f * 100)));
-  const parsePct = (s: string): number | null => {
-    const t = s.trim();
-    if (t === "") return null;
-    const n = Number(t);
-    return Number.isFinite(n) ? n / 100 : null;
-  };
 
   function update(idx: number, patch: Partial<EditPrintRule>) {
     setRules(rules.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
@@ -2637,32 +2777,6 @@ function PrintColumnRulesSection({
     const next = [...rules];
     [next[idx], next[j]] = [next[j], next[idx]];
     setRules(next);
-  }
-  function addEmp(idx: number, id: string) { update(idx, { employmentTypeIds: [...rules[idx].employmentTypeIds, id] }); }
-  function removeEmp(idx: number, id: string) { update(idx, { employmentTypeIds: rules[idx].employmentTypeIds.filter((x) => x !== id) }); }
-
-  // Condition editing (conditions within a rule are ANDed).
-  function blankCond(over: Partial<EditCondition> = {}): EditCondition {
-    return { quantifier: "has_any", categories: [], codes: [], except: [], ...over };
-  }
-  function setConds(idx: number, conds: EditCondition[]) { update(idx, { conditions: conds }); }
-  function addCond(idx: number, cond: EditCondition = blankCond()) { setConds(idx, [...rules[idx].conditions, cond]); }
-  function removeCond(idx: number, ci: number) { setConds(idx, rules[idx].conditions.filter((_, j) => j !== ci)); }
-  function updateCond(idx: number, ci: number, patch: Partial<EditCondition>) {
-    setConds(idx, rules[idx].conditions.map((c, j) => (j === ci ? { ...c, ...patch } : c)));
-  }
-  function toggleCat(idx: number, ci: number, cat: string) {
-    const c = rules[idx].conditions[ci];
-    updateCond(idx, ci, { categories: c.categories.includes(cat) ? c.categories.filter((x) => x !== cat) : [...c.categories, cat] });
-  }
-  function addListItem(idx: number, ci: number, field: "codes" | "except", code: string) {
-    const c = rules[idx].conditions[ci];
-    if (c[field].includes(code)) return;
-    updateCond(idx, ci, { [field]: [...c[field], code] });
-  }
-  function removeListItem(idx: number, ci: number, field: "codes" | "except", code: string) {
-    const c = rules[idx].conditions[ci];
-    updateCond(idx, ci, { [field]: c[field].filter((x) => x !== code) });
   }
 
   function blank(): EditPrintRule {
@@ -2688,28 +2802,6 @@ function PrintColumnRulesSection({
     } catch {
       setStatus("error");
     }
-  }
-
-  // Chip + add-dropdown for a condition's codes/except lists.
-  function codeChips(idx: number, ci: number, field: "codes" | "except", label: string) {
-    const c = rules[idx].conditions[ci];
-    return (
-      <div className="flex items-center gap-1 flex-wrap">
-        <span className="text-[11px] text-slate-500">{label}</span>
-        {c[field].map((code) => (
-          <span key={code} className="inline-flex items-center gap-0.5 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-[11px] border border-slate-600">
-            {code}
-            {canEdit && <button onClick={() => removeListItem(idx, ci, field, code)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>}
-          </span>
-        ))}
-        {canEdit && (
-          <select value="" onChange={(e) => { if (e.target.value) addListItem(idx, ci, field, e.target.value); }} className="bg-slate-700 text-slate-400 rounded px-1 py-0.5 text-[11px] border border-slate-600">
-            <option value="">+</option>
-            {allCodes.filter((x) => !c[field].includes(x)).map((x) => <option key={x} value={x}>{x}</option>)}
-          </select>
-        )}
-      </div>
-    );
   }
 
   return (
@@ -2742,58 +2834,7 @@ function PrintColumnRulesSection({
               )}
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-slate-500 w-20">Emp. types:</span>
-              {rule.employmentTypeIds.map((id) => (
-                <span key={id} className="inline-flex items-center gap-0.5 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-xs border border-slate-600">
-                  {empName(id)}
-                  {canEdit && <button onClick={() => removeEmp(idx, id)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>}
-                </span>
-              ))}
-              {rule.employmentTypeIds.length === 0 && <span className="text-xs text-slate-600 italic">any</span>}
-              {canEdit && (
-                <select value="" onChange={(e) => { if (e.target.value) addEmp(idx, e.target.value); }} className="bg-slate-700 text-slate-400 rounded px-1 py-0.5 text-xs border border-slate-600">
-                  <option value="">+ add</option>
-                  {employmentTypes.filter((et) => !rule.employmentTypeIds.includes(et.id)).map((et) => <option key={et.id} value={et.id}>{et.name}</option>)}
-                </select>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-slate-500 w-20">FTE %:</span>
-              <input type="number" min={0} disabled={!canEdit} value={pctVal(rule.minFtePercentage)} onChange={(e) => update(idx, { minFtePercentage: parsePct(e.target.value) })} placeholder="min" className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-xs border border-slate-600 w-16 disabled:opacity-50" />
-              <span className="text-xs text-slate-500">to</span>
-              <input type="number" min={0} disabled={!canEdit} value={pctVal(rule.maxFtePercentage)} onChange={(e) => update(idx, { maxFtePercentage: parsePct(e.target.value) })} placeholder="max" className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-xs border border-slate-600 w-16 disabled:opacity-50" />
-              <span className="text-xs text-slate-600 italic">blank = no bound</span>
-            </div>
-
-            <div className="space-y-1.5">
-              <span className="text-xs text-slate-500">Shift conditions {rule.conditions.length > 1 && <span className="text-slate-600">(all required)</span>}:</span>
-              {rule.conditions.map((c, ci) => (
-                <div key={ci} className="flex items-start gap-2 flex-wrap bg-slate-800/60 rounded px-2 py-1.5 border border-slate-700">
-                  <select disabled={!canEdit} value={c.quantifier} onChange={(e) => updateCond(idx, ci, { quantifier: e.target.value })} className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-[11px] border border-slate-600 disabled:opacity-50">
-                    {QUANTS.map((q) => <option key={q.key} value={q.key}>{q.label}</option>)}
-                  </select>
-                  {c.quantifier !== "has_all" && (
-                    <span className="flex items-center gap-1">
-                      {CATS.map((cat) => {
-                        const on = c.categories.includes(cat.key);
-                        return (
-                          <button key={cat.key} disabled={!canEdit} onClick={() => toggleCat(idx, ci, cat.key)} className={`text-[11px] rounded px-1.5 py-0.5 border ${on ? "bg-blue-600 text-white border-blue-500" : "bg-slate-700 text-slate-400 border-slate-600"} disabled:opacity-50`}>
-                            {cat.label}
-                          </button>
-                        );
-                      })}
-                    </span>
-                  )}
-                  {codeChips(idx, ci, "codes", c.quantifier === "has_all" ? "shifts:" : "+shifts:")}
-                  {c.quantifier !== "has_all" && c.categories.length > 0 && codeChips(idx, ci, "except", "except:")}
-                  {canEdit && <button onClick={() => removeCond(idx, ci)} className="text-slate-500 hover:text-red-400 text-sm ml-auto">×</button>}
-                </div>
-              ))}
-              {rule.conditions.length === 0 && <span className="text-[11px] text-slate-600 italic">no shift condition (any staff of the above type/FTE)</span>}
-              {canEdit && <button onClick={() => addCond(idx)} className="text-[11px] text-blue-400 hover:text-blue-300">+ Add condition</button>}
-            </div>
+            <RuleFieldsEditor value={rule} onChange={(patch) => update(idx, patch)} employmentTypes={employmentTypes} allCodes={allCodes} canEdit={canEdit} />
           </div>
         ))}
         {rules.length === 0 && <p className="text-xs text-slate-500 italic">No rules — the printed schedule shows every staff member.</p>}
@@ -2811,9 +2852,150 @@ function PrintColumnRulesSection({
   );
 }
 
+type EditAggCol = {
+  label: string;
+  enabled: boolean;
+  isOther: boolean;
+  suppressMembers: boolean;
+} & RuleFields;
+
+// Configurable AGGREGATE columns on the printed schedule (the replacement for the old
+// hardcoded "FB" column). Each named column lists, per day, the initials of the staff
+// matching its rule who are scheduled that day; suppressMembers hides those staff's own
+// columns. The singleton "Other" (isOther) catch-all has no rule, can't be deleted, and
+// is pinned last.
+function AdditionalColumnsSection({
+  initial,
+  shiftTypes,
+  employmentTypes,
+}: {
+  initial: PrintAggregateColumnData[];
+  shiftTypes: ShiftType[];
+  employmentTypes: EmploymentTypeData[];
+}) {
+  const canEdit = useCanEdit();
+  const [cols, setCols] = useState<EditAggCol[]>(
+    initial.map((c) => ({
+      label: c.label,
+      enabled: c.enabled,
+      isOther: c.isOther,
+      suppressMembers: c.suppressMembers,
+      employmentTypeIds: [...c.employmentTypeIds],
+      minFtePercentage: c.minFtePercentage,
+      maxFtePercentage: c.maxFtePercentage,
+      conditions: (c.conditions ?? []).map((x) => ({
+        quantifier: x.quantifier,
+        categories: [...x.categories],
+        codes: [...x.codes],
+        except: [...x.except],
+      })),
+    })),
+  );
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const allCodes = shiftTypes.map((st) => st.code);
+
+  function update(idx: number, patch: Partial<EditAggCol>) {
+    setCols(cols.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
+  }
+  function addCol() {
+    // Insert a new named column just before the Other column so Other stays last.
+    const newCol: EditAggCol = { label: "", enabled: true, isOther: false, suppressMembers: true, employmentTypeIds: [], minFtePercentage: null, maxFtePercentage: null, conditions: [] };
+    const otherIdx = cols.findIndex((c) => c.isOther);
+    if (otherIdx === -1) { setCols([...cols, newCol]); return; }
+    const next = [...cols];
+    next.splice(otherIdx, 0, newCol);
+    setCols(next);
+  }
+  function removeCol(idx: number) {
+    if (cols[idx].isOther) return; // singleton catch-all can't be deleted
+    setCols(cols.filter((_, i) => i !== idx));
+  }
+  function move(idx: number, dir: -1 | 1) {
+    const j = idx + dir;
+    if (j < 0 || j >= cols.length) return;
+    if (cols[idx].isOther || cols[j].isOther) return; // keep Other pinned last
+    const next = [...cols];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setCols(next);
+  }
+
+  async function save() {
+    setStatus("saving");
+    try {
+      const payload = cols.map((c) => ({
+        ...c,
+        // The Other column carries no rule; named columns drop empty-selector conditions.
+        conditions: c.isOther ? [] : c.conditions.filter((x) => x.categories.length > 0 || x.codes.length > 0),
+      }));
+      const res = await fetch("/api/settings/print-aggregate-columns", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ columns: payload }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch {
+      setStatus("error");
+    }
+  }
+
+  return (
+    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
+      <SectionHeader
+        title="Additional Printed Columns"
+        description="Extra aggregate columns for the printed schedule. Each lists, per day, the initials of the staff matching its rule who are scheduled that day. 'Suppress members' hides those staff's own individual columns in print (otherwise they appear both places). The 'Other' column is the catch-all — it lists everyone who appears in no other column; it can't be deleted and is always last. A column with no one to show that month is hidden automatically. Print-only — the on-screen grid is unchanged."
+        status={status}
+      />
+
+      <div className="space-y-3">
+        {cols.map((col, idx) => (
+          <div key={idx} className="bg-slate-900/50 rounded p-3 border border-slate-700 space-y-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="flex items-center gap-1 text-xs text-slate-400">
+                <input type="checkbox" disabled={!canEdit} checked={col.enabled} onChange={(e) => update(idx, { enabled: e.target.checked })} />
+                On
+              </label>
+              <input type="text" disabled={!canEdit} value={col.label} onChange={(e) => update(idx, { label: e.target.value })} placeholder="Column name" className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-sm border border-slate-600 flex-1 min-w-32 disabled:opacity-50" />
+              {col.isOther ? (
+                <span className="text-[11px] text-indigo-300 bg-indigo-500/15 border border-indigo-500/30 rounded px-1.5 py-0.5" title="Catch-all: lists staff who appear in no other column. Cannot be deleted.">catch-all</span>
+              ) : (
+                <label className="flex items-center gap-1 text-xs text-slate-400" title="Hide these staff's individual columns in print (otherwise they appear both individually and in this column)">
+                  <input type="checkbox" disabled={!canEdit} checked={col.suppressMembers} onChange={(e) => update(idx, { suppressMembers: e.target.checked })} />
+                  Suppress members
+                </label>
+              )}
+              {canEdit && !col.isOther && (
+                <span className="flex items-center gap-1">
+                  <button onClick={() => move(idx, -1)} disabled={idx === 0} className="text-slate-500 hover:text-slate-300 disabled:opacity-30 text-xs" title="Move up">▲</button>
+                  <button onClick={() => move(idx, 1)} disabled={idx >= cols.length - 1 || !!cols[idx + 1]?.isOther} className="text-slate-500 hover:text-slate-300 disabled:opacity-30 text-xs" title="Move down">▼</button>
+                  <button onClick={() => removeCol(idx)} className="text-slate-500 hover:text-red-400 text-sm ml-1">×</button>
+                </span>
+              )}
+            </div>
+
+            {!col.isOther && (
+              <RuleFieldsEditor value={col} onChange={(patch) => update(idx, patch)} employmentTypes={employmentTypes} allCodes={allCodes} canEdit={canEdit} />
+            )}
+          </div>
+        ))}
+      </div>
+
+      {canEdit && (
+        <div className="flex items-center gap-3 mt-4">
+          <button onClick={addCol} className="text-xs text-blue-400 hover:text-blue-300">+ Add column</button>
+          <button onClick={save} disabled={status === "saving"} className="ml-auto px-3 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
+            {status === "saving" ? "Saving..." : "Save"}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, canEdit = true }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, canEdit = true }: Props) {
   const undo = useUndo();
   const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
 
@@ -2831,6 +3013,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
         <PrintColumnRulesSection initial={initialPrintColumnRules} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
+        <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />

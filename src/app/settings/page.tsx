@@ -3,7 +3,7 @@ import { SettingsPage } from "./settings-page";
 import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
 import { parsePendingRequestMode } from "@/lib/schedule-requests";
-import { effectiveConditions } from "@/lib/print-column-visibility";
+import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ export default async function Settings() {
   const { error, permissions } = await getSession("settings:view");
   if (error) redirect("/");
   const canEditSettings = permissions!.includes("settings:edit");
-  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors, followRules, countColumns, printColumnRules] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors, followRules, countColumns, printColumnRules, printAggregateColumns] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
@@ -27,6 +27,7 @@ export default async function Settings() {
     prisma.shiftFollowRule.findMany(),
     prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.printColumnRule.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.printAggregateColumn.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
 
   const schedulingPrefs = {
@@ -138,6 +139,17 @@ export default async function Settings() {
           minFtePercentage: r.minFtePercentage,
           maxFtePercentage: r.maxFtePercentage,
           conditions: effectiveConditions(r.conditions, r.shiftCodes, r.shiftMatch),
+        }))}
+        printAggregateColumns={printAggregateColumns.map((c) => ({
+          id: c.id,
+          label: c.label,
+          enabled: c.enabled,
+          isOther: c.isOther,
+          suppressMembers: c.suppressMembers,
+          employmentTypeIds: c.employmentTypeIds,
+          minFtePercentage: c.minFtePercentage,
+          maxFtePercentage: c.maxFtePercentage,
+          conditions: coerceConditions(c.conditions),
         }))}
         canEdit={canEditSettings}
       />
