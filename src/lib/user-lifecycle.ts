@@ -8,6 +8,7 @@
 // TOTP) do NOT pass through here; they can't change who can administer.
 
 import { prisma } from "./prisma";
+import { needsStaffLogin } from "./staff-login-backfill";
 import {
   type AdminUser,
   hasUsersEdit,
@@ -105,6 +106,22 @@ export async function provisionStaffLogin(
   await db.user.create({
     data: { staffId, name, email: null, passwordHash: null, isActive: false, groupId: staffGroup.id },
   });
+}
+
+/** Self-heal the "every active staff has a login" invariant for a single staff member.
+ *  Eager provisioning only fires at staff CREATE and in the one-time backfill (which skips
+ *  inactive staff), so a staff row that entered another way — imported/seeded directly, or
+ *  inactive when the backfill ran and reactivated later — can be active with no paired
+ *  login and (since the manual /users link field was removed) no way to get one. Called on
+ *  the staff PUT path: if the staff is active and has no login, provision the disabled
+ *  shell now so the admin can complete it from /users. No-op if inactive or already linked;
+ *  idempotent. Does NOT enable the login — activation stays a deliberate /users action. */
+export async function ensureStaffLogin(staffId: string): Promise<void> {
+  const staff = await prisma.staff.findUnique({ where: { id: staffId }, select: { name: true, isActive: true } });
+  if (!staff) return;
+  const existing = await prisma.user.findUnique({ where: { staffId }, select: { id: true } });
+  if (!needsStaffLogin(staff.isActive, existing !== null)) return;
+  await provisionStaffLogin(staffId, staff.name);
 }
 
 /** Staff deactivated → RESET its linked login to a bare, disabled shell (disabled, no

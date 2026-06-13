@@ -16,6 +16,14 @@ export type ShellUserSpec = {
   groupId: string;
 };
 
+/** The rule for whether a single staff member needs a shell login provisioned: active,
+ *  and not already backing a login. The one source of truth shared by the batch backfill
+ *  planner below and the per-staff self-heal (`ensureStaffLogin` in user-lifecycle.ts),
+ *  so reactivation/import healing and the original backfill can never drift apart. */
+export function needsStaffLogin(isActive: boolean, hasLinkedLogin: boolean): boolean {
+  return isActive && !hasLinkedLogin;
+}
+
 /** Decide which staff need a shell login. Idempotent: a staff already backing a login
  *  (its id in `linkedStaffIds`) is skipped, so re-running creates nothing new. Inactive
  *  staff are excluded — only active staff get provisioned. Every shell is placed in the
@@ -26,7 +34,7 @@ export function planStaffLoginShells(
   staffGroupId: string,
 ): ShellUserSpec[] {
   return staff
-    .filter((s) => s.isActive && !linkedStaffIds.has(s.id))
+    .filter((s) => needsStaffLogin(s.isActive, linkedStaffIds.has(s.id)))
     .map((s) => ({
       staffId: s.id,
       name: s.name,

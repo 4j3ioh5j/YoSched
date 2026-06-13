@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { provisionStaffLogin, resetLoginForStaff, deleteLoginForStaff } from "@/lib/user-lifecycle";
+import { provisionStaffLogin, resetLoginForStaff, deleteLoginForStaff, ensureStaffLogin } from "@/lib/user-lifecycle";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(req: NextRequest) {
@@ -95,12 +95,19 @@ export async function PUT(req: NextRequest) {
     }
   });
 
-  // If this edit deactivated the staff member, reset their paired login (disable + clear
-  // email/password, never an admin's) and let the /users hide-filter drop it from the
-  // list. Reactivating staff does NOT auto-re-enable the login — it re-surfaces as a
-  // bare "Needs setup" shell for a deliberate /users re-activation.
+  // Keep the paired login in step with the staff active-state.
+  // - Deactivated → reset the login to a disabled, credential-less shell (never an
+  //   admin's); the /users hide-filter drops it from the list.
+  // - Otherwise (active, including reactivation) → ensure a shell login EXISTS. Normal
+  //   staff already have one from create-time, but imported/seeded staff and staff that
+  //   were inactive when the one-time backfill ran have none and no other way to get one;
+  //   ensureStaffLogin provisions the disabled shell so it re-surfaces as "Needs setup".
+  //   It does NOT enable the login — reactivation still requires a deliberate /users
+  //   activation (email + password + Active toggle).
   if (data.isActive === false) {
     await resetLoginForStaff(id);
+  } else {
+    await ensureStaffLogin(id);
   }
 
   const result = await prisma.staff.findUnique({
