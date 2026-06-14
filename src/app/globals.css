@@ -263,6 +263,11 @@ input[type="checkbox"]:disabled {
      Print background), invisible on screen because nothing references the var there.
      Stamped via data-print-bg only when a color is set. Placed AFTER the white/weekend/
      holiday/bold-cell background rules so the shift's color wins on those cells too. */
+  /* The first selector (specificity 0,2,3) strictly out-ranks the weekend row background
+     `tbody tr[data-weekend="true"] td` (0,1,3) so a shift tint still shows on WEEKEND cells
+     — e.g. CALL is a weekend shift and was otherwise overpainted by the pale weekend grey.
+     The second selector covers weekday cells. */
+  tbody tr[data-weekend="true"] td[data-print-bg],
   tbody td[data-print-bg] {
     background: var(--print-bg) !important;
   }
