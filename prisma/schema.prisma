@@ -500,14 +500,18 @@ model PrintColumnRule {
 // A configurable AGGREGATE column on the printed schedule: instead of one column per
 // staff, it lists (per day) the initials of the staff who match its rule and are
 // scheduled that day. Replaces the old hardcoded "FB" collapse column. Reuses the same
-// rule shape as PrintColumnRule (employmentTypeIds / FTE bounds / conditions). Two
+// rule shape as PrintColumnRule (employmentTypeIds / FTE bounds / conditions). Three
 // column-level extras:
 //   - suppressMembers: when true, a member's individual column is hidden in print
 //     (the aggregate "claims" them); when false, the member appears both individually
 //     and in this column.
-//   - isOther: marks the singleton residual catch-all column — it has NO rule and lists
-//     staff who appear in no other printed column (individual or aggregate). Exactly one
-//     isOther row exists (seeded), cannot be deleted, only renamed/enabled.
+//   - isOther: marks a residual catch-all column — it has NO rule and lists staff who
+//     appear in no other printed column (individual or aggregate). A per-row flag, not a
+//     singleton: zero, one, or several isOther rows may exist (each lists the same
+//     residual), all freely editable / movable / deletable.
+//   - conditionScope: "month" (default) evaluates shift conditions over the whole printed
+//     month; "day" evaluates per day, listing a member only on days whose shift matches.
+//     Forced "month" for isOther (no rule). See print-aggregate-columns.ts.
 // Print-only: the on-screen grid is unaffected. See print-aggregate-columns.ts.
 model PrintAggregateColumn {
   id                String   @id @default(cuid())

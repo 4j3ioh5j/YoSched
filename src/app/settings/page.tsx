@@ -150,6 +150,7 @@ export default async function Settings() {
           minFtePercentage: c.minFtePercentage,
           maxFtePercentage: c.maxFtePercentage,
           conditions: coerceConditions(c.conditions),
+          conditionScope: c.conditionScope,
         }))}
         canEdit={canEditSettings}
       />

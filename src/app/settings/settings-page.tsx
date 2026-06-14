@@ -135,6 +135,7 @@ type PrintAggregateColumnData = {
   minFtePercentage: number | null;
   maxFtePercentage: number | null;
   conditions: PrintShiftCondition[];
+  conditionScope: string; // "month" | "day"
 };
 
 type Props = {
@@ -2857,6 +2858,7 @@ type EditAggCol = {
   enabled: boolean;
   isOther: boolean;
   suppressMembers: boolean;
+  conditionScope: string; // "month" (match over the whole month) | "day" (match per day)
 } & RuleFields;
 
 // Configurable AGGREGATE columns on the printed schedule (the replacement for the old
@@ -2881,6 +2883,7 @@ function AdditionalColumnsSection({
       enabled: c.enabled,
       isOther: c.isOther,
       suppressMembers: c.suppressMembers,
+      conditionScope: c.conditionScope === "day" ? "day" : "month",
       employmentTypeIds: [...c.employmentTypeIds],
       minFtePercentage: c.minFtePercentage,
       maxFtePercentage: c.maxFtePercentage,
@@ -2899,7 +2902,7 @@ function AdditionalColumnsSection({
     setCols(cols.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
   }
   function addCol() {
-    setCols([...cols, { label: "", enabled: true, isOther: false, suppressMembers: true, employmentTypeIds: [], minFtePercentage: null, maxFtePercentage: null, conditions: [] }]);
+    setCols([...cols, { label: "", enabled: true, isOther: false, suppressMembers: true, conditionScope: "month", employmentTypeIds: [], minFtePercentage: null, maxFtePercentage: null, conditions: [] }]);
   }
   function removeCol(idx: number) { setCols(cols.filter((_, i) => i !== idx)); }
   function move(idx: number, dir: -1 | 1) {
@@ -2979,6 +2982,27 @@ function AdditionalColumnsSection({
               <p className="text-[11px] text-slate-500 italic">Catch-all — lists staff who appear in no other column (no rule).</p>
             ) : (
               <>
+                <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
+                  <span>Conditions apply to:</span>
+                  <div className="inline-flex rounded border border-slate-600 overflow-hidden">
+                    {(["month", "day"] as const).map((scope) => (
+                      <button
+                        key={scope}
+                        type="button"
+                        disabled={!canEdit}
+                        onClick={() => update(idx, { conditionScope: scope })}
+                        className={`px-2 py-0.5 ${col.conditionScope === scope ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"} disabled:opacity-50`}
+                      >
+                        {scope === "month" ? "Whole month" : "Each day"}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    {col.conditionScope === "day"
+                      ? "lists a person only on the days their shift meets the conditions"
+                      : "lists a person on every scheduled day if they meet the conditions anytime that month"}
+                  </span>
+                </div>
                 <RuleFieldsEditor value={col} onChange={(patch) => update(idx, patch)} employmentTypes={employmentTypes} allCodes={allCodes} canEdit={canEdit} />
                 {col.enabled && !hasSelector && (
                   <p className="text-[11px] text-amber-400/90">No rule set — this column matches <strong>all staff</strong>. Add an employment type, FTE bound, or shift condition, or tick Catch-all.</p>
