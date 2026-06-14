@@ -348,6 +348,36 @@ export function ScheduleGrid({
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
+  // Remember the viewed month across in-app navigation: returning to the schedule from
+  // another tab (Requests/Settings/…) restores the month you left on. sessionStorage is
+  // per browser-tab session, so a brand-new tab still opens on the current month. Restored
+  // in a layout effect (not a lazy initializer) so SSR/first paint stays on `today` —
+  // avoids a whole-grid hydration mismatch — then corrects before the browser paints.
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = sessionStorage.getItem("yosched:viewMonth");
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (
+        Number.isInteger(saved?.year) && saved.year >= 2000 && saved.year <= 2100 &&
+        Number.isInteger(saved?.month) && saved.month >= 0 && saved.month <= 11
+      ) {
+        setViewYear(saved.year);
+        setViewMonth(saved.month);
+      }
+    } catch {
+      /* ignore malformed storage */
+    }
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      sessionStorage.setItem("yosched:viewMonth", JSON.stringify({ year: viewYear, month: viewMonth }));
+    } catch {
+      /* ignore storage failures (private mode / quota) */
+    }
+  }, [viewYear, viewMonth]);
   const [localAssignments, setLocalAssignments] = useState(initialAssignments);
   const [localRequests, setLocalRequests] = useState<GridRequest[]>(scheduleRequests);
   const [requestError, setRequestError] = useState<string | null>(null);
