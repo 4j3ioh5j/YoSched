@@ -26,10 +26,12 @@ import {
   isPendingRequestMode,
   parsePendingRequestMode,
   detectRequestConflicts,
+  keysToRequestIntent,
   PENDING_REQUEST_MODES,
   DEFAULT_PENDING_REQUEST_MODE,
   type LeaveQueueRequest,
   type ScheduleRequestData,
+  type RequestKeyShift,
 } from "../schedule-requests";
 
 // Shift ids → codes for readable conflict messages in tests.
@@ -1215,5 +1217,114 @@ describe("detectRequestConflicts", () => {
     );
     // CALL satisfies both → no "only one can be placed" conflict.
     expect(detectRequestConflicts(folded, isWorking, codeOf).some((m) => m.includes("only one can be placed"))).toBe(false);
+  });
+});
+
+describe("keysToRequestIntent", () => {
+  const work: RequestKeyShift = { id: "orc", category: "work", isOffShift: false };
+  const leave: RequestKeyShift = { id: "al", category: "leave", isOffShift: false };
+  const off: RequestKeyShift = { id: "off", category: "work", isOffShift: true };
+  const other: RequestKeyShift = { id: "x", category: "imported", isOffShift: false };
+
+  it("returns null when no shift resolved (unmapped letter)", () => {
+    expect(keysToRequestIntent(null, { avoid: false, soft: false })).toBeNull();
+    expect(keysToRequestIntent(undefined, { avoid: false, soft: false })).toBeNull();
+  });
+
+  // ---- work shift: want/avoid × hard/soft ----
+  it("work + no mods → want, hard (REQUEST_SHIFT)", () => {
+    expect(keysToRequestIntent(work, { avoid: false, soft: false })).toEqual({
+      shiftMarks: [{ shiftTypeId: "orc", polarity: "accept", strength: "hard" }],
+      offStrength: null,
+      leaveShiftTypeIds: [],
+    });
+  });
+  it("work + Alt → want, soft", () => {
+    expect(keysToRequestIntent(work, { avoid: false, soft: true })).toEqual({
+      shiftMarks: [{ shiftTypeId: "orc", polarity: "accept", strength: "soft" }],
+      offStrength: null,
+      leaveShiftTypeIds: [],
+    });
+  });
+  it("work + Shift → avoid, hard (NEGATE_SHIFT)", () => {
+    expect(keysToRequestIntent(work, { avoid: true, soft: false })).toEqual({
+      shiftMarks: [{ shiftTypeId: "orc", polarity: "negate", strength: "hard" }],
+      offStrength: null,
+      leaveShiftTypeIds: [],
+    });
+  });
+  it("work + Shift+Alt → avoid, soft", () => {
+    expect(keysToRequestIntent(work, { avoid: true, soft: true })).toEqual({
+      shiftMarks: [{ shiftTypeId: "orc", polarity: "negate", strength: "soft" }],
+      offStrength: null,
+      leaveShiftTypeIds: [],
+    });
+  });
+
+  // ---- non-work categories request as work-like ----
+  it("imported/other category requests as a work shift", () => {
+    expect(keysToRequestIntent(other, { avoid: true, soft: false })).toEqual({
+      shiftMarks: [{ shiftTypeId: "x", polarity: "negate", strength: "hard" }],
+      offStrength: null,
+      leaveShiftTypeIds: [],
+    });
+  });
+
+  // ---- LEAVE: hard-only, modifiers dropped ----
+  it("leave → LEAVE, ignores Shift and Alt", () => {
+    const base = { shiftMarks: [], offStrength: null, leaveShiftTypeIds: ["al"] };
+    expect(keysToRequestIntent(leave, { avoid: false, soft: false })).toEqual(base);
+    expect(keysToRequestIntent(leave, { avoid: true, soft: false })).toEqual(base);
+    expect(keysToRequestIntent(leave, { avoid: false, soft: true })).toEqual(base);
+    expect(keysToRequestIntent(leave, { avoid: true, soft: true })).toEqual(base);
+  });
+
+  // ---- OFF: soft honored, avoid dropped ----
+  it("off → OFF hard by default; Alt → soft", () => {
+    expect(keysToRequestIntent(off, { avoid: false, soft: false })).toEqual({
+      shiftMarks: [], offStrength: "hard", leaveShiftTypeIds: [],
+    });
+    expect(keysToRequestIntent(off, { avoid: false, soft: true })).toEqual({
+      shiftMarks: [], offStrength: "soft", leaveShiftTypeIds: [],
+    });
+  });
+  it("off ignores Shift (no anti-off form) but still honors Alt", () => {
+    expect(keysToRequestIntent(off, { avoid: true, soft: false })).toEqual({
+      shiftMarks: [], offStrength: "hard", leaveShiftTypeIds: [],
+    });
+    expect(keysToRequestIntent(off, { avoid: true, soft: true })).toEqual({
+      shiftMarks: [], offStrength: "soft", leaveShiftTypeIds: [],
+    });
+  });
+
+  // ---- end-to-end: flows through buildRequestPayloads like a popup selection ----
+  it("feeds buildRequestPayloads to a single REQUEST_SHIFT row", () => {
+    const marks = keysToRequestIntent(work, { avoid: false, soft: false })!;
+    const payloads = buildRequestPayloads(marks, [{ staffId: "P", startDate: "2026-07-04", endDate: "2026-07-04" }]);
+    expect(payloads).toEqual([{
+      staffId: "P", startDate: "2026-07-04", endDate: "2026-07-04",
+      kind: "REQUEST_SHIFT", shiftTypeIds: ["orc"], leaveShiftTypeId: null,
+      strength: "hard", source: "scheduler", notes: null,
+    }]);
+  });
+  it("avoid keystroke feeds buildRequestPayloads to a NEGATE_SHIFT row", () => {
+    const marks = keysToRequestIntent(work, { avoid: true, soft: true })!;
+    const [p] = buildRequestPayloads(marks, [{ staffId: "P", startDate: "2026-07-04", endDate: "2026-07-04" }]);
+    expect(p.kind).toBe("NEGATE_SHIFT");
+    expect(p.strength).toBe("soft");
+    expect(p.shiftTypeIds).toEqual(["orc"]);
+  });
+  it("leave keystroke feeds buildRequestPayloads to a hard LEAVE row", () => {
+    const marks = keysToRequestIntent(leave, { avoid: true, soft: true })!;
+    const [p] = buildRequestPayloads(marks, [{ staffId: "P", startDate: "2026-07-04", endDate: "2026-07-04" }]);
+    expect(p.kind).toBe("LEAVE");
+    expect(p.strength).toBe("hard");
+    expect(p.leaveShiftTypeId).toBe("al");
+  });
+  it("off keystroke feeds buildRequestPayloads to an OFF row", () => {
+    const marks = keysToRequestIntent(off, { avoid: false, soft: true })!;
+    const [p] = buildRequestPayloads(marks, [{ staffId: "P", startDate: "2026-07-04", endDate: "2026-07-04" }]);
+    expect(p.kind).toBe("OFF");
+    expect(p.strength).toBe("soft");
   });
 });

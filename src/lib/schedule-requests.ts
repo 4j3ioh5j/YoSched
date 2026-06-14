@@ -681,6 +681,58 @@ export function groupCellsIntoTargets(
   }));
 }
 
+// ---- Keyboard request entry ----------------------------------------------
+// In the grid's "request mode" (and on the popup's Request tab) a single
+// keystroke resolves to one shift type plus modifiers — Shift = avoid, Alt =
+// soft. keysToRequestIntent maps that to PickerMarks carrying exactly ONE mark
+// so it flows through buildRequestPayloads on the same path as a popup
+// selection (one shared save path for keyboard + click). Returns null when no
+// shift is resolved (unmapped letter) so the caller can no-op.
+//
+// Per-kind rules — only the forms the model can actually represent:
+//   - OFF shift   → OFF;   Alt honored (soft);  Shift (avoid) is meaningless → dropped.
+//   - LEAVE shift → LEAVE; hard only          → Shift AND Alt dropped (buildRequestPayloads also forces leave hard).
+//   - work-like   → REQUEST_SHIFT (want) or, with Shift, NEGATE_SHIFT (avoid); Alt honored for either polarity.
+// "work-like" = any shift that is neither the off shift nor category "leave"
+// (so imported/other shifts request as work, matching how they'd be assigned).
+
+export type RequestKeyShift = {
+  id: string;
+  category: string; // "work" | "leave" | "imported" | "other"
+  isOffShift: boolean;
+};
+
+export type RequestKeyMods = {
+  avoid: boolean; // Shift held → negative polarity
+  soft: boolean; // Alt/Option held → soft strength
+};
+
+/** Map one request-mode keystroke (resolved shift + modifiers) to PickerMarks
+ *  with a single mark, or null if no shift resolved. Pure. */
+export function keysToRequestIntent(
+  shift: RequestKeyShift | null | undefined,
+  mods: RequestKeyMods
+): PickerMarks | null {
+  if (!shift) return null;
+  const strength: RequestStrength = mods.soft ? "soft" : "hard";
+
+  if (shift.isOffShift) {
+    // OFF: Alt → soft honored; Shift has no "anti-off" form → dropped.
+    return { shiftMarks: [], offStrength: strength, leaveShiftTypeIds: [] };
+  }
+  if (shift.category === "leave") {
+    // LEAVE: hard-only, no negative form → both modifiers dropped.
+    return { shiftMarks: [], offStrength: null, leaveShiftTypeIds: [shift.id] };
+  }
+  // Work-like shift: want vs avoid, soft honored for either.
+  const polarity: MarkPolarity = mods.avoid ? "negate" : "accept";
+  return {
+    shiftMarks: [{ shiftTypeId: shift.id, polarity, strength }],
+    offStrength: null,
+    leaveShiftTypeIds: [],
+  };
+}
+
 // Validated, normalized POST input for creating a request.
 export type RequestInput = {
   staffId: string;
