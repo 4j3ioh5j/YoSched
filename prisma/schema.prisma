@@ -74,6 +74,7 @@ model ShiftType {
   isPaid          Boolean  @default(true)
   category        String   @default("work") // work, leave, imported, other
   color              String?
+  printBackgroundColor String? // optional background tint for this shift's cells on the PRINTED schedule only (null = none); on-screen grid unaffected
   sortOrder          Int      @default(0)
   isOffShift         Boolean  @default(false)
   isFillShift        Boolean  @default(false)

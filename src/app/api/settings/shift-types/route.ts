@@ -10,11 +10,17 @@ import { NextRequest, NextResponse } from "next/server";
 const EDITABLE_FIELDS = [
   "name", "code", "defaultHours",
   "countsTowardFte", "countsOnWeekend", "countsAsHolidayWork",
-  "isLeave", "isPaid", "category", "color", "sortOrder",
+  "isLeave", "isPaid", "category", "color", "printBackgroundColor", "sortOrder",
   "schedulePriority", "isOffShift", "isFillShift", "weekendPaired",
   "ignoresWorkingDays", "maxPerDay", "autoSchedulable", "hotkey", "dedicatedColumn",
   "boldOnSchedule",
 ] as const;
+
+// Accept only null or a #rrggbb hex string for the print background; any other value
+// (malformed direct-API input) is coerced to null. The settings UI only emits valid hex.
+function sanitizePrintBg(v: unknown): string | null {
+  return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v : null;
+}
 
 export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
@@ -25,6 +31,9 @@ export async function PUT(req: NextRequest) {
   const updateData: Prisma.ShiftTypeUpdateInput = {};
   for (const key of EDITABLE_FIELDS) {
     if (key in data) (updateData as Record<string, unknown>)[key] = data[key];
+  }
+  if ("printBackgroundColor" in updateData) {
+    (updateData as Record<string, unknown>).printBackgroundColor = sanitizePrintBg(data.printBackgroundColor);
   }
   if (Object.keys(updateData).length === 0) {
     return NextResponse.json({ error: "No editable fields provided" }, { status: 400 });
@@ -56,6 +65,7 @@ export async function POST(req: NextRequest) {
       category: data.category ?? "work",
 
       color: data.color ?? "#6b7280",
+      printBackgroundColor: sanitizePrintBg(data.printBackgroundColor),
       sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
       schedulePriority: data.schedulePriority ?? null,
       isOffShift: data.isOffShift ?? false,

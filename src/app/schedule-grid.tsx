@@ -73,6 +73,7 @@ type ShiftType = {
   hotkey?: string | null;
   dedicatedColumn?: boolean;
   boldOnSchedule?: boolean;
+  printBackgroundColor?: string | null;
 };
 
 type PayPeriod = {
@@ -601,6 +602,14 @@ export function ScheduleGrid({
     for (const st of shiftTypes) map.set(st.id, st);
     return map;
   }, [shiftTypes]);
+
+  // The HOL shift's print background color shades the date cell of every holiday on the
+  // PRINTED schedule (replaces the old asterisk marker). Driven by the HOL shift's
+  // "Print background" setting, so clearing it removes the shading; null → no shading.
+  const holidayPrintBg = useMemo(
+    () => shiftTypes.find((st) => st.code === "HOL")?.printBackgroundColor ?? null,
+    [shiftTypes],
+  );
 
   // Request chrome (boxed border + bare letters + corner badge) is for PENDING
   // requests only — the open asks still awaiting a decision. Once approved, a
@@ -2291,8 +2300,14 @@ export function ScheduleGrid({
                       "sticky left-0 z-[5] px-2 py-1 text-xs font-mono border-r border-slate-700 whitespace-nowrap cursor-pointer hover:brightness-125",
                       isNewPP ? "border-t-2 border-t-indigo-500" : "",
                     ].join(" ")}
-                    style={{ background: isActiveRow ? "rgba(29,78,216,0.7)" : isOutsideMonth ? "#0d1321" : isWeekend ? "#1a2236" : "#0f172a" }}
+                    data-print-bg={isHoliday && holidayPrintBg ? "" : undefined}
+                    style={{
+                      background: isActiveRow ? "rgba(29,78,216,0.7)" : isOutsideMonth ? "#0d1321" : isWeekend ? "#1a2236" : "#0f172a",
+                      ...(isHoliday && holidayPrintBg ? { "--print-bg": holidayPrintBg } : null),
+                    } as React.CSSProperties}
                     onClick={() => setActiveRow(activeRow === date ? null : date)}
+                    onMouseEnter={isHoliday ? (e) => showTip(setTooltip, holidayNames.get(date) ?? "", e) : undefined}
+                    onMouseLeave={isHoliday ? () => setTooltip(null) : undefined}
                   >
                     <span className={isActiveRow ? "text-blue-200 font-bold" : isWeekend ? "text-slate-500" : "text-slate-300"}>
                       {label.day}
@@ -2300,18 +2315,14 @@ export function ScheduleGrid({
                     <span className={isActiveRow ? "text-blue-200" : isOutsideMonth ? "text-slate-600" : "text-slate-400"}>
                       {label.date}
                     </span>
-                    {isHoliday && (
-                      <span className="ml-1 text-amber-400 text-[10px]"
-                        onMouseEnter={(e) => showTip(setTooltip, holidayNames.get(date) ?? "", e)}
-                        onMouseLeave={() => setTooltip(null)}
-                      >
-                        ★
-                      </span>
-                    )}
                   </td>
                   {visibleStaff.map((p) => {
                     const a = assignmentMap.get(`${p.id}:${date}`);
                     const cellKey = `${p.id}:${date}`;
+                    // Per-shift PRINT background tint (Settings → Shift Types → Print background).
+                    // Carried as a --print-bg CSS var, consumed only by an @media print rule, so
+                    // the on-screen cell is unchanged. null/undefined → no attribute, no tint.
+                    const printBg = a ? shiftTypeMap.get(a.shiftTypeId)?.printBackgroundColor : null;
                     const isSaving = saving === cellKey;
                     const isPickerTarget = picker?.staffId === p.id && picker?.date === date;
                     const cw = cellWarnings.get(cellKey);
@@ -2335,6 +2346,7 @@ export function ScheduleGrid({
                         key={p.id}
                         data-cell={cellKey}
                         data-bold-cell={a && shiftTypeMap.get(a.shiftTypeId)?.boldOnSchedule ? "" : undefined}
+                        data-print-bg={printBg ? "" : undefined}
                         data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
                         className={[
                           `px-0.5 py-0.5 text-center border-slate-700/30 border relative ${canEdit ? "cursor-pointer" : "cursor-default"}`,
@@ -2349,7 +2361,10 @@ export function ScheduleGrid({
                           !a && !isSaving && !isSuggested ? "hover:bg-slate-700/30" : "",
                           isActiveCell ? "ring-2 ring-inset ring-blue-400 z-[2]" : "",
                         ].join(" ")}
-                        style={isActiveCell ? { backgroundColor: "rgba(29,78,216,0.45)" } : undefined}
+                        style={{
+                          ...(isActiveCell ? { backgroundColor: "rgba(29,78,216,0.45)" } : null),
+                          ...(printBg ? { "--print-bg": printBg } : null),
+                        } as React.CSSProperties}
                         onMouseDown={(e) => handleCellMouseDown(p.id, date, e)}
                         onMouseEnter={() => { handleCellMouseEnter(p.id, date); setHoverCol(p.id); }}
                         onClick={(e) => handleCellClick(p.id, date, e)}
@@ -2432,12 +2447,16 @@ export function ScheduleGrid({
                       <td
                         key={`ded-${st.id}`}
                         data-print-ded=""
+                        data-print-bg={st.printBackgroundColor && inits.length ? "" : undefined}
                         className={[
                           "px-0.5 py-0.5 text-center text-[11px] font-mono font-semibold leading-tight break-words border-l border-slate-700",
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
                           canEdit && !isEditing ? "cursor-text hover:bg-slate-700/30" : "",
                         ].join(" ")}
-                        style={{ color: st.color }}
+                        style={{
+                          color: st.color,
+                          ...(st.printBackgroundColor && inits.length ? { "--print-bg": st.printBackgroundColor } : null),
+                        } as React.CSSProperties}
                         title={canEdit && !isEditing ? `Type initials to assign ${st.code}` : undefined}
                         onMouseEnter={!isEditing && inits.length ? (e) => showTip(setTooltip, `${st.code}: ${inits.join(", ")}`, e) : undefined}
                         onMouseLeave={!isEditing && inits.length ? () => setTooltip(null) : undefined}

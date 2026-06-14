@@ -57,6 +57,7 @@ export default async function Settings() {
           isPaid: st.isPaid,
           category: st.category,
           color: st.color ?? "#6b7280",
+          printBackgroundColor: st.printBackgroundColor ?? null,
           sortOrder: st.sortOrder,
           schedulePriority: st.schedulePriority,
           isOffShift: st.isOffShift,

@@ -144,6 +144,7 @@ export default async function Home() {
           code: st.code,
           name: st.name,
           color: st.color ?? "#6b7280",
+          printBackgroundColor: st.printBackgroundColor ?? null,
           category: st.category,
           isLeave: st.isLeave,
           isOffShift: st.isOffShift,

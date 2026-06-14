@@ -32,6 +32,7 @@ type ShiftType = {
   hotkey: string | null;
   dedicatedColumn: boolean;
   boldOnSchedule: boolean;
+  printBackgroundColor: string | null;
 };
 
 type StaffingReq = {
@@ -537,6 +538,7 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
         hotkey: created.hotkey ?? null,
         dedicatedColumn: created.dedicatedColumn ?? false,
         boldOnSchedule: created.boldOnSchedule ?? false,
+        printBackgroundColor: created.printBackgroundColor ?? null,
       };
       setShifts((prev) => [...prev, newShift]);
       setEditingId(created.id);
@@ -681,6 +683,26 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
               </FieldRow>
               <FieldRow label="Color" description="Display color on the grid">
                 <input disabled={!canEdit} type="color" className="w-8 h-8 rounded cursor-pointer border-0 disabled:opacity-50 disabled:cursor-not-allowed" value={editingShift.color} onChange={(e) => updateField(editingShift.id, "color", e.target.value)} />
+              </FieldRow>
+              <FieldRow label="Print background" description="Background color for this shift's cells on the PRINTED schedule only (on-screen grid is unaffected). Default: none.">
+                <div className="flex items-center gap-2">
+                  <input
+                    disabled={!canEdit}
+                    type="checkbox"
+                    checked={editingShift.printBackgroundColor != null}
+                    onChange={(e) => updateField(editingShift.id, "printBackgroundColor", e.target.checked ? (editingShift.printBackgroundColor ?? "#abcde2") : null)}
+                    className="rounded border-slate-600 w-4 h-4 disabled:opacity-50"
+                  />
+                  {editingShift.printBackgroundColor != null && (
+                    <input
+                      disabled={!canEdit}
+                      type="color"
+                      className="w-8 h-8 rounded cursor-pointer border-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                      value={editingShift.printBackgroundColor}
+                      onChange={(e) => updateField(editingShift.id, "printBackgroundColor", e.target.value)}
+                    />
+                  )}
+                </div>
               </FieldRow>
               <FieldRow label="Bold on schedule" description="Print this shift's code in bold on the printed schedule (e.g. call shifts that should stand out). Default on for CALL, ORC, and ORL.">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.boldOnSchedule} onChange={(e) => updateField(editingShift.id, "boldOnSchedule", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />

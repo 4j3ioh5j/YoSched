@@ -156,6 +156,10 @@ input[type="checkbox"]:disabled {
     overflow: visible !important;
     text-overflow: clip !important;
     white-space: nowrap !important;
+    /* Dedicated-column cells carry an inline color: st.color (e.g. ICU/CARD render red
+       on screen). Force every printed letter to solid black — the printout reads
+       black-on-white regardless of each shift's on-screen color. */
+    color: #000 !important;
   }
 
   thead {
@@ -198,10 +202,10 @@ input[type="checkbox"]:disabled {
     background: #f8fafc !important;
   }
 
-  /* Holiday marker */
-  tbody tr[data-holiday="true"] td:first-child {
-    background: #fef3c7 !important;
-  }
+  /* Holiday date cell: shaded with the HOL shift's "Print background" color (replaces
+     the old asterisk + hardcoded amber). The cell carries data-print-bg + an inline
+     --print-bg var set from the HOL shift, painted by the tbody td[data-print-bg] rule
+     below. HOL print background cleared → no shading. */
 
   /* Print only the calendar month — hide leading/trailing pay-period padding days */
   tr[data-outside-month] {
@@ -248,6 +252,15 @@ input[type="checkbox"]:disabled {
     background: #e6e6e6 !important;
   }
 
+  /* Per-shift PRINT background tint. The cell carries an inline --print-bg CSS var
+     (set from the assigned shift's printBackgroundColor — Settings → Shift Types →
+     Print background), invisible on screen because nothing references the var there.
+     Stamped via data-print-bg only when a color is set. Placed AFTER the white/weekend/
+     holiday/bold-cell background rules so the shift's color wins on those cells too. */
+  tbody td[data-print-bg] {
+    background: var(--print-bg) !important;
+  }
+
   /* Hide warning dots, drag handles */
   span[class*="rounded-full"][class*="absolute"] {
     display: none !important;
@@ -274,6 +287,13 @@ input[type="checkbox"]:disabled {
      color above, so they'd otherwise print gray — target the descendants explicitly. */
   thead th, thead th *,
   tbody td:first-child, tbody td:first-child * {
+    color: #000 !important;
+  }
+
+  /* Every printed glyph prints solid black — request markers, summary/count text, and
+     any other inline/Tailwind text color included (user: "make all letters black").
+     Cell backgrounds are set separately by the rules above, so this only affects text. */
+  tbody td, tbody td * {
     color: #000 !important;
   }
 
