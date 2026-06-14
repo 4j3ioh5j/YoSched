@@ -515,13 +515,18 @@ model PrintAggregateColumn {
   sortOrder         Int      @default(0)
   enabled           Boolean  @default(true)
   suppressMembers   Boolean  @default(true) // hide members' individual columns in print
-  isOther           Boolean  @default(false) // the residual catch-all (no rule); singleton
+  isOther           Boolean  @default(false) // residual catch-all (no rule); per-row flag, not a singleton — 0/1/N allowed, each lists the same residual
   employmentTypeIds String[] @default([]) // empty = any employment type
   minFtePercentage  Float? // null = no lower bound
   maxFtePercentage  Float? // null = no upper bound
   // Shift conditions (ANDed): same shape as PrintColumnRule.conditions. Ignored for the
   // isOther column. See print-column-visibility.ts for the condition semantics.
   conditions        Json     @default("[]")
+  // How the shift conditions are evaluated: "month" (default) = match over the whole
+  // printed month, then list the member on every scheduled day; "day" = match per day,
+  // listing the member only on days whose shift satisfies the conditions. Forced "month"
+  // for the isOther catch-all (it has no conditions). See print-aggregate-columns.ts.
+  conditionScope    String   @default("month")
 
   @@map("print_aggregate_columns")
 }

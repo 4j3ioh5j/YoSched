@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { coerceConditions } from "@/lib/print-column-visibility";
+import { coerceConditionScope } from "@/lib/print-aggregate-columns";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET() {
@@ -20,6 +21,7 @@ type ColumnInput = {
   minFtePercentage?: number | null;
   maxFtePercentage?: number | null;
   conditions?: unknown;
+  conditionScope?: unknown;
 };
 
 /** Coerce a value to a finite number or null (rejects NaN/strings/±Infinity). */
@@ -62,6 +64,8 @@ export async function PUT(req: NextRequest) {
         minFtePercentage: isOther ? null : num(c.minFtePercentage),
         maxFtePercentage: isOther ? null : num(c.maxFtePercentage),
         conditions: isOther ? [] : coerceConditions(c.conditions),
+        // Catch-all has no conditions, so its scope is meaningless — force "month".
+        conditionScope: isOther ? "month" : coerceConditionScope(c.conditionScope),
       };
     });
 

@@ -10,7 +10,6 @@ import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT 
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
-import { otherColumnInitials } from "@/lib/other-column";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
@@ -853,8 +852,29 @@ export function ScheduleGrid({
     }));
     const visIds = printVisibleStaffIds(visStaff, printColumnRules, codesByStaff, kindByCode);
 
-    // Aggregate columns: membership + which individual columns they suppress.
-    const agg = computeAggregateColumns(visStaff, visIds, printAggregateColumns, codesByStaff, kindByCode);
+    // Render gate (assignment exists that day + not an off-shift) and per-day code lookup,
+    // used by both scope modes of the aggregate columns.
+    const isScheduledNonOff = (staffId: string, date: string) => {
+      const a = assignmentMap.get(`${staffId}:${date}`);
+      return !!a && !offShiftTypeIds.has(a.shiftTypeId);
+    };
+    const codeByStaffDate = (staffId: string, date: string) => assignmentMap.get(`${staffId}:${date}`)?.code;
+
+    // Aggregate columns: per-day member ids + which individual columns they suppress.
+    // Pass ONLY in-month dates — ownership, suppression and the catch-all residual must
+    // ignore the leading/trailing padding rows (print CSS hides them), or a day-scoped
+    // suppressing column matching only on a padding day could hide a staff member's
+    // in-month individual column while its own (in-month-empty) column is filtered out.
+    const agg = computeAggregateColumns(
+      visStaff,
+      visIds,
+      printAggregateColumns,
+      inMonth,
+      codesByStaff,
+      codeByStaffDate,
+      kindByCode,
+      isScheduledNonOff,
+    );
 
     // Hidden = not rule-visible (visIds null = everyone visible) ∪ suppressed-by-aggregate.
     const hiddenIds = visIds
@@ -867,11 +887,10 @@ export function ScheduleGrid({
     const initialsById = new Map(visibleStaff.map((p) => [p.id, p.initials]));
     const printAggColumns = agg.columns
       .map((c) => {
-        const memberStaff = c.memberIds.map((id) => ({ id, initials: initialsById.get(id) ?? "" }));
-        const initialsByDate = otherColumnInitials(memberStaff, dates, (staffId, date) => {
-          const a = assignmentMap.get(`${staffId}:${date}`);
-          return !!a && !offShiftTypeIds.has(a.shiftTypeId);
-        });
+        const initialsByDate: Record<string, string[]> = {};
+        for (const d of dates) {
+          initialsByDate[d] = (c.memberIdsByDate[d] ?? []).map((id) => initialsById.get(id) ?? "");
+        }
         return { label: c.label, initialsByDate };
       })
       .filter((c) => inMonth.some((d) => (c.initialsByDate[d]?.length ?? 0) > 0));

@@ -208,6 +208,7 @@ export default async function Home() {
           minFtePercentage: c.minFtePercentage,
           maxFtePercentage: c.maxFtePercentage,
           conditions: coerceConditions(c.conditions),
+          conditionScope: c.conditionScope,
         }))}
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
         currentVersions={currentVersions.map((v) => ({
