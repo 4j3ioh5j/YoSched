@@ -2340,6 +2340,10 @@ export function ScheduleGrid({
                       reqSummary && !isSelected && !isActiveCell && !isDragTarget && !isPickerTarget
                         ? `ring-2 ring-inset ${reqSummary.hasApproved ? reqCls!.ring : reqCls!.ringFaint} ${reqCls!.bg}`
                         : "";
+                    // Empty cells get a lightweight "initials on date" tooltip on the <td>.
+                    // Populated cells, requests, suggestions, and the saving state render their
+                    // own inner elements that carry their own tooltips, so skip those.
+                    const showEmptyTip = !a && !isSuggested && !isSaving && !reqSummary;
 
                     return (
                       <td
@@ -2366,7 +2370,12 @@ export function ScheduleGrid({
                           ...(printBg ? { "--print-bg": printBg } : null),
                         } as React.CSSProperties}
                         onMouseDown={(e) => handleCellMouseDown(p.id, date, e)}
-                        onMouseEnter={() => { handleCellMouseEnter(p.id, date); setHoverCol(p.id); }}
+                        onMouseEnter={(e) => {
+                          handleCellMouseEnter(p.id, date);
+                          setHoverCol(p.id);
+                          if (showEmptyTip) showTip(setTooltip, `${p.initials} on ${formatDate(parseDate(date), dateFormat)}`, e);
+                        }}
+                        onMouseLeave={() => { if (showEmptyTip) setTooltip(null); }}
                         onClick={(e) => handleCellClick(p.id, date, e)}
                         onContextMenu={(e) => handleCellContextMenu(p.id, date, e)}
                         onDragOver={(e) => handleDragOver(p.id, date, e)}
