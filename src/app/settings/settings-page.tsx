@@ -69,7 +69,6 @@ type SchedulingPrefs = {
   preferSequentialOff: boolean;
   dateFormat: string;
   maxLeavePerDay: number;
-  collapseOtherOnPrint: boolean;
   pendingRequestMode: PendingRequestMode;
 };
 

@@ -36,7 +36,6 @@ export default async function Settings() {
     preferSequentialOff: schedulingPrefsRow?.preferSequentialOff ?? true,
     dateFormat: schedulingPrefsRow?.dateFormat ?? "MMMM D, YYYY",
     maxLeavePerDay: schedulingPrefsRow?.maxLeavePerDay ?? 0,
-    collapseOtherOnPrint: schedulingPrefsRow?.collapseOtherOnPrint ?? true,
     pendingRequestMode: parsePendingRequestMode(schedulingPrefsRow?.pendingRequestMode),
   };
 
