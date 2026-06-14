@@ -33,6 +33,11 @@ type Props = {
   onDeleteRequest?: (id: string) => void;
   onSaveRequest?: (marks: PickerMarks) => void;
   requestTargetCount?: number;
+  // Controlled active tab. The grid drives this from its requestMode state so
+  // the "/" toggle flips the tab even while the picker is open; the tab buttons
+  // call onTabChange back. Falls back to internal state if not provided.
+  tab?: "assign" | "request";
+  onTabChange?: (tab: "assign" | "request") => void;
 };
 
 function ShiftButton({
@@ -72,9 +77,13 @@ function ShiftButton({
   );
 }
 
-export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect, onClear, onClose, warnings, bulkCount, existingRequests, onDeleteRequest, onSaveRequest, requestTargetCount }: Props) {
+export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect, onClear, onClose, warnings, bulkCount, existingRequests, onDeleteRequest, onSaveRequest, requestTargetCount, tab: tabProp, onTabChange }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const [tab, setTab] = useState<"assign" | "request">("assign");
+  // Controlled by the parent when tabProp is supplied (grid request mode);
+  // otherwise self-managed for any caller that doesn't drive the tab.
+  const [tabInternal, setTabInternal] = useState<"assign" | "request">("assign");
+  const tab = tabProp ?? tabInternal;
+  const setTab = (t: "assign" | "request") => { onTabChange?.(t); setTabInternal(t); };
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {

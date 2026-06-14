@@ -12,7 +12,7 @@ import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
-import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
+import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, keysToRequestIntent, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
 
 // A schedule request as delivered to the grid (pure-module shape + display stamp).
@@ -382,6 +382,10 @@ export function ScheduleGrid({
   const [localRequests, setLocalRequests] = useState<GridRequest[]>(scheduleRequests);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [picker, setPicker] = useState<PickerState>(null);
+  // Request mode (toggled with "/"): bare letters create REQUESTS instead of
+  // assignments, and an open picker shows its Request tab. Single source of
+  // truth shared by the grid keyboard and the picker's active tab.
+  const [requestMode, setRequestMode] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [dragSource, setDragSource] = useState<{ staffId: string; date: string } | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -1316,11 +1320,26 @@ export function ScheduleGrid({
         e.preventDefault();
         redoRef.current();
       }
+      // "/" toggles request mode. Works whether or not the picker is open
+      // (when open, it flips the picker's Assign/Request tab via the shared
+      // requestMode state). Input/SELECT/month-picker targets already returned
+      // above, so this never fires while typing or in the month menu.
+      if (e.key === "/" && canEdit) {
+        e.preventDefault();
+        setRequestMode((m) => !m);
+        return;
+      }
       if (e.key === "Escape" && !picker) {
-        setSelection(new Set());
-        setSelectionAnchor(null);
-        setActiveRow(null);
-        setActiveCol(null);
+        // Precedence: exit request mode first; only clear the selection/active
+        // cell once we're back in normal mode.
+        if (requestMode) {
+          setRequestMode(false);
+        } else {
+          setSelection(new Set());
+          setSelectionAnchor(null);
+          setActiveRow(null);
+          setActiveCol(null);
+        }
       }
       if (e.key === "Tab" && !picker && canEdit && activeRow && activeCol) {
         e.preventDefault();
@@ -1359,17 +1378,32 @@ export function ScheduleGrid({
         const el = document.querySelector(`[data-cell="${newProv.id}:${newDate}"]`);
         el?.scrollIntoView({ block: "nearest", inline: "nearest" });
       }
-      if (!picker && canEdit && e.key.length === 1 && /^[a-zA-Z]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey && (activeRow || selection.size > 0)) {
-        const st = hotkeyMap.get(e.key.toUpperCase());
+      // Hotkey letter entry. Bare letter -> assign (unchanged). In request mode
+      // letter -> request, with Shift=avoid and Alt=soft. Resolve the letter
+      // from KeyboardEvent.code when a modifier is held, since macOS Option
+      // mangles e.key into a non-letter / dead key.
+      if (!picker && canEdit && !e.metaKey && !e.ctrlKey && (activeRow || selection.size > 0)) {
+        const usingMods = e.shiftKey || e.altKey;
+        let letter: string | null = null;
+        if (usingMods && /^Key[A-Z]$/.test(e.code)) letter = e.code.slice(3);
+        else if (e.key.length === 1 && /^[a-zA-Z]$/.test(e.key)) letter = e.key.toUpperCase();
+        const st = letter ? hotkeyMap.get(letter) : undefined;
         if (st) {
-          e.preventDefault();
-          hotkeyAssignRef.current(st);
+          if (requestMode) {
+            e.preventDefault();
+            requestKeyRef.current(st, { avoid: e.shiftKey, soft: e.altKey });
+          } else if (!e.altKey) {
+            // Assign mode: Alt is reserved for request soft-strength, so it
+            // never assigns; bare (or Shift) letter assigns as before.
+            e.preventDefault();
+            hotkeyAssignRef.current(st);
+          }
         }
       }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleStaff, hotkeyMap, selection, showMonthPicker]);
+  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleStaff, hotkeyMap, selection, showMonthPicker, requestMode]);
 
   const hotkeyAssign = useCallback(async (st: ShiftType) => {
     const cells: { staffId: string; date: string }[] = [];
@@ -1602,23 +1636,13 @@ export function ScheduleGrid({
   }, []);
 
   // Request mode: turn picker marks into pending requests for the selected cells.
-  const handleSaveRequests = useCallback(
-    async (marks: PickerMarks) => {
-      if (!picker) return;
-      const cells: { staffId: string; date: string }[] = [];
-      if (selection.size > 0) {
-        for (const key of selection) {
-          const [pid, d] = key.split(":");
-          cells.push({ staffId: pid, date: d });
-        }
-      } else {
-        cells.push({ staffId: picker.staffId, date: picker.date });
-      }
+  // Lower-level save: turn marks + an explicit cell list into request rows and
+  // POST them, with optimistic insert and a partial-failure message. Shared by
+  // the picker (handleSaveRequests) and the keyboard request path
+  // (handleRequestKey) so neither has to fake picker state.
+  const saveRequestMarksForCells = useCallback(
+    async (cells: { staffId: string; date: string }[], marks: PickerMarks) => {
       const payloads = buildRequestPayloads(marks, groupCellsIntoTargets(cells));
-
-      setPicker(null);
-      setSelection(new Set());
-      setSelectionAnchor(null);
       if (payloads.length === 0) return;
 
       setSaving("requests");
@@ -1651,8 +1675,57 @@ export function ScheduleGrid({
         setSaving(null);
       }
     },
-    [picker, selection],
+    [],
   );
+
+  const handleSaveRequests = useCallback(
+    async (marks: PickerMarks) => {
+      if (!picker) return;
+      const cells: { staffId: string; date: string }[] = [];
+      if (selection.size > 0) {
+        for (const key of selection) {
+          const [pid, d] = key.split(":");
+          cells.push({ staffId: pid, date: d });
+        }
+      } else {
+        cells.push({ staffId: picker.staffId, date: picker.date });
+      }
+      setPicker(null);
+      setSelection(new Set());
+      setSelectionAnchor(null);
+      await saveRequestMarksForCells(cells, marks);
+    },
+    [picker, selection, saveRequestMarksForCells],
+  );
+
+  // Keyboard request entry (request mode): apply one keystroke's intent to the
+  // selection or active cell. Requests coexist with assignments, so locked
+  // cells are NOT skipped (a lock pins an assignment, not the right to request).
+  const handleRequestKey = useCallback(
+    (st: ShiftType, mods: { avoid: boolean; soft: boolean }) => {
+      const cells: { staffId: string; date: string }[] = [];
+      if (selection.size > 0) {
+        for (const key of selection) {
+          const [pid, d] = key.split(":");
+          cells.push({ staffId: pid, date: d });
+        }
+      } else if (activeCol && activeRow) {
+        cells.push({ staffId: activeCol, date: activeRow });
+      }
+      if (cells.length === 0) return;
+      const marks = keysToRequestIntent(
+        { id: st.id, category: st.category, isOffShift: st.isOffShift },
+        mods,
+      );
+      if (!marks) return;
+      setSelection(new Set());
+      setSelectionAnchor(null);
+      void saveRequestMarksForCells(cells, marks);
+    },
+    [selection, activeCol, activeRow, saveRequestMarksForCells],
+  );
+  const requestKeyRef = useRef(handleRequestKey);
+  useEffect(() => { requestKeyRef.current = handleRequestKey; }, [handleRequestKey]);
 
   // Delete an existing request (the × in the picker's request list).
   const handleDeleteRequest = useCallback(async (id: string) => {
@@ -1974,7 +2047,17 @@ export function ScheduleGrid({
   }, [alertGroups, dates, showPPRows, visibleStaff.length, viewMonth, viewYear]);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}>
+      {/* Request mode indicator — "/" toggles; letters create requests, not
+          assignments (Shift=avoid, Alt=soft). Esc exits. */}
+      {requestMode && (
+        <div
+          data-print-hide
+          className="shrink-0 flex items-center justify-center gap-2 px-4 py-1 bg-violet-600 text-white text-xs font-semibold"
+        >
+          <span>REQUEST MODE — letters add requests (Shift = avoid, Alt = soft). Press “/” or Esc to exit.</span>
+        </div>
+      )}
       {/* Print-only title: bold-centered "YoSched" brand above the month/year */}
       <div data-print-title className="hidden">
         <span data-print-brand>YoSched</span>
@@ -2712,6 +2795,8 @@ export function ScheduleGrid({
             }
             onDeleteRequest={handleDeleteRequest}
             onSaveRequest={handleSaveRequests}
+            tab={requestMode ? "request" : "assign"}
+            onTabChange={(t) => setRequestMode(t === "request")}
             requestTargetCount={
               selectionCount > 1
                 ? groupCellsIntoTargets([...selection].map((k) => { const [staffId, date] = k.split(":"); return { staffId, date }; })).length
