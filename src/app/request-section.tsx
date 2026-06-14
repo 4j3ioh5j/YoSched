@@ -30,12 +30,19 @@ function markFromEvent(e: { shiftKey: boolean; altKey: boolean }): {
   };
 }
 
-function markGlyph(m: { polarity: "accept" | "negate"; strength: RequestStrength }) {
-  return { sign: m.polarity === "negate" ? "✗" : "○", faint: m.strength === "soft" };
+// Border-only styling that mirrors how a request looks on the schedule grid
+// (colored ring, NO background fill) so the Request tab reads instantly as the
+// request surface vs the filled Assign tab. Want = emerald, avoid = rose,
+// soft = faint border (matches the grid's pending/soft faint ring).
+function workMarkClass(mark: ShiftMark | undefined): string {
+  if (!mark) return "border border-slate-600 hover:border-slate-400";
+  const faint = mark.strength === "soft";
+  if (mark.polarity === "negate") return faint ? "border-2 border-rose-400/40 text-rose-300" : "border-2 border-rose-400 text-rose-300";
+  return faint ? "border-2 border-emerald-400/40 text-emerald-300" : "border-2 border-emerald-400 text-emerald-300";
 }
 
 /** The "make a request" controls — embedded as a section inside the cell picker.
- *  Click a work shift = ○ want (Shift = ✗ won't, Alt = soft); OFF / leave too. */
+ *  Click a work shift = want (Shift = avoid, Alt = soft); OFF / leave too. */
 export function RequestSection({ shiftTypes, targetCount, onSave }: Props) {
   const [shiftMarks, setShiftMarks] = useState<Map<string, ShiftMark>>(new Map());
   const [offStrength, setOffStrength] = useState<RequestStrength | null>(null);
@@ -80,69 +87,74 @@ export function RequestSection({ shiftTypes, targetCount, onSave }: Props) {
         Request{targetCount > 1 ? ` · ${targetCount} staff` : ""}
       </div>
 
+      {/* Same Work / Leave / OFF layout as the Assign tab, but every control is
+          rendered border-only (no fill) in the request category colors so the
+          tab is unmistakably the request surface. */}
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 px-2 py-1">Work</div>
       <div className="grid grid-cols-3 gap-0.5">
         {workShifts.map((st) => {
           const mark = shiftMarks.get(st.id);
-          const g = mark ? markGlyph(mark) : null;
           return (
             <button
               key={st.id}
               onClick={(e) => toggleShift(st.id, e)}
               className={[
-                "px-2 py-1.5 text-xs font-bold rounded text-center transition-colors relative",
-                mark ? "ring-2 ring-violet-400/70" : "",
+                "px-2 py-1.5 text-xs font-bold rounded text-center transition-colors bg-transparent",
+                workMarkClass(mark),
               ].join(" ")}
-              style={{ backgroundColor: st.color + "30", color: st.color }}
+              style={mark ? undefined : { color: st.color }}
               title={st.name}
             >
               {st.code}
-              {g && (
-                <span
-                  className={`absolute -top-1 -right-1 text-[11px] leading-none rounded-full px-0.5 bg-slate-900 ${
-                    mark!.polarity === "negate" ? "text-red-400" : "text-emerald-400"
-                  } ${g.faint ? "opacity-50" : ""}`}
-                >
-                  {g.sign}
-                </span>
-              )}
             </button>
           );
         })}
       </div>
 
       {leaveShifts.length > 0 && (
-        <div className="grid grid-cols-3 gap-0.5 mt-0.5">
-          {leaveShifts.map((st) => (
-            <button
-              key={st.id}
-              onClick={() => toggleLeave(st.id)}
-              className={[
-                "px-2 py-1.5 text-xs font-bold rounded text-center transition-colors",
-                leaveIds.has(st.id) ? "ring-2 ring-violet-400/70" : "",
-              ].join(" ")}
-              style={{ backgroundColor: st.color + "30", color: st.color }}
-              title={`${st.name} (leave)`}
-            >
-              {st.code}
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 px-2 py-1 mt-1">Leave</div>
+          <div className="grid grid-cols-3 gap-0.5">
+            {leaveShifts.map((st) => {
+              const on = leaveIds.has(st.id);
+              return (
+                <button
+                  key={st.id}
+                  onClick={() => toggleLeave(st.id)}
+                  className={[
+                    "px-2 py-1.5 text-xs font-bold rounded text-center transition-colors bg-transparent",
+                    on ? "border-2 border-amber-400 text-amber-300" : "border border-slate-600 hover:border-slate-400",
+                  ].join(" ")}
+                  style={on ? undefined : { color: st.color }}
+                  title={`${st.name} (leave)`}
+                >
+                  {st.code}
+                </button>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {offShift && (
-        <button
-          onClick={(e) => toggleOff(e)}
-          className={[
-            "w-full mt-0.5 px-2 py-1.5 text-xs font-bold rounded text-center text-slate-300 bg-slate-700/50 hover:bg-slate-600/50 transition-colors",
-            offStrength ? "ring-2 ring-violet-400/70" : "",
-          ].join(" ")}
-        >
-          OFF{offStrength === "soft" ? " (prefer)" : ""}
-        </button>
+        <div className="border-t border-slate-700 mt-2 pt-1">
+          <button
+            onClick={(e) => toggleOff(e)}
+            className={[
+              "w-full px-2 py-1.5 text-xs font-bold rounded text-center transition-colors bg-transparent",
+              offStrength === "hard" ? "border-2 border-sky-400 text-sky-300"
+              : offStrength === "soft" ? "border-2 border-sky-400/40 text-sky-300"
+              : "border border-slate-600 text-slate-400 hover:border-slate-400",
+            ].join(" ")}
+          >
+            OFF{offStrength === "soft" ? " (prefer)" : ""}
+          </button>
+        </div>
       )}
 
       <div className="text-[9px] text-slate-500 px-1 pt-1 leading-snug">
-        click ○ want · <span className="text-slate-400">Shift</span> ✗ won&apos;t ·{" "}
+        click <span className="text-emerald-400">want</span> ·{" "}
+        <span className="text-slate-400">Shift</span> <span className="text-rose-400">avoid</span> ·{" "}
         <span className="text-slate-400">Alt</span> soft
       </div>
 

@@ -1046,7 +1046,9 @@ export function ScheduleGrid({
     e.preventDefault();
     if (!canEdit) return;
     const existing = assignmentMap.get(`${staffId}:${date}`);
-    if (existing?.isLocked) return;
+    // A locked assignment blocks the Assign tab, but requests are independent of
+    // the lock — so in request mode the picker still opens (on its Request tab).
+    if (existing?.isLocked && !requestMode) return;
     setActiveRow(date);
     setActiveCol(staffId);
     const cellKey = `${staffId}:${date}`;
@@ -1344,7 +1346,9 @@ export function ScheduleGrid({
       if (e.key === "Tab" && !picker && canEdit && activeRow && activeCol) {
         e.preventDefault();
         const existing = assignmentMap.get(`${activeCol}:${activeRow}`);
-        if (!existing?.isLocked) {
+        // Locked cells still open the picker in request mode (requests are
+        // independent of the assignment lock); blocked only in assign mode.
+        if (!existing?.isLocked || requestMode) {
           if (selection.size === 0) {
             setSelectionAnchor({ staffId: activeCol, date: activeRow });
           }
