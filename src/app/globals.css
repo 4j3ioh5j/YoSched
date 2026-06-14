@@ -191,7 +191,13 @@ input[type="checkbox"]:disabled {
      change size from month to month. */
   tbody td {
     border: 1px solid #cbd5e1 !important;
-    padding: 1px 3px !important;
+    /* Top-biased vertical padding (2px top / 0 bottom) centers the cell text *visually*.
+       With vertical-align:middle the line BOX is centered, but the codes are uppercase —
+       their ink sits in the upper part of the box (the descender space below the baseline
+       is empty), so a geometrically-centered box reads ~1px high. Shifting the content box
+       down by biasing the padding compensates. Vertical total stays 2px (was 1+1) so the
+       fixed row height / 31-day one-page fit is unchanged. */
+    padding: 2px 3px 0 !important;
     background: white !important;
     position: static !important;
     height: 0.19in !important;
