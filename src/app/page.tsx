@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { computeFairness } from "@/lib/fairness";
 import { ScheduleGrid } from "./schedule-grid";
 import { NavHeader } from "./nav-header";
+import { EditorPresenceBanner } from "./editor-presence-banner";
 import { getSession } from "@/lib/auth-guard";
 import { isRequestVisibleToViewer } from "@/lib/schedule-requests";
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
@@ -113,6 +114,7 @@ export default async function Home() {
   return (
     <main className="flex flex-col h-dvh">
       <NavHeader />
+      <EditorPresenceBanner />
 
       <ScheduleGrid
         canEdit={canEdit}

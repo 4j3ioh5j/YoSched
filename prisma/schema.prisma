@@ -311,6 +311,21 @@ model SchedulingPreferences {
   @@map("scheduling_preferences")
 }
 
+// Last-seen heartbeat per login, used ONLY to show a passive "other editors are
+// active" banner on the schedule page. One row per user (keyed by userId), upserted
+// on each heartbeat. NOT a session store and NOT a page tracker — it records that a
+// login is currently active *somewhere*, nothing about which page. "Active" is decided
+// at read time by a freshness TTL (see src/lib/presence.ts), so a closed tab silently
+// ages out. Plain column, no FK back-reference: presence is disposable, never blocks a
+// user delete (a stale row is harmless and is overwritten on that user's next login).
+model UserActivity {
+  userId   String   @id
+  lastSeen DateTime @default(now())
+
+  @@index([lastSeen])
+  @@map("user_activity")
+}
+
 model LoginLog {
   id        String   @id @default(cuid())
   email     String
