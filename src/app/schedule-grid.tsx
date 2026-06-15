@@ -3094,14 +3094,18 @@ export function ScheduleGrid({
             <div className="overflow-y-auto px-5 py-4 text-sm text-slate-300 space-y-5">
               {/* Navigation */}
               <section>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Navigation</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Navigation &amp; selection</h3>
                 <dl className="space-y-1">
                   {[
                     ["↑ ↓ ← →", "Move the active cell"],
+                    ["Click", "Make a cell active (clears any range selection)"],
+                    ["Click a selected cell", "Open the picker for the current selection"],
+                    ["Shift + click", "Select a rectangular range from the anchor cell"],
+                    ["Shift + drag", "Select a range by dragging"],
+                    ["Ctrl / Cmd + click", "Add or remove a cell from the selection"],
+                    ["Right-click", "Open the shift picker on a cell"],
                     ["Tab", "Open the shift picker on the active cell"],
-                    ["Esc", "Close a popup, exit request mode, or clear the selection"],
-                    ["Click + drag", "Select a range of cells"],
-                    ["Right-click", "Cell context menu"],
+                    ["Esc", "Close the picker, exit request mode, or clear the selection"],
                   ].map(([k, d]) => (
                     <div key={k} className="flex items-start gap-3">
                       <kbd className="shrink-0 min-w-[96px] px-2 py-0.5 text-xs font-mono bg-slate-900 border border-slate-600 rounded text-slate-200">{k}</kbd>
@@ -3159,7 +3163,7 @@ export function ScheduleGrid({
                   {shiftTypes.filter((st) => st.hotkey).map((st) => (
                     <div key={st.id} className="flex items-center gap-2">
                       <kbd className="shrink-0 w-6 text-center px-1 py-0.5 text-xs font-mono bg-slate-900 border border-slate-600 rounded text-slate-200">{st.hotkey!.toUpperCase()}</kbd>
-                      <span className="w-9 text-center text-[11px] font-bold rounded px-1 py-0.5" style={{ backgroundColor: st.isOffShift ? "transparent" : st.color + "30", color: st.isOffShift ? "#64748b" : st.color }}>{st.code}</span>
+                      <span className="w-9 text-center text-[11px] font-bold rounded px-1 py-0.5" style={{ backgroundColor: st.isOffShift ? "transparent" : st.color + "30", color: st.isOffShift ? "#475569" : st.color }}>{st.code}</span>
                       <span className="text-xs text-slate-400 truncate">{st.name}</span>
                     </div>
                   ))}
@@ -3177,7 +3181,7 @@ export function ScheduleGrid({
                   <div className="grid grid-cols-3 gap-x-4 gap-y-1">
                     {shiftTypes.map((st) => (
                       <div key={st.id} className="flex items-center gap-2">
-                        <span className="w-8 text-center text-[11px] font-bold rounded px-1 py-0.5" style={{ backgroundColor: st.isOffShift ? "transparent" : st.color + "30", color: st.isOffShift ? "#64748b" : st.color }}>{st.code}</span>
+                        <span className="w-8 text-center text-[11px] font-bold rounded px-1 py-0.5" style={{ backgroundColor: st.isOffShift ? "transparent" : st.color + "30", color: st.isOffShift ? "#475569" : st.color }}>{st.code}</span>
                         <span className="text-[11px] text-slate-400 truncate">{st.name}{st.isOffShift ? " (off)" : ""}</span>
                       </div>
                     ))}
