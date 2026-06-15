@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
-import { checkCellWarnings, checkDayStaffing, type Warning } from "@/lib/constraints";
-import { buildAlerts, groupAlertsByDate } from "@/lib/alerts";
+import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } from "@/lib/constraints";
+import { buildAlerts, buildPPHoursAlerts, buildAlertSections, groupAlertsByDate, type PPHoursEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
@@ -600,6 +600,8 @@ export function ScheduleGrid({
 
   // Alerts + Help modals (the alerts sidebar was replaced by an Alerts button).
   const [showAlerts, setShowAlerts] = useState(false);
+  // Alert-modal sections that are collapsed (by category). Empty = all expanded.
+  const [collapsedAlertSections, setCollapsedAlertSections] = useState<Set<string>>(new Set());
   const [showHelp, setShowHelp] = useState(false);
   // Transient highlight on the day-row a user jumps to from the Alerts modal.
   const [flashDate, setFlashDate] = useState<string | null>(null);
@@ -2290,22 +2292,77 @@ export function ScheduleGrid({
     }
   }
 
-  // Only days in the currently-viewed month get alerts — the grid also renders
-  // pay-period padding rows from adjacent months, which must not produce alerts.
-  const alerts = useMemo(
+  // Day-level staffing alerts (coverage). Only days in the viewed month — the grid
+  // also renders pay-period padding rows from adjacent months, which must not alert.
+  const staffingAlerts = useMemo(
     () => buildAlerts(dates, dayWarnings, firstOfMonth, lastOfMonth),
     [dates, dayWarnings, firstOfMonth, lastOfMonth],
   );
 
-  // Group alerts by date for the Alerts modal list.
-  const alertGroups = useMemo(() => groupAlertsByDate(alerts), [alerts]);
-  // Muted alert keys (shared across logins; seeded server-side). Slice 3 makes
-  // this writable; for now it's the read-side that keeps muted alerts out of the
-  // counts and severity. Empty until something is muted, so behavior is unchanged.
-  const mutedKeys = useMemo(() => new Set(mutedAlertKeys), [mutedAlertKeys]);
+  // Pay-period-hours divergence alerts. Built from the SAME ppHours / visibleStaff
+  // set the PP Totals row uses, so the modal and grid can never disagree. Each
+  // staff member's divergence anchors to the pay period's end date (so a PP
+  // crossing a month boundary surfaces exactly once — see buildPPHoursAlerts).
+  const ppHoursAlerts = useMemo(() => {
+    const entries: PPHoursEntry[] = [];
+    for (const pp of sortedPPs) {
+      const provHours = ppHours.get(pp.startDate);
+      for (const p of visibleStaff) {
+        const hours = provHours?.get(p.id) ?? 0;
+        const warning = checkStaffPPHours({ staff: p, pp, currentHours: hours });
+        if (!warning) continue;
+        entries.push({
+          staffId: p.id,
+          ppStartDate: pp.startDate,
+          anchorDate: pp.endDate,
+          hours,
+          target: pp.targetHours * p.ftePercentage,
+          warning,
+        });
+      }
+    }
+    return buildPPHoursAlerts(entries, firstOfMonth, lastOfMonth);
+  }, [sortedPPs, ppHours, visibleStaff, firstOfMonth, lastOfMonth]);
+
+  // The Alerts modal's sections (pay-period hours first, then daily staffing).
+  const alertSections = useMemo(
+    () => buildAlertSections(staffingAlerts, ppHoursAlerts),
+    [staffingAlerts, ppHoursAlerts],
+  );
+  // Every alert across categories; counts/severity ignore muted ones.
+  const allAlerts = useMemo(() => [...ppHoursAlerts, ...staffingAlerts], [ppHoursAlerts, staffingAlerts]);
+
+  // Muted alert keys, shared across logins (seeded server-side, kept live here).
+  const [mutedKeys, setMutedKeys] = useState<Set<string>>(() => new Set(mutedAlertKeys));
+  // Mute/unmute an alert: optimistic, reverts on failure. Persisted shared via
+  // /api/alerts/mutes (requires schedule:edit) — only offered when canEdit.
+  const toggleMute = useCallback(async (key: string) => {
+    const wasMuted = mutedKeys.has(key);
+    setMutedKeys((prev) => {
+      const next = new Set(prev);
+      if (wasMuted) next.delete(key); else next.add(key);
+      return next;
+    });
+    try {
+      const res = await fetch("/api/alerts/mutes", {
+        method: wasMuted ? "DELETE" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alertKey: key }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      console.error("Toggle alert mute failed:", e);
+      setMutedKeys((prev) => {
+        const next = new Set(prev);
+        if (wasMuted) next.add(key); else next.delete(key);
+        return next;
+      });
+    }
+  }, [mutedKeys]);
+
   // Alerts that still "count" — muted ones are silenced.
-  const visibleAlerts = useMemo(() => alerts.filter((a) => !mutedKeys.has(a.key)), [alerts, mutedKeys]);
-  // True when any unmuted alert is a hard error (shift-count) — drives the button color.
+  const visibleAlerts = useMemo(() => allAlerts.filter((a) => !mutedKeys.has(a.key)), [allAlerts, mutedKeys]);
+  // Hard error (red) only from zero-coverage staffing; PP-hours is always amber.
   const hasAlertError = useMemo(() => visibleAlerts.some((a) => a.type === "error"), [visibleAlerts]);
 
   return (
@@ -2469,20 +2526,30 @@ export function ScheduleGrid({
             </>
           )}
           {/* Alerts — color reflects severity; opens the alerts modal. */}
+          {/* Enabled whenever ANY alert exists (even if all are muted), so muted
+              rows stay reachable to unmute. Active count/severity ignore muted. */}
           <button
             onClick={() => setShowAlerts(true)}
-            disabled={visibleAlerts.length === 0}
+            disabled={allAlerts.length === 0}
             className={[
               "px-3 py-1 text-sm rounded transition-colors flex items-center gap-1.5 font-medium",
-              visibleAlerts.length === 0
+              allAlerts.length === 0
                 ? "bg-slate-800 text-slate-600 cursor-default"
-                : hasAlertError
-                  ? "bg-red-700 hover:bg-red-600 text-red-100"
-                  : "bg-amber-700 hover:bg-amber-600 text-amber-100",
+                : visibleAlerts.length === 0
+                  ? "bg-slate-700 hover:bg-slate-600 text-slate-300"
+                  : hasAlertError
+                    ? "bg-red-700 hover:bg-red-600 text-red-100"
+                    : "bg-amber-700 hover:bg-amber-600 text-amber-100",
             ].join(" ")}
-            title={visibleAlerts.length === 0 ? "No alerts for this month" : `${visibleAlerts.length} alert${visibleAlerts.length !== 1 ? "s" : ""} — click to review`}
+            title={
+              allAlerts.length === 0
+                ? "No alerts for this month"
+                : visibleAlerts.length === 0
+                  ? `All ${allAlerts.length} alert${allAlerts.length !== 1 ? "s" : ""} muted — click to review`
+                  : `${visibleAlerts.length} alert${visibleAlerts.length !== 1 ? "s" : ""} — click to review`
+            }
           >
-            <span className={`w-1.5 h-1.5 rounded-full ${visibleAlerts.length === 0 ? "bg-slate-600" : hasAlertError ? "bg-red-300" : "bg-amber-300"}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${allAlerts.length === 0 || visibleAlerts.length === 0 ? "bg-slate-500" : hasAlertError ? "bg-red-300" : "bg-amber-300"}`} />
             Alerts
             {visibleAlerts.length > 0 && <span className="text-xs opacity-80">{visibleAlerts.length}</span>}
           </button>
@@ -3048,35 +3115,79 @@ export function ScheduleGrid({
               <button onClick={() => setShowAlerts(false)} className="text-slate-400 hover:text-white text-xl leading-none px-1" aria-label="Close">×</button>
             </div>
             <div className="overflow-y-auto p-2">
-              {alertGroups.length === 0 ? (
+              {allAlerts.length === 0 ? (
                 <div className="px-3 py-6 text-center text-sm text-slate-500">No alerts for this month.</div>
               ) : (
-                alertGroups.map((g) => {
-                  const groupHasError = g.items.some((it) => it.type === "error");
+                alertSections.map((section) => {
+                  const total = section.alerts.length;
+                  const active = section.alerts.filter((a) => !mutedKeys.has(a.key)).length;
+                  const collapsed = collapsedAlertSections.has(section.category);
+                  const groups = groupAlertsByDate(section.alerts);
                   return (
-                    <div
-                      key={g.date}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => jumpToDate(g.date)}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jumpToDate(g.date); } }}
-                      className="w-full text-left px-3 py-2 rounded hover:bg-slate-700/60 focus:bg-slate-700/60 outline-none cursor-pointer transition-colors flex flex-col gap-1 mb-0.5"
-                      title="Go to this day on the schedule"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full shrink-0 ${groupHasError ? "bg-red-500" : "bg-amber-500"}`} />
-                        <span className="text-xs font-semibold text-slate-200">
-                          {formatDate(parseDate(g.date), dateFormat)}
-                        </span>
-                        <span className="text-slate-600">→</span>
-                      </div>
-                      <ul className="pl-4 space-y-0.5">
-                        {g.items.map((it, i) => (
-                          <li key={i} className={`text-[11px] leading-tight ${it.type === "error" ? "text-red-300" : "text-amber-300/90"}`}>
-                            {it.message}
-                          </li>
-                        ))}
-                      </ul>
+                    <div key={section.category} className="mb-2">
+                      {/* Section header — click to expand/collapse. */}
+                      <button
+                        onClick={() => setCollapsedAlertSections((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(section.category)) next.delete(section.category); else next.add(section.category);
+                          return next;
+                        })}
+                        disabled={total === 0}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 rounded text-left hover:bg-slate-700/40 disabled:hover:bg-transparent disabled:cursor-default"
+                      >
+                        <span className={`text-slate-500 text-[10px] transition-transform ${collapsed || total === 0 ? "" : "rotate-90"}`}>▶</span>
+                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex-1">{section.title}</span>
+                        {total === 0 ? (
+                          <span className="text-[11px] text-slate-600">none</span>
+                        ) : (
+                          <span className="flex items-center gap-1.5 text-[11px]">
+                            <span className={`px-1.5 py-0.5 rounded-full font-semibold ${active === 0 ? "bg-slate-700 text-slate-400" : "bg-amber-600/30 text-amber-300"}`}>{active}</span>
+                            {active < total && <span className="text-slate-600">{total - active} muted</span>}
+                          </span>
+                        )}
+                      </button>
+
+                      {/* Section body — alerts grouped by day; the date jumps, the
+                          per-alert control mutes (explicit, never the row body). */}
+                      {!collapsed && total > 0 && (
+                        <div className="mt-0.5">
+                          {groups.map((g) => (
+                            <div key={g.date} className="px-2 py-1">
+                              <button
+                                onClick={() => jumpToDate(g.date)}
+                                className="flex items-center gap-1.5 text-xs font-semibold text-slate-200 hover:text-white"
+                                title="Go to this day on the schedule"
+                              >
+                                {formatDate(parseDate(g.date), dateFormat)}
+                                <span className="text-slate-600">↗</span>
+                              </button>
+                              <ul className="pl-3 mt-0.5 space-y-0.5">
+                                {g.items.map((it) => {
+                                  const muted = mutedKeys.has(it.key);
+                                  return (
+                                    <li key={it.key} className="flex items-start gap-2">
+                                      {canEdit && (
+                                        <button
+                                          onClick={() => toggleMute(it.key)}
+                                          className={`shrink-0 mt-[1px] text-[10px] px-1 py-0.5 rounded border transition-colors ${muted ? "border-slate-500 bg-slate-700 text-slate-300 hover:text-white" : "border-slate-600/60 text-slate-500 hover:border-amber-500/60 hover:text-amber-300"}`}
+                                          title={muted ? "Unmute — restore this alert to the count" : "Mute — silence this alert for everyone"}
+                                          aria-label={muted ? "Unmute alert" : "Mute alert"}
+                                          aria-pressed={muted}
+                                        >
+                                          {muted ? "muted" : "mute"}
+                                        </button>
+                                      )}
+                                      <span className={`text-[11px] leading-tight ${muted ? "text-slate-600 line-through" : it.type === "error" ? "text-red-300" : "text-amber-300/90"}`}>
+                                        {it.message}
+                                      </span>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })
