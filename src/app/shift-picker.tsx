@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Warning } from "@/lib/constraints";
 import type { PickerMarks } from "@/lib/schedule-requests";
 import { RequestSection } from "./request-section";
@@ -81,6 +81,8 @@ function ShiftButton({
 
 export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect, onClear, onClose, warnings, bulkCount, existingRequests, onDeleteRequest, onSaveRequest, requestTargetCount, tab: tabProp, onTabChange }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  // Resolved on-screen placement, frozen when the picker opens (see below).
+  const [placement, setPlacement] = useState<{ left: number; top: number } | null>(null);
   // Controlled by the parent when tabProp is supplied (grid request mode);
   // otherwise self-managed for any caller that doesn't drive the tab.
   const [tabInternal, setTabInternal] = useState<"assign" | "request">("assign");
@@ -107,7 +109,15 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
   // Keep the whole popover inside the viewport (clamp, not just flip) so it never
   // opens partly off-screen or with its bottom (Save) below the edge — important
   // on iPad where the popover can be tall and the tap can be near an edge.
-  useEffect(() => {
+  //
+  // Placement is computed ONCE per open (deps: [position.x, position.y]) and frozen. It is
+  // deliberately NOT recomputed when `tab` or `existingRequests` change: the
+  // assign and request tabs differ in size, and re-clamping on a tab switch made
+  // the popover jump around. Freezing keeps it anchored where it opened; the box
+  // is capped at max-h-[85dvh] and scrolls internally, so a taller tab grows
+  // within the same anchor instead of moving. useLayoutEffect runs before paint
+  // so there's no flash at the un-clamped position.
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const margin = 8;
@@ -120,9 +130,13 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
     left = Math.min(Math.max(margin, left), Math.max(margin, vw - rect.width - margin));
     if (top + rect.height > vh - margin) top = position.y - rect.height - 12; // flip up
     top = Math.min(Math.max(margin, top), Math.max(margin, vh - rect.height - margin));
-    el.style.left = `${left}px`;
-    el.style.top = `${top}px`;
-  }, [position, tab, existingRequests]);
+    setPlacement({ left, top });
+    // Depend on the primitive coords, NOT the `position` object: the parent
+    // passes a fresh {x,y} literal every render, so [position] would re-fire on
+    // any parent re-render (e.g. a tab switch) and re-place the popover. Keying
+    // on x/y means we only re-place on a genuine reopen at a new cell.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [position.x, position.y]);
 
   const workShifts = shiftTypes.filter((s) => s.category === "work");
   const leaveShifts = shiftTypes.filter((s) => s.category === "leave");
@@ -136,7 +150,7 @@ export function ShiftPicker({ shiftTypes, currentShiftTypeId, position, onSelect
     <div
       ref={ref}
       className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-2 min-w-[200px] max-h-[85dvh] overflow-y-auto"
-      style={{ left: position.x + 12, top: position.y + 12 }}
+      style={{ left: placement?.left ?? position.x + 12, top: placement?.top ?? position.y + 12 }}
     >
       {showRequest && (
         <div className="flex gap-1 mb-1 pb-1 border-b border-slate-700">
