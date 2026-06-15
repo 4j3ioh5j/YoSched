@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { describeRequest, type LeaveQueueSummary } from "@/lib/schedule-requests";
 import { formatDate, type DateFormatKey } from "@/lib/date-format";
+import { awayShiftChoices } from "@/lib/request-away-choices";
 
 type Kind = "OFF" | "LEAVE" | "NEGATE_SHIFT" | "REQUEST_SHIFT";
 type Status = "pending" | "approved" | "declined" | "withdrawn" | "fulfilled";
@@ -65,9 +66,7 @@ export function MyRequestsPage({
     return (id: string) => m.get(id) ?? id;
   }, [shiftTypes]);
 
-  const leaveShifts = useMemo(() => shiftTypes.filter((s) => s.isLeave), [shiftTypes]);
   const workShifts = useMemo(() => shiftTypes.filter((s) => !s.isLeave && !s.isOffShift), [shiftTypes]);
-  const offShift = useMemo(() => shiftTypes.find((s) => s.isOffShift) ?? null, [shiftTypes]);
   const isAwayId = useMemo(() => {
     const away = new Set(shiftTypes.filter((s) => s.isLeave || s.isOffShift).map((s) => s.id));
     return (id: string) => away.has(id);
@@ -87,10 +86,8 @@ export function MyRequestsPage({
 
   const isRequest = kind === "REQUEST_SHIFT";
   // Time-off / leave chips: leave types, plus the Off shift in the Request category.
-  const awayChoices = useMemo(
-    () => (isRequest && offShift ? [...leaveShifts, offShift] : leaveShifts),
-    [isRequest, offShift, leaveShifts]
-  );
+  // The Off shift can also carry isLeave (e.g. "X"); awayShiftChoices lists it once.
+  const awayChoices = useMemo(() => awayShiftChoices(shiftTypes, isRequest), [shiftTypes, isRequest]);
   // The queue feedback only makes sense when this is an "away" ask (off/leave picked).
   const requestingAway = isRequest && shiftTypeIds.some(isAwayId);
 
