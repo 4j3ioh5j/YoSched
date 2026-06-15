@@ -2475,15 +2475,18 @@ export function ScheduleGrid({
                           !ppEven ? "bg-slate-800/20" : "",
                           reqBox,
                           isPickerTarget ? "ring-1 ring-inset ring-blue-400" : "",
-                          isSelected ? "ring-2 ring-inset ring-emerald-400 bg-emerald-900/20" : "",
+                          // In request mode the selection/active highlight adopts the
+                          // violet of the request banner so the selection visibly
+                          // belongs to the mode.
+                          isSelected ? (requestMode ? "ring-2 ring-inset ring-violet-400 bg-violet-900/30" : "ring-2 ring-inset ring-emerald-400 bg-emerald-900/20") : "",
                           isDragTarget ? "ring-2 ring-inset ring-cyan-400 bg-cyan-900/20" : "",
                           isDragSrc ? "opacity-30" : "",
                           isSuggested && !a ? "bg-emerald-900/30" : "",
                           !a && !isSaving && !isSuggested ? "hover:bg-slate-700/30" : "",
-                          isActiveCell ? "ring-2 ring-inset ring-blue-400 z-[2]" : "",
+                          isActiveCell ? (requestMode ? "ring-2 ring-inset ring-violet-400 z-[2]" : "ring-2 ring-inset ring-blue-400 z-[2]") : "",
                         ].join(" ")}
                         style={{
-                          ...(isActiveCell ? { backgroundColor: "rgba(29,78,216,0.45)" } : null),
+                          ...(isActiveCell ? { backgroundColor: requestMode ? "rgba(124,58,237,0.45)" : "rgba(29,78,216,0.45)" } : null),
                           ...(printBg ? { "--print-bg": printBg } : null),
                         } as React.CSSProperties}
                         onMouseDown={(e) => handleCellMouseDown(p.id, date, e)}
