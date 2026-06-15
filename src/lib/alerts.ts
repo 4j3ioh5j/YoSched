@@ -27,6 +27,19 @@ export type AlertSection = {
   alerts: Alert[];
 };
 
+// Mute keys are produced server-side from trusted inputs, but the mute API
+// accepts them from the client, so validate defensively: non-empty after trim
+// and bounded so a malicious/huge body can't be persisted.
+export const MAX_ALERT_KEY_LENGTH = 200;
+
+/** Validate + normalize an alert key from an untrusted request body. */
+export function parseAlertKey(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const trimmed = input.trim();
+  if (!trimmed || trimmed.length > MAX_ALERT_KEY_LENGTH) return null;
+  return trimmed;
+}
+
 /**
  * Build the day-level staffing alerts (coverage warnings).
  *

@@ -175,6 +175,7 @@ type Props = {
   dateFormat?: string;
   currentVersions?: CurrentVersionMeta[];
   scheduleRequests?: GridRequest[];
+  mutedAlertKeys?: string[]; // alert keys muted by any login (shared, single-tenant)
 };
 
 // The current (last saved/restored) version for a calendar month. snapshotHash
@@ -368,6 +369,7 @@ export function ScheduleGrid({
   dateFormat: dateFormatProp,
   currentVersions = [],
   scheduleRequests = [],
+  mutedAlertKeys = [],
 }: Props) {
   const dateFormat = (dateFormatProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
   const today = new Date();
@@ -2297,8 +2299,14 @@ export function ScheduleGrid({
 
   // Group alerts by date for the Alerts modal list.
   const alertGroups = useMemo(() => groupAlertsByDate(alerts), [alerts]);
-  // True when any alert is a hard error (shift-count) — drives the Alerts button color.
-  const hasAlertError = useMemo(() => alerts.some((a) => a.type === "error"), [alerts]);
+  // Muted alert keys (shared across logins; seeded server-side). Slice 3 makes
+  // this writable; for now it's the read-side that keeps muted alerts out of the
+  // counts and severity. Empty until something is muted, so behavior is unchanged.
+  const mutedKeys = useMemo(() => new Set(mutedAlertKeys), [mutedAlertKeys]);
+  // Alerts that still "count" — muted ones are silenced.
+  const visibleAlerts = useMemo(() => alerts.filter((a) => !mutedKeys.has(a.key)), [alerts, mutedKeys]);
+  // True when any unmuted alert is a hard error (shift-count) — drives the button color.
+  const hasAlertError = useMemo(() => visibleAlerts.some((a) => a.type === "error"), [visibleAlerts]);
 
   return (
     <div className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}>
@@ -2463,20 +2471,20 @@ export function ScheduleGrid({
           {/* Alerts — color reflects severity; opens the alerts modal. */}
           <button
             onClick={() => setShowAlerts(true)}
-            disabled={alerts.length === 0}
+            disabled={visibleAlerts.length === 0}
             className={[
               "px-3 py-1 text-sm rounded transition-colors flex items-center gap-1.5 font-medium",
-              alerts.length === 0
+              visibleAlerts.length === 0
                 ? "bg-slate-800 text-slate-600 cursor-default"
                 : hasAlertError
                   ? "bg-red-700 hover:bg-red-600 text-red-100"
                   : "bg-amber-700 hover:bg-amber-600 text-amber-100",
             ].join(" ")}
-            title={alerts.length === 0 ? "No alerts for this month" : `${alerts.length} alert${alerts.length !== 1 ? "s" : ""} — click to review`}
+            title={visibleAlerts.length === 0 ? "No alerts for this month" : `${visibleAlerts.length} alert${visibleAlerts.length !== 1 ? "s" : ""} — click to review`}
           >
-            <span className={`w-1.5 h-1.5 rounded-full ${alerts.length === 0 ? "bg-slate-600" : hasAlertError ? "bg-red-300" : "bg-amber-300"}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${visibleAlerts.length === 0 ? "bg-slate-600" : hasAlertError ? "bg-red-300" : "bg-amber-300"}`} />
             Alerts
-            {alerts.length > 0 && <span className="text-xs opacity-80">{alerts.length}</span>}
+            {visibleAlerts.length > 0 && <span className="text-xs opacity-80">{visibleAlerts.length}</span>}
           </button>
           {/* Help — farthest right; keystrokes, color legend, tips. */}
           <button
@@ -3035,7 +3043,7 @@ export function ScheduleGrid({
             <div className="flex items-center gap-2 px-5 py-3 border-b border-slate-700">
               <h2 className="text-sm font-semibold text-slate-200 flex-1">
                 Alerts
-                <span className="ml-2 font-normal text-slate-500">{MONTH_NAMES[viewMonth]} {viewYear} · {alerts.length}</span>
+                <span className="ml-2 font-normal text-slate-500">{MONTH_NAMES[viewMonth]} {viewYear} · {visibleAlerts.length}</span>
               </h2>
               <button onClick={() => setShowAlerts(false)} className="text-slate-400 hover:text-white text-xl leading-none px-1" aria-label="Close">×</button>
             </div>

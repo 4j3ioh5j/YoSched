@@ -19,7 +19,7 @@ export default async function Home() {
   // Approved requests are honored as real shifts (the published schedule) and stay
   // visible to all — they're not "viewing a request" any more than seeing a shift.
   const canViewAllRequests = permissions!.includes("requests:view");
-  const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, printColumnRules, printAggregateColumns, currentVersions, scheduleRequests] =
+  const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, printColumnRules, printAggregateColumns, currentVersions, scheduleRequests, mutedAlerts] =
     await Promise.all([
       prisma.staff.findMany({
         // Active roster + any inactive staff that has assignments, so the grid
@@ -55,6 +55,9 @@ export default async function Home() {
       // Schedule requests — the grid filters to the visible month client-side and
       // renders approved (live) vs pending (proposed) differently.
       prisma.scheduleRequest.findMany({ orderBy: { receivedAt: "desc" } }),
+      // Muted alerts — shared across logins. Keys seed the grid's mute state so
+      // silenced alerts stay out of the counts for everyone.
+      prisma.mutedAlert.findMany({ select: { alertKey: true } }),
     ]);
 
   const fairness = computeFairness({
@@ -236,6 +239,7 @@ export default async function Home() {
           source: r.source,
           notes: r.notes,
         }))}
+        mutedAlertKeys={mutedAlerts.map((m) => m.alertKey)}
       />
     </main>
   );

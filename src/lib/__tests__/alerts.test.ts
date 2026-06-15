@@ -4,6 +4,8 @@ import {
   buildPPHoursAlerts,
   buildAlertSections,
   groupAlertsByDate,
+  parseAlertKey,
+  MAX_ALERT_KEY_LENGTH,
   type Alert,
   type PPHoursEntry,
 } from "../alerts";
@@ -164,5 +166,25 @@ describe("groupAlertsByDate", () => {
 
   it("returns an empty array for no alerts", () => {
     expect(groupAlertsByDate([])).toEqual([]);
+  });
+});
+
+describe("parseAlertKey", () => {
+  it("accepts and trims a normal key", () => {
+    expect(parseAlertKey("  pp|s1|2026-07-01|76|80  ")).toBe("pp|s1|2026-07-01|76|80");
+  });
+
+  it("rejects non-strings, empty, and whitespace-only", () => {
+    expect(parseAlertKey(undefined)).toBeNull();
+    expect(parseAlertKey(null)).toBeNull();
+    expect(parseAlertKey(123)).toBeNull();
+    expect(parseAlertKey({})).toBeNull();
+    expect(parseAlertKey("")).toBeNull();
+    expect(parseAlertKey("   ")).toBeNull();
+  });
+
+  it("rejects keys over the max length", () => {
+    expect(parseAlertKey("a".repeat(MAX_ALERT_KEY_LENGTH))).not.toBeNull();
+    expect(parseAlertKey("a".repeat(MAX_ALERT_KEY_LENGTH + 1))).toBeNull();
   });
 });
