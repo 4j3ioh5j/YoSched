@@ -139,6 +139,18 @@ export function resolvePaste(
 }
 
 /**
+ * TSV for a selected range of ONE dedicated column (e.g. ICU/CARD), one row per date in
+ * grid order. Each cell is that date's roster — the covering staff's initials joined by
+ * ", " — so it pastes into a single Excel column. A day with no coverage is a blank row.
+ * Returns null for an empty selection. (Initials must come from PERSISTED assignments,
+ * never suggestions, so a copy→paste round-trip can't promote a suggestion.)
+ */
+export function dedicatedSelectionTsv(dates: string[], initialsAt: (date: string) => string[]): string | null {
+  if (dates.length === 0) return null;
+  return dates.map((d) => initialsAt(d).join(", ")).join("\n");
+}
+
+/**
  * One-line human summary of a paste, e.g. "12 cells set · 2 locked · 1 unknown code".
  * `extraLocked` folds in any additional locks the server caught that the client's local
  * state didn't know about. Only non-zero categories are shown.

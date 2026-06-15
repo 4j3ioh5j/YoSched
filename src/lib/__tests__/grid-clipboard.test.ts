@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary } from "../grid-clipboard";
+import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv } from "../grid-clipboard";
 
 // Grid order: 3 dates (rows) × 3 staff (cols). Assignments below; missing = unassigned.
 const dateOrder = ["2026-06-01", "2026-06-02", "2026-06-03"];
@@ -161,5 +161,26 @@ describe("pasteSummary", () => {
 
   it("folds server-side locks into the locked count", () => {
     expect(pasteSummary(3, { ...none, skippedLocked: 1 }, 2)).toBe("3 cells set · 3 locked");
+  });
+});
+
+describe("dedicatedSelectionTsv", () => {
+  const roster: Record<string, string[]> = {
+    "2026-06-01": ["AA", "BB"],
+    "2026-06-02": [],
+    "2026-06-03": ["CC"],
+  };
+  const initialsAt = (d: string) => roster[d] ?? [];
+
+  it("emits one row per date, initials joined by comma", () => {
+    expect(dedicatedSelectionTsv(["2026-06-01", "2026-06-02", "2026-06-03"], initialsAt)).toBe("AA, BB\n\nCC");
+  });
+
+  it("handles a single date", () => {
+    expect(dedicatedSelectionTsv(["2026-06-01"], initialsAt)).toBe("AA, BB");
+  });
+
+  it("returns null for no dates", () => {
+    expect(dedicatedSelectionTsv([], initialsAt)).toBeNull();
   });
 });

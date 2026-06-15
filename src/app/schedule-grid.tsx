@@ -9,7 +9,7 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
-import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary } from "@/lib/grid-clipboard";
+import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv } from "@/lib/grid-clipboard";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
@@ -475,6 +475,13 @@ export function ScheduleGrid({
   const [dedEdit, setDedEdit] = useState<{ shiftTypeId: string; date: string } | null>(null);
   const [dedEditValue, setDedEditValue] = useState("");
   const dedCancelRef = useRef(false); // set when Escape cancels a dedicated-cell edit
+  // Isolated selection for a dedicated column (ICU/CARD) — a contiguous date range
+  // within ONE column, used only for clipboard copy/paste. Kept entirely separate from
+  // the staff `selection` Set; any staff-cell interaction clears it so staff copy/paste
+  // precedence is never affected. dedAnchorRef remembers the last dedicated cell touched
+  // (plain click or shift+click) so shift+click can extend a range.
+  const [dedSelection, setDedSelection] = useState<{ shiftTypeId: string; dates: string[] } | null>(null);
+  const dedAnchorRef = useRef<{ shiftTypeId: string; date: string } | null>(null);
   // "Show all staff" override (past months only) — not persisted, default off.
   const [showAllStaff, setShowAllStaff] = useState(false);
   const [showPPRows, setShowPPRows] = useState(() => {
@@ -1033,6 +1040,10 @@ export function ScheduleGrid({
     setActiveCol(null);
     setSelection(new Set());
     setSelectionAnchor(null);
+    // Also drop any dedicated-column selection: its dates belong to the old month, so
+    // leaving it set would give stale copy precedence over staff copy after navigation.
+    setDedSelection(null);
+    dedAnchorRef.current = null;
   }
 
   function prevMonth() {
@@ -1062,6 +1073,7 @@ export function ScheduleGrid({
   }
 
   function handleCellClick(staffId: string, date: string, e: React.MouseEvent) {
+    setDedSelection(null); // staff interaction always clears a dedicated-column selection
     setActiveRow(date);
     setActiveCol(staffId);
     if (!canEdit) return;
@@ -1167,6 +1179,7 @@ export function ScheduleGrid({
   function handleCellMouseDown(staffId: string, date: string, e: React.MouseEvent) {
     if (!canEdit || e.button !== 0 || !e.shiftKey) return;
     e.preventDefault();
+    setDedSelection(null); // staff drag-select clears any dedicated-column selection
     dragSelecting.current = true;
     dragSelectMoved.current = false;
     const anchor = selectionAnchor ?? { staffId, date };
@@ -1639,6 +1652,25 @@ export function ScheduleGrid({
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
       if (showMonthPicker || showVersions || showAlerts || showHelp || picker) return;
 
+      // Dedicated-column selection (ICU/CARD) is an isolated path and takes precedence.
+      // Initials come from PERSISTED assignments only (never suggestions), matching the
+      // dedicated editor's roster source — so a copy→paste can't promote a suggestion.
+      if (dedSelection && dedSelection.dates.length > 0) {
+        const dedSt = shiftTypeMap.get(dedSelection.shiftTypeId);
+        if (!dedSt) return;
+        const tsv = dedicatedSelectionTsv(dedSelection.dates, (date) => {
+          const out: string[] = [];
+          for (const p of staff) {
+            if (assignmentMap.get(`${p.id}:${date}`)?.code === dedSt.code) out.push(p.initials);
+          }
+          return out;
+        });
+        if (tsv == null) return;
+        e.clipboardData?.setData("text/plain", tsv);
+        e.preventDefault();
+        return;
+      }
+
       // An explicit multi-cell grid selection is a strong intent signal and wins over
       // any stray DOM selection. With only an active cell, defer to a real text
       // selection so we never hijack the user copying page text.
@@ -1663,7 +1695,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("copy", onCopy);
     return () => document.removeEventListener("copy", onCopy);
-  }, [selection, activeRow, activeCol, assignmentMap, dates, visibleStaff, showMonthPicker, showVersions, showAlerts, showHelp, picker]);
+  }, [selection, activeRow, activeCol, assignmentMap, dates, visibleStaff, showMonthPicker, showVersions, showAlerts, showHelp, picker, dedSelection, shiftTypeMap, staff]);
 
   // Paste a clipboard block (from Excel/Sheets or our own copy) positionally from the
   // active cell, filling down and right. Same guards as keydown/copy. Gated to assignment
@@ -3092,6 +3124,7 @@ export function ScheduleGrid({
                     const inits = dedicatedColumnInitialsData[di]?.[date] ?? [];
                     const isEditing = canEdit && dedEdit?.shiftTypeId === st.id && dedEdit?.date === date;
                     const isDedSaving = saving === `ded-${st.id}:${date}`;
+                    const isDedSelected = dedSelection?.shiftTypeId === st.id && dedSelection.dates.includes(date);
                     return (
                       <td
                         key={`ded-${st.id}`}
@@ -3101,16 +3134,39 @@ export function ScheduleGrid({
                           "px-0.5 py-0.5 text-center text-[11px] font-mono font-semibold leading-tight break-words border-l border-slate-700",
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
                           canEdit && !isEditing ? "cursor-text hover:bg-slate-700/30" : "",
+                          isDedSelected ? "ring-2 ring-inset ring-blue-400 bg-blue-500/10" : "",
                         ].join(" ")}
                         style={{
                           color: st.color,
                           ...(st.printBackgroundColor && inits.length ? { "--print-bg": st.printBackgroundColor } : null),
                         } as React.CSSProperties}
-                        title={canEdit && !isEditing ? `Type initials to assign ${st.code}` : undefined}
+                        title={canEdit && !isEditing ? `Type initials to assign ${st.code} · Shift+click to select for copy/paste` : undefined}
                         onMouseEnter={!isEditing && inits.length ? (e) => showTip(setTooltip, `${st.code}: ${inits.join(", ")}`, e) : undefined}
                         onMouseLeave={!isEditing && inits.length ? () => setTooltip(null) : undefined}
-                        onClick={canEdit && !isEditing ? () => {
+                        onClick={!isEditing ? (e) => {
                           setTooltip(null);
+                          if (e.shiftKey) {
+                            // Select a date range within THIS dedicated column for clipboard
+                            // copy/paste — does not open the editor. Available to VIEWERS too
+                            // (copy is read-only, matching staff copy). Extend from the anchor
+                            // only if it's in the same column AND still in the visible month;
+                            // otherwise start a fresh single-cell selection.
+                            const anchor = dedAnchorRef.current;
+                            const ia = anchor && anchor.shiftTypeId === st.id ? dates.indexOf(anchor.date) : -1;
+                            const ib = dates.indexOf(date);
+                            if (ia >= 0) {
+                              const [lo, hi] = ia <= ib ? [ia, ib] : [ib, ia];
+                              setDedSelection({ shiftTypeId: st.id, dates: dates.slice(lo, hi + 1) });
+                            } else {
+                              dedAnchorRef.current = { shiftTypeId: st.id, date };
+                              setDedSelection({ shiftTypeId: st.id, dates: [date] });
+                            }
+                            return;
+                          }
+                          if (!canEdit) return; // viewers: plain click does nothing (no editor)
+                          // Plain click: open the inline initials editor (unchanged).
+                          dedAnchorRef.current = { shiftTypeId: st.id, date };
+                          setDedSelection(null);
                           setDedEditValue(inits.join(", "));
                           setDedEdit({ shiftTypeId: st.id, date });
                         } : undefined}
