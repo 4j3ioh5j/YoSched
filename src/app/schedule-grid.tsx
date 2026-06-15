@@ -409,6 +409,22 @@ export function ScheduleGrid({
   // assignments, and an open picker shows its Request tab. Single source of
   // truth shared by the grid keyboard and the picker's active tab.
   const [requestMode, setRequestMode] = useState(false);
+  // Whether request overlays (rings, letters, corner markers) are drawn on the
+  // grid. Purely a display toggle — request data/editing are unaffected. Tied
+  // to the "RQ" toolbar button and the "?" (Shift+/) hotkey. Persisted per
+  // browser; defaults to shown.
+  const [showRequests, setShowRequests] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const saved = localStorage.getItem("yosched:showRequests");
+    return saved !== null ? saved === "true" : true;
+  });
+  const toggleShowRequests = useCallback(() => {
+    setShowRequests((v) => {
+      const next = !v;
+      try { localStorage.setItem("yosched:showRequests", String(next)); } catch { /* private mode / quota */ }
+      return next;
+    });
+  }, []);
   const [saving, setSaving] = useState<string | null>(null);
   const [dragSource, setDragSource] = useState<{ staffId: string; date: string } | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -1477,6 +1493,14 @@ export function ScheduleGrid({
         setRequestMode((m) => !m);
         return;
       }
+      // "?" (Shift+/) shows/hides the request overlay — mirrors the "RQ"
+      // toolbar button. Distinct key from "/" (request mode), so no collision;
+      // not gated on canEdit since it only changes what's displayed.
+      if (e.key === "?") {
+        e.preventDefault();
+        toggleShowRequests();
+        return;
+      }
       // Request mode only: "+" approves / "!" denies every pending request on
       // the active cell / selection. Both already require Shift on the key
       // (Shift+= / Shift+1) — match the produced char. Never fires in normal
@@ -1566,7 +1590,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleStaff, hotkeyMap, selection, showMonthPicker, requestMode]);
+  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleStaff, hotkeyMap, selection, showMonthPicker, requestMode, toggleShowRequests]);
 
   const hotkeyAssign = useCallback(async (st: ShiftType) => {
     const cells: { staffId: string; date: string }[] = [];
@@ -2376,6 +2400,7 @@ export function ScheduleGrid({
         <span className="ml-2 text-xs text-slate-500">
           {formatDate(parseDate(dates[0]), dateFormat)} – {formatDate(parseDate(dates[dates.length - 1]), dateFormat)}
         </span>
+        {/* Toolbar order: PP / RQ / Versions / Print (Show all staff trails when shown) */}
         <button
           onClick={() => setShowPPRows((v) => { const next = !v; localStorage.setItem("yosched:showPPRows", String(next)); return next; })}
           className={["ml-4 px-3 py-1 text-sm rounded transition-colors", showPPRows ? "bg-indigo-700 hover:bg-indigo-600 text-indigo-100" : "bg-slate-700 hover:bg-slate-600 text-slate-400"].join(" ")}
@@ -2383,21 +2408,12 @@ export function ScheduleGrid({
         >
           PP Totals
         </button>
-        {pastMonth && (
-          <button
-            onClick={() => { clearColFocus(); setShowAllStaff((v) => !v); }}
-            className={["px-3 py-1 text-sm rounded transition-colors", showAllStaff ? "bg-indigo-700 hover:bg-indigo-600 text-indigo-100" : "bg-slate-700 hover:bg-slate-600 text-slate-400"].join(" ")}
-            title="Show all staff, including those with no assignments this month"
-          >
-            Show all staff
-          </button>
-        )}
         <button
-          onClick={() => window.print()}
-          className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
-          title="Print this month"
+          onClick={toggleShowRequests}
+          className={["px-3 py-1 text-sm rounded transition-colors", showRequests ? "bg-violet-700 hover:bg-violet-600 text-violet-100" : "bg-slate-700 hover:bg-slate-600 text-slate-400"].join(" ")}
+          title="Show or hide requests on the schedule (?)"
         >
-          Print
+          RQ
         </button>
         <button
           onClick={() => setShowVersions(true)}
@@ -2412,6 +2428,22 @@ export function ScheduleGrid({
             </span>
           )}
         </button>
+        <button
+          onClick={() => window.print()}
+          className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
+          title="Print this month"
+        >
+          Print
+        </button>
+        {pastMonth && (
+          <button
+            onClick={() => { clearColFocus(); setShowAllStaff((v) => !v); }}
+            className={["px-3 py-1 text-sm rounded transition-colors", showAllStaff ? "bg-indigo-700 hover:bg-indigo-600 text-indigo-100" : "bg-slate-700 hover:bg-slate-600 text-slate-400"].join(" ")}
+            title="Show all staff, including those with no assignments this month"
+          >
+            Show all staff
+          </button>
+        )}
         {canEdit && (
         <div className="ml-auto flex items-center gap-2">
           {selection.size > 0 && (
@@ -2703,7 +2735,7 @@ export function ScheduleGrid({
                     const isActiveCell = activeCol === p.id && isActiveRow;
                     const suggestion = suggestionMap.get(cellKey);
                     const isSuggested = !!suggestion;
-                    const reqs = requestsByCell.get(cellKey);
+                    const reqs = showRequests ? requestsByCell.get(cellKey) : undefined;
                     const reqSummary = reqs ? summarizeCellRequests(reqs, (id) => shiftTypeMap.get(id)?.code ?? id) : null;
                     const reqCls = reqSummary ? REQ_CAT_CLASSES[reqSummary.category] : null;
                     // Boxed, category-colored request cell; selection/active/drag win.
