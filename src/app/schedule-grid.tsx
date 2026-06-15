@@ -437,6 +437,12 @@ export function ScheduleGrid({
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [activeRow, setActiveRow] = useState<string | null>(null);
   const [activeCol, setActiveCol] = useState<string | null>(null);
+  // The active cell can live in a STAFF column (activeCol = staffId) OR a DEDICATED
+  // column (activeDedCol = shiftTypeId). Invariant: at most one of the two is set at
+  // a time (the "only one active column kind" rule). activeRow (the date) is shared.
+  // This lets arrow navigation, copy/paste, and Delete treat dedicated cells as
+  // first-class grid cells, on par with staff cells.
+  const [activeDedCol, setActiveDedCol] = useState<string | null>(null);
   const [hoverCol, setHoverCol] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [autoSuggestions, setAutoSuggestions] = useState<Array<{
@@ -482,6 +488,11 @@ export function ScheduleGrid({
   // (plain click or shift+click) so shift+click can extend a range.
   const [dedSelection, setDedSelection] = useState<{ shiftTypeId: string; dates: string[] } | null>(null);
   const dedAnchorRef = useRef<{ shiftTypeId: string; date: string } | null>(null);
+  // Dedicated-column drag-select state, mirroring the staff dragSelecting refs. While
+  // a shift-drag is in progress within one dedicated column, onMouseEnter extends the
+  // date range; the shared document mouseup listener clears dedDragging too.
+  const dedDragging = useRef(false);
+  const dedDragMoved = useRef(false);
   // Re-entrancy guard for clipboard paste. The document "paste" listener re-subscribes
   // whenever assignmentMap changes (our own optimistic update does that mid-await), so a
   // second paste firing during an in-flight one could double-apply from stale snapshot
@@ -1043,6 +1054,7 @@ export function ScheduleGrid({
   // avoid setState-in-effect cascades.
   function clearColFocus() {
     setActiveCol(null);
+    setActiveDedCol(null);
     setSelection(new Set());
     setSelectionAnchor(null);
     // Also drop any dedicated-column selection: its dates belong to the old month, so
@@ -1077,8 +1089,17 @@ export function ScheduleGrid({
     setViewMonth(today.getMonth());
   }
 
+  // Any path that moves focus into a STAFF column must drop dedicated active/selection
+  // state, upholding the one-active-kind invariant (so right-click, the header click,
+  // clicks and drags can never leave a stale dedicated cell highlighted/active).
+  function clearDedFocus() {
+    setActiveDedCol(null);
+    setDedSelection(null);
+    dedAnchorRef.current = null;
+  }
+
   function handleCellClick(staffId: string, date: string, e: React.MouseEvent) {
-    setDedSelection(null); // staff interaction always clears a dedicated-column selection
+    clearDedFocus(); // staff interaction always clears dedicated active/selection
     setActiveRow(date);
     setActiveCol(staffId);
     if (!canEdit) return;
@@ -1150,6 +1171,7 @@ export function ScheduleGrid({
     // A locked assignment blocks the Assign tab, but requests are independent of
     // the lock — so in request mode the picker still opens (on its Request tab).
     if (existing?.isLocked && !requestMode) return;
+    clearDedFocus(); // right-click focuses a staff cell — drop dedicated active/selection
     setActiveRow(date);
     setActiveCol(staffId);
     const cellKey = `${staffId}:${date}`;
@@ -1184,7 +1206,7 @@ export function ScheduleGrid({
   function handleCellMouseDown(staffId: string, date: string, e: React.MouseEvent) {
     if (!canEdit || e.button !== 0 || !e.shiftKey) return;
     e.preventDefault();
-    setDedSelection(null); // staff drag-select clears any dedicated-column selection
+    clearDedFocus(); // staff drag-select clears dedicated active/selection
     dragSelecting.current = true;
     dragSelectMoved.current = false;
     const anchor = selectionAnchor ?? { staffId, date };
@@ -1205,9 +1227,120 @@ export function ScheduleGrid({
     setActiveCol(staffId);
   }
 
+  // ----- Dedicated-column (ICU/CARD) cell interaction — parity with staff cells -----
+  // A dedicated cell holds a day's ROSTER (initials of everyone covering that shift),
+  // not a single shift code, but it now behaves like a staff cell: a click selects it
+  // and makes it the active cell; clicking the already-active cell opens the inline
+  // editor; shift+click / shift+drag select a contiguous date range within ONE column.
+  const dedReqModeHint = "Dedicated edits set assignments — exit request mode (press /) first.";
+
+  // The roster initials shown in a dedicated cell — the SAME source the cell renders,
+  // so the editor prefills exactly what is on screen.
+  function dedRosterInitials(shiftTypeId: string, date: string): string[] {
+    const di = dedicatedColumns.findIndex((s) => s.id === shiftTypeId);
+    return di >= 0 ? (dedicatedColumnInitialsData[di]?.[date] ?? []) : [];
+  }
+
+  // Open the inline initials editor for one dedicated cell. Like staff assignment edits
+  // and paste, this is blocked in request mode — which must never create firm assignment
+  // changes — and surfaces a hint instead.
+  function openDedEditor(shiftTypeId: string, date: string) {
+    if (!canEdit) return;
+    if (requestMode) { setPasteToast(dedReqModeHint); return; }
+    setDedEditValue(dedRosterInitials(shiftTypeId, date).join(", "));
+    setDedEdit({ shiftTypeId, date });
+  }
+
+  // Delete-key clear: empties a dedicated cell's roster via the entry path (empty value
+  // removes everyone currently holding this shift that day; locked cells are preserved
+  // by handleDedicatedEntry). Request-mode gated.
+  function clearDedRoster(shiftTypeId: string, date: string) {
+    if (!canEdit) return;
+    if (requestMode) { setPasteToast(dedReqModeHint); return; }
+    void handleDedicatedEntry(shiftTypeId, date, "");
+  }
+
+  // Make a dedicated cell the active cell, dropping all staff focus (one-active-kind
+  // invariant) and any prior dedicated range.
+  function focusDedCell(shiftTypeId: string, date: string) {
+    setActiveCol(null);
+    setSelection(new Set());
+    setSelectionAnchor(null);
+    setActiveDedCol(shiftTypeId);
+    setActiveRow(date);
+  }
+
+  function handleDedCellClick(shiftTypeId: string, date: string, e: React.MouseEvent) {
+    setTooltip(null);
+    if (e.shiftKey) {
+      // A drag already set the range — ignore the trailing click (mirrors staff).
+      if (dedDragMoved.current) { dedDragMoved.current = false; return; }
+      // Shift+click: extend a date range within THIS column from the anchor, but only
+      // when the anchor is in the same column and still in the visible month; otherwise
+      // start a fresh single-cell selection.
+      const anchor = dedAnchorRef.current;
+      const ia = anchor && anchor.shiftTypeId === shiftTypeId ? dates.indexOf(anchor.date) : -1;
+      const ib = dates.indexOf(date);
+      if (ia >= 0 && ib >= 0) {
+        const [lo, hi] = ia <= ib ? [ia, ib] : [ib, ia];
+        setDedSelection({ shiftTypeId, dates: dates.slice(lo, hi + 1) });
+      } else {
+        dedAnchorRef.current = { shiftTypeId, date };
+        setDedSelection({ shiftTypeId, dates: [date] });
+      }
+      focusDedCell(shiftTypeId, date);
+      return;
+    }
+    // Plain click on the already-active single cell → open the editor (the chosen
+    // "click the selected cell to edit" trigger).
+    if (activeDedCol === shiftTypeId && activeRow === date && !(dedSelection && dedSelection.dates.length > 1)) {
+      openDedEditor(shiftTypeId, date);
+      return;
+    }
+    // Plain click elsewhere → select it (no editor). Available to viewers too.
+    focusDedCell(shiftTypeId, date);
+    dedAnchorRef.current = { shiftTypeId, date };
+    setDedSelection(null);
+  }
+
+  function handleDedCellMouseDown(shiftTypeId: string, date: string, e: React.MouseEvent) {
+    if (e.button !== 0 || !e.shiftKey) return;
+    // Suppress the browser's native text selection (the "extraneous page highlight" bug)
+    // and begin an in-column drag range-select.
+    e.preventDefault();
+    dedDragging.current = true;
+    dedDragMoved.current = false;
+    const anchor = dedAnchorRef.current && dedAnchorRef.current.shiftTypeId === shiftTypeId
+      ? dedAnchorRef.current
+      : { shiftTypeId, date };
+    dedAnchorRef.current = anchor;
+    const ia = dates.indexOf(anchor.date);
+    const ib = dates.indexOf(date);
+    if (ia >= 0 && ib >= 0) {
+      const [lo, hi] = ia <= ib ? [ia, ib] : [ib, ia];
+      setDedSelection({ shiftTypeId, dates: dates.slice(lo, hi + 1) });
+    }
+    focusDedCell(shiftTypeId, date);
+  }
+
+  function handleDedCellMouseEnter(shiftTypeId: string, date: string) {
+    if (!dedDragging.current) return;
+    const anchor = dedAnchorRef.current;
+    if (!anchor || anchor.shiftTypeId !== shiftTypeId) return;
+    dedDragMoved.current = true;
+    const ia = dates.indexOf(anchor.date);
+    const ib = dates.indexOf(date);
+    if (ia < 0 || ib < 0) return;
+    const [lo, hi] = ia <= ib ? [ia, ib] : [ib, ia];
+    setDedSelection({ shiftTypeId, dates: dates.slice(lo, hi + 1) });
+    setActiveDedCol(shiftTypeId);
+    setActiveRow(date);
+  }
+
   useEffect(() => {
     function onMouseUp() {
       dragSelecting.current = false;
+      dedDragging.current = false;
     }
     document.addEventListener("mouseup", onMouseUp);
     return () => document.removeEventListener("mouseup", onMouseUp);
@@ -1560,7 +1693,7 @@ export function ScheduleGrid({
       // the active cell / selection. Both already require Shift on the key
       // (Shift+= / Shift+1) — match the produced char. Never fires in normal
       // mode, so a stray + can't approve.
-      if (requestMode && !picker && canEdit && (activeRow || selection.size > 0) && !e.metaKey && !e.ctrlKey && (e.key === "+" || e.key === "!")) {
+      if (requestMode && !picker && canEdit && !activeDedCol && (activeRow || selection.size > 0) && !e.metaKey && !e.ctrlKey && (e.key === "+" || e.key === "!")) {
         e.preventDefault();
         requestApproveRef.current(e.key === "+" ? "approved" : "declined");
         return;
@@ -1575,6 +1708,9 @@ export function ScheduleGrid({
           setSelectionAnchor(null);
           setActiveRow(null);
           setActiveCol(null);
+          setActiveDedCol(null);
+          setDedSelection(null);
+          dedAnchorRef.current = null;
         }
       }
       if (e.key === "Tab" && !picker && canEdit && activeRow && activeCol) {
@@ -1602,29 +1738,64 @@ export function ScheduleGrid({
           clearRef.current({ staffId: activeCol, date: activeRow });
         }
       }
-      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) && !picker && activeRow && activeCol) {
+      // Dedicated cell (ICU/CARD) active: Delete clears its roster; Enter/F2 opens the
+      // inline editor (keyboard parity — dedicated columns have no picker). Both are
+      // request-mode gated inside the helpers (never mutate assignments in request mode).
+      if (!picker && canEdit && activeDedCol && activeRow) {
+        if (e.key === "Delete" || e.key === "Backspace") {
+          e.preventDefault();
+          clearDedRoster(activeDedCol, activeRow);
+        } else if (e.key === "Enter" || e.key === "F2") {
+          e.preventDefault();
+          openDedEditor(activeDedCol, activeRow);
+        }
+      }
+      // Arrow navigation spans staff AND dedicated columns as one ordered list
+      // (staff first, then dedicated). Crossing the boundary swaps the active column
+      // kind and clears the other kind's selection (no stale range left behind).
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) && !picker && activeRow && (activeCol || activeDedCol)) {
         e.preventDefault();
         const dateIdx = dates.indexOf(activeRow);
-        const provIdx = visibleStaff.findIndex((p) => p.id === activeCol);
-        if (dateIdx === -1 || provIdx === -1) return;
+        if (dateIdx === -1) return;
+        const nStaff = visibleStaff.length;
+        const totalCols = nStaff + dedicatedColumns.length;
+        const colIdx = activeCol
+          ? visibleStaff.findIndex((p) => p.id === activeCol)
+          : nStaff + dedicatedColumns.findIndex((st) => st.id === activeDedCol);
+        if (colIdx < 0) return;
         let newDateIdx = dateIdx;
-        let newProvIdx = provIdx;
+        let newColIdx = colIdx;
         if (e.key === "ArrowUp") newDateIdx = Math.max(0, dateIdx - 1);
         if (e.key === "ArrowDown") newDateIdx = Math.min(dates.length - 1, dateIdx + 1);
-        if (e.key === "ArrowLeft") newProvIdx = Math.max(0, provIdx - 1);
-        if (e.key === "ArrowRight") newProvIdx = Math.min(visibleStaff.length - 1, provIdx + 1);
+        if (e.key === "ArrowLeft") newColIdx = Math.max(0, colIdx - 1);
+        if (e.key === "ArrowRight") newColIdx = Math.min(totalCols - 1, colIdx + 1);
         const newDate = dates[newDateIdx];
-        const newProv = visibleStaff[newProvIdx];
         setActiveRow(newDate);
-        setActiveCol(newProv.id);
-        const el = document.querySelector(`[data-cell="${newProv.id}:${newDate}"]`);
-        el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        if (newColIdx < nStaff) {
+          // Landing on a staff column: clear any dedicated selection/anchor.
+          const newProv = visibleStaff[newColIdx];
+          setActiveCol(newProv.id);
+          setActiveDedCol(null);
+          setDedSelection(null);
+          dedAnchorRef.current = null;
+          document.querySelector(`[data-cell="${newProv.id}:${newDate}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        } else {
+          // Landing on a dedicated column: clear staff selection/anchor.
+          const st = dedicatedColumns[newColIdx - nStaff];
+          setActiveDedCol(st.id);
+          setActiveCol(null);
+          setSelection(new Set());
+          setSelectionAnchor(null);
+          setDedSelection(null);
+          dedAnchorRef.current = null;
+          document.querySelector(`[data-cell="ded-${st.id}:${newDate}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
       }
       // Hotkey letter entry. Bare letter -> assign (unchanged). In request mode
       // letter -> request, with Shift=avoid and Alt=soft. Resolve the letter
       // from KeyboardEvent.code when a modifier is held, since macOS Option
       // mangles e.key into a non-letter / dead key.
-      if (!picker && canEdit && !e.metaKey && !e.ctrlKey && (activeRow || selection.size > 0)) {
+      if (!picker && canEdit && !activeDedCol && !e.metaKey && !e.ctrlKey && (activeRow || selection.size > 0)) {
         const usingMods = e.shiftKey || e.altKey;
         let letter: string | null = null;
         if (usingMods && /^Key[A-Z]$/.test(e.code)) letter = e.code.slice(3);
@@ -1645,7 +1816,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleStaff, hotkeyMap, selection, showMonthPicker, requestMode, toggleShowRequests, showVersions, showAlerts, showHelp]);
+  }, [picker, canEdit, activeRow, activeCol, activeDedCol, assignmentMap, dates, visibleStaff, dedicatedColumns, dedicatedColumnInitialsData, staff, shiftTypeMap, hotkeyMap, selection, showMonthPicker, requestMode, toggleShowRequests, showVersions, showAlerts, showHelp]);
 
   // Copy the selected cells (or the active cell) to the clipboard as TSV so they paste
   // into Excel/Sheets matching the grid (dates rows, staff cols), values only. Read-only
@@ -2944,7 +3115,7 @@ export function ScheduleGrid({
                     data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
                     className="px-1 py-1 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer bg-slate-800"
                     style={isActiveCol || hoverCol === p.id ? { backgroundColor: "rgba(29,78,216,0.7)" } : undefined}
-                    onClick={() => setActiveCol(activeCol === p.id ? null : p.id)}
+                    onClick={() => { clearDedFocus(); setActiveCol(activeCol === p.id ? null : p.id); }}
                     onMouseEnter={(e) => {
                       setHoverCol(p.id);
                       const rect = e.currentTarget.getBoundingClientRect();
@@ -3247,51 +3418,35 @@ export function ScheduleGrid({
                     const isEditing = canEdit && dedEdit?.shiftTypeId === st.id && dedEdit?.date === date;
                     const isDedSaving = saving === `ded-${st.id}:${date}`;
                     const isDedSelected = dedSelection?.shiftTypeId === st.id && dedSelection.dates.includes(date);
+                    const isDedActive = activeDedCol === st.id && activeRow === date;
                     return (
                       <td
                         key={`ded-${st.id}`}
+                        data-cell={`ded-${st.id}:${date}`}
                         data-print-ded=""
                         data-print-bg={st.printBackgroundColor && inits.length ? "" : undefined}
                         className={[
-                          "px-0.5 py-0.5 text-center text-[11px] font-mono font-semibold leading-tight break-words border-l border-slate-700",
+                          // Mirror the staff cell so dedicated cells look/feel identical:
+                          // faint full border (with a stronger left edge marking the section),
+                          // select-none to stop native text-selection bleed, pointer cursor,
+                          // and the same emerald-range / blue-active highlight rings.
+                          "px-0.5 py-0.5 text-center text-[11px] font-mono font-semibold leading-tight break-words border border-slate-700/30 border-l-slate-700 relative select-none",
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
-                          canEdit && !isEditing ? "cursor-text hover:bg-slate-700/30" : "",
-                          isDedSelected ? "ring-2 ring-inset ring-blue-400 bg-blue-500/10" : "",
+                          !isEditing ? (canEdit ? "cursor-pointer" : "cursor-default") : "",
+                          !isEditing && !isDedActive && !isDedSelected ? "hover:bg-slate-700/30" : "",
+                          isDedSelected ? "ring-2 ring-inset ring-emerald-400 bg-emerald-900/20" : "",
+                          isDedActive ? "ring-2 ring-inset ring-blue-400 z-[2]" : "",
                         ].join(" ")}
                         style={{
                           color: st.color,
+                          ...(isDedActive ? { backgroundColor: "rgba(29,78,216,0.45)" } : null),
                           ...(st.printBackgroundColor && inits.length ? { "--print-bg": st.printBackgroundColor } : null),
                         } as React.CSSProperties}
-                        title={canEdit && !isEditing ? `Type initials to assign ${st.code} · Shift+click to select for copy/paste` : undefined}
-                        onMouseEnter={!isEditing && inits.length ? (e) => showTip(setTooltip, `${st.code}: ${inits.join(", ")}`, e) : undefined}
-                        onMouseLeave={!isEditing && inits.length ? () => setTooltip(null) : undefined}
-                        onClick={!isEditing ? (e) => {
-                          setTooltip(null);
-                          if (e.shiftKey) {
-                            // Select a date range within THIS dedicated column for clipboard
-                            // copy/paste — does not open the editor. Available to VIEWERS too
-                            // (copy is read-only, matching staff copy). Extend from the anchor
-                            // only if it's in the same column AND still in the visible month;
-                            // otherwise start a fresh single-cell selection.
-                            const anchor = dedAnchorRef.current;
-                            const ia = anchor && anchor.shiftTypeId === st.id ? dates.indexOf(anchor.date) : -1;
-                            const ib = dates.indexOf(date);
-                            if (ia >= 0) {
-                              const [lo, hi] = ia <= ib ? [ia, ib] : [ib, ia];
-                              setDedSelection({ shiftTypeId: st.id, dates: dates.slice(lo, hi + 1) });
-                            } else {
-                              dedAnchorRef.current = { shiftTypeId: st.id, date };
-                              setDedSelection({ shiftTypeId: st.id, dates: [date] });
-                            }
-                            return;
-                          }
-                          if (!canEdit) return; // viewers: plain click does nothing (no editor)
-                          // Plain click: open the inline initials editor (unchanged).
-                          dedAnchorRef.current = { shiftTypeId: st.id, date };
-                          setDedSelection(null);
-                          setDedEditValue(inits.join(", "));
-                          setDedEdit({ shiftTypeId: st.id, date });
-                        } : undefined}
+                        title={canEdit && !isEditing ? `Click to select · click again or Enter to edit (type initials for ${st.code})` : undefined}
+                        onMouseDown={!isEditing ? (e) => handleDedCellMouseDown(st.id, date, e) : undefined}
+                        onMouseEnter={!isEditing ? (e) => { handleDedCellMouseEnter(st.id, date); if (inits.length) showTip(setTooltip, `${st.code}: ${inits.join(", ")}`, e); } : undefined}
+                        onMouseLeave={!isEditing ? () => setTooltip(null) : undefined}
+                        onClick={!isEditing ? (e) => handleDedCellClick(st.id, date, e) : undefined}
                       >
                         {isEditing ? (
                           <input
@@ -3308,6 +3463,9 @@ export function ScheduleGrid({
                               setDedEdit(null);
                               setDedEditValue("");
                               if (dedCancelRef.current) { dedCancelRef.current = false; return; }
+                              // Defensive: never mutate assignments in request mode, even if it
+                              // was toggled on after the editor opened.
+                              if (requestMode) { setPasteToast(dedReqModeHint); return; }
                               if (cur) void handleDedicatedEntry(cur.shiftTypeId, cur.date, raw);
                             }}
                             className="w-full bg-slate-900 text-slate-100 text-center text-[11px] font-mono rounded px-0.5 outline-none ring-1 ring-blue-400"
