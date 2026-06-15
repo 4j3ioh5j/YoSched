@@ -19,16 +19,25 @@ export async function PUT(req: NextRequest) {
   const { error, userId } = await getSession("schedule:edit");
   if (error) return error;
 
-  const { cells } = (await req.json()) as { cells: PasteCell[] };
-  if (!cells?.length) return NextResponse.json({ error: "Missing fields" }, { status: 400 });
-  if (cells.length > MAX_CELLS) {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const rawCells = (body as { cells?: unknown })?.cells;
+  if (!Array.isArray(rawCells) || rawCells.length === 0) {
+    return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+  }
+  if (rawCells.length > MAX_CELLS) {
     return NextResponse.json({ error: `Too many cells (max ${MAX_CELLS})` }, { status: 413 });
   }
-  for (const c of cells) {
+  for (const c of rawCells) {
     if (!c?.staffId || !c?.date || !c?.shiftTypeId) {
       return NextResponse.json({ error: "Bad cell" }, { status: 400 });
     }
   }
+  const cells = rawCells as PasteCell[];
 
   // Reject unknown shift type ids up front — otherwise one bad id (e.g. a stale client)
   // would abort the whole transaction with an opaque FK error.
