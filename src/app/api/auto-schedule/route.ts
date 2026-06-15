@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
     shiftEligibilityRules,
     shiftMinimumTargets,
     scheduleRequests,
+    requiredFollowers,
   ] = await Promise.all([
     prisma.staff.findMany({ where: { isActive: true } }),
     prisma.shiftType.findMany(),
@@ -100,6 +101,7 @@ export async function POST(req: NextRequest) {
         endDate: { gte: new Date(effectiveStart + "T00:00:00Z") },
       },
     }),
+    prisma.requiredFollower.findMany(),
   ]);
 
   const payPeriods = allPayPeriods;
@@ -288,6 +290,12 @@ export async function POST(req: NextRequest) {
       leaveShiftTypeId: r.leaveShiftTypeId,
       strength: r.strength as ScheduleRequestData["strength"],
       status: r.status as ScheduleRequestData["status"],
+    })),
+    requiredFollowers: requiredFollowers.map((r) => ({
+      sourceShiftId: r.sourceShiftId,
+      followerShiftId: r.followerShiftId,
+      scope: r.scope,
+      countsTowardTargets: r.countsTowardTargets,
     })),
   });
 

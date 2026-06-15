@@ -1,6 +1,6 @@
 import { computeFairness, type FairnessSummary, type EquityFactor } from "./fairness";
 import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule, type PayPeriodRange } from "./availability";
-import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter, isRecoveryOnly } from "./follow-rules";
+import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
 import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
 import { foldRequestsForDate, detectRequestConflicts, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode } from "./schedule-requests";
 
@@ -44,6 +44,19 @@ export type ScheduleAssignment = {
   shiftTypeId: string;
   code: string;
   isLocked: boolean;
+};
+
+// A required follower (settings-driven): after `sourceShift`, auto-place
+// `followerShift` on the next eligible day. scope "each_day" = after every
+// occurrence (e.g. ORC→X recovery); "each_run" = once after a consecutive run
+// (e.g. a CALL weekend → one ADM). countsTowardTargets decides whether the
+// placed follower satisfies staffing/min-max targets for its own shift (its
+// worked hours always count toward FTE regardless).
+export type RequiredFollowerRow = {
+  sourceShiftId: string;
+  followerShiftId: string;
+  scope: string;
+  countsTowardTargets: boolean;
 };
 
 type PayPeriod = {
@@ -243,6 +256,7 @@ export function autoSchedule({
   equityFactors,
   followRules,
   scheduleRequests,
+  requiredFollowers,
 }: {
   dates: string[];
   staff: ScheduleStaff[];
@@ -260,6 +274,7 @@ export function autoSchedule({
   equityFactors: EquityFactor[];
   followRules?: FollowRuleRow[];
   scheduleRequests?: ScheduleRequestData[];
+  requiredFollowers?: RequiredFollowerRow[];
 }): AutoScheduleResult {
   const suggestions: Suggestion[] = [];
   const warnings: string[] = [];
@@ -277,6 +292,16 @@ export function autoSchedule({
   }
 
   const offShift = shiftTypes.find((st) => st.isOffShift);
+
+  // Required-follower lookup: sourceShiftId → { follower shift, scope, counts }.
+  // Settings-driven (no shift codes in code). The recovery-day behavior that used
+  // to be derived from a recovery-only follow rule is now just an each_day rule.
+  type FollowerSpec = { follower: ScheduleShiftType; scope: string; countsTowardTargets: boolean };
+  const followerBySource = new Map<string, FollowerSpec>();
+  for (const r of requiredFollowers ?? []) {
+    const f = stById.get(r.followerShiftId);
+    if (f) followerBySource.set(r.sourceShiftId, { follower: f, scope: r.scope, countsTowardTargets: r.countsTowardTargets });
+  }
 
   // A shift is "away" (off or leave) — requesting one means time off, so a soft such
   // request nudges the staff away from work (see foldRequestsForDate).
@@ -330,7 +355,10 @@ export function autoSchedule({
     overrideMap.set(`${o.staffId}:${o.shiftTypeId}`, o.durationHrs);
   }
 
-  const grid = new Map<string, { shiftTypeId: string; code: string; locked: boolean }>();
+  // `noCount` marks a cell placed as a non-counting required follower: its worked
+  // hours still count toward FTE, but it does NOT satisfy staffing requirements or
+  // min/max targets for its shift (see countsTowardTargets).
+  const grid = new Map<string, { shiftTypeId: string; code: string; locked: boolean; noCount?: boolean }>();
   for (const a of existingAssignments) {
     grid.set(`${a.staffId}:${a.date}`, {
       shiftTypeId: a.shiftTypeId,
@@ -447,12 +475,13 @@ export function autoSchedule({
     shiftType: ScheduleShiftType,
     reason: string,
     step: string,
-    confidence: number
+    confidence: number,
+    noCount = false
   ) {
     const key = `${staffId}:${date}`;
     const existing = grid.get(key);
     if (existing && !(offShift && existing.shiftTypeId === offShift.id && !existing.locked)) return;
-    grid.set(key, { shiftTypeId: shiftType.id, code: shiftType.code, locked: false });
+    grid.set(key, { shiftTypeId: shiftType.id, code: shiftType.code, locked: false, noCount });
     suggestions.push({
       staffId,
       date,
@@ -463,6 +492,49 @@ export function autoSchedule({
       confidence,
     });
     byStep[step] = (byStep[step] || 0) + 1;
+  }
+
+  // Place a required follower after `afterDate` for `staffId`. Skips (and, for a
+  // WORK follower, warns) when the next day falls outside the window, is already
+  // filled, is a holiday, or the staff is unavailable. An off-shift follower (a
+  // recovery day) skips silently — an unavailable next day is already off.
+  function placeFollowerAfter(staffId: string, afterDate: string, sourceShift: ScheduleShiftType) {
+    const spec = followerBySource.get(sourceShift.id);
+    if (!spec) return;
+    const next = nextDate(afterDate);
+    if (!dateSet.has(next)) return; // follower would land outside the scheduling window
+    const isWorkFollower = !spec.follower.isOffShift && !spec.follower.isLeave;
+    const member = activeStaff.find((p) => p.id === staffId);
+    if (!member) return;
+    const warn = (why: string) => {
+      if (isWorkFollower) warnings.push(`${member.initials}: could not place required ${spec.follower.code} after ${sourceShift.code} on ${next} (${why})`);
+    };
+    if (isAssigned(staffId, next)) { warn("cell already filled"); return; }
+    const avail = evaluateAvailability(member.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
+    if (!avail.available) { warn("staff unavailable"); return; }
+    if (holidaySet.has(next) && isWorkFollower) { warn("holiday"); return; }
+    assign(staffId, next, spec.follower, `Required follower after ${sourceShift.code}`, "follower", 0.95, !spec.countsTowardTargets);
+  }
+
+  // each_day: place a follower right after a single occurrence (e.g. ORC→X).
+  function placeEachDayFollower(staffId: string, date: string, sourceShift: ScheduleShiftType) {
+    const spec = followerBySource.get(sourceShift.id);
+    if (spec?.scope === "each_day") placeFollowerAfter(staffId, date, sourceShift);
+  }
+
+  // each_run: after a source shift's distribution completes, place ONE follower
+  // after the last day of each consecutive run (e.g. a CALL weekend → one ADM).
+  function placeRunFollowers(sourceShift: ScheduleShiftType) {
+    const spec = followerBySource.get(sourceShift.id);
+    if (spec?.scope !== "each_run") return;
+    for (const member of activeStaff) {
+      for (const d of dates) {
+        if (grid.get(`${member.id}:${d}`)?.code !== sourceShift.code) continue;
+        // d is a source day; it's a run END unless the next calendar day is also one.
+        if (grid.get(`${member.id}:${nextDate(d)}`)?.code === sourceShift.code) continue;
+        placeFollowerAfter(member.id, d, sourceShift);
+      }
+    }
   }
 
   function ppHoursForStaff(staffId: string, pp: PayPeriod): number {
@@ -527,7 +599,7 @@ export function autoSchedule({
 
       const assigned: string[] = [];
       for (const [k, v] of grid.entries()) {
-        if (k.startsWith(staff.id + ":") && v.code === st.code) {
+        if (k.startsWith(staff.id + ":") && v.code === st.code && !v.noCount) {
           const d = k.split(":")[1];
           if (d >= bounds.start && d <= bounds.end) assigned.push(d);
         }
@@ -552,7 +624,7 @@ export function autoSchedule({
 
       let count = 0;
       for (const [k, v] of grid.entries()) {
-        if (k.startsWith(staff.id + ":") && v.code === st.code) {
+        if (k.startsWith(staff.id + ":") && v.code === st.code && !v.noCount) {
           const d = k.split(":")[1];
           if (d >= bounds.start && d <= bounds.end) count++;
         }
@@ -569,10 +641,23 @@ export function autoSchedule({
     return dayMap.get(dayKey) ?? 0;
   }
 
+  // Physical count of `code` cells on `date`, INCLUDING non-counting followers —
+  // use for per-day caps (maxPerDay), where a follower still occupies a slot.
   function countAssigned(code: string, date: string): number {
     let count = 0;
     for (const [k, v] of grid.entries()) {
       if (k.endsWith(`:${date}`) && v.code === code) count++;
+    }
+    return count;
+  }
+
+  // Coverage count: like countAssigned but EXCLUDES non-counting followers
+  // (countsTowardTargets=false). Use wherever a staffing requirement is being
+  // satisfied — a non-counting follower must not falsely meet a requirement.
+  function countCoverage(code: string, date: string): number {
+    let count = 0;
+    for (const [k, v] of grid.entries()) {
+      if (k.endsWith(`:${date}`) && v.code === code && !v.noCount) count++;
     }
     return count;
   }
@@ -585,21 +670,30 @@ export function autoSchedule({
   }
 
   function wouldBreakPPHours(staffId: string, date: string, st: ScheduleShiftType): boolean {
-    const hasRecoveryCost = isRecoveryOnly(followMap, st.id);
-    if (!st.countsTowardFte && !hasRecoveryCost) return false;
+    // An each_day follower (e.g. ORC→X) reliably drags one follower day — and its
+    // hours — into the period per placement, so it's part of this projection.
+    // each_run followers are shared across a run; their hours land via
+    // ppHoursForStaff once placed, and Slice 2 refines their projection.
+    const followerSpec = followerBySource.get(st.id);
+    const eachDayFollower = followerSpec?.scope === "each_day" ? followerSpec : null;
+    const hasFollowerDay = !!eachDayFollower;
+    if (!st.countsTowardFte && !hasFollowerDay) return false;
 
-    const recoveryDate = hasRecoveryCost ? nextDate(date) : null;
-    const recoveryPP = recoveryDate ? findPPForDate(recoveryDate) : null;
-    const pp = st.countsTowardFte ? findPPForDate(date) : recoveryPP;
+    const followerDate = hasFollowerDay ? nextDate(date) : null;
+    const followerPP = followerDate ? findPPForDate(followerDate) : null;
+    const pp = st.countsTowardFte ? findPPForDate(date) : followerPP;
     if (!pp || !fillShift) return false;
     const staff = activeStaff.find((p) => p.id === staffId);
     if (!staff) return false;
     const target = pp.targetHours * staff.ftePercentage;
     if (target <= 0) return false;
 
-    const addHours = st.countsTowardFte ? getShiftHours(staffId, st, overrideMap) : 0;
+    const sameFollowerPP = !!followerPP && followerPP.startDate === pp.startDate;
+    const followerHrs = eachDayFollower && eachDayFollower.follower.countsTowardFte && sameFollowerPP
+      ? getShiftHours(staffId, eachDayFollower.follower, overrideMap) : 0;
+    const addHours = (st.countsTowardFte ? getShiftHours(staffId, st, overrideMap) : 0) + followerHrs;
     const current = ppHoursForStaff(staffId, pp);
-    if (st.countsTowardFte && current + addHours > target) return true;
+    if (current + addHours > target) return true;
 
     const fillHrs = getShiftHours(staffId, fillShift, overrideMap);
     let availDays = 0;
@@ -615,8 +709,7 @@ export function autoSchedule({
 
     let daysConsumed = 0;
     if (st.countsTowardFte) daysConsumed += 1;
-    if (hasRecoveryCost && recoveryPP &&
-        recoveryPP.startDate === pp.startDate) daysConsumed += 1;
+    if (hasFollowerDay && sameFollowerPP) daysConsumed += 1;
     const remainingAvail = availDays - daysConsumed;
     const hoursAfterAssign = current + addHours;
     const hoursStillNeeded = target - hoursAfterAssign;
@@ -842,8 +935,8 @@ export function autoSchedule({
         if (satRequired <= 0 && sunRequired <= 0) continue;
         if (!dateSet.has(sun)) continue;
 
-        const satCount = countAssigned(st.code, sat);
-        const sunCount = countAssigned(st.code, sun);
+        const satCount = countCoverage(st.code, sat);
+        const sunCount = countCoverage(st.code, sun);
         if (satCount >= satRequired && sunCount >= sunRequired) continue;
 
         const available = eligible.filter(
@@ -883,7 +976,7 @@ export function autoSchedule({
         if (!holidaySet.has(date) || isWeekend(date)) continue;
         const required = getRequiredCount(st, date);
         if (required <= 0) continue;
-        const current = countAssigned(st.code, date);
+        const current = countCoverage(st.code, date);
         if (current >= required) continue;
 
         let available = eligible.filter(
@@ -923,7 +1016,7 @@ export function autoSchedule({
           const ppNeedDates: string[] = [];
           for (const date of dates) {
             if (date < pp.startDate || date > pp.endDate) continue;
-            if (getRequiredCount(st, date) > countAssigned(st.code, date)) {
+            if (getRequiredCount(st, date) > countCoverage(st.code, date)) {
               ppNeedDates.push(date);
             }
           }
@@ -940,7 +1033,6 @@ export function autoSchedule({
               const provAvail = remainDates.filter(d => isAvailable(p, d, st));
               if (provAvail.length < pairingFactor) return false;
               const groupHrs = pairingFactor * getShiftHours(p.id, st, overrideMap);
-              const recoveryDays = isRecoveryOnly(followMap, st.id) ? pairingFactor : 0;
               const currentHrs = ppHoursForStaff(p.id, pp);
               const target = pp.targetHours * p.ftePercentage;
               if (target > 0 && currentHrs + groupHrs > target) return false;
@@ -1010,13 +1102,7 @@ export function autoSchedule({
               usedDates.add(date);
               assignedDates.push(date);
 
-              if (isRecoveryOnly(followMap, st.id) && offShift) {
-                const next = nextDate(date);
-                const nextAvail = evaluateAvailability(chosen.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
-                if (dateSet.has(next) && !isAssigned(chosen.id, next) && nextAvail.available) {
-                  assign(chosen.id, next, offShift, `Day off after ${st.code}`, `${stepName}-recovery`, 0.95);
-                }
-              }
+              placeEachDayFollower(chosen.id, date, st);
             }
             for (const date of assignedDates) {
               recordAssignment(chosen.id, date);
@@ -1045,13 +1131,7 @@ export function autoSchedule({
             );
             recordAssignment(chosen.id, date);
 
-            if (isRecoveryOnly(followMap, st.id) && offShift) {
-              const next = nextDate(date);
-              const nextAvail = evaluateAvailability(chosen.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
-              if (dateSet.has(next) && !isAssigned(chosen.id, next) && nextAvail.available) {
-                assign(chosen.id, next, offShift, `Day off after ${st.code}`, `${stepName}-recovery`, 0.95);
-              }
-            }
+            placeEachDayFollower(chosen.id, date, st);
           }
         }
       } else {
@@ -1060,7 +1140,7 @@ export function autoSchedule({
           const required = getRequiredCount(st, date);
           if (required <= 0) continue;
 
-          const current = countAssigned(st.code, date);
+          const current = countCoverage(st.code, date);
           if (current >= required) continue;
 
           const needed = required - current;
@@ -1098,19 +1178,19 @@ export function autoSchedule({
             );
             recordAssignment(chosen.id, date);
 
-            if (isRecoveryOnly(followMap, st.id) && offShift) {
-              const next = nextDate(date);
-              const nextAvail = evaluateAvailability(chosen.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
-              if (dateSet.has(next) && !isAssigned(chosen.id, next) && nextAvail.available) {
-                assign(chosen.id, next, offShift, `Day off after ${st.code}`, `${stepName}-recovery`, 0.95);
-              }
-            }
+            placeEachDayFollower(chosen.id, date, st);
 
             pool = pool.filter((p) => p.id !== chosen.id);
           }
         }
       }
     }
+
+    // each_run followers (e.g. a CALL weekend → one ADM) are placed here, after
+    // this shift's distribution, so each consecutive run is fully formed. each_day
+    // followers (e.g. ORC→X) were placed inline above. CALL (priority 10) finishes
+    // before ORC (20), so ORC distribution and the hours math see these followers.
+    placeRunFollowers(st);
   }
 
   // ── STEP 2b: Satisfy per-staff shift minimum targets ──
@@ -1140,7 +1220,7 @@ export function autoSchedule({
         function countInWindow(): number {
           let n = 0;
           for (const [k, v] of grid.entries()) {
-            if (k.startsWith(staff.id + ":") && v.code === st!.code) {
+            if (k.startsWith(staff.id + ":") && v.code === st!.code && !v.noCount) {
               const d = k.split(":")[1];
               if (d >= bounds!.start && d <= bounds!.end) n++;
             }
@@ -1188,10 +1268,13 @@ export function autoSchedule({
       for (const [dayKey, min] of fillReqs) fillReqsByDay.set(dayKey, min);
     }
 
+    // Coverage count for the fill shift: excludes non-counting followers, so a
+    // follower whose follower-shift is the fill shift can't falsely satisfy a fill
+    // staffing requirement during off-day selection (mirrors countCoverage).
     function fillStaffedCount(date: string): number {
       let count = 0;
       for (const [k, v] of grid.entries()) {
-        if (k.endsWith(`:${date}`) && v.code === fillShift!.code) count++;
+        if (k.endsWith(`:${date}`) && v.code === fillShift!.code && !v.noCount) count++;
       }
       return count;
     }
@@ -1406,7 +1489,7 @@ export function autoSchedule({
 
         const assigned: string[] = [];
         for (const [k, v] of grid.entries()) {
-          if (k.startsWith(staff.id + ":") && v.code === st.code) {
+          if (k.startsWith(staff.id + ":") && v.code === st.code && !v.noCount) {
             const d = k.split(":")[1];
             if (d >= bounds.start && d <= bounds.end) assigned.push(d);
           }
@@ -1455,7 +1538,7 @@ export function autoSchedule({
         if (st.isOffShift || st.isLeave) continue;
         const required = getRequiredCount(st, date);
         if (required <= 0) continue;
-        const assigned = countAssigned(st.code, date);
+        const assigned = countCoverage(st.code, date);
         if (assigned >= required) continue;
         const eligIds = new Set(eligibleStaff(st, date).map((p) => p.id));
         if ([...awaySet].some((id) => eligIds.has(id))) {

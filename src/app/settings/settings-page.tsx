@@ -107,6 +107,14 @@ type FollowRuleData = {
   mode: string;
 };
 
+type RequiredFollowerData = {
+  id: string;
+  sourceShiftId: string;
+  followerShiftId: string;
+  scope: string; // "each_day" | "each_run"
+  countsTowardTargets: boolean;
+};
+
 type PrintShiftCondition = {
   quantifier: string; // "has_any" | "has_none" | "has_all"
   categories: string[]; // "work" | "leave" | "off"
@@ -149,6 +157,7 @@ type Props = {
   equityFactors: EquityFactorData[];
   shiftCodes: string[];
   followRules: FollowRuleData[];
+  requiredFollowers: RequiredFollowerData[];
   countColumns: { id: string; label: string; shiftCodes: string[] }[];
   printColumnRules: PrintColumnRuleData[];
   printAggregateColumns: PrintAggregateColumnData[];
@@ -366,13 +375,90 @@ function FollowRulesEditor({ sourceShiftId, allShifts, state, onChange }: {
   );
 }
 
-function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial: ShiftType[]; pushUndo: (a: UndoAction) => void; initialFollowRules: FollowRuleData[] }) {
+type RequiredFollowerState = {
+  enabled: boolean;
+  followerShiftId: string;
+  scope: "each_day" | "each_run";
+  countsTowardTargets: boolean;
+};
+
+function RequiredFollowerEditor({ sourceShiftId, allShifts, state, onChange }: {
+  sourceShiftId: string;
+  allShifts: ShiftType[];
+  state: RequiredFollowerState;
+  onChange: (state: RequiredFollowerState) => void;
+}) {
+  const canEdit = useCanEdit();
+  const candidates = allShifts.filter((s) => s.id !== sourceShiftId);
+
+  return (
+    <div className="space-y-2">
+      <FieldRow label="Requires a follower" description="Auto-place another shift on the next eligible day (e.g. CALL → ADM, ORC → day off). Skipped with a warning if that day can't take it.">
+        <input
+          type="checkbox"
+          disabled={!canEdit}
+          checked={state.enabled}
+          onChange={(e) => onChange(e.target.checked
+            ? { ...state, enabled: true, followerShiftId: state.followerShiftId || (candidates[0]?.id ?? "") }
+            : { ...state, enabled: false })}
+          className="rounded border-slate-600 w-4 h-4 disabled:opacity-50"
+        />
+      </FieldRow>
+      {state.enabled && (
+        <div className="ml-4 pl-4 border-l-2 border-slate-700 space-y-2">
+          <FieldRow label="Follower shift" description="Which shift is placed after this one">
+            <select
+              disabled={!canEdit}
+              value={state.followerShiftId}
+              onChange={(e) => onChange({ ...state, followerShiftId: e.target.value })}
+              className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50"
+            >
+              {candidates.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
+            </select>
+          </FieldRow>
+          <FieldRow label="Placement" description="After every occurrence, or once after a consecutive run (e.g. one ADM after a whole CALL weekend)">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => canEdit && onChange({ ...state, scope: "each_day" })}
+                className={`px-2.5 py-1 text-[11px] rounded transition-colors ${state.scope === "each_day" ? "bg-sky-600/20 text-sky-400 border border-sky-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"} ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                After each day
+              </button>
+              <button
+                type="button"
+                onClick={() => canEdit && onChange({ ...state, scope: "each_run" })}
+                className={`px-2.5 py-1 text-[11px] rounded transition-colors ${state.scope === "each_run" ? "bg-sky-600/20 text-sky-400 border border-sky-500/30" : "bg-slate-700 text-slate-400 hover:bg-slate-600 border border-transparent"} ${!canEdit ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                After a run
+              </button>
+            </div>
+          </FieldRow>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              disabled={!canEdit}
+              checked={state.countsTowardTargets}
+              onChange={(e) => onChange({ ...state, countsTowardTargets: e.target.checked })}
+              className="rounded border-slate-600 w-3.5 h-3.5 disabled:opacity-50"
+            />
+            <span className="text-slate-300">Counts toward staffing &amp; targets</span>
+            <span className="text-slate-600 text-xs">(off = mandatory extra; hours still count toward FTE)</span>
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShiftTypesSection({ initial, pushUndo, initialFollowRules, initialRequiredFollowers }: { initial: ShiftType[]; pushUndo: (a: UndoAction) => void; initialFollowRules: FollowRuleData[]; initialRequiredFollowers: RequiredFollowerData[] }) {
   const canEdit = useCanEdit();
   const [shifts, setShifts] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [followRules, setFollowRules] = useState(initialFollowRules);
+  const [requiredFollowers, setRequiredFollowers] = useState(initialRequiredFollowers);
   const dragIdx = useRef<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
@@ -435,6 +521,35 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
           ...prev.filter((r) => r.sourceShiftId !== shift.id),
           ...saved.map((r) => ({ id: r.id, sourceShiftId: r.sourceShiftId, allowedShiftId: r.allowedShiftId, allowOffShifts: r.allowOffShifts, mode: r.mode })),
         ]);
+      }
+
+      // Required follower: upsert when enabled, otherwise clear any existing rule.
+      // A non-OK response throws so the save is reported as an error, not "saved".
+      if (requiredFollowerState.enabled && requiredFollowerState.followerShiftId) {
+        const rfRes = await fetch("/api/settings/required-followers", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sourceShiftId: shift.id,
+            followerShiftId: requiredFollowerState.followerShiftId,
+            scope: requiredFollowerState.scope,
+            countsTowardTargets: requiredFollowerState.countsTowardTargets,
+          }),
+        });
+        if (!rfRes.ok) throw new Error(await rfRes.text());
+        const saved = await rfRes.json() as RequiredFollowerData;
+        setRequiredFollowers((prev) => [
+          ...prev.filter((r) => r.sourceShiftId !== shift.id),
+          { id: saved.id, sourceShiftId: saved.sourceShiftId, followerShiftId: saved.followerShiftId, scope: saved.scope, countsTowardTargets: saved.countsTowardTargets },
+        ]);
+      } else {
+        const rfRes = await fetch("/api/settings/required-followers", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sourceShiftId: shift.id }),
+        });
+        if (!rfRes.ok) throw new Error(await rfRes.text());
+        setRequiredFollowers((prev) => prev.filter((r) => r.sourceShiftId !== shift.id));
       }
 
       setStatus("saved");
@@ -581,6 +696,7 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
     if (!editingId) return;
     const rules = followRules.filter((r) => r.sourceShiftId === editingId);
     if (rules.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset editor state when the edited shift changes
       setFollowRuleState({
         enabled: true,
         mode: (rules[0].mode as "allow" | "block") || "allow",
@@ -591,6 +707,26 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
       setFollowRuleState({ enabled: false, mode: "allow", allowOffShifts: false, checkedIds: new Set() });
     }
   }, [editingId, followRules]);
+
+  const [requiredFollowerState, setRequiredFollowerState] = useState<RequiredFollowerState>({ enabled: false, followerShiftId: "", scope: "each_day", countsTowardTargets: false });
+
+  useEffect(() => {
+    if (!editingId) return;
+    const rule = requiredFollowers.find((r) => r.sourceShiftId === editingId);
+    // Mirrors the sibling followRuleState effect: reset editor state when the edited
+    // shift changes. Same set-state-in-effect shape as the existing follow-rule editor.
+    if (rule) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRequiredFollowerState({
+        enabled: true,
+        followerShiftId: rule.followerShiftId,
+        scope: rule.scope === "each_run" ? "each_run" : "each_day",
+        countsTowardTargets: rule.countsTowardTargets,
+      });
+    } else {
+      setRequiredFollowerState({ enabled: false, followerShiftId: "", scope: "each_day", countsTowardTargets: false });
+    }
+  }, [editingId, requiredFollowers]);
 
   return (
     <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
@@ -726,6 +862,12 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules }: { initial:
                 allShifts={shifts}
                 state={followRuleState}
                 onChange={setFollowRuleState}
+              />
+              <RequiredFollowerEditor
+                sourceShiftId={editingShift.id}
+                allShifts={shifts}
+                state={requiredFollowerState}
+                onChange={setRequiredFollowerState}
               />
             </div>
 
@@ -3049,7 +3191,7 @@ function AdditionalColumnsSection({
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, canEdit = true }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, canEdit = true }: Props) {
   const undo = useUndo();
   const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
 
@@ -3062,7 +3204,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
             View-only — you do not have permission to edit settings
           </div>
         )}
-        <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} initialFollowRules={initialFollowRules} />
+        <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} initialFollowRules={initialFollowRules} initialRequiredFollowers={initialRequiredFollowers} />
         <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} shiftTypes={shiftTypes} />
         <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <PrintColumnRulesSection initial={initialPrintColumnRules} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />

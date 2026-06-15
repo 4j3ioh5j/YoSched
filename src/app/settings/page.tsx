@@ -12,7 +12,7 @@ export default async function Settings() {
   const { error, permissions } = await getSession("settings:view");
   if (error) redirect("/");
   const canEditSettings = permissions!.includes("settings:edit");
-  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors, followRules, countColumns, printColumnRules, printAggregateColumns] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
@@ -25,6 +25,7 @@ export default async function Settings() {
     }),
     prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.shiftFollowRule.findMany(),
+    prisma.requiredFollower.findMany(),
     prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.printColumnRule.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.printAggregateColumn.findMany({ orderBy: { sortOrder: "asc" } }),
@@ -124,6 +125,13 @@ export default async function Settings() {
           allowedShiftId: r.allowedShiftId,
           allowOffShifts: r.allowOffShifts,
           mode: r.mode,
+        }))}
+        requiredFollowers={requiredFollowers.map((r) => ({
+          id: r.id,
+          sourceShiftId: r.sourceShiftId,
+          followerShiftId: r.followerShiftId,
+          scope: r.scope,
+          countsTowardTargets: r.countsTowardTargets,
         }))}
         countColumns={countColumns.map((c) => ({
           id: c.id,

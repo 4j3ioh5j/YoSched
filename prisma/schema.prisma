@@ -99,6 +99,8 @@ model ShiftType {
   defaultForEmploymentTypes    EmploymentTypeDefaultShift[]
   followRulesAsSource  ShiftFollowRule[] @relation("followRuleSource")
   followRulesAsAllowed ShiftFollowRule[] @relation("followRuleAllowed")
+  requiredFollowerAsSource   RequiredFollower[] @relation("requiredFollowerSource")
+  requiredFollowerAsFollower RequiredFollower[] @relation("requiredFollowerFollower")
   shiftEligibilityRules        ShiftEligibilityRule[]
   shiftMinimumTargets          ShiftMinimumTarget[]
   requestLeaveShifts           ScheduleRequest[] @relation("requestLeaveShift")
@@ -443,6 +445,28 @@ model ShiftFollowRule {
 
   @@unique([sourceShiftId, allowedShiftId])
   @@map("shift_follow_rules")
+}
+
+// A REQUIRED follower: after a source shift the engine auto-places `followerShift`
+// on the next eligible day. Complements ShiftFollowRule (which only says what MAY
+// follow). `scope` = "each_day" (after every occurrence, e.g. ORC→X recovery) or
+// "each_run" (once after a consecutive run, e.g. a CALL weekend → one ADM).
+// `countsTowardTargets` decides whether the placed follower satisfies staffing
+// requirements / min-max targets for its own shift (its worked hours always count
+// toward FTE regardless). Fully editable in settings — no shift codes live in code.
+model RequiredFollower {
+  id                  String   @id @default(cuid())
+  sourceShiftId       String
+  followerShiftId     String
+  scope               String   @default("each_day") // "each_day" | "each_run"
+  countsTowardTargets Boolean  @default(false)
+  createdAt           DateTime @default(now())
+
+  sourceShift   ShiftType @relation("requiredFollowerSource", fields: [sourceShiftId], references: [id], onDelete: Cascade)
+  followerShift ShiftType @relation("requiredFollowerFollower", fields: [followerShiftId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceShiftId])
+  @@map("required_followers")
 }
 
 model ShiftEligibilityRule {

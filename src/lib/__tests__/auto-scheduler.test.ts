@@ -336,7 +336,7 @@ describe("autoSchedule", () => {
   });
 
   describe("follow rules integration", () => {
-    it("places recovery day after shift with recovery-only follow rule", () => {
+    it("places a recovery day off via an each_day required follower (ORC→X style)", () => {
       const CALL = makeShift("st-call", "CALL", { schedulePriority: 1, autoSchedulable: true });
       const staff = [
         makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-call", "st-off"] }),
@@ -347,17 +347,173 @@ describe("autoSchedule", () => {
         staffingRequirements: [
           { shiftCode: "CALL", dayKey: "1", minCount: 1 },
         ],
-        followRules: [
-          { sourceShiftId: "st-call", allowedShiftId: null, allowOffShifts: true, mode: "allow" },
+        requiredFollowers: [
+          { sourceShiftId: "st-call", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false },
         ],
       });
       const callDay = result.suggestions.find((s) => s.code === "CALL");
       expect(callDay).toBeDefined();
       const nextDay = result.suggestions.find(
-        (s) => s.staffId === callDay!.staffId && s.step.includes("recovery")
+        (s) => s.staffId === callDay!.staffId && s.step === "follower"
       );
       expect(nextDay).toBeDefined();
       expect(nextDay!.code).toBe("X");
+    });
+  });
+
+  describe("required followers", () => {
+    // consecutive calendar dates INCLUDING weekends (weekdayDates skips them)
+    function allDates(startDate: string, count: number): string[] {
+      const out: string[] = [];
+      const cur = new Date(startDate + "T12:00:00");
+      for (let i = 0; i < count; i++) {
+        const y = cur.getFullYear();
+        const m = String(cur.getMonth() + 1).padStart(2, "0");
+        const d = String(cur.getDate()).padStart(2, "0");
+        out.push(`${y}-${m}-${d}`);
+        cur.setDate(cur.getDate() + 1);
+      }
+      return out;
+    }
+
+    const CALL = makeShift("st-call", "CALL", { schedulePriority: 1, autoSchedulable: true });
+    // ADM has no schedulePriority → never distributed by staffing; only placed as a
+    // follower or to satisfy a per-staff target.
+    const ADM = makeShift("st-adm", "ADM", { defaultHours: 8, autoSchedulable: true });
+    const ORC = makeShift("st-orc", "ORC", { defaultHours: 16, schedulePriority: 2, autoSchedulable: true });
+    const followerShifts = [OR, CALL, ADM, ORC, OFF];
+    const everyDay = [0, 1, 2, 3, 4, 5, 6].map((d) => ({
+      dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
+    }));
+    function fStaff(overrides: Partial<ScheduleStaff> = {}) {
+      return makeStaff("p1", "AB", {
+        eligibleShiftTypeIds: ["st-or", "st-call", "st-adm", "st-orc", "st-off"],
+        availabilityRules: everyDay,
+        ...overrides,
+      });
+    }
+    const pp = [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }];
+    const callWeekend = (locked = true) => [
+      { staffId: "p1", date: "2025-05-17", shiftTypeId: "st-call", code: "CALL", isLocked: locked },
+      { staffId: "p1", date: "2025-05-18", shiftTypeId: "st-call", code: "CALL", isLocked: locked },
+    ];
+
+    it("each_run: a CALL weekend gets ONE ADM the next day, not one per CALL day", () => {
+      const result = runSchedule({
+        dates: allDates("2025-05-17", 5), // Sat, Sun, Mon, Tue, Wed
+        staff: [fStaff()],
+        shiftTypes: followerShifts,
+        existingAssignments: callWeekend(),
+        payPeriods: pp,
+        requiredFollowers: [
+          { sourceShiftId: "st-call", followerShiftId: "st-adm", scope: "each_run", countsTowardTargets: false },
+        ],
+      });
+      const adm = result.suggestions.filter((s) => s.code === "ADM");
+      expect(adm).toHaveLength(1);
+      expect(adm[0].date).toBe("2025-05-19"); // the Monday after the weekend run
+      expect(adm[0].step).toBe("follower");
+    });
+
+    it("each_run: skips and warns when the follower's day is already filled", () => {
+      const result = runSchedule({
+        dates: allDates("2025-05-17", 5),
+        staff: [fStaff()],
+        shiftTypes: followerShifts,
+        existingAssignments: [
+          ...callWeekend(),
+          { staffId: "p1", date: "2025-05-19", shiftTypeId: "st-or", code: "OR", isLocked: true },
+        ],
+        payPeriods: pp,
+        requiredFollowers: [
+          { sourceShiftId: "st-call", followerShiftId: "st-adm", scope: "each_run", countsTowardTargets: false },
+        ],
+      });
+      expect(result.suggestions.filter((s) => s.code === "ADM")).toHaveLength(0);
+      expect(result.warnings.some((w) => w.includes("ADM") && w.includes("CALL"))).toBe(true);
+    });
+
+    it("each_day: places a follower after EVERY occurrence (ORC→X on Tue and Thu)", () => {
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5), // Mon..Fri
+        staff: [fStaff()],
+        shiftTypes: followerShifts,
+        payPeriods: pp,
+        staffingRequirements: [
+          { shiftCode: "ORC", dayKey: "1", minCount: 1 }, // Monday
+          { shiftCode: "ORC", dayKey: "3", minCount: 1 }, // Wednesday
+        ],
+        requiredFollowers: [
+          { sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false },
+        ],
+      });
+      const orc = result.suggestions.filter((s) => s.code === "ORC").map((s) => s.date).sort();
+      expect(orc).toEqual(["2025-05-12", "2025-05-14"]);
+      // each ORC is followed the next day by an X placed by the follower step
+      for (const d of ["2025-05-13", "2025-05-15"]) {
+        const x = result.suggestions.find((s) => s.code === "X" && s.date === d && s.step === "follower");
+        expect(x, `expected recovery X on ${d}`).toBeDefined();
+      }
+    });
+
+    it("countsTowardTargets=false: the follower ADM does NOT satisfy an ADM target (extra)", () => {
+      const result = runSchedule({
+        dates: allDates("2025-05-17", 6), // Sat..Thu
+        staff: [fStaff({
+          shiftMinimumTargets: [{ shiftTypeId: "st-adm", minCount: 1, maxCount: 1, window: "pay_period", windowDays: null }],
+        })],
+        shiftTypes: followerShifts,
+        existingAssignments: callWeekend(),
+        payPeriods: pp,
+        requiredFollowers: [
+          { sourceShiftId: "st-call", followerShiftId: "st-adm", scope: "each_run", countsTowardTargets: false },
+        ],
+      });
+      const adm = result.suggestions.filter((s) => s.code === "ADM");
+      // one ADM from the follower (extra), one SEPARATE ADM to satisfy the target
+      expect(adm.map((s) => s.step).sort()).toEqual(["follower", "min-target"]);
+    });
+
+    it("countsTowardTargets=false: a non-counting follower does NOT satisfy a staffing requirement", () => {
+      // ADM is staffed on Monday (req 1). p1 does the CALL weekend → a non-counting
+      // ADM follower lands Monday. That follower must NOT satisfy the requirement, so
+      // the scheduler still places a real (counting) ADM for p2.
+      const ADM_REQ = makeShift("st-adm", "ADM", { defaultHours: 8, autoSchedulable: true, schedulePriority: 3 });
+      const p2 = makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"], availabilityRules: everyDay });
+      const result = runSchedule({
+        dates: allDates("2025-05-17", 4), // Sat, Sun, Mon, Tue
+        staff: [fStaff(), p2],
+        shiftTypes: [OR, CALL, ADM_REQ, OFF],
+        existingAssignments: callWeekend(),
+        payPeriods: pp,
+        staffingRequirements: [{ shiftCode: "ADM", dayKey: "1", minCount: 1 }], // Monday
+        requiredFollowers: [
+          { sourceShiftId: "st-call", followerShiftId: "st-adm", scope: "each_run", countsTowardTargets: false },
+        ],
+      });
+      const mondayAdm = result.suggestions.filter((s) => s.code === "ADM" && s.date === "2025-05-19");
+      // one follower (p1, noCount) + one real coverage ADM (p2)
+      expect(mondayAdm.some((s) => s.step === "follower" && s.staffId === "p1")).toBe(true);
+      expect(mondayAdm.some((s) => s.step !== "follower")).toBe(true);
+      expect(mondayAdm).toHaveLength(2);
+    });
+
+    it("countsTowardTargets=true: the follower ADM DOES satisfy the ADM target", () => {
+      const result = runSchedule({
+        dates: allDates("2025-05-17", 6),
+        staff: [fStaff({
+          shiftMinimumTargets: [{ shiftTypeId: "st-adm", minCount: 1, maxCount: 1, window: "pay_period", windowDays: null }],
+        })],
+        shiftTypes: followerShifts,
+        existingAssignments: callWeekend(),
+        payPeriods: pp,
+        requiredFollowers: [
+          { sourceShiftId: "st-call", followerShiftId: "st-adm", scope: "each_run", countsTowardTargets: true },
+        ],
+      });
+      const adm = result.suggestions.filter((s) => s.code === "ADM");
+      expect(adm).toHaveLength(1);
+      expect(adm[0].step).toBe("follower");
     });
   });
 
