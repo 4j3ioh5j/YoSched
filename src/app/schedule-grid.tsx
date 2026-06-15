@@ -591,15 +591,29 @@ export function ScheduleGrid({
 
   const closeVersions = useCallback(() => { setShowVersions(false); setChangesView(null); }, []);
   useEscape(() => { if (changesView) setChangesView(null); else setShowVersions(false); });
+  useEscape(() => setShowAlerts(false));
+  useEscape(() => setShowHelp(false));
 
-  // Resizable alerts panel width (pixels)
-  const [alertWidth, setAlertWidth] = useState(() => {
-    if (typeof window === "undefined") return 220;
-    const saved = localStorage.getItem("yosched:alertWidth");
-    return saved !== null ? Number(saved) : 220;
-  });
-  const splitContainerRef = useRef<HTMLDivElement>(null);
-  const splitDragging = useRef(false);
+  // Alerts + Help modals (the alerts sidebar was replaced by an Alerts button).
+  const [showAlerts, setShowAlerts] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  // Transient highlight on the day-row a user jumps to from the Alerts modal.
+  const [flashDate, setFlashDate] = useState<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
+  // Scroll the grid to a day-row and flash it. Used by the Alerts modal.
+  const jumpToDate = useCallback((date: string) => {
+    setShowAlerts(false);
+    requestAnimationFrame(() => {
+      const scroller = scrollRef.current;
+      const row = scroller?.querySelector(`tr[data-date="${date}"]`) as HTMLElement | null;
+      const thead = scroller?.querySelector("thead") as HTMLElement | null;
+      if (scroller && row) scroller.scrollTop = row.offsetTop - (thead?.clientHeight ?? 0);
+      setFlashDate(date);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setFlashDate(null), 1600);
+    });
+  }, []);
 
   // Shift+drag-select state
   const dragSelecting = useRef(false);
@@ -1476,6 +1490,9 @@ export function ScheduleGrid({
         if (e.key === "Escape") setShowMonthPicker(false);
         return;
       }
+      // While a modal is open, grid hotkeys (letters, "/", "?", arrows, etc.)
+      // are suppressed; each modal closes itself on Escape via useEscape.
+      if (showVersions || showAlerts || showHelp) return;
       if (canEdit && (e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
         undoRef.current();
@@ -1590,7 +1607,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleStaff, hotkeyMap, selection, showMonthPicker, requestMode, toggleShowRequests]);
+  }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleStaff, hotkeyMap, selection, showMonthPicker, requestMode, toggleShowRequests, showVersions, showAlerts, showHelp]);
 
   const hotkeyAssign = useCallback(async (st: ShiftType) => {
     const cells: { staffId: string; date: string }[] = [];
@@ -2273,60 +2290,10 @@ export function ScheduleGrid({
     [dates, dayWarnings, firstOfMonth, lastOfMonth],
   );
 
-  // Group alerts by date so each row gets a single positioned block.
+  // Group alerts by date for the Alerts modal list.
   const alertGroups = useMemo(() => groupAlertsByDate(alerts), [alerts]);
-
-  // Vertically align each alert block with the schedule row it refers to,
-  // and keep them in sync as the grid scrolls.
-  const alertGroupRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const [alertHeaderH, setAlertHeaderH] = useState(0);
-  useLayoutEffect(() => {
-    const scroller = scrollRef.current;
-    if (!scroller || alertGroups.length === 0) return;
-    const thead = scroller.querySelector("thead") as HTMLElement | null;
-    const headerH = thead?.offsetHeight ?? 0;
-    setAlertHeaderH(headerH);
-
-    // Per alert date: the matching row's top offset and height, so each block
-    // can be centered on its row's vertical midpoint.
-    const rows = new Map<string, { top: number; height: number }>();
-    const measure = () => {
-      rows.clear();
-      for (const date of alertGroupRefs.current.keys()) {
-        const row = scroller.querySelector(`tr[data-date="${date}"]`) as HTMLElement | null;
-        if (row) rows.set(date, { top: row.offsetTop, height: row.offsetHeight });
-      }
-    };
-    const apply = () => {
-      const top0 = thead?.offsetHeight ?? headerH;
-      const st = scroller.scrollTop;
-      for (const [date, el] of alertGroupRefs.current) {
-        const r = rows.get(date);
-        if (!r) {
-          el.style.display = "none";
-          continue;
-        }
-        el.style.display = "";
-        // Center the block on the row: row midpoint minus half the block height.
-        const rowCenter = r.top + r.height / 2 - top0 - st;
-        el.style.transform = `translateY(${rowCenter - el.offsetHeight / 2}px)`;
-      }
-    };
-    measure();
-    apply();
-    scroller.addEventListener("scroll", apply, { passive: true });
-    // Re-measure on table layout changes (rows added, PP rows toggled) and
-    // re-apply when an alert block's own height changes — e.g. resizing the
-    // alerts panel rewraps the text, which would otherwise leave it off-center.
-    const ro = new ResizeObserver(() => { measure(); apply(); });
-    const table = scroller.querySelector("table");
-    if (table) ro.observe(table);
-    for (const el of alertGroupRefs.current.values()) ro.observe(el);
-    return () => {
-      scroller.removeEventListener("scroll", apply);
-      ro.disconnect();
-    };
-  }, [alertGroups, dates, showPPRows, visibleStaff.length, viewMonth, viewYear]);
+  // True when any alert is a hard error (shift-count) — drives the Alerts button color.
+  const hasAlertError = useMemo(() => alerts.some((a) => a.type === "error"), [alerts]);
 
   return (
     <div className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}>
@@ -2351,18 +2318,21 @@ export function ScheduleGrid({
         <button
           onClick={prevMonth}
           className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors"
+          title="Previous month"
         >
           ←
         </button>
         <button
           onClick={goToday}
           className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors"
+          title="Jump to the current month"
         >
           Today
         </button>
         <button
           onClick={nextMonth}
           className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors"
+          title="Next month"
         >
           →
         </button>
@@ -2370,6 +2340,7 @@ export function ScheduleGrid({
           <button
             onClick={() => setShowMonthPicker((v) => !v)}
             className="text-base font-semibold text-slate-200 hover:text-white hover:bg-slate-700 px-2 py-0.5 rounded transition-colors"
+            title="Pick a month and year"
           >
             {MONTH_NAMES[viewMonth]} {viewYear}
           </button>
@@ -2444,45 +2415,74 @@ export function ScheduleGrid({
             Show all staff
           </button>
         )}
-        {canEdit && (
         <div className="ml-auto flex items-center gap-2">
-          {selection.size > 0 && (
-            <span className="text-xs text-emerald-400 font-medium">
-              {selection.size} selected
-            </span>
+          {canEdit && (
+            <>
+              {selection.size > 0 && (
+                <span className="text-xs text-emerald-400 font-medium">
+                  {selection.size} selected
+                </span>
+              )}
+              <button
+                onClick={clearAutoScheduled}
+                disabled={autoLoading}
+                className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded transition-colors text-red-400 font-medium"
+                title="Remove all auto-scheduled assignments (keeps manual entries)"
+              >
+                Clear Auto
+              </button>
+              <button
+                onClick={runAutoSchedule}
+                disabled={autoLoading}
+                className="px-3 py-1 text-sm bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 rounded transition-colors text-emerald-100 font-medium"
+                title="Auto-fill empty slots using fairness-weighted scheduling"
+              >
+                {autoLoading ? "Working..." : "Auto-Schedule"}
+              </button>
+              <button
+                onClick={handleUndo}
+                className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-400"
+                title="Undo (Ctrl+Z)"
+              >
+                ↩
+              </button>
+              <button
+                onClick={handleRedo}
+                className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-400"
+                title="Redo (Ctrl+Shift+Z)"
+              >
+                ↪
+              </button>
+            </>
           )}
+          {/* Alerts — color reflects severity; opens the alerts modal. */}
           <button
-            onClick={clearAutoScheduled}
-            disabled={autoLoading}
-            className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded transition-colors text-red-400 font-medium"
-            title="Remove all auto-scheduled assignments (keeps manual entries)"
+            onClick={() => setShowAlerts(true)}
+            disabled={alerts.length === 0}
+            className={[
+              "px-3 py-1 text-sm rounded transition-colors flex items-center gap-1.5 font-medium",
+              alerts.length === 0
+                ? "bg-slate-800 text-slate-600 cursor-default"
+                : hasAlertError
+                  ? "bg-red-700 hover:bg-red-600 text-red-100"
+                  : "bg-amber-700 hover:bg-amber-600 text-amber-100",
+            ].join(" ")}
+            title={alerts.length === 0 ? "No alerts for this month" : `${alerts.length} alert${alerts.length !== 1 ? "s" : ""} — click to review`}
           >
-            Clear Auto
+            <span className={`w-1.5 h-1.5 rounded-full ${alerts.length === 0 ? "bg-slate-600" : hasAlertError ? "bg-red-300" : "bg-amber-300"}`} />
+            Alerts
+            {alerts.length > 0 && <span className="text-xs opacity-80">{alerts.length}</span>}
           </button>
+          {/* Help — farthest right; keystrokes, color legend, tips. */}
           <button
-            onClick={runAutoSchedule}
-            disabled={autoLoading}
-            className="px-3 py-1 text-sm bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 rounded transition-colors text-emerald-100 font-medium"
-            title="Auto-fill empty slots using fairness-weighted scheduling"
+            onClick={() => setShowHelp(true)}
+            className="px-2.5 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300 font-semibold"
+            title="Keyboard shortcuts, cell color legend, and help"
+            aria-label="Help"
           >
-            {autoLoading ? "Working..." : "Auto-Schedule"}
-          </button>
-          <button
-            onClick={handleUndo}
-            className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-400"
-            title="Undo (Ctrl+Z)"
-          >
-            ↩
-          </button>
-          <button
-            onClick={handleRedo}
-            className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-400"
-            title="Redo (Ctrl+Shift+Z)"
-          >
-            ↪
+            ?
           </button>
         </div>
-        )}
       </div>
 
       {/* Auto-schedule review panel */}
@@ -2523,9 +2523,9 @@ export function ScheduleGrid({
         </div>
       )}
 
-      <div ref={splitContainerRef} className="flex-1 flex overflow-hidden">
-      {/* Scrollable grid area */}
-      <div ref={scrollRef} className="shrink-0 overflow-auto" style={{ width: `calc(100% - ${alerts.length > 0 ? alertWidth + 4 : 0}px)` }}>
+      <div className="flex-1 flex overflow-hidden">
+      {/* Scrollable grid area (full width — the old alerts sidebar is now a modal) */}
+      <div ref={scrollRef} className="flex-1 overflow-auto">
         <table className="border-collapse text-sm w-full">
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-800">
@@ -2695,6 +2695,7 @@ export function ScheduleGrid({
                     isWeekend && !isOutsideMonth ? "bg-slate-800/50" : "",
                     isHoliday ? "bg-amber-950/20" : "",
                     isToday ? "ring-1 ring-inset ring-blue-500/50" : "",
+                    flashDate === date ? "ring-2 ring-inset ring-amber-400 bg-amber-500/20" : "",
                     "transition-colors",
                   ].join(" ")}
                 >
@@ -2928,90 +2929,6 @@ export function ScheduleGrid({
         </table>
       </div>
 
-      {/* Resize handle + Alerts sidebar */}
-      {alerts.length > 0 && (
-        <>
-        <div
-          data-print-hide
-          className="w-1 shrink-0 cursor-col-resize bg-slate-700 hover:bg-blue-500 active:bg-blue-400 transition-colors"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            splitDragging.current = true;
-            let lastWidth = alertWidth;
-            const minGridWidth = 200;
-            const onMove = (ev: MouseEvent) => {
-              if (!splitDragging.current || !splitContainerRef.current) return;
-              const rect = splitContainerRef.current.getBoundingClientRect();
-              const maxAlert = rect.width - minGridWidth - 4;
-              lastWidth = Math.min(maxAlert, Math.max(120, rect.right - ev.clientX));
-              setAlertWidth(lastWidth);
-            };
-            const onUp = () => {
-              splitDragging.current = false;
-              localStorage.setItem("yosched:alertWidth", String(Math.round(lastWidth)));
-              document.removeEventListener("mousemove", onMove);
-              document.removeEventListener("mouseup", onUp);
-            };
-            document.addEventListener("mousemove", onMove);
-            document.addEventListener("mouseup", onUp);
-          }}
-        />
-        <div data-print-hide className="shrink-0 bg-slate-900/50 flex flex-col overflow-hidden" style={{ width: alertWidth }}>
-          <div
-            className="shrink-0 flex items-center bg-slate-900 px-3 border-b border-slate-700"
-            style={alertHeaderH ? { height: alertHeaderH } : undefined}
-          >
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Alerts
-            </span>
-            <span className="ml-1.5 text-[11px] text-slate-500">{alerts.length}</span>
-          </div>
-          {/* Alert blocks are absolutely positioned to line up with the row they refer to. */}
-          <div className="relative flex-1 overflow-hidden">
-            {alertGroups.map((g) => {
-              // Keep each day's alerts on a single line that ellipsizes when it
-              // doesn't fit (widening the panel reveals more). The full set is
-              // stacked vertically in the hover tooltip.
-              const hasError = g.items.some((it) => it.type === "error");
-              const line = g.items.map((it) => it.message).join("  •  ");
-              const tip = g.items.map((it) => it.message).join("\n");
-              return (
-                <div
-                  key={g.date}
-                  ref={(el) => {
-                    const m = alertGroupRefs.current;
-                    if (el) m.set(g.date, el);
-                    else m.delete(g.date);
-                  }}
-                  className="absolute left-0 right-0 px-2 will-change-transform"
-                  style={{ top: 0 }}
-                >
-                  <div
-                    className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-slate-800/50 cursor-pointer transition-colors overflow-hidden"
-                    onMouseEnter={(e) => showTip(setTooltip, tip, e)}
-                    onMouseLeave={() => setTooltip(null)}
-                    onClick={() => {
-                      const row = scrollRef.current?.querySelector(`tr[data-date="${g.date}"]`);
-                      if (row) {
-                        const thead = scrollRef.current?.querySelector("thead");
-                        if (scrollRef.current && thead) {
-                          scrollRef.current.scrollTop = (row as HTMLElement).offsetTop - thead.clientHeight;
-                        }
-                      }
-                    }}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${hasError ? "bg-red-500" : "bg-amber-500"}`} />
-                    <span className="flex-1 min-w-0 text-[11px] text-slate-400 leading-tight whitespace-nowrap overflow-hidden text-ellipsis">
-                      {line}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        </>
-      )}
       </div>
 
       {/* Version footer — visible on screen AND in print (shows at the bottom of
@@ -3096,6 +3013,212 @@ export function ScheduleGrid({
                 : 1
             }
           />
+        </div>
+      )}
+
+      {/* Alerts modal — replaces the old sidebar. Click a day to jump to it. */}
+      {showAlerts && (
+        <div
+          data-print-hide
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setShowAlerts(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-[480px] max-h-[80vh] flex flex-col"
+          >
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-slate-700">
+              <h2 className="text-sm font-semibold text-slate-200 flex-1">
+                Alerts
+                <span className="ml-2 font-normal text-slate-500">{MONTH_NAMES[viewMonth]} {viewYear} · {alerts.length}</span>
+              </h2>
+              <button onClick={() => setShowAlerts(false)} className="text-slate-400 hover:text-white text-xl leading-none px-1" aria-label="Close">×</button>
+            </div>
+            <div className="overflow-y-auto p-2">
+              {alertGroups.length === 0 ? (
+                <div className="px-3 py-6 text-center text-sm text-slate-500">No alerts for this month.</div>
+              ) : (
+                alertGroups.map((g) => {
+                  const groupHasError = g.items.some((it) => it.type === "error");
+                  return (
+                    <div
+                      key={g.date}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => jumpToDate(g.date)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jumpToDate(g.date); } }}
+                      className="w-full text-left px-3 py-2 rounded hover:bg-slate-700/60 focus:bg-slate-700/60 outline-none cursor-pointer transition-colors flex flex-col gap-1 mb-0.5"
+                      title="Go to this day on the schedule"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${groupHasError ? "bg-red-500" : "bg-amber-500"}`} />
+                        <span className="text-xs font-semibold text-slate-200">
+                          {formatDate(parseDate(g.date), dateFormat)}
+                        </span>
+                        <span className="text-slate-600">→</span>
+                      </div>
+                      <ul className="pl-4 space-y-0.5">
+                        {g.items.map((it, i) => (
+                          <li key={i} className={`text-[11px] leading-tight ${it.type === "error" ? "text-red-300" : "text-amber-300/90"}`}>
+                            {it.message}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Help modal — keyboard shortcuts, cell color legend, tips. */}
+      {showHelp && (
+        <div
+          data-print-hide
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setShowHelp(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl w-[640px] max-h-[85vh] flex flex-col"
+          >
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-slate-700">
+              <h2 className="text-sm font-semibold text-slate-200 flex-1">Help — shortcuts &amp; legend</h2>
+              <button onClick={() => setShowHelp(false)} className="text-slate-400 hover:text-white text-xl leading-none px-1" aria-label="Close">×</button>
+            </div>
+            <div className="overflow-y-auto px-5 py-4 text-sm text-slate-300 space-y-5">
+              {/* Navigation */}
+              <section>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Navigation</h3>
+                <dl className="space-y-1">
+                  {[
+                    ["↑ ↓ ← →", "Move the active cell"],
+                    ["Tab", "Open the shift picker on the active cell"],
+                    ["Esc", "Close a popup, exit request mode, or clear the selection"],
+                    ["Click + drag", "Select a range of cells"],
+                    ["Right-click", "Cell context menu"],
+                  ].map(([k, d]) => (
+                    <div key={k} className="flex items-start gap-3">
+                      <kbd className="shrink-0 min-w-[96px] px-2 py-0.5 text-xs font-mono bg-slate-900 border border-slate-600 rounded text-slate-200">{k}</kbd>
+                      <span className="text-slate-300">{d}</span>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+
+              {/* Entering shifts */}
+              <section>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Entering shifts</h3>
+                <dl className="space-y-1">
+                  {[
+                    ["letter", "Assign the shift bound to that hotkey to the active cell / selection"],
+                    ["Drag a shift", "Move an assignment to another cell"],
+                    ["Delete / Backspace", "Clear the assignment(s)"],
+                    ["Ctrl / Cmd + Z", "Undo"],
+                    ["Ctrl + Shift + Z  ·  Ctrl + Y", "Redo"],
+                  ].map(([k, d]) => (
+                    <div key={k} className="flex items-start gap-3">
+                      <kbd className="shrink-0 min-w-[96px] px-2 py-0.5 text-xs font-mono bg-slate-900 border border-slate-600 rounded text-slate-200">{k}</kbd>
+                      <span className="text-slate-300">{d}</span>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+
+              {/* Request mode */}
+              <section>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Request mode</h3>
+                <dl className="space-y-1">
+                  {[
+                    ["/", "Toggle request mode (violet banner). Letters now create requests, not assignments."],
+                    ["letter", "Request: want this shift"],
+                    ["Shift + letter", "Request: avoid this shift"],
+                    ["Alt + letter", "Request: soft (preference). Shift + Alt = soft avoid"],
+                    ["+", "Approve every pending request on the cell / selection"],
+                    ["!", "Deny every pending request on the cell / selection"],
+                    ["Delete / Backspace", "Remove the request(s) on the cell / selection"],
+                    ["?", "Show or hide the request overlay (the RQ button)"],
+                  ].map(([k, d]) => (
+                    <div key={k} className="flex items-start gap-3">
+                      <kbd className="shrink-0 min-w-[96px] px-2 py-0.5 text-xs font-mono bg-slate-900 border border-slate-600 rounded text-slate-200">{k}</kbd>
+                      <span className="text-slate-300">{d}</span>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+
+              {/* Shift hotkey legend (dynamic) */}
+              <section>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Shift hotkeys</h3>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                  {shiftTypes.filter((st) => st.hotkey).map((st) => (
+                    <div key={st.id} className="flex items-center gap-2">
+                      <kbd className="shrink-0 w-6 text-center px-1 py-0.5 text-xs font-mono bg-slate-900 border border-slate-600 rounded text-slate-200">{st.hotkey!.toUpperCase()}</kbd>
+                      <span className="w-9 text-center text-[11px] font-bold rounded px-1 py-0.5" style={{ backgroundColor: st.isOffShift ? "transparent" : st.color + "30", color: st.isOffShift ? "#64748b" : st.color }}>{st.code}</span>
+                      <span className="text-xs text-slate-400 truncate">{st.name}</span>
+                    </div>
+                  ))}
+                  {shiftTypes.every((st) => !st.hotkey) && (
+                    <span className="text-xs text-slate-500">No shift hotkeys configured.</span>
+                  )}
+                </div>
+              </section>
+
+              {/* Cell color legend */}
+              <section>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Cell colors</h3>
+                <div className="space-y-2">
+                  <p className="text-[11px] text-slate-500">Assigned shifts use each shift&apos;s own color:</p>
+                  <div className="grid grid-cols-3 gap-x-4 gap-y-1">
+                    {shiftTypes.map((st) => (
+                      <div key={st.id} className="flex items-center gap-2">
+                        <span className="w-8 text-center text-[11px] font-bold rounded px-1 py-0.5" style={{ backgroundColor: st.isOffShift ? "transparent" : st.color + "30", color: st.isOffShift ? "#64748b" : st.color }}>{st.code}</span>
+                        <span className="text-[11px] text-slate-400 truncate">{st.name}{st.isOffShift ? " (off)" : ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-500 pt-1">Request overlay (ring + letters): solid ring = approved, faint ring = pending.</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    {([
+                      { label: "want", desc: "Wants the shift", c: REQ_CAT_CLASSES.want },
+                      { label: "avoid", desc: "Wants to avoid", c: REQ_CAT_CLASSES.restricted },
+                      { label: "leave", desc: "Leave request", c: REQ_CAT_CLASSES.leave },
+                      { label: "off", desc: "Off request", c: REQ_CAT_CLASSES.off },
+                      { label: "mixed", desc: "Multiple kinds", c: REQ_CAT_CLASSES.mixed },
+                    ]).map(({ label, desc, c }) => (
+                      <div key={label} className="flex items-center gap-2">
+                        <span className={`w-6 h-5 rounded ring-2 ring-inset ${c.ring} ${c.bg}`} />
+                        <span className={`text-[11px] font-semibold ${c.text}`}>{label}</span>
+                        <span className="text-[11px] text-slate-500 truncate">{desc}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-500 pt-1">Cell states:</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    {[
+                      ["ring-2 ring-inset ring-yellow-500/70", "Locked assignment"],
+                      ["bg-emerald-900/40", "Auto-schedule suggestion"],
+                      ["ring-2 ring-inset ring-emerald-400 bg-emerald-900/20", "Selected (normal mode)"],
+                      ["ring-2 ring-inset ring-violet-400 bg-violet-900/30", "Selected (request mode)"],
+                      ["ring-2 ring-inset ring-blue-400", "Active cell (normal mode)"],
+                      ["ring-2 ring-inset ring-violet-400", "Active cell (request mode)"],
+                    ].map(([cls, desc]) => (
+                      <div key={desc} className="flex items-center gap-2">
+                        <span className={`w-6 h-5 rounded ${cls}`} />
+                        <span className="text-[11px] text-slate-400 truncate">{desc}</span>
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-5 rounded bg-slate-900 relative"><span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-red-500" /></span>
+                      <span className="text-[11px] text-slate-400 truncate">Warning dot: red = error, amber = warning</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
         </div>
       )}
 
