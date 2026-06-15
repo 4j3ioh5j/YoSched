@@ -29,6 +29,7 @@ export type RequestSource = "scheduler" | "staff" | "email";
 export type PendingRequestMode = "off" | "soft" | "full";
 
 export const REQUEST_KINDS: readonly RequestKind[] = ["OFF", "LEAVE", "NEGATE_SHIFT", "REQUEST_SHIFT"];
+export const REQUEST_STATUSES: readonly RequestStatus[] = ["pending", "approved", "declined", "fulfilled", "withdrawn"];
 export const REQUEST_STRENGTHS: readonly RequestStrength[] = ["hard", "soft"];
 export const REQUEST_SOURCES: readonly RequestSource[] = ["scheduler", "staff", "email"];
 export const PENDING_REQUEST_MODES: readonly PendingRequestMode[] = ["off", "soft", "full"];
@@ -802,6 +803,57 @@ export function validateRequestInput(
       strength: strength as RequestStrength,
       source: source as RequestSource,
       notes,
+    },
+  };
+}
+
+// ---- Undo restore --------------------------------------------------------
+// Restoring an undeleted request must recreate it VERBATIM (same id, status,
+// approval stamp) so the undo stack stays id-stable. validateRestoreInput
+// reuses validateRequestInput for the shared fields, then layers the identity
+// (id) and the full lifecycle state a plain create can't carry.
+
+export type RestoreRequestInput = RequestInput & {
+  id: string;
+  status: RequestStatus;
+  autoApproved: boolean;
+  approvedAt: string | null;
+  approvedBy: string | null;
+  receivedAt: string | null;
+};
+
+/** Pure validation for the restore endpoint. `id` is required (the original,
+ *  freed by the prior delete) and `status` defaults to "pending"; the rest of
+ *  the field rules are delegated to validateRequestInput. Pure. */
+export function validateRestoreInput(
+  body: unknown
+): { error: string } | { value: RestoreRequestInput } {
+  const b = (body ?? {}) as Record<string, unknown>;
+
+  const id = b.id;
+  if (typeof id !== "string" || !id) return { error: "id required" };
+
+  const base = validateRequestInput(b);
+  if ("error" in base) return base;
+
+  const status = b.status ?? "pending";
+  if (!REQUEST_STATUSES.includes(status as RequestStatus)) {
+    return { error: `status must be one of ${REQUEST_STATUSES.join(", ")}` };
+  }
+  // ISO timestamps are stored verbatim; a malformed one is dropped to null
+  // rather than rejected (the stamp is informational, not load-bearing).
+  const isoOrNull = (v: unknown): string | null =>
+    typeof v === "string" && !Number.isNaN(Date.parse(v)) ? v : null;
+
+  return {
+    value: {
+      ...base.value,
+      id,
+      status: status as RequestStatus,
+      autoApproved: b.autoApproved === true,
+      approvedAt: isoOrNull(b.approvedAt),
+      approvedBy: typeof b.approvedBy === "string" ? b.approvedBy : null,
+      receivedAt: isoOrNull(b.receivedAt),
     },
   };
 }

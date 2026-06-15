@@ -4,11 +4,68 @@
 // true. This is the assign→approve direction; the requests route handles the
 // approve→assign direction. Satisfaction rules live in schedule-requests.ts.
 import { prisma } from "./prisma";
-import { isRequestSatisfied, reconcileApprovalAction, type RequestKind } from "./schedule-requests";
+import { isRequestSatisfied, reconcileApprovalAction, lockedBlockingDates, eachDateInclusive, type RequestKind } from "./schedule-requests";
 
 type Cell = { staffId: string; date: string }; // date = "YYYY-MM-DD"
 
 const ymd = (d: Date): string => d.toISOString().slice(0, 10);
+
+type PlaceableRequest = {
+  staffId: string;
+  kind: RequestKind;
+  shiftTypeIds: string[];
+  leaveShiftTypeId: string | null;
+  startDate: string; // "YYYY-MM-DD"
+  endDate: string;
+};
+
+/**
+ * Place an approved request's resolved shift across its covered days — the
+ * approve→assign half of the sync, shared by the PATCH-approve route and the
+ * undo /restore route so the lock rule and placement stay identical in both.
+ *
+ * A locked day that doesn't already satisfy the request can't be honoured
+ * (approval can neither place its shift nor lean on what's there): such days are
+ * returned in `blocked` and NOTHING is placed — the caller decides whether to
+ * refuse (PATCH → 409) or fall back to pending (restore). When nothing is
+ * blocked, the shift is upserted (source:"request") on every covered,
+ * non-locked day. Caller still owns the request row's status + a follow-up
+ * syncRequestApprovals to reconcile neighbours.
+ */
+export async function placeApprovedRequestShift(
+  req: PlaceableRequest,
+  placement: string,
+): Promise<{ blocked: string[] }> {
+  const at = (date: string) => new Date(date + "T00:00:00Z");
+  const dates = eachDateInclusive(req.startDate, req.endDate);
+  const existing = await prisma.assignment.findMany({
+    where: { staffId: req.staffId, date: { in: dates.map(at) } },
+    select: { date: true, shiftTypeId: true, isLocked: true },
+  });
+  const byDate = new Map(existing.map((c) => [ymd(c.date), c]));
+  const offSet = new Set(
+    (await prisma.shiftType.findMany({ where: { isOffShift: true }, select: { id: true } })).map((s) => s.id)
+  );
+  const blocked = lockedBlockingDates(
+    req,
+    (date) => {
+      const c = byDate.get(date);
+      return c ? { shiftTypeId: c.shiftTypeId, isLocked: c.isLocked } : null;
+    },
+    (s) => offSet.has(s)
+  );
+  if (blocked.length > 0) return { blocked };
+
+  for (const date of dates) {
+    if (byDate.get(date)?.isLocked) continue; // already satisfies (else it'd be blocked)
+    await prisma.assignment.upsert({
+      where: { staffId_date: { staffId: req.staffId, date: at(date) } },
+      update: { shiftTypeId: placement, source: "request" },
+      create: { staffId: req.staffId, date: at(date), shiftTypeId: placement, source: "request" },
+    });
+  }
+  return { blocked: [] };
+}
 
 /**
  * Reconcile request approval after assignments change for the given cells.

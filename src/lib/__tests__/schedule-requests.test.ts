@@ -27,6 +27,7 @@ import {
   parsePendingRequestMode,
   detectRequestConflicts,
   keysToRequestIntent,
+  validateRestoreInput,
   PENDING_REQUEST_MODES,
   DEFAULT_PENDING_REQUEST_MODE,
   type LeaveQueueRequest,
@@ -1326,5 +1327,76 @@ describe("keysToRequestIntent", () => {
     const [p] = buildRequestPayloads(marks, [{ staffId: "P", startDate: "2026-07-04", endDate: "2026-07-04" }]);
     expect(p.kind).toBe("OFF");
     expect(p.strength).toBe("soft");
+  });
+});
+
+describe("validateRestoreInput", () => {
+  const full = {
+    id: "req-123",
+    staffId: "P",
+    startDate: "2026-07-04",
+    endDate: "2026-07-06",
+    kind: "REQUEST_SHIFT",
+    shiftTypeIds: ["orc"],
+    leaveShiftTypeId: null,
+    strength: "hard",
+    source: "scheduler",
+    notes: null,
+    status: "approved",
+    autoApproved: true,
+    approvedAt: "2026-07-01T12:00:00.000Z",
+    approvedBy: "admin",
+    receivedAt: "2026-06-30T08:00:00.000Z",
+  };
+
+  it("accepts a full approved snapshot verbatim", () => {
+    const r = validateRestoreInput(full);
+    expect("value" in r).toBe(true);
+    if ("value" in r) {
+      expect(r.value.id).toBe("req-123");
+      expect(r.value.status).toBe("approved");
+      expect(r.value.autoApproved).toBe(true);
+      expect(r.value.approvedBy).toBe("admin");
+      expect(r.value.approvedAt).toBe("2026-07-01T12:00:00.000Z");
+      expect(r.value.kind).toBe("REQUEST_SHIFT");
+      expect(r.value.shiftTypeIds).toEqual(["orc"]);
+    }
+  });
+
+  it("requires id", () => {
+    expect(validateRestoreInput({ ...full, id: "" })).toEqual({ error: "id required" });
+    const { id: _omit, ...noId } = full;
+    expect(validateRestoreInput(noId)).toEqual({ error: "id required" });
+  });
+
+  it("defaults status to pending and autoApproved to false", () => {
+    const { status: _s, autoApproved: _a, approvedAt: _at, approvedBy: _by, ...rest } = full;
+    const r = validateRestoreInput(rest);
+    expect("value" in r).toBe(true);
+    if ("value" in r) {
+      expect(r.value.status).toBe("pending");
+      expect(r.value.autoApproved).toBe(false);
+      expect(r.value.approvedAt).toBeNull();
+      expect(r.value.approvedBy).toBeNull();
+    }
+  });
+
+  it("rejects an unknown status", () => {
+    const r = validateRestoreInput({ ...full, status: "bogus" });
+    expect("error" in r && r.error).toMatch(/status must be one of/);
+  });
+
+  it("drops a malformed timestamp to null rather than failing", () => {
+    const r = validateRestoreInput({ ...full, approvedAt: "not-a-date", receivedAt: 12345 });
+    expect("value" in r).toBe(true);
+    if ("value" in r) {
+      expect(r.value.approvedAt).toBeNull();
+      expect(r.value.receivedAt).toBeNull();
+    }
+  });
+
+  it("inherits validateRequestInput field rules (e.g. REQUEST_SHIFT needs a shift)", () => {
+    const r = validateRestoreInput({ ...full, shiftTypeIds: [] });
+    expect("error" in r && r.error).toMatch(/REQUEST_SHIFT requires/);
   });
 });

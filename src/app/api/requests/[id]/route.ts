@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { syncRequestApprovals } from "@/lib/request-sync";
-import { resolveRequestPlacement, releasableDates, eachDateInclusive, lockedBlockingDates, type RequestKind } from "@/lib/schedule-requests";
+import { syncRequestApprovals, placeApprovedRequestShift } from "@/lib/request-sync";
+import { resolveRequestPlacement, releasableDates, eachDateInclusive, type RequestKind } from "@/lib/schedule-requests";
 import { NextRequest, NextResponse } from "next/server";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -29,11 +29,6 @@ const ymd = (d: Date): string => d.toISOString().slice(0, 10);
 async function offShiftId(): Promise<string | null> {
   const off = await prisma.shiftType.findFirst({ where: { isOffShift: true }, select: { id: true } });
   return off?.id ?? null;
-}
-
-async function offShiftSet(): Promise<Set<string>> {
-  const offs = await prisma.shiftType.findMany({ where: { isOffShift: true }, select: { id: true } });
-  return new Set(offs.map((s) => s.id));
 }
 
 const reqShape = (r: RequestRow) => ({
@@ -115,28 +110,13 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
   if (status === "approved") {
     if (placement) {
-      // Load every covered cell once so we can both detect locked blockers and
-      // place in one pass.
-      const at = (date: string) => new Date(date + "T00:00:00Z");
-      const existingCells = await prisma.assignment.findMany({
-        where: { staffId: existing.staffId, date: { in: cells.map((c) => at(c.date)) } },
-        select: { date: true, shiftTypeId: true, isLocked: true },
-      });
-      const byDate = new Map(existingCells.map((c) => [ymd(c.date), c]));
-      const offSet = await offShiftSet();
-
       // A locked day that doesn't already satisfy the request can't be honoured —
       // approval can neither place its shift nor lean on what's there. Refuse the
       // approval (place nothing) and leave the request pending so the scheduler
       // resolves the lock; the grid keeps surfacing it as an unmet request.
-      const blocked = lockedBlockingDates(
-        reqShape(existing),
-        (date) => {
-          const c = byDate.get(date);
-          return c ? { shiftTypeId: c.shiftTypeId, isLocked: c.isLocked } : null;
-        },
-        (s) => offSet.has(s)
-      );
+      // (Shared with /restore via placeApprovedRequestShift so the lock rule and
+      // placement are identical in both.)
+      const { blocked } = await placeApprovedRequestShift({ ...reqShape(existing), staffId: existing.staffId }, placement);
       if (blocked.length > 0) {
         return NextResponse.json(
           {
@@ -145,17 +125,6 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
           },
           { status: 409 }
         );
-      }
-
-      // Place the resolved shift on every covered, non-locked day. (Any locked day
-      // that reached here already satisfies the request, so leave it as-is.)
-      for (const { staffId, date } of cells) {
-        if (byDate.get(date)?.isLocked) continue;
-        await prisma.assignment.upsert({
-          where: { staffId_date: { staffId, date: at(date) } },
-          update: { shiftTypeId: placement, source: "request" },
-          create: { staffId, date: at(date), shiftTypeId: placement, source: "request" },
-        });
       }
     }
     // Explicit approval is authoritative — stamp it directly regardless of the
