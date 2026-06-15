@@ -79,6 +79,45 @@ async function datesToRelease(r: RequestRow, placement: string | null, offId: st
   ).map((d) => new Date(d + "T00:00:00Z"));
 }
 
+// The authoritative post-change state of everything a status change can touch:
+// the visible (pending/approved) requests overlapping the covered cells — which
+// includes any co-approved/reverted NEIGHBOUR requests — and the current
+// assignment on each covered cell. The client replaces its local state for this
+// window so co-approval cascades and placement are always reflected exactly,
+// and undo/redo (which PATCH back) get the inverse window the same way.
+async function affectedWindow(staffId: string, cells: { staffId: string; date: string }[]) {
+  if (cells.length === 0) return { requests: [], cells: [] };
+  const dates = cells.map((c) => c.date).sort();
+  const at = (d: string) => new Date(d + "T00:00:00Z");
+  const [requests, assignments] = await Promise.all([
+    prisma.scheduleRequest.findMany({
+      where: {
+        staffId,
+        status: { in: ["pending", "approved"] },
+        startDate: { lte: at(dates[dates.length - 1]) },
+        endDate: { gte: at(dates[0]) },
+      },
+      select: { id: true, status: true },
+    }),
+    prisma.assignment.findMany({
+      where: { staffId, date: { in: cells.map((c) => at(c.date)) } },
+      select: { id: true, date: true, shiftTypeId: true, isLocked: true },
+    }),
+  ]);
+  const byDate = new Map(assignments.map((a) => [ymd(a.date), a]));
+  return {
+    requests,
+    cells: cells.map((c) => {
+      const a = byDate.get(c.date);
+      return {
+        staffId: c.staffId,
+        date: c.date,
+        assignment: a ? { id: a.id, shiftTypeId: a.shiftTypeId, isLocked: a.isLocked } : null,
+      };
+    }),
+  };
+}
+
 // PATCH — change a request's status (the approval action). Requires schedule:edit.
 //
 // Approval and assignment are two routes to the same end state, so this keeps
@@ -137,7 +176,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     });
     // Co-approve any OTHER requests the placement satisfies; never re-derive this one.
     await syncRequestApprovals(cells, result.userId, { excludeRequestId: id });
-    return NextResponse.json(serialize(updated));
+    return NextResponse.json({ ...serialize(updated), affected: await affectedWindow(existing.staffId, cells) });
   }
 
   if (status === "declined" || status === "withdrawn" || status === "pending") {
@@ -163,12 +202,12 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     // Reconcile OTHER requests on those cells, but never re-derive THIS one — the
     // explicit transition is authoritative, even if a satisfying shift remains.
     await syncRequestApprovals(cells, result.userId, { excludeRequestId: id });
-    return NextResponse.json(serialize(updated));
+    return NextResponse.json({ ...serialize(updated), affected: await affectedWindow(existing.staffId, cells) });
   }
 
   // fulfilled — record the outcome only; leave assignments and the stamp as-is.
   const updated = await prisma.scheduleRequest.update({ where: { id }, data: { status } });
-  return NextResponse.json(serialize(updated));
+  return NextResponse.json({ ...serialize(updated), affected: await affectedWindow(existing.staffId, cells) });
 }
 
 // DELETE — remove a request entirely. Requires schedule:edit.

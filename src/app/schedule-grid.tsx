@@ -598,7 +598,15 @@ export function ScheduleGrid({
   type UndoEntry =
     | { kind: "assignment"; ops: UndoOp[] }
     | { kind: "request-create"; snapshots: RequestSnapshot[] }
-    | { kind: "request-delete"; snapshots: RequestSnapshot[] };
+    | { kind: "request-delete"; snapshots: RequestSnapshot[] }
+    // approve/deny that changed EXACTLY ONE request (no co-approval cascade) —
+    // safely reversible by a single PATCH. undo/redo PATCH it back and apply the
+    // returned affected window.
+    | { kind: "request-status"; item: { id: string; from: RequestStatus; to: RequestStatus } }
+    // approve/deny that cascaded (co-approved neighbours / shared placement):
+    // a single-PATCH undo would race the auto-approve sync and leave stale state,
+    // so it is NOT undoable — Cmd-Z warns instead of attempting it.
+    | { kind: "request-status-blocked" };
   const undoStack = useRef<UndoEntry[]>([]);
   const redoStack = useRef<UndoEntry[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1344,9 +1352,62 @@ export function ScheduleGrid({
     if (results.some((ok) => !ok)) setRequestError("Some requests could not be restored during undo/redo.");
   }
 
+  // Apply the authoritative "affected window" a request status change returns:
+  // overlapping pending/approved requests (incl. co-approved neighbours) and the
+  // current assignment on each covered cell. Replaces local state for that
+  // window so the grid always matches the server.
+  type AffectedDelta = {
+    requests?: { id: string; status: RequestStatus }[];
+    cells?: { staffId: string; date: string; assignment: { id: string; shiftTypeId: string; isLocked: boolean } | null }[];
+  };
+  function applyRequestDelta(affected?: AffectedDelta) {
+    if (!affected) return;
+    if (affected.requests?.length) {
+      const m = new Map(affected.requests.map((r) => [r.id, r.status]));
+      setLocalRequests((prev) => prev.map((r) => (m.has(r.id) ? { ...r, status: m.get(r.id)! } : r)));
+    }
+    if (affected.cells?.length) {
+      setLocalAssignments((prev) => {
+        let next = prev;
+        for (const c of affected.cells!) {
+          next = next.filter((a) => !(a.staffId === c.staffId && a.date === c.date));
+          if (c.assignment) {
+            const st = shiftTypeMap.get(c.assignment.shiftTypeId);
+            next = [...next, { id: c.assignment.id, staffId: c.staffId, date: c.date, shiftTypeId: c.assignment.shiftTypeId, isLocked: c.assignment.isLocked, code: st?.code ?? "?", color: st?.color ?? "#6b7280" }];
+          }
+        }
+        return next;
+      });
+    }
+  }
+
+  // PATCH one request's status and apply the affected window it returns. The
+  // explicit row's status is set by the caller (a terminal status like declined
+  // drops out of the returned window). Returns ok + http status (409 = locked).
+  async function patchRequestStatus(id: string, status: RequestStatus): Promise<{ ok: boolean; httpStatus: number; affected?: AffectedDelta }> {
+    try {
+      const res = await fetch(`/api/requests/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }),
+      });
+      if (res.ok) {
+        const affected = (await res.json())?.affected as AffectedDelta | undefined;
+        applyRequestDelta(affected);
+        return { ok: true, httpStatus: res.status, affected };
+      }
+      return { ok: res.ok, httpStatus: res.status };
+    } catch {
+      return { ok: false, httpStatus: 0 };
+    }
+  }
+
   async function handleUndo() {
     const entry = undoStack.current.pop();
     if (!entry) return;
+    if (entry.kind === "request-status-blocked") {
+      // Consume the marker and warn — a cascading approve/deny isn't Cmd-Z-able.
+      setRequestError("That approve/deny also changed related requests, so it can't be undone with Cmd-Z — reverse it from the Requests view.");
+      return;
+    }
     redoStack.current.push(entry);
     if (entry.kind === "assignment") {
       await Promise.all(entry.ops.map((op) => applyAssignment(op.staffId, op.date, op.prev)));
@@ -1354,6 +1415,12 @@ export function ScheduleGrid({
       await deleteRequestsForUndo(entry.snapshots); // undo a create = delete the requests
     } else if (entry.kind === "request-delete") {
       await restoreRequestsForUndo(entry.snapshots); // undo a delete = restore them (same ids)
+    } else if (entry.kind === "request-status") {
+      // Single, non-cascading change → revert with one PATCH; the affected
+      // window restores its placement.
+      setLocalRequests((prev) => prev.map((r) => (r.id === entry.item.id ? { ...r, status: entry.item.from } : r)));
+      const { ok } = await patchRequestStatus(entry.item.id, entry.item.from);
+      if (!ok) setRequestError("The request approval could not be reverted during undo.");
     }
   }
 
@@ -1367,6 +1434,10 @@ export function ScheduleGrid({
       await restoreRequestsForUndo(entry.snapshots); // redo a create = restore them (same ids)
     } else if (entry.kind === "request-delete") {
       await deleteRequestsForUndo(entry.snapshots); // redo a delete = delete again
+    } else if (entry.kind === "request-status") {
+      setLocalRequests((prev) => prev.map((r) => (r.id === entry.item.id ? { ...r, status: entry.item.to } : r)));
+      const { ok } = await patchRequestStatus(entry.item.id, entry.item.to);
+      if (!ok) setRequestError("The request approval could not be re-applied during redo.");
     }
   }
 
@@ -1404,6 +1475,15 @@ export function ScheduleGrid({
       if (e.key === "/" && canEdit) {
         e.preventDefault();
         setRequestMode((m) => !m);
+        return;
+      }
+      // Request mode only: "+" approves / "!" denies every pending request on
+      // the active cell / selection. Both already require Shift on the key
+      // (Shift+= / Shift+1) — match the produced char. Never fires in normal
+      // mode, so a stray + can't approve.
+      if (requestMode && !picker && canEdit && (activeRow || selection.size > 0) && !e.metaKey && !e.ctrlKey && (e.key === "+" || e.key === "!")) {
+        e.preventDefault();
+        requestApproveRef.current(e.key === "+" ? "approved" : "declined");
         return;
       }
       if (e.key === "Escape" && !picker) {
@@ -1844,6 +1924,66 @@ export function ScheduleGrid({
   }, [selection, activeCol, activeRow, localRequests]);
   const requestDeleteRef = useRef(handleRequestDelete);
   useEffect(() => { requestDeleteRef.current = handleRequestDelete; }, [handleRequestDelete]);
+
+  // Request-mode + / ! : approve / deny every PENDING request overlapping the
+  // active cell / selection. The decision is made against a PRE-BATCH snapshot
+  // (only requests pending right now) so co-approval triggered by an earlier
+  // PATCH can't make it order-dependent. Approving a single-shift request also
+  // places that shift (server-side; mirrored locally), skipping requests whose
+  // covered days are locked-and-unsatisfied (which the server would 409).
+  const handleRequestApproveDeny = useCallback(async (target: "approved" | "declined") => {
+    const cells: { staffId: string; date: string }[] = [];
+    if (selection.size > 0) {
+      for (const key of selection) { const [pid, d] = key.split(":"); cells.push({ staffId: pid, date: d }); }
+    } else if (activeCol && activeRow) {
+      cells.push({ staffId: activeCol, date: activeRow });
+    }
+    if (cells.length === 0) return;
+
+    // PRE-BATCH snapshot: only requests pending RIGHT NOW (so co-approval from an
+    // earlier PATCH in this batch can't make the decision order-dependent).
+    const explicit = localRequests
+      .filter((r) => r.status === "pending" && cells.some((c) => c.staffId === r.staffId && r.startDate <= c.date && c.date <= r.endDate))
+      .map((r) => r.id);
+    if (explicit.length === 0) return;
+
+    // Capture every request's status BEFORE the batch so we can record the FULL
+    // set that changes — explicit approvals/denials AND any co-approved/reverted
+    // neighbours — so undo reverts the whole cascade, not just the keys pressed.
+    const preStatus = new Map(localRequests.map((r) => [r.id, r.status]));
+    const postStatus = new Map(preStatus);
+
+    setLocalRequests((prev) => prev.map((r) => (explicit.includes(r.id) ? { ...r, status: target } : r)));
+    let failed = 0, locked = 0;
+    for (const id of explicit) {
+      const { ok, httpStatus, affected } = await patchRequestStatus(id, target);
+      if (ok) {
+        postStatus.set(id, target);
+        for (const ar of affected?.requests ?? []) postStatus.set(ar.id, ar.status); // co-approved neighbours
+      } else {
+        failed++;
+        if (httpStatus === 409) locked++; // a covered day is locked-and-unsatisfied
+        setLocalRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: "pending" } : r))); // revert
+      }
+    }
+
+    // Record undo based on blast radius: a change confined to ONE request is
+    // safely reversible by a single PATCH; anything that also moved other
+    // requests (a co-approval cascade, or a multi-cell batch) can't be undone
+    // by sequential PATCHes without racing the auto-approve sync — push a
+    // non-undoable marker so Cmd-Z warns rather than corrupting state.
+    const changed = [...postStatus.entries()]
+      .filter(([id, st]) => preStatus.get(id) !== st)
+      .map(([id, st]) => ({ id, from: preStatus.get(id) ?? ("pending" as RequestStatus), to: st }));
+    if (changed.length === 1) pushUndoEntry({ kind: "request-status", item: changed[0] });
+    else if (changed.length > 1) pushUndoEntry({ kind: "request-status-blocked" });
+    if (failed > 0) {
+      const verb = target === "approved" ? "approved" : "denied";
+      setRequestError(`${failed} request(s) couldn't be ${verb}${locked > 0 ? ` (${locked} locked)` : ""}.`);
+    }
+  }, [selection, activeCol, activeRow, localRequests]);
+  const requestApproveRef = useRef(handleRequestApproveDeny);
+  useEffect(() => { requestApproveRef.current = handleRequestApproveDeny; }, [handleRequestApproveDeny]);
 
   // Delete an existing request (the × in the picker's request list).
   const handleDeleteRequest = useCallback(async (id: string) => {
