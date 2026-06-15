@@ -1507,6 +1507,9 @@ export function ScheduleGrid({
       // above, so this never fires while typing or in the month menu.
       if (e.key === "/" && canEdit) {
         e.preventDefault();
+        // Entering request mode forces the request overlay on; exiting leaves it
+        // as-is (it stays visible until the user hides it via RQ / "?").
+        if (!requestMode) setShowRequests(true);
         setRequestMode((m) => !m);
         return;
       }
@@ -3006,7 +3009,7 @@ export function ScheduleGrid({
             onDeleteRequest={handleDeleteRequest}
             onSaveRequest={handleSaveRequests}
             tab={requestMode ? "request" : "assign"}
-            onTabChange={(t) => setRequestMode(t === "request")}
+            onTabChange={(t) => { const on = t === "request"; if (on) setShowRequests(true); setRequestMode(on); }}
             requestTargetCount={
               selectionCount > 1
                 ? groupCellsIntoTargets([...selection].map((k) => { const [staffId, date] = k.split(":"); return { staffId, date }; })).length
