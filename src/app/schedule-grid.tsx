@@ -9,6 +9,7 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
+import { selectionToTsv } from "@/lib/grid-clipboard";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
@@ -1617,6 +1618,42 @@ export function ScheduleGrid({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [picker, canEdit, activeRow, activeCol, assignmentMap, dates, visibleStaff, hotkeyMap, selection, showMonthPicker, requestMode, toggleShowRequests, showVersions, showAlerts, showHelp]);
+
+  // Copy the selected cells (or the active cell) to the clipboard as TSV so they paste
+  // into Excel/Sheets matching the grid (dates rows, staff cols), values only. Read-only
+  // — no canEdit gate. Mirrors the keydown guards (inputs/modals/picker) and yields to
+  // the browser when the user has selected real page text and there's no grid selection.
+  useEffect(() => {
+    function onCopy(e: ClipboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (showMonthPicker || showVersions || showAlerts || showHelp || picker) return;
+
+      // An explicit multi-cell grid selection is a strong intent signal and wins over
+      // any stray DOM selection. With only an active cell, defer to a real text
+      // selection so we never hijack the user copying page text.
+      let keys: string[];
+      if (selection.size > 0) {
+        keys = [...selection];
+      } else if (activeRow && activeCol) {
+        if (window.getSelection()?.toString().trim()) return; // user is copying text
+        keys = [`${activeCol}:${activeRow}`];
+      } else {
+        return;
+      }
+
+      const tsv = selectionToTsv(keys, {
+        dateOrder: dates,
+        staffOrder: visibleStaff.map((p) => p.id),
+        codeAt: (staffId, date) => assignmentMap.get(`${staffId}:${date}`)?.code,
+      });
+      if (tsv == null) return;
+      e.clipboardData?.setData("text/plain", tsv);
+      e.preventDefault();
+    }
+    document.addEventListener("copy", onCopy);
+    return () => document.removeEventListener("copy", onCopy);
+  }, [selection, activeRow, activeCol, assignmentMap, dates, visibleStaff, showMonthPicker, showVersions, showAlerts, showHelp, picker]);
 
   const hotkeyAssign = useCallback(async (st: ShiftType) => {
     const cells: { staffId: string; date: string }[] = [];
