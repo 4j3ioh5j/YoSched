@@ -12,11 +12,32 @@ import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
-import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, keysToRequestIntent, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory } from "@/lib/schedule-requests";
+import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, keysToRequestIntent, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory, type RequestKind, type RequestStrength, type RequestStatus } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
 
 // A schedule request as delivered to the grid (pure-module shape + display stamp).
 type GridRequest = ScheduleRequestData & { receivedAt: string };
+
+// Everything /api/requests/[id]/restore needs to recreate a request verbatim
+// under its original id — captured when a request is created/deleted so undo &
+// redo can replay it id-stably.
+type RequestSnapshot = {
+  id: string;
+  staffId: string;
+  startDate: string;
+  endDate: string;
+  kind: RequestKind;
+  shiftTypeIds: string[];
+  leaveShiftTypeId: string | null;
+  strength: RequestStrength;
+  status: RequestStatus;
+  source: string;
+  notes: string | null;
+  receivedAt: string;
+  autoApproved?: boolean;
+  approvedAt?: string | null;
+  approvedBy?: string | null;
+};
 
 // Box/letter colors per request category (static classes for Tailwind).
 const REQ_CAT_CLASSES: Record<RequestCategory | "mixed", { ring: string; ringFaint: string; text: string; bg: string }> = {
@@ -569,7 +590,12 @@ export function ScheduleGrid({
 
   // Undo/redo stacks — each entry is a group of changes applied together
   type UndoOp = { staffId: string; date: string; prev: AssignmentData | null; next: AssignmentData | null };
-  type UndoEntry = UndoOp[];
+  // Tagged-union undo stack so assignments AND requests share one chronological
+  // Cmd-Z / redo. Request entries are id-stable: undo/redo recreate a request
+  // under its ORIGINAL id (via /restore) so no other stack entry goes stale.
+  type UndoEntry =
+    | { kind: "assignment"; ops: UndoOp[] }
+    | { kind: "request-create"; snapshots: RequestSnapshot[] };
   const undoStack = useRef<UndoEntry[]>([]);
   const redoStack = useRef<UndoEntry[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1122,8 +1148,13 @@ export function ScheduleGrid({
     return () => document.removeEventListener("mousedown", onClick);
   }, [showMonthPicker]);
 
+  // Assignment ops keep their original call sites; wrap them as an entry so the
+  // 7 existing pushUndo() callers are untouched.
   function pushUndo(ops: UndoOp[]) {
-    undoStack.current.push(ops);
+    pushUndoEntry({ kind: "assignment", ops });
+  }
+  function pushUndoEntry(entry: UndoEntry) {
+    undoStack.current.push(entry);
     redoStack.current = [];
   }
 
@@ -1281,18 +1312,54 @@ export function ScheduleGrid({
     setSaving(null);
   }
 
+  // Optimistically drop / re-add requests in local state, then persist. Best-
+  // effort like the assignment undo path; a failed call surfaces a message.
+  async function deleteRequestsForUndo(snapshots: RequestSnapshot[]) {
+    setLocalRequests((prev) => prev.filter((r) => !snapshots.some((s) => s.id === r.id)));
+    const results = await Promise.all(
+      snapshots.map((s) => fetch(`/api/requests/${s.id}`, { method: "DELETE" }).then((r) => r.ok).catch(() => false)),
+    );
+    if (results.some((ok) => !ok)) setRequestError("Some requests could not be removed during undo/redo.");
+  }
+  async function restoreRequestsForUndo(snapshots: RequestSnapshot[]) {
+    setLocalRequests((prev) => [
+      ...snapshots.map((s): GridRequest => ({
+        id: s.id, staffId: s.staffId, startDate: s.startDate, endDate: s.endDate,
+        kind: s.kind, shiftTypeIds: s.shiftTypeIds, leaveShiftTypeId: s.leaveShiftTypeId,
+        strength: s.strength, status: s.status, receivedAt: s.receivedAt,
+      })),
+      ...prev,
+    ]);
+    const results = await Promise.all(
+      snapshots.map((s) =>
+        fetch(`/api/requests/${s.id}/restore`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s),
+        }).then((r) => r.ok).catch(() => false),
+      ),
+    );
+    if (results.some((ok) => !ok)) setRequestError("Some requests could not be restored during undo/redo.");
+  }
+
   async function handleUndo() {
-    const group = undoStack.current.pop();
-    if (!group) return;
-    redoStack.current.push(group);
-    await Promise.all(group.map((op) => applyAssignment(op.staffId, op.date, op.prev)));
+    const entry = undoStack.current.pop();
+    if (!entry) return;
+    redoStack.current.push(entry);
+    if (entry.kind === "assignment") {
+      await Promise.all(entry.ops.map((op) => applyAssignment(op.staffId, op.date, op.prev)));
+    } else if (entry.kind === "request-create") {
+      await deleteRequestsForUndo(entry.snapshots); // undo a create = delete the requests
+    }
   }
 
   async function handleRedo() {
-    const group = redoStack.current.pop();
-    if (!group) return;
-    undoStack.current.push(group);
-    await Promise.all(group.map((op) => applyAssignment(op.staffId, op.date, op.next)));
+    const entry = redoStack.current.pop();
+    if (!entry) return;
+    undoStack.current.push(entry);
+    if (entry.kind === "assignment") {
+      await Promise.all(entry.ops.map((op) => applyAssignment(op.staffId, op.date, op.next)));
+    } else if (entry.kind === "request-create") {
+      await restoreRequestsForUndo(entry.snapshots); // redo a create = restore them (same ids)
+    }
   }
 
   const undoRef = useRef(handleUndo);
@@ -1651,7 +1718,7 @@ export function ScheduleGrid({
 
       setSaving("requests");
       setRequestError(null);
-      const created: GridRequest[] = [];
+      const created: RequestSnapshot[] = [];
       let failed = 0;
       try {
         for (const p of payloads) {
@@ -1661,7 +1728,7 @@ export function ScheduleGrid({
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(p),
             });
-            if (res.ok) created.push(await res.json());
+            if (res.ok) created.push(await res.json() as RequestSnapshot);
             else failed++;
           } catch {
             failed++;
@@ -1670,7 +1737,12 @@ export function ScheduleGrid({
       } finally {
         // Show whatever did persist, then surface any failures so a partial
         // save is never silent.
-        if (created.length > 0) setLocalRequests((prev) => [...created, ...prev]);
+        if (created.length > 0) {
+          setLocalRequests((prev) => [...created, ...prev]);
+          // One undoable entry for the batch: Cmd-Z deletes the created
+          // requests; redo restores them under the same ids via /restore.
+          pushUndoEntry({ kind: "request-create", snapshots: created });
+        }
         if (failed > 0) {
           setRequestError(
             `${failed} of ${payloads.length} request${payloads.length > 1 ? "s" : ""} failed to save${created.length > 0 ? ` (${created.length} saved)` : ""}.`,
