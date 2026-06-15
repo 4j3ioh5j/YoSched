@@ -2558,7 +2558,7 @@ export function ScheduleGrid({
                   <th
                     key={p.id}
                     data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
-                    className="px-1 py-1 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer"
+                    className="px-1 py-1 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer bg-slate-800"
                     style={isActiveCol || hoverCol === p.id ? { backgroundColor: "rgba(29,78,216,0.7)" } : undefined}
                     onClick={() => setActiveCol(activeCol === p.id ? null : p.id)}
                     onMouseEnter={(e) => {
@@ -2785,7 +2785,7 @@ export function ScheduleGrid({
                           setHoverCol(p.id);
                           if (showEmptyTip) showTip(setTooltip, `${p.initials} on ${formatDate(parseDate(date), dateFormat)}`, e);
                         }}
-                        onMouseLeave={() => { if (showEmptyTip) setTooltip(null); }}
+                        onMouseLeave={() => { setHoverCol(null); if (showEmptyTip) setTooltip(null); }}
                         onClick={(e) => handleCellClick(p.id, date, e)}
                         onContextMenu={(e) => handleCellContextMenu(p.id, date, e)}
                         onDragOver={(e) => handleDragOver(p.id, date, e)}
