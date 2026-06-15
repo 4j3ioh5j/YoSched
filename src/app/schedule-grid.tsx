@@ -16,7 +16,9 @@ import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCells
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
 
 // A schedule request as delivered to the grid (pure-module shape + display stamp).
-type GridRequest = ScheduleRequestData & { receivedAt: string };
+// source/notes are carried (beyond ScheduleRequestData) so a deleted request can
+// be restored verbatim on undo; autoApproved/approvedBy are re-derived by /restore.
+type GridRequest = ScheduleRequestData & { receivedAt: string; source: string; notes: string | null };
 
 // Everything /api/requests/[id]/restore needs to recreate a request verbatim
 // under its original id — captured when a request is created/deleted so undo &
@@ -595,7 +597,8 @@ export function ScheduleGrid({
   // under its ORIGINAL id (via /restore) so no other stack entry goes stale.
   type UndoEntry =
     | { kind: "assignment"; ops: UndoOp[] }
-    | { kind: "request-create"; snapshots: RequestSnapshot[] };
+    | { kind: "request-create"; snapshots: RequestSnapshot[] }
+    | { kind: "request-delete"; snapshots: RequestSnapshot[] };
   const undoStack = useRef<UndoEntry[]>([]);
   const redoStack = useRef<UndoEntry[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1327,6 +1330,7 @@ export function ScheduleGrid({
         id: s.id, staffId: s.staffId, startDate: s.startDate, endDate: s.endDate,
         kind: s.kind, shiftTypeIds: s.shiftTypeIds, leaveShiftTypeId: s.leaveShiftTypeId,
         strength: s.strength, status: s.status, receivedAt: s.receivedAt,
+        source: s.source, notes: s.notes,
       })),
       ...prev,
     ]);
@@ -1348,6 +1352,8 @@ export function ScheduleGrid({
       await Promise.all(entry.ops.map((op) => applyAssignment(op.staffId, op.date, op.prev)));
     } else if (entry.kind === "request-create") {
       await deleteRequestsForUndo(entry.snapshots); // undo a create = delete the requests
+    } else if (entry.kind === "request-delete") {
+      await restoreRequestsForUndo(entry.snapshots); // undo a delete = restore them (same ids)
     }
   }
 
@@ -1359,6 +1365,8 @@ export function ScheduleGrid({
       await Promise.all(entry.ops.map((op) => applyAssignment(op.staffId, op.date, op.next)));
     } else if (entry.kind === "request-create") {
       await restoreRequestsForUndo(entry.snapshots); // redo a create = restore them (same ids)
+    } else if (entry.kind === "request-delete") {
+      await deleteRequestsForUndo(entry.snapshots); // redo a delete = delete again
     }
   }
 
@@ -1425,7 +1433,11 @@ export function ScheduleGrid({
       }
       if ((e.key === "Delete" || e.key === "Backspace") && !picker && canEdit && activeRow && activeCol) {
         e.preventDefault();
-        if (selection.size > 0) {
+        if (requestMode) {
+          // Request mode: delete requests on the active cell / selection
+          // (assignments are left untouched).
+          requestDeleteRef.current();
+        } else if (selection.size > 0) {
           clearRef.current();
         } else {
           clearRef.current({ staffId: activeCol, date: activeRow });
@@ -1802,6 +1814,36 @@ export function ScheduleGrid({
   );
   const requestKeyRef = useRef(handleRequestKey);
   useEffect(() => { requestKeyRef.current = handleRequestKey; }, [handleRequestKey]);
+
+  // Request-mode Delete: remove every request overlapping the active cell /
+  // selection (a request overlaps when its staff matches and its date range
+  // covers the cell's date). Whole-request delete (a ranged request is removed
+  // entirely), undoable via a request-delete entry that restores verbatim.
+  const handleRequestDelete = useCallback(() => {
+    const cells: { staffId: string; date: string }[] = [];
+    if (selection.size > 0) {
+      for (const key of selection) { const [pid, d] = key.split(":"); cells.push({ staffId: pid, date: d }); }
+    } else if (activeCol && activeRow) {
+      cells.push({ staffId: activeCol, date: activeRow });
+    }
+    if (cells.length === 0) return;
+    const snapshots: RequestSnapshot[] = localRequests
+      // Only the requests the grid actually RENDERS on a cell (pending/approved)
+      // — never the invisible terminal records (declined/withdrawn/fulfilled)
+      // that also live in localRequests but aren't shown.
+      .filter((r) => (r.status === "pending" || r.status === "approved")
+        && cells.some((c) => c.staffId === r.staffId && r.startDate <= c.date && c.date <= r.endDate))
+      .map((r) => ({
+        id: r.id, staffId: r.staffId, startDate: r.startDate, endDate: r.endDate,
+        kind: r.kind, shiftTypeIds: r.shiftTypeIds, leaveShiftTypeId: r.leaveShiftTypeId,
+        strength: r.strength, status: r.status, source: r.source, notes: r.notes, receivedAt: r.receivedAt,
+      }));
+    if (snapshots.length === 0) return;
+    pushUndoEntry({ kind: "request-delete", snapshots });
+    void deleteRequestsForUndo(snapshots); // optimistic remove + DELETE
+  }, [selection, activeCol, activeRow, localRequests]);
+  const requestDeleteRef = useRef(handleRequestDelete);
+  useEffect(() => { requestDeleteRef.current = handleRequestDelete; }, [handleRequestDelete]);
 
   // Delete an existing request (the × in the picker's request list).
   const handleDeleteRequest = useCallback(async (id: string) => {

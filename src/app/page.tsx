@@ -233,6 +233,8 @@ export default async function Home() {
           strength: r.strength as "hard" | "soft",
           status: r.status as "pending" | "approved" | "declined" | "withdrawn" | "fulfilled",
           receivedAt: r.receivedAt.toISOString(),
+          source: r.source,
+          notes: r.notes,
         }))}
       />
     </main>
