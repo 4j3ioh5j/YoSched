@@ -9,7 +9,7 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
-import { selectionToTsv } from "@/lib/grid-clipboard";
+import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary } from "@/lib/grid-clipboard";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
@@ -409,6 +409,8 @@ export function ScheduleGrid({
   const [localAssignments, setLocalAssignments] = useState(initialAssignments);
   const [localRequests, setLocalRequests] = useState<GridRequest[]>(scheduleRequests);
   const [requestError, setRequestError] = useState<string | null>(null);
+  // Transient summary after a paste (e.g. "12 set · 2 locked · 1 unknown code").
+  const [pasteToast, setPasteToast] = useState<string | null>(null);
   const [picker, setPicker] = useState<PickerState>(null);
   // Request mode (toggled with "/"): bare letters create REQUESTS instead of
   // assignments, and an open picker shows its Request tab. Single source of
@@ -708,6 +710,14 @@ export function ScheduleGrid({
   const shiftTypeMap = useMemo(() => {
     const map = new Map<string, ShiftType>();
     for (const st of shiftTypes) map.set(st.id, st);
+    return map;
+  }, [shiftTypes]);
+
+  // Reverse map for paste: UPPERCASE shift code → id (codes are unique). Lets a pasted
+  // "ORC"/"x" resolve to a shift type without a server round-trip.
+  const codeToId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const st of shiftTypes) map.set(st.code.toUpperCase(), st.id);
     return map;
   }, [shiftTypes]);
 
@@ -1654,6 +1664,112 @@ export function ScheduleGrid({
     document.addEventListener("copy", onCopy);
     return () => document.removeEventListener("copy", onCopy);
   }, [selection, activeRow, activeCol, assignmentMap, dates, visibleStaff, showMonthPicker, showVersions, showAlerts, showHelp, picker]);
+
+  // Paste a clipboard block (from Excel/Sheets or our own copy) positionally from the
+  // active cell, filling down and right. Same guards as keydown/copy. Gated to assignment
+  // mode — in request mode it no-ops with a hint (it must never silently create firm
+  // assignments). Writes atomically via /api/assignments/paste, pushes ONE undo group for
+  // everything that persisted, and reverts cleanly if the (all-or-nothing) write fails.
+  useEffect(() => {
+    async function onPaste(e: ClipboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (showMonthPicker || showVersions || showAlerts || showHelp || picker) return;
+      if (!canEdit) return;
+      if (!activeRow || !activeCol) return; // need an anchor cell
+
+      const block = parseClipboardGrid(e.clipboardData?.getData("text/plain") ?? "");
+      if (block.length === 0) return;
+      e.preventDefault(); // we own this paste
+
+      if (requestMode) {
+        setPasteToast("Paste sets assignments — exit request mode (press /) first.");
+        return;
+      }
+
+      const dateIndex = dates.indexOf(activeRow);
+      const staffIndex = visibleStaff.findIndex((p) => p.id === activeCol);
+      if (dateIndex < 0 || staffIndex < 0) return;
+
+      const resolution = resolvePaste(block, { dateIndex, staffIndex }, {
+        dateOrder: dates,
+        staffOrder: visibleStaff.map((p) => p.id),
+        codeToId,
+        isLocked: (staffId, date) => !!assignmentMap.get(`${staffId}:${date}`)?.isLocked,
+      });
+      const { sets } = resolution;
+      if (sets.length === 0) {
+        setPasteToast(pasteSummary(0, resolution));
+        return;
+      }
+
+      // Prior state per target cell — drives both the undo group and failure revert.
+      const prevByKey = new Map<string, AssignmentData | null>();
+      for (const s of sets) prevByKey.set(`${s.staffId}:${s.date}`, assignmentMap.get(`${s.staffId}:${s.date}`) ?? null);
+      const sentKeys = new Set(sets.map((s) => `${s.staffId}:${s.date}`));
+
+      // Optimistic temps.
+      setLocalAssignments((prev) => {
+        const filtered = prev.filter((a) => !sentKeys.has(`${a.staffId}:${a.date}`));
+        const temps = sets.map((s) => {
+          const st = shiftTypeMap.get(s.shiftTypeId);
+          return { id: `temp-${s.staffId}:${s.date}`, staffId: s.staffId, date: s.date, shiftTypeId: s.shiftTypeId, isLocked: false, code: st?.code ?? "?", color: st?.color ?? "#6b7280" };
+        });
+        return [...filtered, ...temps];
+      });
+      setSaving("paste");
+
+      try {
+        const res = await fetch("/api/assignments/paste", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cells: sets }),
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        const { applied, skippedLocked = 0 } = (await res.json()) as { applied: AssignmentData[]; skippedLocked?: number };
+        const appliedKeys = new Set(applied.map((a) => `${a.staffId}:${a.date}`));
+
+        // Reconcile to exactly what the server persisted: drop temps, add authoritative
+        // rows, and restore the prior value of any cell the server skipped (its lock).
+        setLocalAssignments((prev) => {
+          const next = prev.filter((a) => !sentKeys.has(`${a.staffId}:${a.date}`)).concat(applied);
+          for (const s of sets) {
+            const k = `${s.staffId}:${s.date}`;
+            if (!appliedKeys.has(k)) {
+              const prior = prevByKey.get(k);
+              if (prior) next.push(prior);
+            }
+          }
+          return next;
+        });
+
+        // One undo group covering everything that actually persisted.
+        const undoOps: UndoOp[] = applied.map((a) => ({ staffId: a.staffId, date: a.date, prev: prevByKey.get(`${a.staffId}:${a.date}`) ?? null, next: a }));
+        if (undoOps.length) pushUndo(undoOps);
+
+        setPasteToast(pasteSummary(applied.length, resolution, skippedLocked));
+      } catch {
+        // Atomic write → nothing persisted. Revert the optimistic temps to prior state.
+        setLocalAssignments((prev) => {
+          const next = prev.filter((a) => !sentKeys.has(`${a.staffId}:${a.date}`));
+          for (const prior of prevByKey.values()) if (prior) next.push(prior);
+          return next;
+        });
+        setRequestError("Paste failed — no changes were made.");
+      } finally {
+        setSaving(null);
+      }
+    }
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [canEdit, requestMode, activeRow, activeCol, dates, visibleStaff, assignmentMap, codeToId, shiftTypeMap, showMonthPicker, showVersions, showAlerts, showHelp, picker]);
+
+  // Auto-dismiss the paste summary toast.
+  useEffect(() => {
+    if (!pasteToast) return;
+    const id = setTimeout(() => setPasteToast(null), 6000);
+    return () => clearTimeout(id);
+  }, [pasteToast]);
 
   const hotkeyAssign = useCallback(async (st: ShiftType) => {
     const cells: { staffId: string; date: string }[] = [];
@@ -3086,6 +3202,23 @@ export function ScheduleGrid({
           <button
             onClick={() => setRequestError(null)}
             className="text-red-300 hover:text-white text-base leading-none"
+            title="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {pasteToast && (
+        <div
+          data-print-hide
+          role="status"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-3 bg-slate-800/95 border border-slate-600 text-slate-100 text-sm px-4 py-2 rounded-lg shadow-xl"
+        >
+          <span>{pasteToast}</span>
+          <button
+            onClick={() => setPasteToast(null)}
+            className="text-slate-400 hover:text-white text-base leading-none"
             title="Dismiss"
           >
             ×
