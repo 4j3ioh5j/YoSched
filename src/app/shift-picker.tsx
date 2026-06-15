@@ -52,7 +52,9 @@ function ShiftButton({
   onSelect: (id: string) => void;
 }) {
   const hasWarning = warnings && warnings.length > 0;
-  const hasError = warnings?.some((w) => w.type === "post-shift" || w.type === "over-hours");
+  // Only post-shift conflicts are hard (red) here; pay-period hour divergence is
+  // amber and lives in the Alerts modal, not on the shift buttons.
+  const hasError = warnings?.some((w) => w.type === "post-shift");
 
   return (
     <button

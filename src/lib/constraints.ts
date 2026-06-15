@@ -7,10 +7,23 @@ export type Warning = {
     | "post-shift"
     | "non-working-day"
     | "over-hours"
+    | "under-hours"
     | "shift-count"
     | "request-violation";
   message: string;
 };
+
+// Pay-period hour divergence is treated as STRICT: any difference from the
+// target fires. This epsilon only swallows floating-point noise (e.g. a target
+// of 72.0000001), never a real over/under. Mute-key rounding (roundPPHours)
+// uses the same precision so a muted alert stays muted across recomputation.
+export const PP_HOURS_EPSILON = 0.001;
+
+// Round a pay-period hour figure to the epsilon's precision (3 dp). Used for the
+// human-facing message AND the value-bearing mute key, so both are deterministic.
+export function roundPPHours(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}
 
 type ShiftType = {
   id: string;
@@ -242,13 +255,15 @@ export function checkDayStaffing({
   return warnings;
 }
 
+// Flag a staff member whose scheduled hours diverge from their pay-period target
+// in EITHER direction. Strict: any non-noise difference fires (see PP_HOURS_EPSILON).
+// `target = pp.targetHours * ftePercentage` — must match the grid's PP Totals row.
 export function checkStaffPPHours({
-  staffId,
   staff,
   pp,
   currentHours,
 }: {
-  staffId: string;
+  staffId?: string; // accepted for call-site symmetry; not used
   staff: Staff;
   pp: PayPeriod | null;
   currentHours: number;
@@ -256,11 +271,14 @@ export function checkStaffPPHours({
   if (!pp) return null;
   const target = pp.targetHours * staff.ftePercentage;
   if (target <= 0) return null;
-  if (currentHours > target * 1.05) {
-    return {
-      type: "over-hours",
-      message: `${staff.initials}: ${currentHours}/${target}hrs this pay period`,
-    };
-  }
-  return null;
+  const diff = currentHours - target;
+  if (Math.abs(diff) <= PP_HOURS_EPSILON) return null;
+  const over = diff > 0;
+  const hrs = roundPPHours(currentHours);
+  const tgt = roundPPHours(target);
+  const d = roundPPHours(diff);
+  return {
+    type: over ? "over-hours" : "under-hours",
+    message: `${staff.initials}: ${hrs}/${tgt}hrs this pay period (${over ? "+" : ""}${d})`,
+  };
 }

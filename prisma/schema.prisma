@@ -587,3 +587,18 @@ model ScheduleRequest {
   @@index([status])
   @@map("schedule_requests")
 }
+
+// A dismissed ("muted") schedule alert. Mutes are SHARED across all logins
+// (single-tenant) so silencing a known/intentional alert sticks for everyone.
+// `alertKey` is a stable, VALUE-BEARING identity built by the alert pipeline
+// (src/lib/alerts.ts) — it embeds the alert's numbers, so when the underlying
+// value changes the key changes and the alert re-surfaces (you re-confirm it).
+// Stale rows (keys no longer produced) are harmless; pruning is a later concern.
+model MutedAlert {
+  id       String   @id @default(cuid())
+  alertKey String   @unique
+  mutedBy  String? // login id/initials that muted it (informational; no FK)
+  mutedAt  DateTime @default(now())
+
+  @@map("muted_alerts")
+}

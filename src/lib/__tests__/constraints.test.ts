@@ -307,32 +307,57 @@ describe("checkStaffPPHours", () => {
     })).toBeNull();
   });
 
-  it("returns null when within 5% of target", () => {
+  it("returns null when hours equal target (within float epsilon)", () => {
     const pp = { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 };
     expect(checkStaffPPHours({
-      staffId: "p1", staff, pp, currentHours: 84, // 80 * 1.05 = 84
+      staffId: "p1", staff, pp, currentHours: 80,
+    })).toBeNull();
+    // sub-epsilon noise must not fire
+    expect(checkStaffPPHours({
+      staffId: "p1", staff, pp, currentHours: 80.0005,
     })).toBeNull();
   });
 
-  it("warns when exceeding target by more than 5%", () => {
+  it("warns on ANY amount over target (strict, no tolerance band)", () => {
     const pp = { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 };
     const w = checkStaffPPHours({
-      staffId: "p1", staff, pp, currentHours: 85,
+      staffId: "p1", staff, pp, currentHours: 80.5,
     });
     expect(w).not.toBeNull();
     expect(w!.type).toBe("over-hours");
-    expect(w!.message).toContain("85");
+    expect(w!.message).toContain("80.5");
+    expect(w!.message).toContain("+0.5");
+  });
+
+  it("warns on ANY amount under target", () => {
+    const pp = { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 };
+    const w = checkStaffPPHours({
+      staffId: "p1", staff, pp, currentHours: 76,
+    });
+    expect(w).not.toBeNull();
+    expect(w!.type).toBe("under-hours");
+    expect(w!.message).toContain("76");
+    expect(w!.message).toContain("-4");
+  });
+
+  it("treats a fully-empty pay period as under (zero hours fires)", () => {
+    const pp = { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 };
+    const w = checkStaffPPHours({
+      staffId: "p1", staff, pp, currentHours: 0,
+    });
+    expect(w).not.toBeNull();
+    expect(w!.type).toBe("under-hours");
   });
 
   it("scales target by FTE percentage", () => {
     const partTime = { ...staff, ftePercentage: 0.5 };
     const pp = { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 };
-    // target = 80 * 0.5 = 40, 5% = 42
+    // target = 80 * 0.5 = 40
     expect(checkStaffPPHours({
-      staffId: "p1", staff: partTime, pp, currentHours: 42,
+      staffId: "p1", staff: partTime, pp, currentHours: 40,
     })).toBeNull();
     const w = checkStaffPPHours({
-      staffId: "p1", staff: partTime, pp, currentHours: 43,
+      staffId: "p1", staff: partTime, pp, currentHours: 41,
     });
     expect(w).not.toBeNull();
     expect(w!.type).toBe("over-hours");

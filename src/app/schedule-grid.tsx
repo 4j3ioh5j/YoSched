@@ -324,7 +324,9 @@ function showTip(setTooltip: SetTooltip, text: string, e: React.MouseEvent) {
 
 function WarningDot({ warnings, setTooltip }: { warnings: Warning[]; setTooltip: SetTooltip }) {
   if (warnings.length === 0) return null;
-  const hasError = warnings.some((w) => w.type === "post-shift" || w.type === "over-hours");
+  // post-shift is the only hard (red) cell warning. Pay-period hour divergence
+  // (over-/under-hours) is amber and surfaces in the Alerts modal, not as a red dot.
+  const hasError = warnings.some((w) => w.type === "post-shift");
   const text = warnings.map((w) => w.message).join("\n");
   return (
     <span

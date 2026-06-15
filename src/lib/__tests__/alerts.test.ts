@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { buildAlerts, groupAlertsByDate } from "../alerts";
+import {
+  buildAlerts,
+  buildPPHoursAlerts,
+  buildAlertSections,
+  groupAlertsByDate,
+  type Alert,
+  type PPHoursEntry,
+} from "../alerts";
 import type { Warning } from "../constraints";
 
 const w = (type: Warning["type"], message: string): Warning => ({ type, message });
@@ -20,6 +27,7 @@ describe("buildAlerts", () => {
 
     expect(alerts.map((a) => a.date)).toEqual(["2026-07-01", "2026-07-31"]);
     expect(alerts.map((a) => a.message)).toEqual(["first", "last"]);
+    expect(alerts.every((a) => a.category === "staffing")).toBe(true);
   });
 
   it("includes both inclusive month boundaries", () => {
@@ -45,8 +53,8 @@ describe("buildAlerts", () => {
     const alerts = buildAlerts(dates, dayWarnings, "2026-07-01", "2026-07-31");
 
     expect(alerts).toEqual([
-      { date: "2026-07-10", message: "too many", type: "error" },
-      { date: "2026-07-10", message: "too few", type: "warn" },
+      { category: "staffing", key: "staffing|2026-07-10|too many", date: "2026-07-10", message: "too many", type: "error" },
+      { category: "staffing", key: "staffing|2026-07-10|too few", date: "2026-07-10", message: "too few", type: "warn" },
     ]);
   });
 
@@ -56,20 +64,101 @@ describe("buildAlerts", () => {
   });
 });
 
+describe("buildPPHoursAlerts", () => {
+  const entry = (over: PPHoursEntry): PPHoursEntry => over;
+
+  it("anchors a PP-hours alert to the pay-period end date and keys it by value", () => {
+    const entries: PPHoursEntry[] = [
+      entry({
+        staffId: "s1",
+        ppStartDate: "2026-07-01",
+        anchorDate: "2026-07-14",
+        hours: 76,
+        target: 80,
+        warning: w("under-hours", "AB: 76/80hrs this pay period (-4)"),
+      }),
+    ];
+
+    const alerts = buildPPHoursAlerts(entries, "2026-07-01", "2026-07-31");
+
+    expect(alerts).toEqual([
+      {
+        category: "pp-hours",
+        key: "pp|s1|2026-07-01|76|80",
+        date: "2026-07-14",
+        message: "AB: 76/80hrs this pay period (-4)",
+        type: "warn",
+      },
+    ]);
+  });
+
+  // A pay period straddling June→July must surface its alert exactly once, in
+  // the month that contains its END date — never disappear, never double up.
+  it("surfaces a cross-month PP in the month containing its end date, not the start month", () => {
+    const crossing: PPHoursEntry = {
+      staffId: "s1",
+      ppStartDate: "2026-06-29", // starts in June
+      anchorDate: "2026-07-12", // ends in July
+      hours: 90,
+      target: 80,
+      warning: w("over-hours", "AB: 90/80hrs this pay period (+10)"),
+    };
+
+    // Viewing June: the July-ending PP is NOT shown.
+    expect(buildPPHoursAlerts([crossing], "2026-06-01", "2026-06-30")).toEqual([]);
+
+    // Viewing July: it shows.
+    const july = buildPPHoursAlerts([crossing], "2026-07-01", "2026-07-31");
+    expect(july).toHaveLength(1);
+    expect(july[0].key).toBe("pp|s1|2026-06-29|90|80");
+  });
+
+  it("rounds fractional hours/target into the key deterministically", () => {
+    const alerts = buildPPHoursAlerts(
+      [{
+        staffId: "s2",
+        ppStartDate: "2026-07-01",
+        anchorDate: "2026-07-14",
+        hours: 38.0001, // sub-precision noise collapses
+        target: 37.5,
+        warning: w("over-hours", "x"),
+      }],
+      "2026-07-01",
+      "2026-07-31",
+    );
+    expect(alerts[0].key).toBe("pp|s2|2026-07-01|38|37.5");
+  });
+});
+
+describe("buildAlertSections", () => {
+  it("orders pay-period hours before daily staffing and preserves each list", () => {
+    const staffing: Alert[] = [
+      { category: "staffing", key: "staffing|2026-07-10|x", date: "2026-07-10", message: "x", type: "warn" },
+    ];
+    const pp: Alert[] = [
+      { category: "pp-hours", key: "pp|s1|2026-07-01|76|80", date: "2026-07-14", message: "y", type: "warn" },
+    ];
+    const sections = buildAlertSections(staffing, pp);
+    expect(sections.map((s) => s.category)).toEqual(["pp-hours", "staffing"]);
+    expect(sections[0].alerts).toBe(pp);
+    expect(sections[1].alerts).toBe(staffing);
+  });
+});
+
 describe("groupAlertsByDate", () => {
-  it("collapses multiple alerts for a date into one block, preserving order", () => {
+  it("collapses multiple alerts for a date into one block, preserving order and keys", () => {
     const groups = groupAlertsByDate([
-      { date: "2026-07-01", message: "a", type: "warn" },
-      { date: "2026-07-03", message: "b", type: "error" },
-      { date: "2026-07-01", message: "c", type: "error" },
+      { category: "staffing", key: "k1", date: "2026-07-01", message: "a", type: "warn" },
+      { category: "staffing", key: "k2", date: "2026-07-03", message: "b", type: "error" },
+      { category: "staffing", key: "k3", date: "2026-07-01", message: "c", type: "error" },
     ]);
 
     expect(groups).toEqual([
       { date: "2026-07-01", items: [
-        { message: "a", type: "warn" },
-        { message: "c", type: "error" },
+        { key: "k1", message: "a", type: "warn" },
+        { key: "k3", message: "c", type: "error" },
       ] },
-      { date: "2026-07-03", items: [{ message: "b", type: "error" }] },
+      { date: "2026-07-03", items: [{ key: "k2", message: "b", type: "error" }] },
     ]);
   });
 
