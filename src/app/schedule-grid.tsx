@@ -9,7 +9,7 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
-import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv } from "@/lib/grid-clipboard";
+import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary } from "@/lib/grid-clipboard";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
@@ -482,6 +482,11 @@ export function ScheduleGrid({
   // (plain click or shift+click) so shift+click can extend a range.
   const [dedSelection, setDedSelection] = useState<{ shiftTypeId: string; dates: string[] } | null>(null);
   const dedAnchorRef = useRef<{ shiftTypeId: string; date: string } | null>(null);
+  // Re-entrancy guard for clipboard paste. The document "paste" listener re-subscribes
+  // whenever assignmentMap changes (our own optimistic update does that mid-await), so a
+  // second paste firing during an in-flight one could double-apply from stale snapshot
+  // state. While a paste is committing, ignore further paste events.
+  const pasteBusyRef = useRef(false);
   // "Show all staff" override (past months only) — not persisted, default off.
   const [showAllStaff, setShowAllStaff] = useState(false);
   const [showPPRows, setShowPPRows] = useState(() => {
@@ -1703,21 +1708,136 @@ export function ScheduleGrid({
   // assignments). Writes atomically via /api/assignments/paste, pushes ONE undo group for
   // everything that persisted, and reverts cleanly if the (all-or-nothing) write fails.
   useEffect(() => {
+    // Dedicated-column (ICU/CARD) paste: set each day's roster from a column of initials.
+    // Row-level all-or-nothing client-side; the server re-enforces per-date lock/conflict
+    // skips authoritatively. One transaction, one undo group, optimistic + full revert.
+    async function runDedicatedPaste(block: string[][], sel: { shiftTypeId: string; dates: string[] }) {
+      const dedSt = shiftTypeMap.get(sel.shiftTypeId);
+      if (!dedSt) return;
+      const anchorIdx = dates.indexOf(sel.dates[0]);
+      if (anchorIdx < 0) return;
+
+      const resolution = resolveDedicatedPaste(block, anchorIdx, {
+        dateOrder: dates,
+        shiftCode: dedSt.code,
+        resolveInitials: (raw) => {
+          const { resolved, unknown } = resolveInitials(raw, staff);
+          return { resolvedIds: resolved.map((r) => r.id), unknownCount: unknown.length };
+        },
+        rosterAt: (date) => staff.filter((p) => assignmentMap.get(`${p.id}:${date}`)?.code === dedSt.code).map((p) => p.id),
+        shiftCodeOf: (staffId, date) => assignmentMap.get(`${staffId}:${date}`)?.code ?? null,
+        isLocked: (staffId, date) => !!assignmentMap.get(`${staffId}:${date}`)?.isLocked,
+      });
+
+      const { groups } = resolution;
+      if (groups.length === 0) {
+        setPasteToast(dedicatedPasteSummary(dedSt.code, 0, 0, resolution));
+        return;
+      }
+
+      const involvedKeys = new Set<string>();
+      for (const g of groups) for (const id of [...g.addStaffIds, ...g.removeStaffIds]) involvedKeys.add(`${id}:${g.date}`);
+      const prevByKey = new Map<string, AssignmentData | null>();
+      for (const k of involvedKeys) prevByKey.set(k, assignmentMap.get(k) ?? null);
+
+      // Optimistic: drop involved cells, then add the adds (removes stay dropped).
+      setLocalAssignments((prev) => {
+        const next = prev.filter((a) => !involvedKeys.has(`${a.staffId}:${a.date}`));
+        for (const g of groups) {
+          for (const id of g.addStaffIds) {
+            next.push({ id: `temp-${id}:${g.date}`, staffId: id, date: g.date, shiftTypeId: dedSt.id, isLocked: false, code: dedSt.code, color: dedSt.color });
+          }
+        }
+        return next;
+      });
+      setSaving("paste");
+
+      try {
+        const res = await fetch("/api/assignments/roster-paste", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ shiftTypeId: dedSt.id, groups }),
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        const { applied, cleared, skippedGroups } = (await res.json()) as {
+          applied: AssignmentData[]; cleared: { staffId: string; date: string }[]; skippedGroups: { date: string; reason: string }[];
+        };
+        const appliedKeys = new Set(applied.map((a) => `${a.staffId}:${a.date}`));
+        const clearedKeys = new Set(cleared.map((c) => `${c.staffId}:${c.date}`));
+
+        // Reconcile to exactly what the server persisted; restore prior for any involved
+        // cell in a server-skipped group (neither applied nor cleared).
+        setLocalAssignments((prev) => {
+          const next = prev.filter((a) => !involvedKeys.has(`${a.staffId}:${a.date}`)).concat(applied);
+          for (const k of involvedKeys) {
+            if (!appliedKeys.has(k) && !clearedKeys.has(k)) {
+              const prior = prevByKey.get(k);
+              if (prior) next.push(prior);
+            }
+          }
+          return next;
+        });
+
+        // ONE undo group: applied (prev→next) + cleared (prev→null).
+        const undoOps: UndoOp[] = [];
+        for (const a of applied) undoOps.push({ staffId: a.staffId, date: a.date, prev: prevByKey.get(`${a.staffId}:${a.date}`) ?? null, next: a });
+        for (const c of cleared) undoOps.push({ staffId: c.staffId, date: c.date, prev: prevByKey.get(`${c.staffId}:${c.date}`) ?? null, next: null });
+        if (undoOps.length) pushUndo(undoOps);
+
+        const serverLocked = skippedGroups.filter((s) => s.reason === "locked").length;
+        const serverConflict = skippedGroups.filter((s) => s.reason === "conflict").length;
+        setPasteToast(dedicatedPasteSummary(dedSt.code, applied.length, cleared.length, {
+          unknown: resolution.unknown,
+          conflict: resolution.conflict + serverConflict,
+          locked: resolution.locked + serverLocked,
+          clipped: resolution.clipped,
+        }));
+      } catch {
+        setLocalAssignments((prev) => {
+          const next = prev.filter((a) => !involvedKeys.has(`${a.staffId}:${a.date}`));
+          for (const prior of prevByKey.values()) if (prior) next.push(prior);
+          return next;
+        });
+        setRequestError("Paste failed — no changes were made.");
+      } finally {
+        setSaving(null);
+      }
+    }
+
     async function onPaste(e: ClipboardEvent) {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
       if (showMonthPicker || showVersions || showAlerts || showHelp || picker) return;
       if (!canEdit) return;
-      if (!activeRow || !activeCol) return; // need an anchor cell
 
       const block = parseClipboardGrid(e.clipboardData?.getData("text/plain") ?? "");
       if (block.length === 0) return;
+
+      // Dedicated-column (ICU/CARD) paste takes precedence — isolated path + endpoint.
+      if (dedSelection && dedSelection.dates.length > 0) {
+        e.preventDefault();
+        if (requestMode) {
+          setPasteToast("Paste sets assignments — exit request mode (press /) first.");
+          return;
+        }
+        if (pasteBusyRef.current) return; // ignore a paste while one is committing
+        pasteBusyRef.current = true;
+        try {
+          await runDedicatedPaste(block, dedSelection);
+        } finally {
+          pasteBusyRef.current = false;
+        }
+        return;
+      }
+
+      if (!activeRow || !activeCol) return; // staff paste needs an anchor cell
       e.preventDefault(); // we own this paste
 
       if (requestMode) {
         setPasteToast("Paste sets assignments — exit request mode (press /) first.");
         return;
       }
+      if (pasteBusyRef.current) return; // ignore a paste while one is committing
 
       const dateIndex = dates.indexOf(activeRow);
       const staffIndex = visibleStaff.findIndex((p) => p.id === activeCol);
@@ -1749,6 +1869,7 @@ export function ScheduleGrid({
         });
         return [...filtered, ...temps];
       });
+      pasteBusyRef.current = true;
       setSaving("paste");
 
       try {
@@ -1790,11 +1911,12 @@ export function ScheduleGrid({
         setRequestError("Paste failed — no changes were made.");
       } finally {
         setSaving(null);
+        pasteBusyRef.current = false;
       }
     }
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-  }, [canEdit, requestMode, activeRow, activeCol, dates, visibleStaff, assignmentMap, codeToId, shiftTypeMap, showMonthPicker, showVersions, showAlerts, showHelp, picker]);
+  }, [canEdit, requestMode, activeRow, activeCol, dates, visibleStaff, staff, assignmentMap, codeToId, shiftTypeMap, dedSelection, showMonthPicker, showVersions, showAlerts, showHelp, picker]);
 
   // Auto-dismiss the paste summary toast.
   useEffect(() => {
@@ -3472,6 +3594,23 @@ export function ScheduleGrid({
                     ["Delete / Backspace", "Clear the assignment(s)"],
                     ["Ctrl / Cmd + Z", "Undo"],
                     ["Ctrl + Shift + Z  ·  Ctrl + Y", "Redo"],
+                  ].map(([k, d]) => (
+                    <div key={k} className="flex items-start gap-3">
+                      <kbd className="shrink-0 min-w-[96px] px-2 py-0.5 text-xs font-mono bg-slate-900 border border-slate-600 rounded text-slate-200">{k}</kbd>
+                      <span className="text-slate-300">{d}</span>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+
+              {/* Copy & paste */}
+              <section>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Copy &amp; paste (Excel)</h3>
+                <dl className="space-y-1">
+                  {[
+                    ["Ctrl / Cmd + C", "Copy the selected cells to the clipboard — paste straight into Excel/Sheets"],
+                    ["Ctrl / Cmd + V", "Paste a block from Excel into the grid, filling down/right from the active cell"],
+                    ["Shift + click  (ICU/CARD)", "Select a dedicated column's cell or date range (by initials); then Ctrl+C to copy or Ctrl+V to set each day's roster"],
                   ].map(([k, d]) => (
                     <div key={k} className="flex items-start gap-3">
                       <kbd className="shrink-0 min-w-[96px] px-2 py-0.5 text-xs font-mono bg-slate-900 border border-slate-600 rounded text-slate-200">{k}</kbd>

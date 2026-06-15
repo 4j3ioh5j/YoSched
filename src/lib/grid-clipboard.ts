@@ -150,6 +150,98 @@ export function dedicatedSelectionTsv(dates: string[], initialsAt: (date: string
   return dates.map((d) => initialsAt(d).join(", ")).join("\n");
 }
 
+export type DedicatedGroup = { date: string; addStaffIds: string[]; removeStaffIds: string[] };
+
+export type DedicatedPasteResolution = {
+  /** One per surviving date — the roster change to send to the server. */
+  groups: DedicatedGroup[];
+  clipped: number; // row fell past the bottom of the grid
+  blank: number; // empty row (no change)
+  unknown: number; // row had an unresolved initial → WHOLE row skipped
+  conflict: number; // a named staff holds a different shift that day → WHOLE row skipped
+  locked: number; // an add/remove target is locked → WHOLE row skipped
+};
+
+const uniq = (ids: string[]) => [...new Set(ids)];
+
+/**
+ * Resolve a clipboard block pasted into a dedicated column (ICU/CARD) into per-date
+ * roster changes, with ROW-LEVEL ALL-OR-NOTHING: a date produces a change only if it is
+ * fully resolvable AND fully applicable — every initial resolves to a known staff, no
+ * named staff already holds a DIFFERENT shift that day, and no add/remove target is
+ * locked. If any of those fail, the ENTIRE date is skipped (zero adds, zero removes) and
+ * counted, so a removal can never strip holders the paste couldn't fully replace. Blank
+ * rows are skipped (never clear). Pure — all lookups are injected.
+ */
+export function resolveDedicatedPaste(
+  rows: string[][],
+  anchorDateIndex: number,
+  opts: {
+    dateOrder: string[];
+    shiftCode: string;
+    resolveInitials: (raw: string) => { resolvedIds: string[]; unknownCount: number };
+    rosterAt: (date: string) => string[]; // staffIds currently holding this shift that day
+    shiftCodeOf: (staffId: string, date: string) => string | null; // current shift code in a cell
+    isLocked: (staffId: string, date: string) => boolean;
+  }
+): DedicatedPasteResolution {
+  const groups: DedicatedGroup[] = [];
+  let clipped = 0, blank = 0, unknown = 0, conflict = 0, locked = 0;
+
+  for (let r = 0; r < rows.length; r++) {
+    const di = anchorDateIndex + r;
+    if (di >= opts.dateOrder.length) {
+      clipped++;
+      continue;
+    }
+    const date = opts.dateOrder[di];
+    const raw = rows[r].join(" ").trim();
+    if (raw === "") {
+      blank++;
+      continue;
+    }
+    const { resolvedIds, unknownCount } = opts.resolveInitials(raw);
+    if (unknownCount > 0) {
+      unknown++;
+      continue;
+    }
+    const desired = new Set(resolvedIds);
+    const current = opts.rosterAt(date);
+    const currentSet = new Set(current);
+    const additions = uniq(resolvedIds.filter((id) => !currentSet.has(id)));
+    const removals = current.filter((id) => !desired.has(id));
+
+    if (additions.some((id) => { const c = opts.shiftCodeOf(id, date); return c != null && c !== opts.shiftCode; })) {
+      conflict++;
+      continue;
+    }
+    if (additions.some((id) => opts.isLocked(id, date)) || removals.some((id) => opts.isLocked(id, date))) {
+      locked++;
+      continue;
+    }
+    if (additions.length === 0 && removals.length === 0) continue; // already correct — no-op
+
+    groups.push({ date, addStaffIds: additions, removeStaffIds: removals });
+  }
+
+  return { groups, clipped, blank, unknown, conflict, locked };
+}
+
+/** Summary toast for a dedicated paste, e.g. "ICU: 3 added · 2 removed · 1 unknown · 1 locked". */
+export function dedicatedPasteSummary(
+  shiftCode: string,
+  added: number,
+  removed: number,
+  skips: { unknown: number; conflict: number; locked: number; clipped: number }
+): string {
+  const parts = [`${added} added`, `${removed} removed`];
+  if (skips.unknown) parts.push(`${skips.unknown} unknown`);
+  if (skips.conflict) parts.push(`${skips.conflict} conflict`);
+  if (skips.locked) parts.push(`${skips.locked} locked`);
+  if (skips.clipped) parts.push(`${skips.clipped} past edge`);
+  return `${shiftCode}: ${parts.join(" · ")}`;
+}
+
 /**
  * One-line human summary of a paste, e.g. "12 cells set · 2 locked · 1 unknown code".
  * `extraLocked` folds in any additional locks the server caught that the client's local

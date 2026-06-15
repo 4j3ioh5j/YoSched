@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv } from "../grid-clipboard";
+import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary } from "../grid-clipboard";
 
 // Grid order: 3 dates (rows) × 3 staff (cols). Assignments below; missing = unassigned.
 const dateOrder = ["2026-06-01", "2026-06-02", "2026-06-03"];
@@ -182,5 +182,82 @@ describe("dedicatedSelectionTsv", () => {
 
   it("returns null for no dates", () => {
     expect(dedicatedSelectionTsv([], initialsAt)).toBeNull();
+  });
+});
+
+describe("resolveDedicatedPaste", () => {
+  const dateOrder = ["2026-06-01", "2026-06-02", "2026-06-03"];
+  // staff: AA,BB,CC,DD; current ICU roster per date + other-shift map.
+  const known: Record<string, string> = { AA: "s-aa", BB: "s-bb", CC: "s-cc", DD: "s-dd" };
+  const resolveInitials = (raw: string) => {
+    const toks = raw.split(/[\s,]+/).filter(Boolean);
+    const resolvedIds: string[] = [];
+    let unknownCount = 0;
+    for (const t of toks) {
+      const id = known[t.toUpperCase()];
+      if (id) resolvedIds.push(id); else unknownCount++;
+    }
+    return { resolvedIds, unknownCount };
+  };
+  const base = {
+    dateOrder,
+    shiftCode: "ICU",
+    resolveInitials,
+    rosterAt: () => [] as string[],
+    shiftCodeOf: () => null as string | null,
+    isLocked: () => false,
+  };
+  const at = (anchorDateIndex: number) => anchorDateIndex;
+
+  it("replaces a roster: adds named, removes others", () => {
+    const r = resolveDedicatedPaste([["AA, CC"]], at(0), { ...base, rosterAt: () => ["s-aa", "s-bb"] });
+    expect(r.groups).toEqual([{ date: "2026-06-01", addStaffIds: ["s-cc"], removeStaffIds: ["s-bb"] }]);
+  });
+
+  it("skips the WHOLE row on an unknown initial (no removals applied)", () => {
+    const r = resolveDedicatedPaste([["AA, ZZ"]], at(0), { ...base, rosterAt: () => ["s-bb"] });
+    expect(r.groups).toEqual([]);
+    expect(r.unknown).toBe(1);
+  });
+
+  it("skips the WHOLE row on a conflict (named staff has another shift)", () => {
+    const shiftCodeOf = (id: string) => (id === "s-cc" ? "ORC" : null);
+    const r = resolveDedicatedPaste([["AA, CC"]], at(0), { ...base, rosterAt: () => ["s-aa"], shiftCodeOf });
+    expect(r.groups).toEqual([]);
+    expect(r.conflict).toBe(1);
+  });
+
+  it("skips the WHOLE row when a remove target is locked", () => {
+    const isLocked = (id: string) => id === "s-bb";
+    const r = resolveDedicatedPaste([["AA"]], at(0), { ...base, rosterAt: () => ["s-aa", "s-bb"], isLocked });
+    expect(r.groups).toEqual([]);
+    expect(r.locked).toBe(1);
+  });
+
+  it("skips blank rows and clips past the grid", () => {
+    const r = resolveDedicatedPaste([["AA"], [""], ["BB"], ["CC"]], at(1), base);
+    // anchor at index 1: row0->6/02 (AA add), row1->6/03 blank, row2->past edge, row3->past edge
+    expect(r.groups).toEqual([{ date: "2026-06-02", addStaffIds: ["s-aa"], removeStaffIds: [] }]);
+    expect(r.blank).toBe(1);
+    expect(r.clipped).toBe(2);
+  });
+
+  it("emits no group for a no-op row (roster already correct)", () => {
+    const r = resolveDedicatedPaste([["AA, BB"]], at(0), { ...base, rosterAt: () => ["s-aa", "s-bb"] });
+    expect(r.groups).toEqual([]);
+    expect(r).toMatchObject({ unknown: 0, conflict: 0, locked: 0 });
+  });
+
+  it("dedupes repeated initials in additions", () => {
+    const r = resolveDedicatedPaste([["AA AA"]], at(0), base);
+    expect(r.groups).toEqual([{ date: "2026-06-01", addStaffIds: ["s-aa"], removeStaffIds: [] }]);
+  });
+});
+
+describe("dedicatedPasteSummary", () => {
+  it("always shows added/removed, then only non-zero skips", () => {
+    expect(dedicatedPasteSummary("ICU", 3, 2, { unknown: 1, conflict: 0, locked: 1, clipped: 0 })).toBe(
+      "ICU: 3 added · 2 removed · 1 unknown · 1 locked"
+    );
   });
 });
