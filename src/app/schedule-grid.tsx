@@ -1828,13 +1828,20 @@ export function ScheduleGrid({
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
       if (showMonthPicker || showVersions || showAlerts || showHelp || picker) return;
 
-      // Dedicated-column selection (ICU/CARD) is an isolated path and takes precedence.
-      // Initials come from PERSISTED assignments only (never suggestions), matching the
-      // dedicated editor's roster source — so a copy→paste can't promote a suggestion.
-      if (dedSelection && dedSelection.dates.length > 0) {
-        const dedSt = shiftTypeMap.get(dedSelection.shiftTypeId);
+      // Dedicated-column copy (ICU/CARD): a multi-date dedSelection range, OR the single
+      // active dedicated cell (parity with a staff active-cell copy). Initials come from
+      // PERSISTED assignments only (never suggestions), matching the editor's roster
+      // source — so a copy→paste can't promote a suggestion.
+      const dedRange = dedSelection && dedSelection.dates.length > 0;
+      const dedCopyId = dedRange ? dedSelection!.shiftTypeId : (activeDedCol && activeRow ? activeDedCol : null);
+      const dedCopyDates = dedRange ? dedSelection!.dates : (activeDedCol && activeRow ? [activeRow] : null);
+      if (dedCopyId && dedCopyDates) {
+        const dedSt = shiftTypeMap.get(dedCopyId);
         if (!dedSt) return;
-        const tsv = dedicatedSelectionTsv(dedSelection.dates, (date) => {
+        // Single active cell (no range): defer to a real page-text selection so we never
+        // hijack the user copying text (mirrors the staff active-cell rule).
+        if (!dedRange && window.getSelection()?.toString().trim()) return;
+        const tsv = dedicatedSelectionTsv(dedCopyDates, (date) => {
           const out: string[] = [];
           for (const p of staff) {
             if (assignmentMap.get(`${p.id}:${date}`)?.code === dedSt.code) out.push(p.initials);
@@ -1871,7 +1878,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("copy", onCopy);
     return () => document.removeEventListener("copy", onCopy);
-  }, [selection, activeRow, activeCol, assignmentMap, dates, visibleStaff, showMonthPicker, showVersions, showAlerts, showHelp, picker, dedSelection, shiftTypeMap, staff]);
+  }, [selection, activeRow, activeCol, activeDedCol, assignmentMap, dates, visibleStaff, showMonthPicker, showVersions, showAlerts, showHelp, picker, dedSelection, shiftTypeMap, staff]);
 
   // Paste a clipboard block (from Excel/Sheets or our own copy) positionally from the
   // active cell, filling down and right. Same guards as keydown/copy. Gated to assignment
@@ -1985,7 +1992,14 @@ export function ScheduleGrid({
       if (block.length === 0) return;
 
       // Dedicated-column (ICU/CARD) paste takes precedence — isolated path + endpoint.
-      if (dedSelection && dedSelection.dates.length > 0) {
+      // Anchor at the dedSelection range OR, with parity to staff paste, the single
+      // active dedicated cell (fills DOWN from there). This is what lets the user click
+      // one ICU/CARD cell and paste a whole column of initials — previously a click
+      // opened the text <input> and the whole block landed in one cell.
+      const dedPasteSel = dedSelection && dedSelection.dates.length > 0
+        ? dedSelection
+        : (activeDedCol && activeRow ? { shiftTypeId: activeDedCol, dates: [activeRow] } : null);
+      if (dedPasteSel) {
         e.preventDefault();
         if (requestMode) {
           setPasteToast("Paste sets assignments — exit request mode (press /) first.");
@@ -1994,7 +2008,7 @@ export function ScheduleGrid({
         if (pasteBusyRef.current) return; // ignore a paste while one is committing
         pasteBusyRef.current = true;
         try {
-          await runDedicatedPaste(block, dedSelection);
+          await runDedicatedPaste(block, dedPasteSel);
         } finally {
           pasteBusyRef.current = false;
         }
@@ -2087,7 +2101,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-  }, [canEdit, requestMode, activeRow, activeCol, dates, visibleStaff, staff, assignmentMap, codeToId, shiftTypeMap, dedSelection, showMonthPicker, showVersions, showAlerts, showHelp, picker]);
+  }, [canEdit, requestMode, activeRow, activeCol, activeDedCol, dates, visibleStaff, staff, assignmentMap, codeToId, shiftTypeMap, dedSelection, showMonthPicker, showVersions, showAlerts, showHelp, picker]);
 
   // Auto-dismiss the paste summary toast.
   useEffect(() => {
@@ -3749,7 +3763,8 @@ export function ScheduleGrid({
                   {[
                     ["letter", "Assign the shift bound to that hotkey to the active cell / selection"],
                     ["Drag a shift", "Move an assignment to another cell"],
-                    ["Delete / Backspace", "Clear the assignment(s)"],
+                    ["Delete / Backspace", "Clear the assignment(s) — or, on an ICU/CARD cell, that day's roster"],
+                    ["ICU / CARD cell", "Click to select, then click again (or Enter / F2) to edit the initials"],
                     ["Ctrl / Cmd + Z", "Undo"],
                     ["Ctrl + Shift + Z  ·  Ctrl + Y", "Redo"],
                   ].map(([k, d]) => (
@@ -3768,7 +3783,7 @@ export function ScheduleGrid({
                   {[
                     ["Ctrl / Cmd + C", "Copy the selected cells to the clipboard — paste straight into Excel/Sheets"],
                     ["Ctrl / Cmd + V", "Paste a block from Excel into the grid, filling down/right from the active cell"],
-                    ["Shift + click  (ICU/CARD)", "Select a dedicated column's cell or date range (by initials); then Ctrl+C to copy or Ctrl+V to set each day's roster"],
+                    ["ICU / CARD columns", "Work like staff cells: click to select, Ctrl+C copies, Ctrl+V fills a column of initials down (sets each day's roster). Shift+click or drag selects a date range."],
                   ].map(([k, d]) => (
                     <div key={k} className="flex items-start gap-3">
                       <kbd className="shrink-0 min-w-[96px] px-2 py-0.5 text-xs font-mono bg-slate-900 border border-slate-600 rounded text-slate-200">{k}</kbd>
