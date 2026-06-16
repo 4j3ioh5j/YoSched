@@ -1,7 +1,29 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { provisionStaffLogin, resetLoginForStaff, deleteLoginForStaff, ensureStaffLogin } from "@/lib/user-lifecycle";
+import { ruleToWhen, whenToColumns } from "@/lib/recurrence";
 import { NextRequest, NextResponse } from "next/server";
+
+// Derive the normalized WHEN columns for a rule on save, keeping them in sync
+// with the legacy columns. ruleToWhen prefers explicit when* fields (slice-4
+// picker) and otherwise bridges the legacy dayOfWeek/pattern fields (slice-3 UI).
+function whenColumns(r: Record<string, unknown>) {
+  return whenToColumns(
+    ruleToWhen({
+      dayOfWeek: r.dayOfWeek as number,
+      pattern: (r.pattern as string) ?? "every",
+      cycleLength: r.cycleLength as number | null | undefined,
+      cycleOffset: r.cycleOffset as number | null | undefined,
+      whenKind: r.whenKind as string | null | undefined,
+      whenDays: r.whenDays as number[] | null | undefined,
+      whenPpWeek: r.whenPpWeek as number | null | undefined,
+      whenOrds: r.whenOrds as number[] | null | undefined,
+      whenCycleUnit: r.whenCycleUnit as string | null | undefined,
+      whenCycleN: r.whenCycleN as number | null | undefined,
+      whenCycleOffset: r.whenCycleOffset as number | null | undefined,
+    }),
+  );
+}
 
 export async function PUT(req: NextRequest) {
   const { error } = await getSession("staff:edit");
@@ -55,6 +77,7 @@ export async function PUT(req: NextRequest) {
             cycleOffset: r.cycleOffset as number | undefined,
             conditionStaffId: r.conditionStaffId as string | undefined,
             conditionType: r.conditionType as string | undefined,
+            ...whenColumns(r),
           })),
         });
       }
@@ -73,6 +96,7 @@ export async function PUT(req: NextRequest) {
             pattern: (r.pattern as string) ?? "every",
             cycleLength: r.cycleLength as number | undefined,
             cycleOffset: r.cycleOffset as number | undefined,
+            ...whenColumns(r),
           })),
         });
       }

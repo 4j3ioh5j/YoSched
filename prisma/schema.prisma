@@ -413,6 +413,14 @@ model AvailabilityRule {
   cycleOffset         Int?    // for "every_n": 0-indexed position in the cycle
   conditionStaffId String?
   conditionType       String? // "working" or "not_working"
+  // Unified WHEN model (recurrence.ts). whenKind null = read legacy cols above.
+  whenKind            String?
+  whenDays            Int[]   @default([])
+  whenPpWeek          Int?
+  whenOrds            Int[]   @default([])
+  whenCycleUnit       String?
+  whenCycleN          Int?
+  whenCycleOffset     Int?
 
   staff          Staff  @relation("staffRules", fields: [staffId], references: [id], onDelete: Cascade)
   conditionStaff Staff? @relation("conditionStaff", fields: [conditionStaffId], references: [id], onDelete: SetNull)
@@ -427,6 +435,15 @@ model EmploymentTypeDefaultAvailability {
   type             String @default("available")
   strength         String @default("rule")
   pattern          String @default("every")
+  // Unified WHEN model (recurrence.ts). whenKind null = read legacy cols above.
+  // No cycle here — defaults can only be every / pp_week_1 / pp_week_2.
+  whenKind        String?
+  whenDays        Int[]   @default([])
+  whenPpWeek      Int?
+  whenOrds        Int[]   @default([])
+  whenCycleUnit   String?
+  whenCycleN      Int?
+  whenCycleOffset Int?
 
   employmentType EmploymentType @relation(fields: [employmentTypeId], references: [id], onDelete: Cascade)
 
@@ -480,6 +497,14 @@ model ShiftEligibilityRule {
   pattern     String @default("every")
   cycleLength Int?
   cycleOffset Int?
+  // Unified WHEN model (recurrence.ts). whenKind null = read legacy cols above.
+  whenKind        String?
+  whenDays        Int[]   @default([])
+  whenPpWeek      Int?
+  whenOrds        Int[]   @default([])
+  whenCycleUnit   String?
+  whenCycleN      Int?
+  whenCycleOffset Int?
 
   staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)

@@ -169,7 +169,10 @@ export function matchesWhen(
     }
 
     default:
-      return true;
+      // Unknown/corrupt explicit kind → fail closed (don't silently broaden a
+      // rule). All valid OccurrenceKind values are handled above; ruleToWhen's
+      // legacy fallback only ever produces every/ppWeek/cycle.
+      return false;
   }
 }
 
@@ -242,4 +245,28 @@ export function buildWhenFromColumns(rule: RecurrenceRuleRow): WhenPattern {
 // legacy bridge. Keeps the scheduler correct across the dual-column transition.
 export function ruleToWhen(rule: RecurrenceRuleRow): WhenPattern {
   return rule.whenKind != null ? buildWhenFromColumns(rule) : legacyPatternToWhen(rule);
+}
+
+// The persisted shape of a WhenPattern — the new normalized DB columns. Inverse
+// of buildWhenFromColumns. Used by write paths to derive/store the WHEN columns.
+export type WhenColumns = {
+  whenKind: string;
+  whenDays: number[];
+  whenPpWeek: number | null;
+  whenOrds: number[];
+  whenCycleUnit: string | null;
+  whenCycleN: number | null;
+  whenCycleOffset: number | null;
+};
+
+export function whenToColumns(w: WhenPattern): WhenColumns {
+  return {
+    whenKind: w.kind,
+    whenDays: w.daysOfWeek ?? [],
+    whenPpWeek: w.ppWeek ?? null,
+    whenOrds: w.ords ?? [],
+    whenCycleUnit: w.cycleUnit ?? null,
+    whenCycleN: w.cycleN ?? null,
+    whenCycleOffset: w.cycleOffset ?? null,
+  };
 }

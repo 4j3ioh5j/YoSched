@@ -8,6 +8,7 @@ import {
   legacyPatternToWhen,
   ruleToWhen,
   buildWhenFromColumns,
+  whenToColumns,
   type WhenPattern,
 } from "../recurrence";
 import { matchesPattern, type PayPeriodRange } from "../availability";
@@ -246,5 +247,44 @@ describe("matchesWhen — outside known pay periods", () => {
   });
   it("cycle 'week' keeps legacy every_n behavior (matches) outside known PPs", () => {
     expect(matchesWhen({ daysOfWeek: [], kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0 }, OUT, PP)).toBe(true);
+  });
+});
+
+describe("matchesWhen — unknown kind fails closed", () => {
+  it("an invalid persisted kind matches nothing (does not broaden the rule)", () => {
+    const bogus = { daysOfWeek: [], kind: "garbage" } as unknown as WhenPattern;
+    for (const d of ALL_DATES) expect(matchesWhen(bogus, d, PP)).toBe(false);
+  });
+});
+
+describe("whenToColumns — serialization", () => {
+  it("round-trips through buildWhenFromColumns with identical matching", () => {
+    const patterns: WhenPattern[] = [
+      { daysOfWeek: [2], kind: "ordinalMonth", ords: [1, 3] },
+      { daysOfWeek: [2], kind: "ordinalMonth", ords: [-1] },
+      { daysOfWeek: [2], kind: "ppWeek", ppWeek: 2 },
+      { daysOfWeek: [2], kind: "cycle", cycleUnit: "payPeriod", cycleN: 2, cycleOffset: 1 },
+      { daysOfWeek: [1, 3, 5], kind: "every" },
+    ];
+    for (const w of patterns) {
+      const round = buildWhenFromColumns({ dayOfWeek: 0, pattern: "every", ...whenToColumns(w) });
+      for (const d of ALL_DATES) {
+        expect(matchesWhen(round, d, PP)).toBe(matchesWhen(w, d, PP));
+      }
+    }
+  });
+
+  it("every_n with NULL cycleLength/cycleOffset backfills to n=2 / offset=0 (legacy default)", () => {
+    // Mirrors the migration's COALESCE(cycleLength,2)/COALESCE(cycleOffset,0).
+    const cols = whenToColumns(legacyPatternToWhen({ dayOfWeek: 2, pattern: "every_n", cycleLength: null, cycleOffset: null }));
+    expect(cols.whenKind).toBe("cycle");
+    expect(cols.whenCycleUnit).toBe("week");
+    expect(cols.whenCycleN).toBe(2);
+    expect(cols.whenCycleOffset).toBe(0);
+    // And it evaluates identically to the legacy null-default rule.
+    const legacy = { dayOfWeek: 2, pattern: "every_n", cycleLength: null, cycleOffset: null };
+    for (const d of ALL_DATES) {
+      expect(matchesWhen(ruleToWhen(legacy), d, PP)).toBe(dow(d) === 2 && matchesPattern(legacy, d, PP));
+    }
   });
 });
