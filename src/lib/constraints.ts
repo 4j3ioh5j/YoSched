@@ -1,5 +1,6 @@
 import { FollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
 import { checkRequestConflict, type ScheduleRequestData } from "./schedule-requests";
+import { ruleToWhen } from "./recurrence";
 
 export type Warning = {
   type:
@@ -130,9 +131,14 @@ export function checkCellWarnings({
   const dow = parseDate(date).getDay();
 
   // Non-working day
-  const hasWorkRule = staff.availabilityRules.some(
-    (r) => r.dayOfWeek === dow && r.type === "available" && r.strength === "rule"
-  );
+  // Weekday coverage via the WHEN model (legacy ignored the occurrence
+  // qualifier, so match on weekday coverage only): a hard/available rule whose
+  // recurrence covers this weekday means it's a normal working day.
+  const hasWorkRule = staff.availabilityRules.some((r) => {
+    if (r.type !== "available" || r.strength !== "rule") return false;
+    const days = ruleToWhen(r).daysOfWeek;
+    return days.length === 0 || days.includes(dow);
+  });
   if (!hasWorkRule && !st.isOffShift && !st.ignoresWorkingDays) {
     warnings.push({
       type: "non-working-day",

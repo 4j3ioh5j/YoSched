@@ -2316,6 +2316,14 @@ function defaultIsPlain(r: DefaultAvailabilityRule): boolean {
   return r.type === "available" && r.strength === "rule" && isPlainWeekdayWhen(ruleToWhen(r));
 }
 
+// Whether a default rule's recurrence covers this weekday — read through the
+// WHEN model rather than the legacy dayOfWeek column so the quick-toggle stays
+// correct once the legacy columns are gone (slice 7).
+function defaultRuleCoversDay(r: DefaultAvailabilityRule, d: number): boolean {
+  const days = ruleToWhen(r).daysOfWeek;
+  return days.length === 0 || days.includes(d);
+}
+
 // Two-layer default-availability editor: quick day toggles (plain rules only) +
 // an advanced rules list with the shared <RecurrencePicker>. Mirrors the staff
 // AvailabilityEditor, minus per-staff conditions.
@@ -2332,9 +2340,9 @@ function DefaultAvailabilityEditor({
 
   function toggleDay(d: number) {
     if (!canEdit) return;
-    const plainForDay = rules.filter((r) => r.dayOfWeek === d && defaultIsPlain(r));
+    const plainForDay = rules.filter((r) => defaultIsPlain(r) && defaultRuleCoversDay(r, d));
     if (plainForDay.length > 0) {
-      onChange(rules.filter((r) => !(r.dayOfWeek === d && defaultIsPlain(r))));
+      onChange(rules.filter((r) => !(defaultIsPlain(r) && defaultRuleCoversDay(r, d))));
     } else {
       onChange([...rules, { dayOfWeek: d, type: "available", strength: "rule", pattern: "every" }]);
     }
@@ -2360,7 +2368,7 @@ function DefaultAvailabilityEditor({
         <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1.5">Default working days</div>
         <div className="flex gap-1">
           {ET_DAY_INDICES.map((d) => {
-            const active = rules.some((r) => r.dayOfWeek === d && defaultIsPlain(r));
+            const active = rules.some((r) => defaultIsPlain(r) && defaultRuleCoversDay(r, d));
             return (
               <button
                 key={d}

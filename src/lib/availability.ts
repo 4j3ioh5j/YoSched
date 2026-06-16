@@ -101,14 +101,16 @@ export function isBaseWorkDay(
   rules: AvailabilityRule[],
   dayOfWeek: number
 ): boolean {
-  return rules.some(
-    (r) =>
-      r.dayOfWeek === dayOfWeek &&
-      r.type === "available" &&
-      r.strength === "rule" &&
-      r.pattern === "every" &&
-      !r.conditionStaffId
-  );
+  // A base work day is the trivial hard/available/unconditioned "every
+  // occurrence" rule covering this weekday. Read through the WHEN model
+  // (ruleToWhen prefers the explicit when* columns, else bridges legacy) so a
+  // picker-authored rule whose inert legacy pattern is "every" is still judged
+  // by its real recurrence; a multi-day every rule counts for each covered day.
+  return rules.some((r) => {
+    if (r.type !== "available" || r.strength !== "rule" || r.conditionStaffId) return false;
+    const w = ruleToWhen(r);
+    return w.kind === "every" && (w.daysOfWeek.length === 0 || w.daysOfWeek.includes(dayOfWeek));
+  });
 }
 
 export function getBaseWorkDays(rules: AvailabilityRule[]): number[] {
@@ -119,36 +121,7 @@ export function getBaseWorkDays(rules: AvailabilityRule[]): number[] {
   return days;
 }
 
-export function hasAdvancedRules(rules: AvailabilityRule[]): boolean {
-  return rules.some(
-    (r) =>
-      r.pattern !== "every" ||
-      r.strength !== "rule" ||
-      r.type !== "available" ||
-      r.conditionStaffId
-  );
-}
-
-export function getRuleSummary(rules: AvailabilityRule[]): string {
-  if (rules.length === 0) return "Off";
-
-  const parts: string[] = [];
-  for (const r of rules) {
-    let s = r.type === "available" ? "" : "Not ";
-    if (r.strength === "preference") s = r.type === "available" ? "Prefer " : "Avoid ";
-
-    switch (r.pattern) {
-      case "every": s += "every week"; break;
-      case "pp_week_1": s += "PP wk 1"; break;
-      case "pp_week_2": s += "PP wk 2"; break;
-      case "every_n": {
-        const n = r.cycleLength ?? 2;
-        const ord = n === 2 ? "other" : n === 3 ? "3rd" : `${n}th`;
-        s += `every ${ord}`;
-        break;
-      }
-    }
-    parts.push(s);
-  }
-  return parts.join("; ");
-}
+// Removed in slice 7: hasAdvancedRules / getRuleSummary were legacy-pattern
+// readers with no production callers — describeWhen (recurrence.ts) supersedes
+// the summary, and rule classification routes through the WHEN model
+// (isPlainWeekdayWhen / isPlainRule in the staff editor).

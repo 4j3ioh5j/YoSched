@@ -220,9 +220,9 @@ function AvailabilityEditor({
   function toggleDay(d: number) {
     // Only manage the plain single-day rules; advanced rules (multi-day,
     // ordinal, preference, off, conditioned) for this weekday are left intact.
-    const plainForDay = rules.filter((r) => r.dayOfWeek === d && isPlainRule(r));
+    const plainForDay = rules.filter((r) => isPlainRule(r) && ruleCoversDay(r, d));
     if (plainForDay.length > 0) {
-      onChange(rules.filter((r) => !(r.dayOfWeek === d && isPlainRule(r))));
+      onChange(rules.filter((r) => !(isPlainRule(r) && ruleCoversDay(r, d))));
     } else {
       onChange([...rules, { dayOfWeek: d, type: "available", strength: "rule", pattern: "every" }]);
     }
@@ -254,7 +254,7 @@ function AvailabilityEditor({
             // Reflect only the plain rule the toggle actually manages, so the
             // lit state and the click action stay consistent (an advanced
             // available rule on this day lives in the list below, not here).
-            const active = rules.some((r) => r.dayOfWeek === d && isPlainRule(r));
+            const active = rules.some((r) => isPlainRule(r) && ruleCoversDay(r, d));
             return (
               <button
                 key={d}

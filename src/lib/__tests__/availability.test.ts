@@ -3,8 +3,6 @@ import {
   evaluateAvailability,
   isBaseWorkDay,
   getBaseWorkDays,
-  hasAdvancedRules,
-  getRuleSummary,
   type AvailabilityRule,
 } from "../availability";
 
@@ -209,70 +207,33 @@ describe("getBaseWorkDays", () => {
   });
 });
 
-describe("hasAdvancedRules", () => {
-  it("returns false for simple weekday rules", () => {
-    const rules = [1, 2, 3, 4, 5].map((d) => rule({ dayOfWeek: d }));
-    expect(hasAdvancedRules(rules)).toBe(false);
-  });
-
-  it("returns true for preference strength", () => {
-    const rules = [rule({ dayOfWeek: 1, strength: "preference" })];
-    expect(hasAdvancedRules(rules)).toBe(true);
-  });
-
-  it("returns true for non-every pattern", () => {
-    const rules = [rule({ dayOfWeek: 1, pattern: "pp_week_1" })];
-    expect(hasAdvancedRules(rules)).toBe(true);
-  });
-
-  it("returns true for unavailable type", () => {
-    const rules = [rule({ dayOfWeek: 1, type: "unavailable" })];
-    expect(hasAdvancedRules(rules)).toBe(true);
-  });
-
-  it("returns true for conditional rules", () => {
-    const rules = [rule({ dayOfWeek: 1, conditionStaffId: "p1" })];
-    expect(hasAdvancedRules(rules)).toBe(true);
-  });
-});
-
-describe("getRuleSummary", () => {
-  it("returns 'Off' for empty rules", () => {
-    expect(getRuleSummary([])).toBe("Off");
-  });
-
-  it("formats every-week available rule", () => {
-    expect(getRuleSummary([rule({ dayOfWeek: 1 })])).toBe("every week");
-  });
-
-  it("formats unavailable rule with 'Not' prefix", () => {
-    expect(getRuleSummary([rule({ dayOfWeek: 1, type: "unavailable" })])).toBe("Not every week");
-  });
-
-  it("formats preference available as 'Prefer'", () => {
-    expect(getRuleSummary([rule({ dayOfWeek: 1, strength: "preference" })])).toBe("Prefer every week");
-  });
-
-  it("formats preference unavailable as 'Avoid'", () => {
-    expect(getRuleSummary([rule({ dayOfWeek: 1, type: "unavailable", strength: "preference" })])).toBe("Avoid every week");
-  });
-
-  it("formats pp_week_1 and pp_week_2", () => {
-    expect(getRuleSummary([rule({ dayOfWeek: 1, pattern: "pp_week_1" })])).toBe("PP wk 1");
-    expect(getRuleSummary([rule({ dayOfWeek: 1, pattern: "pp_week_2" })])).toBe("PP wk 2");
-  });
-
-  it("formats every_n with cycle length", () => {
-    expect(getRuleSummary([rule({ dayOfWeek: 1, pattern: "every_n", cycleLength: 2 })])).toBe("every other");
-    expect(getRuleSummary([rule({ dayOfWeek: 1, pattern: "every_n", cycleLength: 3 })])).toBe("every 3rd");
-    expect(getRuleSummary([rule({ dayOfWeek: 1, pattern: "every_n", cycleLength: 4 })])).toBe("every 4th");
-  });
-
-  it("joins multiple rules with semicolons", () => {
+// Slice 7: isBaseWorkDay/getBaseWorkDays read the WHEN model (ruleToWhen), so
+// when the explicit when* columns are present they are authoritative over the
+// inert legacy dayOfWeek/pattern. These rows mimic post-backfill data where
+// whenKind is set and the legacy columns may disagree (lossy back-projection).
+describe("isBaseWorkDay / getBaseWorkDays read the WHEN model", () => {
+  it("uses whenDays coverage, not the legacy dayOfWeek, for a multi-day every rule", () => {
+    // Legacy dayOfWeek=1, but the authoritative WHEN says Tue+Wed every week.
     const rules = [
-      rule({ dayOfWeek: 1, pattern: "pp_week_1" }),
-      rule({ dayOfWeek: 1, type: "unavailable", strength: "preference", pattern: "pp_week_2" }),
+      rule({ dayOfWeek: 1, whenKind: "every", whenDays: [2, 3] }),
     ];
-    expect(getRuleSummary(rules)).toBe("PP wk 1; Avoid PP wk 2");
+    expect(isBaseWorkDay(rules, 1)).toBe(false); // legacy day ignored
+    expect(isBaseWorkDay(rules, 2)).toBe(true);
+    expect(isBaseWorkDay(rules, 3)).toBe(true);
+    expect(getBaseWorkDays(rules)).toEqual([2, 3]);
+  });
+
+  it("excludes a non-every WHEN kind even when legacy pattern is 'every'", () => {
+    // Legacy pattern says every; WHEN says only pay-period week 1 → not a base day.
+    const rules = [
+      rule({ dayOfWeek: 1, pattern: "every", whenKind: "ppWeek", whenDays: [1], whenPpWeek: 1 }),
+    ];
+    expect(isBaseWorkDay(rules, 1)).toBe(false);
+  });
+
+  it("falls back to the legacy bridge when whenKind is null", () => {
+    const rules = [rule({ dayOfWeek: 4, pattern: "every" })]; // whenKind unset
+    expect(isBaseWorkDay(rules, 4)).toBe(true);
+    expect(isBaseWorkDay(rules, 1)).toBe(false);
   });
 });
