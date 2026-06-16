@@ -4,6 +4,8 @@ import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, u
 import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
 import { PENDING_REQUEST_MODES, type PendingRequestMode } from "@/lib/schedule-requests";
+import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, whenToLegacy, describeWhen } from "@/lib/recurrence";
+import { RecurrencePicker } from "../staff/recurrence-picker";
 
 const CanEditContext = createContext(true);
 function useCanEdit() { return useContext(CanEditContext); }
@@ -2307,6 +2309,120 @@ const ET_DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const ET_DAY_INDICES = [0, 1, 2, 3, 4, 5, 6];
 const ET_DAY_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
 
+// A "plain" default rule is the trivial available/hard single-weekday every rule
+// the quick-toggle manages. Routed through the WHEN model so an explicit
+// ordinal/multi-day default (picker) is never hidden or clobbered by the toggle.
+function defaultIsPlain(r: DefaultAvailabilityRule): boolean {
+  return r.type === "available" && r.strength === "rule" && isPlainWeekdayWhen(ruleToWhen(r));
+}
+
+// Two-layer default-availability editor: quick day toggles (plain rules only) +
+// an advanced rules list with the shared <RecurrencePicker>. Mirrors the staff
+// AvailabilityEditor, minus per-staff conditions.
+function DefaultAvailabilityEditor({
+  rules,
+  onChange,
+  canEdit,
+}: {
+  rules: DefaultAvailabilityRule[];
+  onChange: (next: DefaultAvailabilityRule[]) => void;
+  canEdit: boolean;
+}) {
+  const advanced = rules.filter((r) => !defaultIsPlain(r));
+
+  function toggleDay(d: number) {
+    if (!canEdit) return;
+    const plainForDay = rules.filter((r) => r.dayOfWeek === d && defaultIsPlain(r));
+    if (plainForDay.length > 0) {
+      onChange(rules.filter((r) => !(r.dayOfWeek === d && defaultIsPlain(r))));
+    } else {
+      onChange([...rules, { dayOfWeek: d, type: "available", strength: "rule", pattern: "every" }]);
+    }
+  }
+  function updateAt(i: number, patch: Partial<DefaultAvailabilityRule>) {
+    if (!canEdit) return;
+    onChange(rules.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  }
+  function removeAt(i: number) {
+    if (!canEdit) return;
+    onChange(rules.filter((_, idx) => idx !== i));
+  }
+  function addRule() {
+    if (!canEdit) return;
+    onChange([...rules, { dayOfWeek: 1, type: "available", strength: "preference", pattern: "every" }]);
+  }
+
+  const selCls = "bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300 disabled:opacity-50";
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1.5">Default working days</div>
+        <div className="flex gap-1">
+          {ET_DAY_INDICES.map((d) => {
+            const active = rules.some((r) => r.dayOfWeek === d && defaultIsPlain(r));
+            return (
+              <button
+                key={d}
+                onClick={() => toggleDay(d)}
+                disabled={!canEdit}
+                className={[
+                  "w-10 h-8 text-xs rounded font-medium transition-colors",
+                  active ? "bg-blue-600/50 text-blue-200 border border-blue-500/50" : "bg-slate-700 text-slate-500 border border-slate-600",
+                  canEdit ? "hover:brightness-125" : "opacity-50 cursor-not-allowed",
+                ].join(" ")}
+              >
+                {ET_DAY_LABELS[d]}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1.5">
+          Advanced default rules {advanced.length > 0 && `(${advanced.length})`}
+        </div>
+        <div className="space-y-1.5">
+          {rules.map((rule, i) => {
+            if (defaultIsPlain(rule)) return null;
+            return (
+              <div key={i} className="bg-slate-700/30 border border-slate-600/50 rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-1.5 flex-wrap text-xs">
+                  <select className={selCls} value={rule.type} onChange={(e) => updateAt(i, { type: e.target.value })} disabled={!canEdit}>
+                    <option value="available">Available</option>
+                    <option value="unavailable">Not available</option>
+                  </select>
+                  <select className={selCls} value={rule.strength} onChange={(e) => updateAt(i, { strength: e.target.value })} disabled={!canEdit}>
+                    <option value="rule">Hard rule</option>
+                    <option value="preference">Soft preference</option>
+                  </select>
+                  {canEdit && (
+                    <button onClick={() => removeAt(i)} className="text-slate-600 hover:text-red-400 ml-auto transition-colors" title="Remove rule">×</button>
+                  )}
+                </div>
+                <RecurrencePicker
+                  value={ruleToWhen(rule)}
+                  onChange={(w) => updateAt(i, { ...whenToLegacy(w), ...whenToColumns(w) })}
+                />
+                <div className="text-[10px] text-slate-500 italic border-t border-slate-600/30 pt-1.5 mt-1">
+                  {rule.type === "available" ? (rule.strength === "preference" ? "Prefers to work" : "Works") : (rule.strength === "preference" ? "Prefers not to work" : "Cannot work")}
+                  {": "}{describeWhen(ruleToWhen(rule))}.
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {canEdit && (
+          <button onClick={addRule} className="mt-2 px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded transition-colors text-slate-300">
+            + Add rule
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: EmploymentTypeData[]; pushUndo: (a: UndoAction) => void; shiftTypes: ShiftType[] }) {
   const canEdit = useCanEdit();
   const [types, setTypes] = useState(initial);
@@ -2590,31 +2706,12 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
                 </div>
               </div>
               <div>
-                <div className="text-sm text-slate-200 mb-2">Default working days</div>
-                <div className="flex gap-1">
-                  {ET_DAY_INDICES.map((d) => {
-                    const active = et.defaultAvailabilityRules.some((r) => r.dayOfWeek === d && r.type === "available");
-                    return (
-                      <button
-                        key={d}
-                        onClick={() => {
-                          if (!canEdit) return;
-                          const next = active
-                            ? et.defaultAvailabilityRules.filter((r) => r.dayOfWeek !== d)
-                            : [...et.defaultAvailabilityRules, { dayOfWeek: d, type: "available", strength: "rule", pattern: "every" }];
-                          updateField(et.id, "defaultAvailabilityRules", next);
-                        }}
-                        className={[
-                          "w-10 h-8 text-xs rounded font-medium transition-colors",
-                          active ? "bg-blue-600/50 text-blue-200 border border-blue-500/50" : "bg-slate-700 text-slate-500 border border-slate-600",
-                          canEdit ? "hover:brightness-125" : "opacity-50 cursor-not-allowed",
-                        ].join(" ")}
-                      >
-                        {ET_DAY_LABELS[d]}
-                      </button>
-                    );
-                  })}
-                </div>
+                <div className="text-sm text-slate-200 mb-2">Default availability</div>
+                <DefaultAvailabilityEditor
+                  rules={et.defaultAvailabilityRules}
+                  onChange={(next) => updateField(et.id, "defaultAvailabilityRules", next)}
+                  canEdit={canEdit}
+                />
               </div>
             </div>
 
