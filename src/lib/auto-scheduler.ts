@@ -31,6 +31,7 @@ export type ScheduleShiftType = {
   sortOrder: number; // configured display order; orders OR-request placement deterministically
   schedulePriority: number | null;
   weekendPaired: boolean;
+  holidayWeekendPaired: boolean;
   ignoresWorkingDays: boolean;
   maxPerDay: number | null;
   category: string;
@@ -1000,6 +1001,31 @@ export function autoSchedule({
           warnings.push(`${chosen.initials}: skipped ${st.code} on ${sun} — capped by max shift limit`);
         }
         recordAssignment(chosen.id, sat);
+
+        // Pair with a leading/following holiday: if the Friday before Saturday
+        // or the Monday after Sunday is a holiday needing coverage, extend the
+        // same staff member across it for a 3-day holiday weekend. If the chosen
+        // staff can't take it, warn and leave it for the holiday pass below to
+        // fill independently (the 3-day invariant couldn't be met).
+        if (st.holidayWeekendPaired) {
+          for (const bridge of [prevDate(sat), nextDate(sun)]) {
+            if (!dateSet.has(bridge) || !holidaySet.has(bridge)) continue;
+            const bridgeRequired = getRequiredCount(st, bridge);
+            if (bridgeRequired <= 0) continue;
+            if (countCoverage(st.code, bridge) >= bridgeRequired) continue;
+            if (isAssigned(chosen.id, bridge)) continue;
+            if (!isAvailable(chosen, bridge, st)) {
+              warnings.push(`${chosen.initials}: cannot extend ${st.code} weekend to adjacent holiday ${bridge} — unavailable`);
+              continue;
+            }
+            if (isAtMaximum(chosen, st, bridge)) {
+              warnings.push(`${chosen.initials}: skipped ${st.code} on holiday ${bridge} — capped by max shift limit`);
+              continue;
+            }
+            assign(chosen.id, bridge, st, `Holiday weekend ${st.code} (${chosen.initials})`, `holiday-weekend-${stepName}`, 0.8);
+            recordAssignment(chosen.id, bridge);
+          }
+        }
       }
 
       for (const date of dates) {

@@ -204,6 +204,7 @@ export async function POST(req: NextRequest) {
       sortOrder: st.sortOrder,
       schedulePriority: st.schedulePriority,
       weekendPaired: st.weekendPaired,
+      holidayWeekendPaired: st.holidayWeekendPaired,
       ignoresWorkingDays: st.ignoresWorkingDays,
       maxPerDay: st.maxPerDay,
       category: st.category,

@@ -38,6 +38,7 @@ function makeShift(id: string, code: string, overrides: Partial<ScheduleShiftTyp
     sortOrder: 0,
     schedulePriority: null,
     weekendPaired: false,
+    holidayWeekendPaired: false,
     ignoresWorkingDays: false,
     maxPerDay: null,
     category: "clinical",
@@ -553,6 +554,90 @@ describe("autoSchedule", () => {
       const orcSuggestions = result.suggestions.filter((s) => s.code === "ORC");
       expect(orcSuggestions).toHaveLength(2);
       expect(orcSuggestions[0].staffId).toBe(orcSuggestions[1].staffId);
+    });
+
+    function pairedHolidayStaff() {
+      return [
+        makeStaff("p1", "AB", {
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+          availabilityRules: [0, 1, 2, 3, 4, 5, 6].map((d) => ({
+            dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
+          })),
+        }),
+        makeStaff("p2", "CD", {
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+          availabilityRules: [0, 1, 2, 3, 4, 5, 6].map((d) => ({
+            dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
+          })),
+        }),
+      ];
+    }
+
+    it("extends a paired weekend to a leading Friday holiday (FRI-SAT-SUN, same staff)", () => {
+      const ORC = makeShift("st-orc", "ORC", {
+        schedulePriority: 1, autoSchedulable: true,
+        weekendPaired: true, holidayWeekendPaired: true, countsOnWeekend: true,
+      });
+      const result = runSchedule({
+        dates: ["2025-05-23", "2025-05-24", "2025-05-25"], // Fri (holiday), Sat, Sun
+        holidays: [{ date: "2025-05-23" }],
+        staff: pairedHolidayStaff(),
+        shiftTypes: [OR, ORC, OFF],
+        staffingRequirements: [
+          { shiftCode: "ORC", dayKey: "holiday", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "6", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "0", minCount: 1 },
+        ],
+      });
+      const orc = result.suggestions.filter((s) => s.code === "ORC");
+      expect(orc).toHaveLength(3);
+      expect(new Set(orc.map((s) => s.staffId)).size).toBe(1);
+    });
+
+    it("extends a paired weekend to a following Monday holiday (SAT-SUN-MON, same staff)", () => {
+      const ORC = makeShift("st-orc", "ORC", {
+        schedulePriority: 1, autoSchedulable: true,
+        weekendPaired: true, holidayWeekendPaired: true, countsOnWeekend: true,
+      });
+      const result = runSchedule({
+        dates: ["2025-05-24", "2025-05-25", "2025-05-26"], // Sat, Sun, Mon (Memorial Day)
+        holidays: [{ date: "2025-05-26" }],
+        staff: pairedHolidayStaff(),
+        shiftTypes: [OR, ORC, OFF],
+        staffingRequirements: [
+          { shiftCode: "ORC", dayKey: "6", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "0", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "holiday", minCount: 1 },
+        ],
+      });
+      const orc = result.suggestions.filter((s) => s.code === "ORC");
+      expect(orc).toHaveLength(3);
+      expect(new Set(orc.map((s) => s.staffId)).size).toBe(1);
+    });
+
+    it("does NOT pull an adjacent holiday into the weekend group when holidayWeekendPaired is off", () => {
+      const ORC = makeShift("st-orc", "ORC", {
+        schedulePriority: 1, autoSchedulable: true,
+        weekendPaired: true, holidayWeekendPaired: false, countsOnWeekend: true,
+      });
+      const result = runSchedule({
+        dates: ["2025-05-23", "2025-05-24", "2025-05-25"], // Fri (holiday), Sat, Sun
+        holidays: [{ date: "2025-05-23" }],
+        staff: pairedHolidayStaff(),
+        shiftTypes: [OR, ORC, OFF],
+        staffingRequirements: [
+          { shiftCode: "ORC", dayKey: "holiday", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "6", minCount: 1 },
+          { shiftCode: "ORC", dayKey: "0", minCount: 1 },
+        ],
+      });
+      const orc = result.suggestions.filter((s) => s.code === "ORC");
+      // All three days are still staffed, but the holiday is filled
+      // independently (even distribution), not glued to the weekend person.
+      expect(orc).toHaveLength(3);
+      const holidayStaff = orc.find((s) => s.date === "2025-05-23")!.staffId;
+      const saturdayStaff = orc.find((s) => s.date === "2025-05-24")!.staffId;
+      expect(holidayStaff).not.toBe(saturdayStaff);
     });
   });
 

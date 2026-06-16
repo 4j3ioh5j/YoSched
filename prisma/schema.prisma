@@ -80,6 +80,7 @@ model ShiftType {
   isFillShift        Boolean  @default(false)
   schedulePriority   Int?
   weekendPaired      Boolean  @default(false)
+  holidayWeekendPaired Boolean @default(false) // when weekendPaired, also assign the same person to an adjacent holiday (Fri before / Mon after) for a 3-day holiday weekend
   ignoresWorkingDays Boolean  @default(false)
   noConsecutiveGroup String?
   maxPerDay          Int?

@@ -26,6 +26,7 @@ type ShiftType = {
   isOffShift: boolean;
   isFillShift: boolean;
   weekendPaired: boolean;
+  holidayWeekendPaired: boolean;
   ignoresWorkingDays: boolean;
   maxPerDay: number | null;
   autoSchedulable: boolean;
@@ -646,6 +647,7 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules, initialRequi
         isOffShift: created.isOffShift ?? false,
         isFillShift: created.isFillShift ?? false,
         weekendPaired: created.weekendPaired ?? false,
+        holidayWeekendPaired: created.holidayWeekendPaired ?? false,
         ignoresWorkingDays: created.ignoresWorkingDays ?? false,
         maxPerDay: created.maxPerDay ?? null,
         autoSchedulable: created.autoSchedulable ?? false,
@@ -881,6 +883,9 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules, initialRequi
               </FieldRow>
               <FieldRow label="Pair Saturday and Sunday" description="Assign the same person to both Saturday and Sunday when filling this shift on weekends">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.weekendPaired} onChange={(e) => updateField(editingShift.id, "weekendPaired", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
+              </FieldRow>
+              <FieldRow label="Pair with leading or following holiday" description="When Saturday/Sunday are paired, also assign the same person to an adjacent holiday (the Friday before or Monday after) so a 3-day holiday weekend (e.g. FRI-SAT-SUN or SAT-SUN-MON) is covered by one staff member">
+                <input disabled={!canEdit || !editingShift.weekendPaired} type="checkbox" checked={editingShift.holidayWeekendPaired} onChange={(e) => updateField(editingShift.id, "holidayWeekendPaired", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Can be assigned on days off" description="Allow this shift to be assigned even on a staff's non-working days (e.g., weekend call)">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.ignoresWorkingDays} onChange={(e) => updateField(editingShift.id, "ignoresWorkingDays", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />

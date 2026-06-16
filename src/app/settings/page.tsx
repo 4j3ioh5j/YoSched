@@ -63,6 +63,7 @@ export default async function Settings() {
           isOffShift: st.isOffShift,
           isFillShift: st.isFillShift,
           weekendPaired: st.weekendPaired,
+          holidayWeekendPaired: st.holidayWeekendPaired,
           ignoresWorkingDays: st.ignoresWorkingDays,
           maxPerDay: st.maxPerDay,
           autoSchedulable: st.autoSchedulable,

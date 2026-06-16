@@ -11,7 +11,7 @@ const EDITABLE_FIELDS = [
   "name", "code", "defaultHours",
   "countsTowardFte", "countsOnWeekend", "countsAsHolidayWork",
   "isLeave", "isPaid", "category", "color", "printBackgroundColor", "sortOrder",
-  "schedulePriority", "isOffShift", "isFillShift", "weekendPaired",
+  "schedulePriority", "isOffShift", "isFillShift", "weekendPaired", "holidayWeekendPaired",
   "ignoresWorkingDays", "maxPerDay", "autoSchedulable", "hotkey", "dedicatedColumn",
   "boldOnSchedule",
 ] as const;
@@ -71,6 +71,7 @@ export async function POST(req: NextRequest) {
       isOffShift: data.isOffShift ?? false,
       isFillShift: data.isFillShift ?? false,
       weekendPaired: data.weekendPaired ?? false,
+      holidayWeekendPaired: data.holidayWeekendPaired ?? false,
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
       maxPerDay: data.maxPerDay ?? null,
       autoSchedulable: data.autoSchedulable ?? false,
