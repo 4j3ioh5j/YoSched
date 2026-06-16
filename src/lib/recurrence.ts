@@ -229,8 +229,11 @@ export function legacyPatternToWhen(rule: {
 // discriminator (nullable, no default) — null means "this row predates / was not
 // written by a WHEN-aware path", so we fall back to the legacy columns.
 export type RecurrenceRuleRow = {
-  dayOfWeek: number;
-  pattern: string;
+  // Legacy columns are optional since slice 7 dropped them from the DB — only
+  // the bridge tests and ruleToWhen's (now dead-in-prod) fallback still read
+  // them; live rows always carry whenKind.
+  dayOfWeek?: number | null;
+  pattern?: string | null;
   cycleLength?: number | null;
   cycleOffset?: number | null;
   whenKind?: string | null;
@@ -262,7 +265,16 @@ export function buildWhenFromColumns(rule: RecurrenceRuleRow): WhenPattern {
 // The single entry point readers use: prefer the explicit WHEN columns, else the
 // legacy bridge. Keeps the scheduler correct across the dual-column transition.
 export function ruleToWhen(rule: RecurrenceRuleRow): WhenPattern {
-  return rule.whenKind != null ? buildWhenFromColumns(rule) : legacyPatternToWhen(rule);
+  if (rule.whenKind != null) return buildWhenFromColumns(rule);
+  // Legacy fallback — dead in production since slice 7 (every row has whenKind);
+  // retained for the bridge-equivalence tests. Coerce the now-optional legacy
+  // columns to concrete values for legacyPatternToWhen.
+  return legacyPatternToWhen({
+    dayOfWeek: rule.dayOfWeek ?? 0,
+    pattern: rule.pattern ?? "every",
+    cycleLength: rule.cycleLength,
+    cycleOffset: rule.cycleOffset,
+  });
 }
 
 // The persisted shape of a WhenPattern — the new normalized DB columns. Inverse
@@ -347,51 +359,18 @@ export function describeWhen(w: WhenPattern): string {
   }
 }
 
-// Inert back-projection to the legacy NOT-NULL columns. Kept sensible so old
-// readers / legacy summaries don't choke, but ignored by WHEN-aware readers
-// (ruleToWhen prefers the explicit when* columns once whenKind is set). Patterns
-// the legacy model can't express (ordinals, multi-day, every-other-pay-period)
-// degrade to "every" — lossy on purpose; the when* columns hold the real shape.
-export type LegacyColumns = {
-  dayOfWeek: number;
-  pattern: string;
-  cycleLength: number | null;
-  cycleOffset: number | null;
-};
-
-export function whenToLegacy(w: WhenPattern): LegacyColumns {
-  const dayOfWeek = w.daysOfWeek?.[0] ?? 1;
-  const plain: LegacyColumns = { dayOfWeek, pattern: "every", cycleLength: null, cycleOffset: null };
-  switch (w.kind) {
-    case "ppWeek":
-      if (w.ppWeek === 1) return { ...plain, pattern: "pp_week_1" };
-      if (w.ppWeek === 2) return { ...plain, pattern: "pp_week_2" };
-      return plain;
-    case "cycle":
-      // Only the "week" cycle maps to legacy every_n; pay-period cycle is inexpressible.
-      if (w.cycleUnit === "week") {
-        return {
-          dayOfWeek,
-          pattern: "every_n",
-          cycleLength: Math.max(1, Math.floor(w.cycleN ?? 2)),
-          cycleOffset: w.cycleOffset ?? 0,
-        };
-      }
-      return plain;
-    default:
-      // every, ordinalMonth, ordinalPayPeriod → legacy "every".
-      return plain;
-  }
-}
-
 // ── StandingCommitment WHEN bridge (slice 6) ─────────────────────────────────
-// StandingCommitment's legacy columns are `dayOfWeek` (nullable) + `frequency`
-// (weekly|biweekly|monthly), NOT the pattern/cycle* shape availability rules use,
-// so it needs its own bridge (whenToLegacy / legacyPatternToWhen don't apply).
+// StandingCommitment's former legacy columns were `dayOfWeek` (nullable) +
+// `frequency` (weekly|biweekly|monthly), a different shape from availability
+// rules' pattern/cycle*, so it has its own read bridge. (Slice 7 dropped the
+// legacy columns; the back-projection helpers whenToLegacy/whenToStandingLegacy
+// were removed with them.)
 
 export type StandingCommitmentRow = {
-  dayOfWeek: number | null;
-  frequency: string;
+  // Legacy columns optional since slice 7 dropped them from the DB; live rows
+  // always carry whenKind. Retained for the bridge-equivalence tests.
+  dayOfWeek?: number | null;
+  frequency?: string | null;
   whenKind?: string | null;
   whenDays?: number[] | null;
   whenPpWeek?: number | null;
@@ -432,16 +411,4 @@ export function standingToWhen(sc: StandingCommitmentRow): WhenPattern {
     default:
       return { daysOfWeek, kind: "every" };
   }
-}
-
-// Inert back-projection of a WhenPattern to StandingCommitment's legacy columns.
-// A single weekday maps to dayOfWeek; multi-day / any-day → null. Authoritative
-// reads use the when* columns (standingToWhen), so this only keeps the legacy
-// columns sensible.
-export function whenToStandingLegacy(w: WhenPattern): { dayOfWeek: number | null; frequency: string } {
-  const dayOfWeek = (w.daysOfWeek?.length ?? 0) === 1 ? w.daysOfWeek[0] : null;
-  let frequency = "weekly";
-  if (w.kind === "cycle" && w.cycleUnit === "week") frequency = "biweekly";
-  else if (w.kind === "ordinalMonth") frequency = "monthly";
-  return { dayOfWeek, frequency };
 }

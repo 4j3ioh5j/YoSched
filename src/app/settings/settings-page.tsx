@@ -4,7 +4,7 @@ import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, u
 import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
 import { PENDING_REQUEST_MODES, type PendingRequestMode } from "@/lib/schedule-requests";
-import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, whenToLegacy, describeWhen } from "@/lib/recurrence";
+import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
 import { RecurrencePicker } from "../staff/recurrence-picker";
 
 const CanEditContext = createContext(true);
@@ -76,12 +76,10 @@ type SchedulingPrefs = {
 };
 
 type DefaultAvailabilityRule = {
-  dayOfWeek: number;
   type: string;
   strength: string;
-  pattern: string;
-  // Unified WHEN columns (slice 6c) — carried so explicit ordinal/multi-day
-  // default rules survive a load→save round-trip.
+  // Unified WHEN columns — sole recurrence representation (slice 7 dropped the
+  // legacy dayOfWeek/pattern columns).
   whenKind?: string | null;
   whenDays?: number[] | null;
   whenPpWeek?: number | null;
@@ -2344,7 +2342,7 @@ function DefaultAvailabilityEditor({
     if (plainForDay.length > 0) {
       onChange(rules.filter((r) => !(defaultIsPlain(r) && defaultRuleCoversDay(r, d))));
     } else {
-      onChange([...rules, { dayOfWeek: d, type: "available", strength: "rule", pattern: "every" }]);
+      onChange([...rules, { type: "available", strength: "rule", ...whenToColumns({ daysOfWeek: [d], kind: "every" }) }]);
     }
   }
   function updateAt(i: number, patch: Partial<DefaultAvailabilityRule>) {
@@ -2357,7 +2355,7 @@ function DefaultAvailabilityEditor({
   }
   function addRule() {
     if (!canEdit) return;
-    onChange([...rules, { dayOfWeek: 1, type: "available", strength: "preference", pattern: "every" }]);
+    onChange([...rules, { type: "available", strength: "preference", ...whenToColumns({ daysOfWeek: [1], kind: "every" }) }]);
   }
 
   const selCls = "bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300 disabled:opacity-50";
@@ -2411,7 +2409,7 @@ function DefaultAvailabilityEditor({
                 </div>
                 <RecurrencePicker
                   value={ruleToWhen(rule)}
-                  onChange={(w) => updateAt(i, { ...whenToLegacy(w), ...whenToColumns(w) })}
+                  onChange={(w) => updateAt(i, { ...whenToColumns(w) })}
                 />
                 <div className="text-[10px] text-slate-500 italic border-t border-slate-600/30 pt-1.5 mt-1">
                   {rule.type === "available" ? (rule.strength === "preference" ? "Prefers to work" : "Works") : (rule.strength === "preference" ? "Prefers not to work" : "Cannot work")}
@@ -2501,7 +2499,7 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
         defaultFtePercentage: created.defaultFtePercentage,
         defaultEligibleShiftTypeIds: (created.defaultEligibleShifts ?? []).map((ds: { shiftTypeId: string }) => ds.shiftTypeId),
         defaultAvailabilityRules: (created.defaultAvailability ?? []).map((da: DefaultAvailabilityRule) => ({
-          dayOfWeek: da.dayOfWeek, type: da.type, strength: da.strength, pattern: da.pattern,
+          type: da.type, strength: da.strength,
           whenKind: da.whenKind, whenDays: da.whenDays, whenPpWeek: da.whenPpWeek, whenOrds: da.whenOrds,
           whenCycleUnit: da.whenCycleUnit, whenCycleN: da.whenCycleN, whenCycleOffset: da.whenCycleOffset,
         })),

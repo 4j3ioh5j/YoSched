@@ -2,13 +2,10 @@ import { matchesWhen, ruleToWhen, type PayPeriodRange } from "./recurrence";
 
 export type ShiftEligibilityRule = {
   shiftTypeId: string;
-  dayOfWeek: number;
   type: "eligible" | "ineligible";
   strength: "rule" | "preference";
-  pattern: "every" | "pp_week_1" | "pp_week_2" | "every_n";
-  cycleLength?: number | null;
-  cycleOffset?: number | null;
-  // New normalized WHEN columns (present after slice-3b backfill / picker save).
+  // Normalized WHEN columns — sole recurrence representation (slice 7 dropped
+  // the legacy dayOfWeek/pattern/cycle* columns).
   whenKind?: string | null;
   whenDays?: number[] | null;
   whenPpWeek?: number | null;

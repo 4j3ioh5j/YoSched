@@ -12,6 +12,7 @@ import {
   type ShiftEligibilityRule,
   type ShiftMinTarget,
 } from "../shift-eligibility";
+import { whenToColumns, legacyPatternToWhen } from "../recurrence";
 
 const PP = [
   { startDate: "2025-05-11", endDate: "2025-05-24" },
@@ -19,14 +20,25 @@ const PP = [
   { startDate: "2025-06-08", endDate: "2025-06-21" },
 ];
 
-function rule(shiftTypeId: string, dayOfWeek: number, overrides: Partial<ShiftEligibilityRule> = {}): ShiftEligibilityRule {
+// Builds a WHEN-only ShiftEligibilityRule from legacy-style test inputs (the
+// dayOfWeek/pattern/cycle* are bridged to when* via legacyPatternToWhen).
+function rule(
+  shiftTypeId: string,
+  dayOfWeek: number,
+  overrides: {
+    pattern?: "every" | "pp_week_1" | "pp_week_2" | "every_n";
+    cycleLength?: number | null;
+    cycleOffset?: number | null;
+    type?: "eligible" | "ineligible";
+    strength?: "rule" | "preference";
+  } = {},
+): ShiftEligibilityRule {
+  const { pattern = "every", cycleLength, cycleOffset, type = "eligible", strength = "rule" } = overrides;
   return {
     shiftTypeId,
-    dayOfWeek,
-    type: "eligible",
-    strength: "rule",
-    pattern: "every",
-    ...overrides,
+    type,
+    strength,
+    ...whenToColumns(legacyPatternToWhen({ dayOfWeek, pattern, cycleLength, cycleOffset })),
   };
 }
 

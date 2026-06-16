@@ -36,10 +36,15 @@ type ShiftType = {
 };
 
 type AvailabilityRuleData = {
-  dayOfWeek: number;
   type: string;
   strength: string;
-  pattern: string;
+  whenKind?: string | null;
+  whenDays?: number[] | null;
+  whenPpWeek?: number | null;
+  whenOrds?: number[] | null;
+  whenCycleUnit?: string | null;
+  whenCycleN?: number | null;
+  whenCycleOffset?: number | null;
 };
 
 type Staff = {

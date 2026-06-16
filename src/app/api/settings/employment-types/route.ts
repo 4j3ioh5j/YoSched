@@ -56,10 +56,8 @@ export async function PUT(req: NextRequest) {
       await prisma.employmentTypeDefaultAvailability.createMany({
         data: defaultAvailabilityRules.map((r: Record<string, unknown>) => ({
           employmentTypeId: id,
-          dayOfWeek: r.dayOfWeek as number,
           type: (r.type as string) ?? "available",
           strength: (r.strength as string) ?? "rule",
-          pattern: (r.pattern as string) ?? "every",
           ...whenColumns(r),
         })),
       });
@@ -97,10 +95,8 @@ export async function POST(req: NextRequest) {
     await prisma.employmentTypeDefaultAvailability.createMany({
       data: defaultDays.map((r: Record<string, unknown>) => ({
         employmentTypeId: created.id,
-        dayOfWeek: r.dayOfWeek as number,
         type: (r.type as string) ?? "available",
         strength: (r.strength as string) ?? "rule",
-        pattern: (r.pattern as string) ?? "every",
         ...whenColumns(r),
       })),
     });

@@ -5,6 +5,7 @@ import {
   getBaseWorkDays,
   type AvailabilityRule,
 } from "../availability";
+import { whenToColumns, legacyPatternToWhen } from "../recurrence";
 
 const PP = [
   { startDate: "2025-05-11", endDate: "2025-05-24" },
@@ -13,13 +14,42 @@ const PP = [
   { startDate: "2025-06-22", endDate: "2025-07-05" },
 ];
 
-function rule(overrides: Partial<AvailabilityRule> & { dayOfWeek: number }): AvailabilityRule {
-  return {
-    type: "available",
-    strength: "rule",
-    pattern: "every",
-    ...overrides,
-  };
+type RuleInput = {
+  dayOfWeek: number;
+  pattern?: "every" | "pp_week_1" | "pp_week_2" | "every_n";
+  cycleLength?: number | null;
+  cycleOffset?: number | null;
+  type?: "available" | "unavailable";
+  strength?: "rule" | "preference";
+  conditionStaffId?: string | null;
+  conditionType?: "working" | "not_working" | null;
+  whenKind?: string | null;
+  whenDays?: number[] | null;
+  whenPpWeek?: number | null;
+  whenOrds?: number[] | null;
+  whenCycleUnit?: string | null;
+  whenCycleN?: number | null;
+  whenCycleOffset?: number | null;
+};
+
+// Builds a WHEN-only AvailabilityRule from legacy-style test inputs: an explicit
+// whenKind wins; otherwise dayOfWeek/pattern/cycle* are bridged to when* via
+// legacyPatternToWhen (mirrors how production rows were backfilled before the
+// slice-7 column drop).
+function rule(o: RuleInput): AvailabilityRule {
+  const {
+    dayOfWeek, pattern = "every", cycleLength, cycleOffset,
+    type = "available", strength = "rule", conditionStaffId, conditionType,
+    whenKind, whenDays, whenPpWeek, whenOrds, whenCycleUnit, whenCycleN, whenCycleOffset,
+  } = o;
+  const whenCols =
+    whenKind != null
+      ? {
+          whenKind, whenDays: whenDays ?? [], whenPpWeek: whenPpWeek ?? null, whenOrds: whenOrds ?? [],
+          whenCycleUnit: whenCycleUnit ?? null, whenCycleN: whenCycleN ?? null, whenCycleOffset: whenCycleOffset ?? null,
+        }
+      : whenToColumns(legacyPatternToWhen({ dayOfWeek, pattern, cycleLength, cycleOffset }));
+  return { type, strength, conditionStaffId, conditionType, ...whenCols };
 }
 
 describe("evaluateAvailability", () => {
@@ -231,8 +261,8 @@ describe("isBaseWorkDay / getBaseWorkDays read the WHEN model", () => {
     expect(isBaseWorkDay(rules, 1)).toBe(false);
   });
 
-  it("falls back to the legacy bridge when whenKind is null", () => {
-    const rules = [rule({ dayOfWeek: 4, pattern: "every" })]; // whenKind unset
+  it("treats a plain every-weekday rule as a base work day on its weekday", () => {
+    const rules = [rule({ dayOfWeek: 4, pattern: "every" })];
     expect(isBaseWorkDay(rules, 4)).toBe(true);
     expect(isBaseWorkDay(rules, 1)).toBe(false);
   });

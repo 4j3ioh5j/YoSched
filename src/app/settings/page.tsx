@@ -103,10 +103,8 @@ export default async function Settings() {
           defaultFtePercentage: et.defaultFtePercentage,
           defaultEligibleShiftTypeIds: et.defaultEligibleShifts.map((ds) => ds.shiftTypeId),
           defaultAvailabilityRules: et.defaultAvailability.map((da) => ({
-            dayOfWeek: da.dayOfWeek,
             type: da.type,
             strength: da.strength,
-            pattern: da.pattern,
             whenKind: da.whenKind,
             whenDays: da.whenDays,
             whenPpWeek: da.whenPpWeek,

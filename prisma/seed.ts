@@ -131,23 +131,23 @@ async function main() {
   await prisma.employmentTypeDefaultAvailability.createMany({
     data: fteDefaultDays.map((d) => ({
       employmentTypeId: fteType.id,
-      dayOfWeek: d,
       type: "available",
       strength: "rule",
-      pattern: "every",
+      whenKind: "every",
+      whenDays: [d],
     })),
   });
   console.log("Seeded employment type default availability rules");
 
   // --- Staff Availability Rules ---
   await prisma.availabilityRule.deleteMany({});
-  const availRules: { staffId: string; dayOfWeek: number; type: string; strength: string; pattern: string }[] = [];
+  const availRules: { staffId: string; type: string; strength: string; whenKind: string; whenDays: number[] }[] = [];
   const defaultWorkDays = [1, 2, 3, 4, 5];
   const kzWorkDays = [1, 3]; // KZ only works Mon/Wed
   for (const prov of allStaffRecords) {
     const days = prov.initials === "KZ" ? kzWorkDays : (feeBasisInitials.has(prov.initials) ? [] : defaultWorkDays);
     for (const d of days) {
-      availRules.push({ staffId: prov.id, dayOfWeek: d, type: "available", strength: "rule", pattern: "every" });
+      availRules.push({ staffId: prov.id, type: "available", strength: "rule", whenKind: "every", whenDays: [d] });
     }
   }
   if (availRules.length > 0) {
@@ -194,7 +194,7 @@ async function main() {
 
   await prisma.standingCommitment.deleteMany({ where: { staffId: staId, shiftTypeId: rsId } });
   await prisma.standingCommitment.create({
-    data: { staffId: staId, shiftTypeId: rsId, frequency: "weekly", notes: "Standing research days" },
+    data: { staffId: staId, shiftTypeId: rsId, whenKind: "every", notes: "Standing research days" },
   });
   console.log("Seeded STa standing commitment (Research)");
 

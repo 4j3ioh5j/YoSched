@@ -161,15 +161,11 @@ export async function POST(req: NextRequest) {
       ftePercentage: p.ftePercentage ?? 1.0,
       eligibleShiftTypeIds: eligibilityMap.get(p.id) ?? [],
       availabilityRules: (rulesMap.get(p.id) ?? []).map((ar) => ({
-        dayOfWeek: ar.dayOfWeek,
         type: ar.type as "available" | "unavailable",
         strength: ar.strength as "rule" | "preference",
-        pattern: ar.pattern as "every" | "pp_week_1" | "pp_week_2" | "every_n",
-        cycleLength: ar.cycleLength,
-        cycleOffset: ar.cycleOffset,
         conditionStaffId: ar.conditionStaffId,
         conditionType: ar.conditionType as "working" | "not_working" | null,
-        // New WHEN columns — ruleToWhen reads these when whenKind is set.
+        // WHEN columns — the sole recurrence representation (slice 7).
         whenKind: ar.whenKind,
         whenDays: ar.whenDays,
         whenPpWeek: ar.whenPpWeek,
@@ -183,12 +179,8 @@ export async function POST(req: NextRequest) {
       specialQualifications: p.specialQualifications,
       shiftEligibilityRules: (eligRulesMap.get(p.id) ?? []).map((er) => ({
         shiftTypeId: er.shiftTypeId,
-        dayOfWeek: er.dayOfWeek,
         type: er.type as "eligible" | "ineligible",
         strength: er.strength as "rule" | "preference",
-        pattern: er.pattern as "every" | "pp_week_1" | "pp_week_2" | "every_n",
-        cycleLength: er.cycleLength,
-        cycleOffset: er.cycleOffset,
         whenKind: er.whenKind,
         whenDays: er.whenDays,
         whenPpWeek: er.whenPpWeek,
@@ -249,8 +241,6 @@ export async function POST(req: NextRequest) {
     standingCommitments: standingCommitments.map((sc) => ({
       staffId: sc.staffId,
       shiftTypeId: sc.shiftTypeId,
-      dayOfWeek: sc.dayOfWeek,
-      frequency: sc.frequency,
       whenKind: sc.whenKind,
       whenDays: sc.whenDays,
       whenPpWeek: sc.whenPpWeek,

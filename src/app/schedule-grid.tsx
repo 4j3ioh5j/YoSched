@@ -69,11 +69,18 @@ const REQUEST_FILTER_STATUSES: Record<RequestFilter, RequestStatus[]> = {
 import { useEscape } from "@/lib/use-escape";
 
 type AvailabilityRuleData = {
-  dayOfWeek: number;
   type: string;
   strength: string;
-  pattern: string;
   conditionStaffId?: string | null;
+  // WHEN columns — sole recurrence representation (slice 7). checkCellWarnings
+  // reads these via ruleToWhen for the non-working-day check.
+  whenKind?: string | null;
+  whenDays?: number[] | null;
+  whenPpWeek?: number | null;
+  whenOrds?: number[] | null;
+  whenCycleUnit?: string | null;
+  whenCycleN?: number | null;
+  whenCycleOffset?: number | null;
 };
 
 type Staff = {

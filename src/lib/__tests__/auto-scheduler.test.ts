@@ -1,8 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { daysBetween, bestSpread, autoSchedule, maxReachableDailyHours, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult } from "../auto-scheduler";
 import { type ScheduleRequestData } from "../schedule-requests";
+import { whenToColumns, legacyPatternToWhen, standingToWhen } from "../recurrence";
 
 // ─── helpers ───
+
+// WHEN columns for a plain "every occurrence of weekday d" rule (slice 7: rules
+// are WHEN-only). sw() derives WHEN columns for a standing commitment from its
+// former legacy dayOfWeek + frequency shape.
+const wEvery = (d: number) => whenToColumns(legacyPatternToWhen({ dayOfWeek: d, pattern: "every" }));
+const sw = (dayOfWeek: number | null, frequency: string) => whenToColumns(standingToWhen({ dayOfWeek, frequency }));
 
 function makeStaff(id: string, initials: string, overrides: Partial<ScheduleStaff> = {}): ScheduleStaff {
   return {
@@ -11,10 +18,9 @@ function makeStaff(id: string, initials: string, overrides: Partial<ScheduleStaf
     ftePercentage: 1,
     eligibleShiftTypeIds: ["st-or", "st-off"],
     availabilityRules: [1, 2, 3, 4, 5].map((d) => ({
-      dayOfWeek: d,
       type: "available" as const,
       strength: "rule" as const,
-      pattern: "every" as const,
+      ...wEvery(d),
     })),
     isActive: true,
     isAutoScheduled: true,
@@ -176,7 +182,7 @@ describe("autoSchedule", () => {
     it("assigns standing commitments on matching days", () => {
       const result = runSchedule({
         standingCommitments: [
-          { staffId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "weekly" },
+          { staffId: "p1", shiftTypeId: "st-or", ...sw(1, "weekly") },
         ],
         staffingRequirements: [],
       });
@@ -190,7 +196,7 @@ describe("autoSchedule", () => {
     it("skips standing commitments on holidays", () => {
       const result = runSchedule({
         standingCommitments: [
-          { staffId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "weekly" },
+          { staffId: "p1", shiftTypeId: "st-or", ...sw(1, "weekly") },
         ],
         holidays: [{ date: "2025-05-12" }],
       });
@@ -205,12 +211,12 @@ describe("autoSchedule", () => {
         staff: [
           makeStaff("p1", "AB", {
             shiftEligibilityRules: [
-              { shiftTypeId: "st-or", dayOfWeek: 3, type: "eligible", strength: "rule", pattern: "every" },
+              { shiftTypeId: "st-or", type: "eligible", strength: "rule", ...wEvery(3) },
             ],
           }),
         ],
         standingCommitments: [
-          { staffId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "weekly" },
+          { staffId: "p1", shiftTypeId: "st-or", ...sw(1, "weekly") },
         ],
       });
       // p1 has temporal rules for OR: only Wednesday eligible
@@ -224,7 +230,7 @@ describe("autoSchedule", () => {
     it("skips standing commitments for non-autoSchedulable shifts", () => {
       const result = runSchedule({
         standingCommitments: [
-          { staffId: "p1", shiftTypeId: "st-off", dayOfWeek: 1, frequency: "weekly" },
+          { staffId: "p1", shiftTypeId: "st-off", ...sw(1, "weekly") },
         ],
       });
       const standing = result.suggestions.filter((s) => s.step === "standing");
@@ -241,7 +247,7 @@ describe("autoSchedule", () => {
     it("biweekly commitment fires every other week only", () => {
       const result = runSchedule({
         standingCommitments: [
-          { staffId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "biweekly" },
+          { staffId: "p1", shiftTypeId: "st-or", ...sw(1, "biweekly") },
         ],
         dates: weekdayDates("2025-05-12", 20), // 4 weeks Mon–Fri
         payPeriods: TWO_PP,
@@ -257,7 +263,7 @@ describe("autoSchedule", () => {
     it("monthly commitment fires on the 1st matching weekday of the month only", () => {
       const result = runSchedule({
         standingCommitments: [
-          { staffId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "monthly" },
+          { staffId: "p1", shiftTypeId: "st-or", ...sw(1, "monthly") },
         ],
         dates: weekdayDates("2025-05-12", 20),
         payPeriods: TWO_PP,
@@ -424,7 +430,7 @@ describe("autoSchedule", () => {
     const ORC = makeShift("st-orc", "ORC", { defaultHours: 16, schedulePriority: 2, autoSchedulable: true });
     const followerShifts = [OR, CALL, ADM, ORC, OFF];
     const everyDay = [0, 1, 2, 3, 4, 5, 6].map((d) => ({
-      dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
+      type: "available" as const, strength: "rule" as const, ...wEvery(d),
     }));
     function fStaff(overrides: Partial<ScheduleStaff> = {}) {
       return makeStaff("p1", "AB", {
@@ -570,13 +576,13 @@ describe("autoSchedule", () => {
         makeStaff("p1", "AB", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
           availabilityRules: [0, 1, 2, 3, 4, 5, 6].map((d) => ({
-            dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
+            type: "available" as const, strength: "rule" as const, ...wEvery(d),
           })),
         }),
         makeStaff("p2", "CD", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
           availabilityRules: [0, 1, 2, 3, 4, 5, 6].map((d) => ({
-            dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
+            type: "available" as const, strength: "rule" as const, ...wEvery(d),
           })),
         }),
       ];
@@ -601,13 +607,13 @@ describe("autoSchedule", () => {
         makeStaff("p1", "AB", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
           availabilityRules: [0, 1, 2, 3, 4, 5, 6].map((d) => ({
-            dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
+            type: "available" as const, strength: "rule" as const, ...wEvery(d),
           })),
         }),
         makeStaff("p2", "CD", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
           availabilityRules: [0, 1, 2, 3, 4, 5, 6].map((d) => ({
-            dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
+            type: "available" as const, strength: "rule" as const, ...wEvery(d),
           })),
         }),
       ];
@@ -725,7 +731,7 @@ describe("autoSchedule", () => {
         makeStaff("p1", "AB", {
           eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
           shiftEligibilityRules: [
-            { shiftTypeId: "st-orc", dayOfWeek: 1, type: "eligible", strength: "rule", pattern: "every" },
+            { shiftTypeId: "st-orc", type: "eligible", strength: "rule", ...wEvery(1) },
           ],
         }),
         makeStaff("p2", "CD", {
@@ -880,7 +886,7 @@ describe("autoSchedule", () => {
         dates: weekdayDates("2025-05-12", 5),
         staff: [p],
         standingCommitments: [
-          { staffId: "p1", shiftTypeId: "st-or", dayOfWeek: null, frequency: "weekly" },
+          { staffId: "p1", shiftTypeId: "st-or", ...sw(null, "weekly") },
         ],
       });
       const orCount = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "OR").length;
@@ -911,10 +917,9 @@ describe("autoSchedule", () => {
       const p = makeStaff("p1", "AB", {
         eligibleShiftTypeIds: ["st-call", "st-off"],
         availabilityRules: [0, 1, 2, 3, 4, 5, 6].map((d) => ({
-          dayOfWeek: d,
           type: "available" as const,
           strength: "rule" as const,
-          pattern: "every" as const,
+          ...wEvery(d),
         })),
         shiftMinimumTargets: [
           { shiftTypeId: "st-call", minCount: 0, maxCount: 1, window: "pay_period" as const },
@@ -962,11 +967,11 @@ describe("autoSchedule", () => {
       const p = makeStaff("p1", "AB", {
         eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"],
         shiftEligibilityRules: [
-          { shiftTypeId: "st-adm", dayOfWeek: 5, type: "eligible" as const, strength: "rule" as const, pattern: "every" as const },
-          { shiftTypeId: "st-adm", dayOfWeek: 1, type: "ineligible" as const, strength: "rule" as const, pattern: "every" as const },
-          { shiftTypeId: "st-adm", dayOfWeek: 2, type: "ineligible" as const, strength: "rule" as const, pattern: "every" as const },
-          { shiftTypeId: "st-adm", dayOfWeek: 3, type: "ineligible" as const, strength: "rule" as const, pattern: "every" as const },
-          { shiftTypeId: "st-adm", dayOfWeek: 4, type: "ineligible" as const, strength: "rule" as const, pattern: "every" as const },
+          { shiftTypeId: "st-adm", type: "eligible" as const, strength: "rule" as const, ...wEvery(5) },
+          { shiftTypeId: "st-adm", type: "ineligible" as const, strength: "rule" as const, ...wEvery(1) },
+          { shiftTypeId: "st-adm", type: "ineligible" as const, strength: "rule" as const, ...wEvery(2) },
+          { shiftTypeId: "st-adm", type: "ineligible" as const, strength: "rule" as const, ...wEvery(3) },
+          { shiftTypeId: "st-adm", type: "ineligible" as const, strength: "rule" as const, ...wEvery(4) },
         ],
         shiftMinimumTargets: [
           { shiftTypeId: "st-adm", minCount: 1, window: "pay_period" as const },
@@ -1149,7 +1154,7 @@ describe("autoSchedule — schedule requests", () => {
 
   it("hard OFF overrides a standing commitment on the same date", () => {
     const r = runSchedule({
-      standingCommitments: [{ staffId: "p1", shiftTypeId: "st-or", dayOfWeek: null, frequency: "weekly" }],
+      standingCommitments: [{ staffId: "p1", shiftTypeId: "st-or", ...sw(null, "weekly") }],
       scheduleRequests: [req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "OFF" })],
     });
     expect(worksOR(r, "p1", "2025-05-12")).toBe(false);
@@ -1569,10 +1574,10 @@ describe("autoSchedule — ORC distribution (Slice 2)", () => {
   // (ORC/off/ORC/off/ORC = 3 ORC). Valuing days at the real reachable shift hours
   // (ORC=16h) keeps everyone feasible, so run-count fairness spreads ORC evenly.
   const everyDay = [0, 1, 2, 3, 4, 5, 6].map((d) => ({
-    dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
+    type: "available" as const, strength: "rule" as const, ...wEvery(d),
   }));
   const weekdaysOnly = [1, 2, 3, 4, 5].map((d) => ({
-    dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
+    type: "available" as const, strength: "rule" as const, ...wEvery(d),
   }));
   const ORC = makeShift("st-orc", "ORC", { defaultHours: 16, schedulePriority: 2, autoSchedulable: true });
   const eligible = ["st-or", "st-orc", "st-off"];

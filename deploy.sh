@@ -22,9 +22,6 @@ git pull --ff-only
 echo "--- pnpm install"
 pnpm install --frozen-lockfile
 
-echo "--- prisma migrate"
-npx prisma migrate deploy
-
 echo "--- prisma generate"
 npx prisma generate
 
@@ -34,6 +31,15 @@ pnpm build
 echo "--- link static assets into standalone"
 ln -sf ../../static .next/standalone/.next/static
 ln -sf ../../public .next/standalone/public
+
+# Run migrations LAST, immediately before restart. For a destructive
+# (column-drop) migration the still-running old process queries the old schema;
+# applying the drop only after the (slow) build — right before the (fast)
+# restart — shrinks the window where the live process sees a migrated schema
+# from the whole build down to a couple of seconds. The new client/build ignore
+# the soon-to-be-dropped columns, so building against the pre-migration DB is safe.
+echo "--- prisma migrate"
+npx prisma migrate deploy
 
 echo "--- restart service"
 systemctl --user restart yosched-app

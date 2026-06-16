@@ -11,10 +11,8 @@ import {
   whenToColumns,
   isPlainWeekdayWhen,
   describeWhen,
-  whenToLegacy,
   ordinalLabel,
   standingToWhen,
-  whenToStandingLegacy,
   normalizeAnyDay,
   type WhenPattern,
 } from "../recurrence";
@@ -368,26 +366,12 @@ describe("describeWhen — natural language", () => {
   });
 });
 
-describe("whenToLegacy — inert back-projection", () => {
-  it("maps legacy-expressible patterns", () => {
-    expect(whenToLegacy({ daysOfWeek: [3], kind: "every" })).toEqual({ dayOfWeek: 3, pattern: "every", cycleLength: null, cycleOffset: null });
-    expect(whenToLegacy({ daysOfWeek: [3], kind: "ppWeek", ppWeek: 2 })).toEqual({ dayOfWeek: 3, pattern: "pp_week_2", cycleLength: null, cycleOffset: null });
-    expect(whenToLegacy({ daysOfWeek: [3], kind: "cycle", cycleUnit: "week", cycleN: 3, cycleOffset: 1 })).toEqual({ dayOfWeek: 3, pattern: "every_n", cycleLength: 3, cycleOffset: 1 });
-  });
-
-  it("degrades inexpressible patterns to 'every' on the first weekday", () => {
-    // ordinals, multi-day, and pay-period cycle have no legacy form.
-    expect(whenToLegacy({ daysOfWeek: [1, 3, 5], kind: "ordinalMonth", ords: [1, 3] })).toEqual({ dayOfWeek: 1, pattern: "every", cycleLength: null, cycleOffset: null });
-    expect(whenToLegacy({ daysOfWeek: [4], kind: "ordinalPayPeriod", ords: [-1] })).toEqual({ dayOfWeek: 4, pattern: "every", cycleLength: null, cycleOffset: null });
-    expect(whenToLegacy({ daysOfWeek: [2], kind: "cycle", cycleUnit: "payPeriod", cycleN: 2, cycleOffset: 0 })).toEqual({ dayOfWeek: 2, pattern: "every", cycleLength: null, cycleOffset: null });
-  });
-
-  it("but the explicit when* columns still hold the real shape (readers use ruleToWhen)", () => {
-    // A picker rule = whenToLegacy (inert) + whenToColumns (authoritative). The
-    // reader prefers when* because whenKind != null, so the lossy legacy pattern
-    // never affects matching.
+describe("ruleToWhen round-trips a picker-written availability row", () => {
+  it("reads back the explicit when* columns (legacy back-projection removed in slice 7)", () => {
+    // A picker rule is persisted as just whenToColumns(w); ruleToWhen must read
+    // it back to the same matching shape across every date.
     const w: WhenPattern = { daysOfWeek: [1, 3, 5], kind: "ordinalMonth", ords: [1, 3] };
-    const row = { ...whenToLegacy(w), ...whenToColumns(w) };
+    const row = { ...whenToColumns(w) };
     for (const d of ALL_DATES) {
       expect(matchesWhen(ruleToWhen(row), d, PP)).toBe(matchesWhen(w, d, PP));
     }
@@ -432,23 +416,7 @@ describe("standingToWhen — StandingCommitment legacy bridge (slice 6)", () => 
   });
 });
 
-describe("whenToStandingLegacy — inert back-projection", () => {
-  it("maps single-weekday patterns to dayOfWeek + frequency", () => {
-    expect(whenToStandingLegacy({ daysOfWeek: [3], kind: "every" })).toEqual({ dayOfWeek: 3, frequency: "weekly" });
-    expect(whenToStandingLegacy({ daysOfWeek: [3], kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0 })).toEqual({ dayOfWeek: 3, frequency: "biweekly" });
-    expect(whenToStandingLegacy({ daysOfWeek: [3], kind: "ordinalMonth", ords: [1] })).toEqual({ dayOfWeek: 3, frequency: "monthly" });
-  });
-
-  it("maps any-day and multi-day patterns to dayOfWeek=null", () => {
-    expect(whenToStandingLegacy({ daysOfWeek: [], kind: "every" })).toEqual({ dayOfWeek: null, frequency: "weekly" });
-    expect(whenToStandingLegacy({ daysOfWeek: [1, 3], kind: "every" })).toEqual({ dayOfWeek: null, frequency: "weekly" });
-  });
-
-  it("round-trips the seeded any-day weekly commitment", () => {
-    const legacy = { dayOfWeek: null, frequency: "weekly" };
-    expect(whenToStandingLegacy(standingToWhen(legacy))).toEqual(legacy);
-  });
-
+describe("standing-commitment WHEN round-trip + normalizeAnyDay", () => {
   it("normalizeAnyDay forces empty-weekday patterns to kind every (no hidden qualifier)", () => {
     expect(normalizeAnyDay({ daysOfWeek: [], kind: "ordinalMonth", ords: [1] })).toEqual({ daysOfWeek: [], kind: "every" });
     expect(normalizeAnyDay({ daysOfWeek: [], kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0 })).toEqual({ daysOfWeek: [], kind: "every" });
@@ -458,8 +426,9 @@ describe("whenToStandingLegacy — inert back-projection", () => {
   });
 
   it("a picker-written standing row round-trips losslessly via standingToWhen", () => {
-    // The S6b editor writes { ...whenToStandingLegacy(w), ...whenToColumns(w) } onto
-    // the commitment; standingToWhen must read it back to the same matching shape.
+    // The S6b editor now persists just whenToColumns(w) onto the commitment
+    // (the whenToStandingLegacy back-projection was removed in slice 7);
+    // standingToWhen must read it back to the same matching shape.
     const patterns: WhenPattern[] = [
       { daysOfWeek: [], kind: "every" }, // any day
       { daysOfWeek: [2], kind: "every" }, // specific weekday
@@ -467,7 +436,7 @@ describe("whenToStandingLegacy — inert back-projection", () => {
       { daysOfWeek: [4], kind: "ordinalMonth", ords: [1] }, // monthly, 1st
     ];
     for (const w of patterns) {
-      const row = { ...whenToStandingLegacy(w), ...whenToColumns(w) };
+      const row = { ...whenToColumns(w) };
       for (const d of ALL_DATES) {
         expect(matchesWhen(standingToWhen(row), d, PP)).toBe(matchesWhen(w, d, PP));
       }

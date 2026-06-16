@@ -200,11 +200,9 @@ model StandingCommitment {
   id          String @id @default(cuid())
   staffId  String
   shiftTypeId String
-  dayOfWeek   Int?      // 0-6, null = any applicable day
-  frequency   String    @default("weekly") // weekly, biweekly, monthly
   notes       String?
-  // Unified WHEN model (recurrence.ts). whenKind null = read legacy dayOfWeek +
-  // frequency above (standingToWhen bridge). Backfilled from those columns.
+  // Unified WHEN model (recurrence.ts) — the sole recurrence representation
+  // since slice 7 dropped the legacy dayOfWeek + frequency columns.
   whenKind        String?
   whenDays        Int[]   @default([])
   whenPpWeek      Int?
@@ -414,15 +412,12 @@ model EmploymentTypeDefaultShift {
 model AvailabilityRule {
   id                  String  @id @default(cuid())
   staffId          String
-  dayOfWeek           Int     // 0=Sun..6=Sat
   type                String  @default("available") // "available" or "unavailable"
   strength            String  @default("rule") // "rule" or "preference"
-  pattern             String  @default("every") // "every", "pp_week_1", "pp_week_2", "every_n"
-  cycleLength         Int?    // for "every_n": 2=every other, 3=every third, etc.
-  cycleOffset         Int?    // for "every_n": 0-indexed position in the cycle
   conditionStaffId String?
   conditionType       String? // "working" or "not_working"
-  // Unified WHEN model (recurrence.ts). whenKind null = read legacy cols above.
+  // Unified WHEN model (recurrence.ts) — sole recurrence representation since
+  // slice 7 dropped legacy dayOfWeek/pattern/cycleLength/cycleOffset.
   whenKind            String?
   whenDays            Int[]   @default([])
   whenPpWeek          Int?
@@ -440,12 +435,10 @@ model AvailabilityRule {
 model EmploymentTypeDefaultAvailability {
   id               String @id @default(cuid())
   employmentTypeId String
-  dayOfWeek        Int
   type             String @default("available")
   strength         String @default("rule")
-  pattern          String @default("every")
-  // Unified WHEN model (recurrence.ts). whenKind null = read legacy cols above.
-  // No cycle here — defaults can only be every / pp_week_1 / pp_week_2.
+  // Unified WHEN model (recurrence.ts) — sole recurrence representation since
+  // slice 7 dropped the legacy dayOfWeek/pattern columns.
   whenKind        String?
   whenDays        Int[]   @default([])
   whenPpWeek      Int?
@@ -500,13 +493,10 @@ model ShiftEligibilityRule {
   id          String @id @default(cuid())
   staffId  String
   shiftTypeId String
-  dayOfWeek   Int
   type        String @default("eligible")
   strength    String @default("rule")
-  pattern     String @default("every")
-  cycleLength Int?
-  cycleOffset Int?
-  // Unified WHEN model (recurrence.ts). whenKind null = read legacy cols above.
+  // Unified WHEN model (recurrence.ts) — sole recurrence representation since
+  // slice 7 dropped legacy dayOfWeek/pattern/cycleLength/cycleOffset.
   whenKind        String?
   whenDays        Int[]   @default([])
   whenPpWeek      Int?

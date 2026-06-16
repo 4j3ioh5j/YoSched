@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useEscape } from "@/lib/use-escape";
 import type { StaffLoginStatus } from "@/lib/staff-login-status";
-import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, whenToLegacy, describeWhen, standingToWhen, whenToStandingLegacy } from "@/lib/recurrence";
+import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen, standingToWhen } from "@/lib/recurrence";
 import { RecurrencePicker } from "./recurrence-picker";
 import { FrequencyPicker } from "./frequency-picker";
 import { describeFrequency, type ShiftMinTarget } from "@/lib/shift-eligibility";
@@ -50,24 +50,16 @@ type WhenFields = {
 };
 
 type AvailabilityRule = WhenFields & {
-  dayOfWeek: number;
   type: string;
   strength: string;
-  pattern: string;
-  cycleLength?: number | null;
-  cycleOffset?: number | null;
   conditionStaffId?: string | null;
   conditionType?: string | null;
 };
 
 type ShiftEligibilityRuleData = WhenFields & {
   shiftTypeId: string;
-  dayOfWeek: number;
   type: string;
   strength: string;
-  pattern: string;
-  cycleLength?: number | null;
-  cycleOffset?: number | null;
 };
 
 type ShiftMinimumTargetData = {
@@ -79,13 +71,11 @@ type ShiftMinimumTargetData = {
   windowCount?: number | null;
 };
 
-// StandingCommitment carries the unified WHEN columns plus its own legacy shape
-// (dayOfWeek + frequency, NOT pattern/cycle*). The picker writes when* + the
-// whenToStandingLegacy back-projection; the scheduler reads via standingToWhen.
+// StandingCommitment carries the unified WHEN columns (slice 7 dropped its legacy
+// dayOfWeek + frequency columns). The picker writes when*; the scheduler reads
+// via standingToWhen.
 type StandingCommitmentData = WhenFields & {
   shiftTypeId: string;
-  dayOfWeek: number | null;
-  frequency: string;
   notes?: string | null;
 };
 
@@ -109,10 +99,8 @@ type Staff = {
 };
 
 type DefaultAvailabilityRule = WhenFields & {
-  dayOfWeek: number;
   type: string;
   strength: string;
-  pattern: string;
 };
 
 type EmploymentType = {
@@ -224,7 +212,7 @@ function AvailabilityEditor({
     if (plainForDay.length > 0) {
       onChange(rules.filter((r) => !(isPlainRule(r) && ruleCoversDay(r, d))));
     } else {
-      onChange([...rules, { dayOfWeek: d, type: "available", strength: "rule", pattern: "every" }]);
+      onChange([...rules, { type: "available", strength: "rule", ...whenToColumns({ daysOfWeek: [d], kind: "every" }) }]);
     }
   }
 
@@ -239,7 +227,7 @@ function AvailabilityEditor({
   }
 
   function addAdvancedRule() {
-    onChange([...rules, { dayOfWeek: 1, type: "available", strength: "preference", pattern: "every" }]);
+    onChange([...rules, { type: "available", strength: "preference", ...whenToColumns({ daysOfWeek: [1], kind: "every" }) }]);
   }
 
   const otherStaff = allStaff.filter((p) => p.id !== currentStaffId);
@@ -318,7 +306,7 @@ function AvailabilityEditor({
                 {/* When (unified recurrence) */}
                 <RecurrencePicker
                   value={ruleToWhen(rule)}
-                  onChange={(w) => updateRuleAtIndex(globalIdx, { ...whenToLegacy(w), ...whenToColumns(w) })}
+                  onChange={(w) => updateRuleAtIndex(globalIdx, { ...whenToColumns(w) })}
                 />
 
                 {/* Enforcement */}
@@ -402,7 +390,7 @@ function ShiftEligibilityEditor({
   onMinimumChange: (target: ShiftMinimumTargetData | undefined) => void;
 }) {
   function addRule() {
-    onRulesChange([...rules, { shiftTypeId: shiftType.id, dayOfWeek: 1, type: "eligible", strength: "rule", pattern: "every" }]);
+    onRulesChange([...rules, { shiftTypeId: shiftType.id, type: "eligible", strength: "rule", ...whenToColumns({ daysOfWeek: [1], kind: "every" }) }]);
   }
 
   function updateRule(idx: number, updates: Partial<ShiftEligibilityRuleData>) {
@@ -439,7 +427,7 @@ function ShiftEligibilityEditor({
           </div>
           <RecurrencePicker
             value={ruleToWhen(rule)}
-            onChange={(w) => updateRule(idx, { ...whenToLegacy(w), ...whenToColumns(w) })}
+            onChange={(w) => updateRule(idx, { ...whenToColumns(w) })}
           />
         </div>
       ))}
@@ -593,8 +581,6 @@ function StandingCommitmentsEditor({
       ...commitments,
       {
         shiftTypeId: first.id,
-        dayOfWeek: null,
-        frequency: "weekly",
         notes: "",
         whenKind: "every",
         whenDays: [],
@@ -641,7 +627,7 @@ function StandingCommitmentsEditor({
               <RecurrencePicker
                 allowAnyDay
                 value={standingToWhen(c)}
-                onChange={(w) => update(idx, { ...whenToStandingLegacy(w), ...whenToColumns(w) })}
+                onChange={(w) => update(idx, { ...whenToColumns(w) })}
               />
               <input
                 type="text"
@@ -714,10 +700,8 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
       ftePercentage: et.defaultFtePercentage,
       eligibleShiftTypeIds: et.defaultEligibleShiftTypeIds,
       availabilityRules: et.defaultAvailabilityRules.map((r) => ({
-        dayOfWeek: r.dayOfWeek,
         type: r.type,
         strength: r.strength,
-        pattern: r.pattern,
         whenKind: r.whenKind,
         whenDays: r.whenDays,
         whenPpWeek: r.whenPpWeek,
@@ -836,16 +820,10 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
         employmentTypeName: created.employmentType?.name ?? defaultType?.name ?? "",
         ftePercentage: created.ftePercentage ?? 1.0,
         availabilityRules: (created.availabilityRules ?? []).map((ar: AvailabilityRule) => ({
-          dayOfWeek: ar.dayOfWeek,
           type: ar.type,
           strength: ar.strength,
-          pattern: ar.pattern,
-          cycleLength: ar.cycleLength,
-          cycleOffset: ar.cycleOffset,
           conditionStaffId: ar.conditionStaffId,
           conditionType: ar.conditionType,
-          // Carry when* from the server-copied defaults, else the next save
-          // re-derives legacy and overwrites an explicit ordinal/multi-day default.
           whenKind: ar.whenKind,
           whenDays: ar.whenDays,
           whenPpWeek: ar.whenPpWeek,

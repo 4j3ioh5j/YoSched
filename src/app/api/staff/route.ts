@@ -92,12 +92,8 @@ export async function PUT(req: NextRequest) {
         await tx.availabilityRule.createMany({
           data: availabilityRules.map((r: Record<string, unknown>) => ({
             staffId: id,
-            dayOfWeek: r.dayOfWeek as number,
             type: (r.type as string) ?? "available",
             strength: (r.strength as string) ?? "rule",
-            pattern: (r.pattern as string) ?? "every",
-            cycleLength: r.cycleLength as number | undefined,
-            cycleOffset: r.cycleOffset as number | undefined,
             conditionStaffId: r.conditionStaffId as string | undefined,
             conditionType: r.conditionType as string | undefined,
             ...whenColumns(r),
@@ -113,12 +109,8 @@ export async function PUT(req: NextRequest) {
           data: shiftEligibilityRules.map((r: Record<string, unknown>) => ({
             staffId: id,
             shiftTypeId: r.shiftTypeId as string,
-            dayOfWeek: r.dayOfWeek as number,
             type: (r.type as string) ?? "eligible",
             strength: (r.strength as string) ?? "rule",
-            pattern: (r.pattern as string) ?? "every",
-            cycleLength: r.cycleLength as number | undefined,
-            cycleOffset: r.cycleOffset as number | undefined,
             ...whenColumns(r),
           })),
         });
@@ -149,8 +141,6 @@ export async function PUT(req: NextRequest) {
           data: standingCommitments.map((r: Record<string, unknown>) => ({
             staffId: id,
             shiftTypeId: r.shiftTypeId as string,
-            dayOfWeek: (r.dayOfWeek as number | null) ?? null,
-            frequency: (r.frequency as string) ?? "weekly",
             notes: (r.notes as string) || null,
             ...standingWhenColumns(r),
           })),
@@ -234,11 +224,9 @@ export async function POST(req: NextRequest) {
     await prisma.availabilityRule.createMany({
       data: defaultAvailability.map((da) => ({
         staffId: created.id,
-        dayOfWeek: da.dayOfWeek,
         type: da.type,
         strength: da.strength,
-        pattern: da.pattern,
-        // Carry the explicit WHEN columns so a non-legacy default rule (e.g. an
+        // Carry the explicit WHEN columns so a default rule (e.g. an
         // ordinal/multi-day default) survives the copy to the new staff member.
         whenKind: da.whenKind,
         whenDays: da.whenDays,

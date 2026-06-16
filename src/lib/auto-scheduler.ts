@@ -78,10 +78,8 @@ type DesirabilityWeight = {
 type StandingCommitment = {
   staffId: string;
   shiftTypeId: string;
-  dayOfWeek: number | null;
-  frequency: string;
-  // Unified WHEN columns (slice 6). When present (whenKind != null) they are
-  // authoritative; otherwise standingToWhen bridges dayOfWeek + frequency.
+  // Unified WHEN columns — sole recurrence representation (slice 7 dropped the
+  // legacy dayOfWeek + frequency columns). standingToWhen reads these.
   whenKind?: string | null;
   whenDays?: number[] | null;
   whenPpWeek?: number | null;

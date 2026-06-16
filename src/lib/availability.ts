@@ -7,16 +7,12 @@ import {
 } from "./recurrence";
 
 export type AvailabilityRule = {
-  dayOfWeek: number;
   type: "available" | "unavailable";
   strength: "rule" | "preference";
-  pattern: "every" | "pp_week_1" | "pp_week_2" | "every_n";
-  cycleLength?: number | null;
-  cycleOffset?: number | null;
   conditionStaffId?: string | null;
   conditionType?: "working" | "not_working" | null;
-  // New normalized WHEN columns (present after the slice-3b backfill / picker
-  // save). ruleToWhen prefers these when whenKind is set, else the legacy fields.
+  // Normalized WHEN columns — the sole recurrence representation (slice 7 dropped
+  // the legacy dayOfWeek/pattern/cycle* columns). ruleToWhen reads these.
   whenKind?: string | null;
   whenDays?: number[] | null;
   whenPpWeek?: number | null;
