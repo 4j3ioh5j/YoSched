@@ -9,6 +9,7 @@ import {
   ruleToWhen,
   buildWhenFromColumns,
   whenToColumns,
+  isPlainWeekdayWhen,
   type WhenPattern,
 } from "../recurrence";
 import { matchesPattern, type PayPeriodRange } from "../availability";
@@ -286,5 +287,52 @@ describe("whenToColumns — serialization", () => {
     for (const d of ALL_DATES) {
       expect(matchesWhen(ruleToWhen(legacy), d, PP)).toBe(dow(d) === 2 && matchesPattern(legacy, d, PP));
     }
+  });
+});
+
+describe("isPlainWeekdayWhen — quick-toggle classification", () => {
+  it("true only for single-weekday every-occurrence patterns", () => {
+    expect(isPlainWeekdayWhen({ daysOfWeek: [2], kind: "every" })).toBe(true);
+    // legacy + backfilled rows route here via ruleToWhen and agree:
+    expect(isPlainWeekdayWhen(ruleToWhen({ dayOfWeek: 4, pattern: "every" }))).toBe(true);
+    expect(
+      isPlainWeekdayWhen(
+        ruleToWhen({ dayOfWeek: 4, pattern: "every", whenKind: "every", whenDays: [4] }),
+      ),
+    ).toBe(true);
+  });
+
+  it("false for multi-day, ordinal, pp-week, and cycle patterns", () => {
+    expect(isPlainWeekdayWhen({ daysOfWeek: [1, 3, 5], kind: "every" })).toBe(false); // multi-day
+    expect(isPlainWeekdayWhen({ daysOfWeek: [], kind: "every" })).toBe(false); // any-day
+    expect(isPlainWeekdayWhen({ daysOfWeek: [2], kind: "ordinalMonth", ords: [1, 3] })).toBe(false);
+    expect(isPlainWeekdayWhen({ daysOfWeek: [2], kind: "ppWeek", ppWeek: 1 })).toBe(false);
+    expect(isPlainWeekdayWhen({ daysOfWeek: [2], kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0 })).toBe(false);
+  });
+});
+
+// The slice-4 carry-forward guarantee: an explicit ordinal/multi-day rule the
+// picker writes must survive a client load → edit-unrelated-field → save cycle.
+// saveStaff PUTs the whole rule and the route derives when* via
+// whenToColumns(ruleToWhen(rule)); for an explicit row this must be identity on
+// the when* columns (not collapse to the legacy back-projection).
+describe("explicit WHEN rows survive the persistence derive (load→save)", () => {
+  const persist = (cols: ReturnType<typeof whenToColumns>) =>
+    whenToColumns(ruleToWhen({ dayOfWeek: 0, pattern: "every", ...cols }));
+
+  it("preserves a multi-day ordinal availability rule", () => {
+    // "1st & 3rd Mon/Wed/Fri of each month" — legacy can't express this.
+    const cols = whenToColumns({ daysOfWeek: [1, 3, 5], kind: "ordinalMonth", ords: [1, 3] });
+    expect(persist(cols)).toEqual(cols);
+  });
+
+  it("preserves an every-other pay-period eligibility rule", () => {
+    const cols = whenToColumns({ daysOfWeek: [2], kind: "cycle", cycleUnit: "payPeriod", cycleN: 2, cycleOffset: 1 });
+    expect(persist(cols)).toEqual(cols);
+  });
+
+  it("preserves a last-occurrence-in-PP rule", () => {
+    const cols = whenToColumns({ daysOfWeek: [4], kind: "ordinalPayPeriod", ords: [-1] });
+    expect(persist(cols)).toEqual(cols);
   });
 });

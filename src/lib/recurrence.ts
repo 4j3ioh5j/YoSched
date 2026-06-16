@@ -66,6 +66,15 @@ function dowOf(dateStr: string): number {
   return new Date(dateStr + "T12:00:00").getDay();
 }
 
+// True when a pattern is the trivial "every occurrence of one specific weekday"
+// — i.e. semantically identical to a legacy `pattern="every"` single-day rule.
+// This is what the staff "Working days" quick-toggle manages; anything richer
+// (multi-day, ordinal, pp-week, cycle) is an advanced rule edited in the picker.
+// Routed through ruleToWhen so legacy (whenKind=null) and explicit rows agree.
+export function isPlainWeekdayWhen(w: WhenPattern): boolean {
+  return w.kind === "every" && (w.daysOfWeek?.length ?? 0) === 1;
+}
+
 // Nth occurrence of this date's own weekday within its calendar month (1-indexed).
 // e.g. the 3rd Tuesday returns 3. Independent of any daysOfWeek filter.
 export function monthOrdinalForDate(dateStr: string): number {

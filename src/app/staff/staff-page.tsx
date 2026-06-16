@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useEscape } from "@/lib/use-escape";
 import type { StaffLoginStatus } from "@/lib/staff-login-status";
+import { ruleToWhen, isPlainWeekdayWhen } from "@/lib/recurrence";
 
 // Read-only login-setup badge shown per staff row. Activation/credentials are managed
 // on /users (deep-link); editing here only changes scheduling attributes.
@@ -32,7 +33,20 @@ function LoginStatusBadge({ status }: { status: StaffLoginStatus }) {
   );
 }
 
-type AvailabilityRule = {
+// The unified WHEN columns (slice 3b/4). Carried end-to-end so an explicit
+// rule authored via the RecurrencePicker round-trips losslessly. When whenKind
+// is null the rule is legacy-shaped and the server bridges from pattern/cycle*.
+type WhenFields = {
+  whenKind?: string | null;
+  whenDays?: number[] | null;
+  whenPpWeek?: number | null;
+  whenOrds?: number[] | null;
+  whenCycleUnit?: string | null;
+  whenCycleN?: number | null;
+  whenCycleOffset?: number | null;
+};
+
+type AvailabilityRule = WhenFields & {
   dayOfWeek: number;
   type: string;
   strength: string;
@@ -43,7 +57,7 @@ type AvailabilityRule = {
   conditionType?: string | null;
 };
 
-type ShiftEligibilityRuleData = {
+type ShiftEligibilityRuleData = WhenFields & {
   shiftTypeId: string;
   dayOfWeek: number;
   type: string;
@@ -133,12 +147,23 @@ function hasBaseRule(rules: AvailabilityRule[], dayOfWeek: number): boolean {
   return rules.some((r) => r.dayOfWeek === dayOfWeek && r.type === "available");
 }
 
-function hasAdvancedRule(rules: AvailabilityRule[], dayOfWeek: number): boolean {
-  return rules.some(
-    (r) =>
-      r.dayOfWeek === dayOfWeek &&
-      (r.pattern !== "every" || r.strength !== "rule" || r.type !== "available" || r.conditionStaffId)
+// A "plain" rule is the trivial available/hard/unconditioned single-weekday
+// every-occurrence rule that the quick-toggle row manages. Everything else
+// (multi-day, ordinal, pp-week, cycle, preference, off, or conditioned) is an
+// advanced rule shown/edited in the rule list. Routed through the WHEN model so
+// an explicit picker rule with a back-projected legacy pattern="every" is still
+// correctly recognized as advanced (and never hidden or clobbered by the toggle).
+function isPlainRule(r: AvailabilityRule): boolean {
+  return (
+    r.type === "available" &&
+    r.strength === "rule" &&
+    !r.conditionStaffId &&
+    isPlainWeekdayWhen(ruleToWhen(r))
   );
+}
+
+function hasAdvancedRule(rules: AvailabilityRule[], dayOfWeek: number): boolean {
+  return rules.some((r) => r.dayOfWeek === dayOfWeek && !isPlainRule(r));
 }
 
 function dayRuleSummary(rules: AvailabilityRule[], dayOfWeek: number): string {
@@ -200,17 +225,17 @@ function AvailabilityEditor({
   currentStaffId: string;
 }) {
   function toggleDay(d: number) {
-    const existing = rules.filter((r) => r.dayOfWeek === d);
-    if (existing.length > 0) {
-      onChange(rules.filter((r) => r.dayOfWeek !== d));
+    // Only manage the plain single-day rules; advanced rules (multi-day,
+    // ordinal, preference, off, conditioned) for this weekday are left intact.
+    const plainForDay = rules.filter((r) => r.dayOfWeek === d && isPlainRule(r));
+    if (plainForDay.length > 0) {
+      onChange(rules.filter((r) => !(r.dayOfWeek === d && isPlainRule(r))));
     } else {
       onChange([...rules, { dayOfWeek: d, type: "available", strength: "rule", pattern: "every" }]);
     }
   }
 
-  const advancedRules = rules.filter(
-    (r) => r.pattern !== "every" || r.strength !== "rule" || r.type !== "available" || r.conditionStaffId
-  );
+  const advancedRules = rules.filter((r) => !isPlainRule(r));
 
   function updateRuleAtIndex(globalIndex: number, updates: Partial<AvailabilityRule>) {
     onChange(rules.map((r, i) => (i === globalIndex ? { ...r, ...updates } : r)));
@@ -264,8 +289,7 @@ function AvailabilityEditor({
 
         <div className="space-y-1.5">
           {rules.map((rule, globalIdx) => {
-            const isSimple = rule.type === "available" && rule.strength === "rule" && rule.pattern === "every" && !rule.conditionStaffId;
-            if (isSimple) return null;
+            if (isPlainRule(rule)) return null;
 
             const condName = rule.conditionStaffId
               ? otherStaff.find((p) => p.id === rule.conditionStaffId)?.initials ?? "?"
@@ -993,9 +1017,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
               </thead>
               <tbody className="divide-y divide-slate-700/50">
                 {activeStaff.map((p) => {
-                  const hasAdv = p.availabilityRules.some(
-                    (r) => r.pattern !== "every" || r.strength !== "rule" || r.type !== "available" || r.conditionStaffId
-                  );
+                  const hasAdv = p.availabilityRules.some((r) => !isPlainRule(r));
                   return (
                     <tr
                       key={p.id}
