@@ -479,13 +479,18 @@ function ShiftEligibilityEditor({
                 value={rule.cycleLength ?? 2}
                 onChange={(e) => updateRule(idx, { cycleLength: parseInt(e.target.value) || 2 })}
                 className="w-10 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
+                title="Cycle length (N): the rule repeats every N week-slots. Week-slots are counted across pay periods — PP week 1, PP week 2, next PP week 1, and so on."
               />
-              <span className="text-slate-500">offset</span>
+              <span
+                className="text-slate-500 cursor-help underline decoration-dotted"
+                title="Offset: which week-slot in the N-slot cycle this rule applies to. 0-indexed — 0 = the first slot in the cycle, up to N−1. Slots are counted across pay periods (PP week 1 = 0, PP week 2 = 1, next PP week 1 = 2 …), so the rule fires whenever (slot mod N) equals this offset."
+              >offset</span>
               <input
                 type="number" min={0} max={(rule.cycleLength ?? 2) - 1}
                 value={rule.cycleOffset ?? 0}
                 onChange={(e) => updateRule(idx, { cycleOffset: parseInt(e.target.value) || 0 })}
                 className="w-10 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
+                title="Offset: which week-slot in the N-slot cycle this rule applies to. 0-indexed — 0 = the first slot, up to N−1."
               />
             </>
           )}
@@ -558,7 +563,7 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
   allShiftTypes: ShiftTypeInfo[];
   updateField: (id: string, field: keyof Staff, value: unknown) => void;
 }) {
-  const [expandedShift, setExpandedShift] = useState<string | null>(null);
+  const [expandedShifts, setExpandedShifts] = useState<Set<string>>(new Set());
   const workShifts = allShiftTypes.filter((st) => !st.isLeave && st.autoSchedulable);
   const leaveShifts = allShiftTypes.filter((st) => st.isLeave && st.autoSchedulable);
 
@@ -581,7 +586,7 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
     const isEligible = ep.eligibleShiftTypeIds.includes(st.id);
     const hasRules = ep.shiftEligibilityRules.some((r) => r.shiftTypeId === st.id);
     const hasMin = ep.shiftMinimumTargets.some((t) => t.shiftTypeId === st.id);
-    const isExpanded = expandedShift === st.id;
+    const isExpanded = expandedShifts.has(st.id);
     const rulesForShift = ep.shiftEligibilityRules.filter((r) => r.shiftTypeId === st.id);
     const minTarget = ep.shiftMinimumTargets.find((t) => t.shiftTypeId === st.id);
 
@@ -602,7 +607,11 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
           </button>
           {isEligible && (
             <button
-              onClick={() => setExpandedShift(isExpanded ? null : st.id)}
+              onClick={() => setExpandedShifts((prev) => {
+                const next = new Set(prev);
+                if (next.has(st.id)) next.delete(st.id); else next.add(st.id);
+                return next;
+              })}
               className="text-slate-500 hover:text-slate-300 text-xs px-1"
               title="Configure eligibility rules"
             >
