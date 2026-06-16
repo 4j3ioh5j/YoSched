@@ -1,12 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { syncRequestApprovals } from "@/lib/request-sync";
+import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { NextRequest, NextResponse } from "next/server";
 
 type BulkItem = { staffId: string; date: string };
 
 export async function PUT(req: NextRequest) {
-  const { error, userId } = await getSession("schedule:edit");
+  const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
   const { cells, shiftTypeId } = await req.json() as {
     cells: BulkItem[];
@@ -56,11 +56,11 @@ export async function PUT(req: NextRequest) {
     userId
   );
 
-  return NextResponse.json({ applied: results, skipped, requestChanges });
+  return NextResponse.json({ applied: results, skipped, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
 
 export async function DELETE(req: NextRequest) {
-  const { error, userId } = await getSession("schedule:edit");
+  const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
   const { cells } = await req.json() as { cells: BulkItem[] };
 
@@ -89,5 +89,5 @@ export async function DELETE(req: NextRequest) {
 
   const requestChanges = await syncRequestApprovals(clearedCells, userId);
 
-  return NextResponse.json({ ok: true, cleared: clearedCells.length, skipped, requestChanges });
+  return NextResponse.json({ ok: true, cleared: clearedCells.length, skipped, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }

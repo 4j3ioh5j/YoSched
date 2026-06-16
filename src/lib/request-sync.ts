@@ -4,7 +4,7 @@
 // true. This is the assign→approve direction; the requests route handles the
 // approve→assign direction. Satisfaction rules live in schedule-requests.ts.
 import { prisma } from "./prisma";
-import { isRequestSatisfied, reconcileApprovalAction, lockedBlockingDates, eachDateInclusive, type RequestKind } from "./schedule-requests";
+import { isRequestSatisfied, reconcileApprovalAction, lockedBlockingDates, eachDateInclusive, isRequestVisibleToViewer, type RequestKind } from "./schedule-requests";
 
 type Cell = { staffId: string; date: string }; // date = "YYYY-MM-DD"
 
@@ -83,7 +83,22 @@ export async function placeApprovedRequestShift(
  * mirror the change into client state without a full refetch — auto-schedule uses
  * this to keep the grid's request overlay in sync the moment shifts are applied.
  */
-export type RequestStatusChange = { id: string; status: "approved" | "pending" };
+export type RequestStatusChange = { id: string; staffId: string; status: "approved" | "pending" };
+
+/** Narrow a set of status changes to those the viewer is allowed to see, mapping
+ *  to the bare {id, status} the client overlay consumes. A caller with
+ *  schedule:edit but not requests:view must not learn another staff's hidden
+ *  PENDING request ids via a write response — same visibility rule the schedule
+ *  page applies to props (isRequestVisibleToViewer). Pure. */
+export function visibleRequestChanges(
+  changes: RequestStatusChange[],
+  viewer: { permissions: string[]; staffId: string | null }
+): { id: string; status: "approved" | "pending" }[] {
+  const canViewAll = viewer.permissions.includes("requests:view");
+  return changes
+    .filter((c) => isRequestVisibleToViewer(c, { canViewAll, viewerStaffId: viewer.staffId }))
+    .map((c) => ({ id: c.id, status: c.status }));
+}
 
 export async function syncRequestApprovals(
   affected: Cell[],
@@ -156,13 +171,13 @@ export async function syncRequestApprovals(
         where: { id: r.id },
         data: { status: "approved", autoApproved: true, approvedAt: new Date(), approvedBy: approverUserId },
       }));
-      changes.push({ id: r.id, status: "approved" });
+      changes.push({ id: r.id, staffId: r.staffId, status: "approved" });
     } else if (action === "revert") {
       updates.push(prisma.scheduleRequest.update({
         where: { id: r.id },
         data: { status: "pending", autoApproved: false, approvedAt: null, approvedBy: null },
       }));
-      changes.push({ id: r.id, status: "pending" });
+      changes.push({ id: r.id, staffId: r.staffId, status: "pending" });
     }
   }
   await Promise.all(updates);

@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { syncRequestApprovals } from "@/lib/request-sync";
+import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { NextRequest, NextResponse } from "next/server";
 
 // Paste write path for the schedule grid: a block of already-resolved cells, each with
@@ -16,7 +16,7 @@ const MAX_CELLS = 2000; // bounds the transaction; a paste is a human-sized sele
 const asUtcDate = (date: string) => new Date(date + "T00:00:00Z");
 
 export async function PUT(req: NextRequest) {
-  const { error, userId } = await getSession("schedule:edit");
+  const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
 
   let body: unknown;
@@ -97,5 +97,5 @@ export async function PUT(req: NextRequest) {
     color: a.shiftType.color ?? "#6b7280",
   }));
 
-  return NextResponse.json({ applied, skippedLocked, requestChanges });
+  return NextResponse.json({ applied, skippedLocked, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }

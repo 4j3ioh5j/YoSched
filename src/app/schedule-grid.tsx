@@ -2513,11 +2513,12 @@ export function ScheduleGrid({
       cells.push({ staffId: activeCol, date: activeRow });
     }
     if (cells.length === 0) return;
+    const visibleStatuses = REQUEST_FILTER_STATUSES[requestFilter];
     const snapshots: RequestSnapshot[] = localRequests
-      // Only the requests the grid actually RENDERS on a cell (pending/approved)
-      // — never the invisible terminal records (declined/withdrawn/fulfilled)
-      // that also live in localRequests but aren't shown.
-      .filter((r) => (r.status === "pending" || r.status === "approved")
+      // Only the requests the grid actually RENDERS on a cell under the active RQ
+      // filter — so a visible denied request is deletable, while records the filter
+      // hides (and the always-hidden withdrawn/fulfilled) are never silently removed.
+      .filter((r) => visibleStatuses.includes(r.status)
         && cells.some((c) => c.staffId === r.staffId && r.startDate <= c.date && c.date <= r.endDate))
       .map((r) => ({
         id: r.id, staffId: r.staffId, startDate: r.startDate, endDate: r.endDate,
@@ -2527,7 +2528,7 @@ export function ScheduleGrid({
     if (snapshots.length === 0) return;
     pushUndoEntry({ kind: "request-delete", snapshots });
     void deleteRequestsForUndo(snapshots); // optimistic remove + DELETE
-  }, [selection, activeCol, activeRow, localRequests]);
+  }, [selection, activeCol, activeRow, localRequests, requestFilter]);
   const requestDeleteRef = useRef(handleRequestDelete);
   useEffect(() => { requestDeleteRef.current = handleRequestDelete; }, [handleRequestDelete]);
 

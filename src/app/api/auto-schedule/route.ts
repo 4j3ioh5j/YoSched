@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { autoSchedule } from "@/lib/auto-scheduler";
 import { parsePendingRequestMode, type ScheduleRequestData } from "@/lib/schedule-requests";
-import { syncRequestApprovals } from "@/lib/request-sync";
+import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 
 export async function POST(req: NextRequest) {
   const { error } = await getSession("schedule:auto");
@@ -303,7 +303,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const { error, userId } = await getSession("schedule:auto");
+  const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:auto");
   if (error) return error;
   const body = await req.json();
   const { suggestions } = body as {
@@ -368,11 +368,11 @@ export async function PUT(req: NextRequest) {
     userId
   );
 
-  return NextResponse.json({ applied, skipped, requestChanges });
+  return NextResponse.json({ applied, skipped, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
 
 export async function DELETE(req: NextRequest) {
-  const { error, userId } = await getSession("schedule:auto");
+  const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:auto");
   if (error) return error;
   const body = await req.json();
   const { startDate, endDate } = body as { startDate: string; endDate: string };
@@ -417,5 +417,5 @@ export async function DELETE(req: NextRequest) {
     userId
   );
 
-  return NextResponse.json({ removed, requestChanges });
+  return NextResponse.json({ removed, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }

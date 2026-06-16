@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { syncRequestApprovals } from "@/lib/request-sync";
+import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { NextRequest, NextResponse } from "next/server";
 
 // Paste into a DEDICATED column (ICU/CARD): set each day's roster for one shift type.
@@ -20,7 +20,7 @@ const asUtcDate = (date: string) => new Date(date + "T00:00:00Z");
 const dateKey = (d: Date) => d.toISOString().split("T")[0];
 
 export async function PUT(req: NextRequest) {
-  const { error, userId } = await getSession("schedule:edit");
+  const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
 
   let body: unknown;
@@ -124,5 +124,5 @@ export async function PUT(req: NextRequest) {
     console.error("roster-paste: request-approval sync failed after commit (assignments persisted)", err);
   }
 
-  return NextResponse.json({ applied, cleared, skippedGroups, requestChanges });
+  return NextResponse.json({ applied, cleared, skippedGroups, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }

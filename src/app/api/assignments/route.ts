@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { syncRequestApprovals } from "@/lib/request-sync";
+import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { NextRequest, NextResponse } from "next/server";
 
 function formatAssignment(a: { id: string; staffId: string; shiftTypeId: string; isLocked: boolean; shiftType: { code: string; color: string | null } }, date: string) {
@@ -16,7 +16,7 @@ function formatAssignment(a: { id: string; staffId: string; shiftTypeId: string;
 }
 
 export async function PUT(req: NextRequest) {
-  const { error, userId } = await getSession("schedule:edit");
+  const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
   const { staffId, date, shiftTypeId } = await req.json();
 
@@ -47,11 +47,11 @@ export async function PUT(req: NextRequest) {
 
   const requestChanges = await syncRequestApprovals([{ staffId, date }], userId);
 
-  return NextResponse.json({ ...formatAssignment(assignment, date), requestChanges });
+  return NextResponse.json({ ...formatAssignment(assignment, date), requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
 
 export async function POST(req: NextRequest) {
-  const { error, userId } = await getSession("schedule:edit");
+  const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
   const { action, from, to } = await req.json();
 
@@ -122,13 +122,14 @@ export async function POST(req: NextRequest) {
       results.cleared = { staffId: from.staffId, date: from.date };
     }
 
-    results.requestChanges = await syncRequestApprovals(
+    const requestChanges = await syncRequestApprovals(
       [
         { staffId: from.staffId, date: from.date },
         { staffId: to.staffId, date: to.date },
       ],
       userId
     );
+    results.requestChanges = visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null });
 
     return NextResponse.json(results);
   }
@@ -137,7 +138,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const { error, userId } = await getSession("schedule:edit");
+  const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
   const { staffId, date } = await req.json();
 
@@ -161,5 +162,5 @@ export async function DELETE(req: NextRequest) {
 
   const requestChanges = await syncRequestApprovals([{ staffId, date }], userId);
 
-  return NextResponse.json({ ok: true, requestChanges });
+  return NextResponse.json({ ok: true, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
