@@ -635,6 +635,17 @@ export function autoSchedule({
     return maxDeficit;
   }
 
+  // A staff member with an unmet hard minimum for this shift takes precedence over
+  // the soft pay-period hours cap. The configured minimum (e.g. "1 ORC per 28 days")
+  // is a stronger signal than hour-target protection, so these staff must not be
+  // filtered out of the candidate pool by wouldBreakPPHours — otherwise a constrained
+  // low-FTE staff loses every eligible day to broadly-available staff and can never
+  // satisfy the minimum. pickStaff already sorts by deficit, so once they're in the
+  // pool they win the contested slot. maxCount (via isAtMaximum) still caps them.
+  function hasUnmetMinimum(staff: ScheduleStaff, st: ScheduleShiftType, date: string): boolean {
+    return getMinimumDeficit(staff, st, date) > 0;
+  }
+
   function isAtMaximum(staff: ScheduleStaff, st: ScheduleShiftType, date: string): boolean {
     if (!staff.shiftMinimumTargets || staff.shiftMinimumTargets.length === 0) return false;
     const targets = staff.shiftMinimumTargets.filter((t) => t.shiftTypeId === st.id && t.maxCount != null);
@@ -1091,7 +1102,8 @@ export function autoSchedule({
               const groupHrs = pairingFactor * getShiftHours(p.id, st, overrideMap);
               const currentHrs = ppHoursForStaff(p.id, pp);
               const target = pp.targetHours * p.ftePercentage;
-              if (target > 0 && currentHrs + groupHrs > target) return false;
+              // An unmet hard minimum overrides the PP-hours cap (see hasUnmetMinimum).
+              if (target > 0 && currentHrs + groupHrs > target && !hasUnmetMinimum(p, st, remainDates[0])) return false;
               return true;
             });
 
@@ -1169,7 +1181,8 @@ export function autoSchedule({
           const leftoverDates = ppNeedDates.filter(d => !usedDates.has(d));
           for (const date of leftoverDates) {
             let available = eligible.filter(
-              p => isAvailable(p, date, st) && !wouldBreakPPHours(p.id, date, st)
+              p => isAvailable(p, date, st) &&
+                (!wouldBreakPPHours(p.id, date, st) || hasUnmetMinimum(p, st, date))
             );
             if (available.length === 0) {
               available = eligible.filter(p => isAvailable(p, date, st));
@@ -1201,7 +1214,8 @@ export function autoSchedule({
 
           const needed = required - current;
           let available = eligible.filter(
-            (p) => isAvailable(p, date, st) && !wouldBreakPPHours(p.id, date, st)
+            (p) => isAvailable(p, date, st) &&
+              (!wouldBreakPPHours(p.id, date, st) || hasUnmetMinimum(p, st, date))
           );
           if (available.length === 0) {
             available = eligible.filter((p) => isAvailable(p, date, st));

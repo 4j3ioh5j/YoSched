@@ -943,6 +943,62 @@ describe("autoSchedule", () => {
       // 2025-05-16 is Friday (day 5) — the only eligible day
       expect(admSuggestions[0].date).toBe("2025-05-16");
     });
+
+    it("places a hard-minimum shift on a constrained low-FTE staff over a broadly-available full-timer, even when it exceeds their PP hours", () => {
+      // ORC is 16h; LO is 0.3 FTE ⇒ PP target 12h, so a single ORC overshoots and
+      // wouldBreakPPHours would normally exclude LO. But LO has an unmet hard minimum
+      // (1 ORC/PP), which must take precedence over the soft hours cap. HI (1.0 FTE,
+      // no minimum) must NOT win the only required ORC slot.
+      const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true, defaultHours: 16 });
+      const staff = [
+        makeStaff("p1", "LO", {
+          ftePercentage: 0.3,
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+          shiftMinimumTargets: [{ shiftTypeId: "st-orc", minCount: 1, maxCount: 1, window: "pay_period" as const }],
+        }),
+        makeStaff("p2", "HI", {
+          ftePercentage: 1.0,
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+        }),
+      ];
+      const result = runSchedule({
+        dates: ["2025-05-12"], // Monday (dayKey 1)
+        staff,
+        shiftTypes: [OR, ORC, OFF],
+        payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
+        staffingRequirements: [{ shiftCode: "ORC", dayKey: "1", minCount: 1 }],
+      });
+      const orc = result.suggestions.filter((s) => s.code === "ORC");
+      expect(orc).toHaveLength(1);
+      expect(orc[0].staffId).toBe("p1"); // LO wins despite breaking PP hours
+    });
+
+    it("does NOT override the PP-hours cap for a low-FTE staff WITHOUT a hard minimum", () => {
+      // Same setup but LO has no minimum target — the soft hours cap still protects
+      // them, so the broadly-available full-timer takes the ORC slot. This guards that
+      // the override is driven by the hard minimum, not by FTE alone.
+      const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true, defaultHours: 16 });
+      const staff = [
+        makeStaff("p1", "LO", {
+          ftePercentage: 0.3,
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+        }),
+        makeStaff("p2", "HI", {
+          ftePercentage: 1.0,
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+        }),
+      ];
+      const result = runSchedule({
+        dates: ["2025-05-12"], // Monday (dayKey 1)
+        staff,
+        shiftTypes: [OR, ORC, OFF],
+        payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
+        staffingRequirements: [{ shiftCode: "ORC", dayKey: "1", minCount: 1 }],
+      });
+      const orc = result.suggestions.filter((s) => s.code === "ORC");
+      expect(orc).toHaveLength(1);
+      expect(orc[0].staffId).toBe("p2"); // HI wins; LO protected by PP-hours cap
+    });
   });
 });
 
