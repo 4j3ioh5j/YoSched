@@ -10,6 +10,9 @@ import {
   buildWhenFromColumns,
   whenToColumns,
   isPlainWeekdayWhen,
+  describeWhen,
+  whenToLegacy,
+  ordinalLabel,
   type WhenPattern,
 } from "../recurrence";
 import { matchesPattern, type PayPeriodRange } from "../availability";
@@ -334,5 +337,56 @@ describe("explicit WHEN rows survive the persistence derive (load→save)", () =
   it("preserves a last-occurrence-in-PP rule", () => {
     const cols = whenToColumns({ daysOfWeek: [4], kind: "ordinalPayPeriod", ords: [-1] });
     expect(persist(cols)).toEqual(cols);
+  });
+});
+
+describe("ordinalLabel", () => {
+  it("formats 1..5 and last", () => {
+    expect(["1st", "2nd", "3rd", "4th", "5th"]).toEqual([1, 2, 3, 4, 5].map(ordinalLabel));
+    expect(ordinalLabel(-1)).toBe("last");
+  });
+});
+
+describe("describeWhen — natural language", () => {
+  it("describes each occurrence kind", () => {
+    expect(describeWhen({ daysOfWeek: [2], kind: "every" })).toBe("Every Tuesday");
+    expect(describeWhen({ daysOfWeek: [1, 3, 5], kind: "every" })).toBe("Every Monday, Wednesday & Friday");
+    expect(describeWhen({ daysOfWeek: [2], kind: "ppWeek", ppWeek: 1 })).toBe("Tuesday — pay-period week 1");
+    expect(describeWhen({ daysOfWeek: [2], kind: "ordinalMonth", ords: [1, 3] })).toBe("1st & 3rd Tuesday of each month");
+    expect(describeWhen({ daysOfWeek: [4], kind: "ordinalMonth", ords: [-1] })).toBe("last Thursday of each month");
+    expect(describeWhen({ daysOfWeek: [2], kind: "ordinalPayPeriod", ords: [1] })).toBe("1st Tuesday of each pay period");
+    expect(describeWhen({ daysOfWeek: [2], kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0 })).toBe("Every other week: Tuesday");
+    expect(describeWhen({ daysOfWeek: [2], kind: "cycle", cycleUnit: "payPeriod", cycleN: 2, cycleOffset: 1 })).toBe("Every other pay period (offset 1): Tuesday");
+  });
+
+  it("falls back gracefully when ordinals/weekdays are unset", () => {
+    expect(describeWhen({ daysOfWeek: [2], kind: "ordinalMonth", ords: [] })).toBe("Every Tuesday");
+    expect(describeWhen({ daysOfWeek: [], kind: "every" })).toBe("Every day");
+  });
+});
+
+describe("whenToLegacy — inert back-projection", () => {
+  it("maps legacy-expressible patterns", () => {
+    expect(whenToLegacy({ daysOfWeek: [3], kind: "every" })).toEqual({ dayOfWeek: 3, pattern: "every", cycleLength: null, cycleOffset: null });
+    expect(whenToLegacy({ daysOfWeek: [3], kind: "ppWeek", ppWeek: 2 })).toEqual({ dayOfWeek: 3, pattern: "pp_week_2", cycleLength: null, cycleOffset: null });
+    expect(whenToLegacy({ daysOfWeek: [3], kind: "cycle", cycleUnit: "week", cycleN: 3, cycleOffset: 1 })).toEqual({ dayOfWeek: 3, pattern: "every_n", cycleLength: 3, cycleOffset: 1 });
+  });
+
+  it("degrades inexpressible patterns to 'every' on the first weekday", () => {
+    // ordinals, multi-day, and pay-period cycle have no legacy form.
+    expect(whenToLegacy({ daysOfWeek: [1, 3, 5], kind: "ordinalMonth", ords: [1, 3] })).toEqual({ dayOfWeek: 1, pattern: "every", cycleLength: null, cycleOffset: null });
+    expect(whenToLegacy({ daysOfWeek: [4], kind: "ordinalPayPeriod", ords: [-1] })).toEqual({ dayOfWeek: 4, pattern: "every", cycleLength: null, cycleOffset: null });
+    expect(whenToLegacy({ daysOfWeek: [2], kind: "cycle", cycleUnit: "payPeriod", cycleN: 2, cycleOffset: 0 })).toEqual({ dayOfWeek: 2, pattern: "every", cycleLength: null, cycleOffset: null });
+  });
+
+  it("but the explicit when* columns still hold the real shape (readers use ruleToWhen)", () => {
+    // A picker rule = whenToLegacy (inert) + whenToColumns (authoritative). The
+    // reader prefers when* because whenKind != null, so the lossy legacy pattern
+    // never affects matching.
+    const w: WhenPattern = { daysOfWeek: [1, 3, 5], kind: "ordinalMonth", ords: [1, 3] };
+    const row = { ...whenToLegacy(w), ...whenToColumns(w) };
+    for (const d of ALL_DATES) {
+      expect(matchesWhen(ruleToWhen(row), d, PP)).toBe(matchesWhen(w, d, PP));
+    }
   });
 });

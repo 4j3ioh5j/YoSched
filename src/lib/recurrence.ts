@@ -279,3 +279,98 @@ export function whenToColumns(w: WhenPattern): WhenColumns {
     whenCycleOffset: w.cycleOffset ?? null,
   };
 }
+
+// ── Human-readable + legacy back-projection (slice 4 picker) ─────────────────
+
+const WEEKDAY_NAMES = [
+  "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+];
+
+// "1st", "2nd", "3rd", "4th", "5th", and -1 → "last".
+export function ordinalLabel(n: number): string {
+  if (n === -1) return "last";
+  const v = n % 100;
+  const suffix = v >= 11 && v <= 13 ? "th" : (["th", "st", "nd", "rd"][n % 10] ?? "th");
+  return `${n}${suffix}`;
+}
+
+// "Mon", "Mon & Wed", "Mon, Wed & Fri".
+function joinList(parts: string[]): string {
+  if (parts.length <= 1) return parts.join("");
+  return `${parts.slice(0, -1).join(", ")} & ${parts[parts.length - 1]}`;
+}
+
+function weekdayPhrase(days: number[] | undefined): string {
+  if (!days || days.length === 0) return "day";
+  return joinList([...days].sort((a, b) => a - b).map((d) => WEEKDAY_NAMES[d]));
+}
+
+// A compact natural-language summary of a WHEN pattern, for the rule list / chips.
+export function describeWhen(w: WhenPattern): string {
+  const days = weekdayPhrase(w.daysOfWeek);
+  switch (w.kind) {
+    case "every":
+      return `Every ${days}`;
+    case "ppWeek":
+      return w.ppWeek === 2 || w.ppWeek === 1
+        ? `${days} — pay-period week ${w.ppWeek}`
+        : `Every ${days}`;
+    case "ordinalMonth": {
+      const ords = w.ords ?? [];
+      if (ords.length === 0) return `Every ${days}`;
+      return `${joinList(ords.map(ordinalLabel))} ${days} of each month`;
+    }
+    case "ordinalPayPeriod": {
+      const ords = w.ords ?? [];
+      if (ords.length === 0) return `Every ${days}`;
+      return `${joinList(ords.map(ordinalLabel))} ${days} of each pay period`;
+    }
+    case "cycle": {
+      const n = Math.max(1, Math.floor(w.cycleN ?? 1));
+      const unit = w.cycleUnit === "payPeriod" ? "pay period" : "week";
+      const cadence = n === 1 ? "Every" : n === 2 ? "Every other" : `Every ${ordinalLabel(n)}`;
+      const off = w.cycleOffset ?? 0;
+      const offNote = n > 1 && off > 0 ? ` (offset ${off})` : "";
+      return `${cadence} ${unit}${offNote}: ${days}`;
+    }
+    default:
+      return `Every ${days}`;
+  }
+}
+
+// Inert back-projection to the legacy NOT-NULL columns. Kept sensible so old
+// readers / legacy summaries don't choke, but ignored by WHEN-aware readers
+// (ruleToWhen prefers the explicit when* columns once whenKind is set). Patterns
+// the legacy model can't express (ordinals, multi-day, every-other-pay-period)
+// degrade to "every" — lossy on purpose; the when* columns hold the real shape.
+export type LegacyColumns = {
+  dayOfWeek: number;
+  pattern: string;
+  cycleLength: number | null;
+  cycleOffset: number | null;
+};
+
+export function whenToLegacy(w: WhenPattern): LegacyColumns {
+  const dayOfWeek = w.daysOfWeek?.[0] ?? 1;
+  const plain: LegacyColumns = { dayOfWeek, pattern: "every", cycleLength: null, cycleOffset: null };
+  switch (w.kind) {
+    case "ppWeek":
+      if (w.ppWeek === 1) return { ...plain, pattern: "pp_week_1" };
+      if (w.ppWeek === 2) return { ...plain, pattern: "pp_week_2" };
+      return plain;
+    case "cycle":
+      // Only the "week" cycle maps to legacy every_n; pay-period cycle is inexpressible.
+      if (w.cycleUnit === "week") {
+        return {
+          dayOfWeek,
+          pattern: "every_n",
+          cycleLength: Math.max(1, Math.floor(w.cycleN ?? 2)),
+          cycleOffset: w.cycleOffset ?? 0,
+        };
+      }
+      return plain;
+    default:
+      // every, ordinalMonth, ordinalPayPeriod → legacy "every".
+      return plain;
+  }
+}

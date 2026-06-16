@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useEscape } from "@/lib/use-escape";
 import type { StaffLoginStatus } from "@/lib/staff-login-status";
-import { ruleToWhen, isPlainWeekdayWhen } from "@/lib/recurrence";
+import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, whenToLegacy, describeWhen } from "@/lib/recurrence";
+import { RecurrencePicker } from "./recurrence-picker";
 
 // Read-only login-setup badge shown per staff row. Activation/credentials are managed
 // on /users (deep-link); editing here only changes scheduling attributes.
@@ -136,15 +137,16 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_INDICES = [0, 1, 2, 3, 4, 5, 6];
 const DAY_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
 
-const PATTERN_LABELS: Record<string, string> = {
-  every: "Every week",
-  pp_week_1: "PP week 1",
-  pp_week_2: "PP week 2",
-  every_n: "Every Nth",
-};
+// Does a rule land on weekday `d`? Honors the full WHEN weekday set (multi-day
+// rules cover every selected weekday, not just the back-projected legacy one;
+// [] = any day). Used by the collapsed-card preview grid.
+function ruleCoversDay(r: AvailabilityRule, d: number): boolean {
+  const days = ruleToWhen(r).daysOfWeek;
+  return days.length === 0 || days.includes(d);
+}
 
 function hasBaseRule(rules: AvailabilityRule[], dayOfWeek: number): boolean {
-  return rules.some((r) => r.dayOfWeek === dayOfWeek && r.type === "available");
+  return rules.some((r) => r.type === "available" && ruleCoversDay(r, dayOfWeek));
 }
 
 // A "plain" rule is the trivial available/hard/unconditioned single-weekday
@@ -163,29 +165,7 @@ function isPlainRule(r: AvailabilityRule): boolean {
 }
 
 function hasAdvancedRule(rules: AvailabilityRule[], dayOfWeek: number): boolean {
-  return rules.some((r) => r.dayOfWeek === dayOfWeek && !isPlainRule(r));
-}
-
-function dayRuleSummary(rules: AvailabilityRule[], dayOfWeek: number): string {
-  const dayRules = rules.filter((r) => r.dayOfWeek === dayOfWeek);
-  if (dayRules.length === 0) return "";
-  const parts: string[] = [];
-  for (const r of dayRules) {
-    if (r.type === "available" && r.strength === "rule" && r.pattern === "every" && !r.conditionStaffId) continue;
-    let s = "";
-    if (r.strength === "preference") s += r.type === "available" ? "Prefer" : "Avoid";
-    else if (r.type === "unavailable") s += "Off";
-    if (r.pattern !== "every") {
-      if (s) s += " ";
-      s += PATTERN_LABELS[r.pattern] ?? r.pattern;
-      if (r.pattern === "every_n" && r.cycleLength) {
-        s = `Every ${r.cycleLength === 2 ? "other" : r.cycleLength === 3 ? "3rd" : `${r.cycleLength}th`}`;
-      }
-    }
-    if (r.conditionStaffId) s += " (cond.)";
-    if (s) parts.push(s);
-  }
-  return parts.join(", ");
+  return rules.some((r) => ruleCoversDay(r, dayOfWeek) && !isPlainRule(r));
 }
 
 function UndoToast({ action, onUndo, onDismiss }: { action: UndoAction; onUndo: () => void; onDismiss: () => void }) {
@@ -258,7 +238,10 @@ function AvailabilityEditor({
         <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1.5">Working days</div>
         <div className="flex gap-1">
           {DAY_INDICES.map((d) => {
-            const active = rules.some((r) => r.dayOfWeek === d && r.type === "available");
+            // Reflect only the plain rule the toggle actually manages, so the
+            // lit state and the click action stay consistent (an advanced
+            // available rule on this day lives in the list below, not here).
+            const active = rules.some((r) => r.dayOfWeek === d && isPlainRule(r));
             return (
               <button
                 key={d}
@@ -297,19 +280,8 @@ function AvailabilityEditor({
 
             return (
               <div key={globalIdx} className="bg-slate-700/30 border border-slate-600/50 rounded-lg p-3 space-y-2">
-                {/* Sentence line 1: On [day], [status] [schedule] — [enforcement] */}
+                {/* Status + remove */}
                 <div className="flex items-center gap-1.5 flex-wrap text-xs">
-                  <span className="text-slate-400">On</span>
-                  <select
-                    className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs font-medium text-blue-300"
-                    value={rule.dayOfWeek}
-                    onChange={(e) => updateRuleAtIndex(globalIdx, { dayOfWeek: parseInt(e.target.value) })}
-                  >
-                    {DAY_INDICES.map((d) => (
-                      <option key={d} value={d}>{DAY_LABELS[d]}</option>
-                    ))}
-                  </select>
-                  <span className="text-slate-500">—</span>
                   <select
                     className={[
                       "bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs font-medium",
@@ -321,16 +293,6 @@ function AvailabilityEditor({
                     <option value="available">Available</option>
                     <option value="unavailable">Not available</option>
                   </select>
-                  <select
-                    className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300"
-                    value={rule.pattern}
-                    onChange={(e) => updateRuleAtIndex(globalIdx, { pattern: e.target.value })}
-                  >
-                    <option value="every">every week</option>
-                    <option value="pp_week_1">PP week 1 only</option>
-                    <option value="pp_week_2">PP week 2 only</option>
-                    <option value="every_n">every Nth week</option>
-                  </select>
                   <button
                     onClick={() => removeRuleAtIndex(globalIdx)}
                     className="text-slate-600 hover:text-red-400 ml-auto transition-colors"
@@ -340,33 +302,11 @@ function AvailabilityEditor({
                   </button>
                 </div>
 
-                {/* Every Nth options */}
-                {rule.pattern === "every_n" && (
-                  <div className="flex items-center gap-1.5 text-xs pl-1">
-                    <span className="text-slate-500">Repeat every</span>
-                    <select
-                      className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300 w-20"
-                      value={rule.cycleLength ?? 2}
-                      onChange={(e) => updateRuleAtIndex(globalIdx, { cycleLength: parseInt(e.target.value) })}
-                    >
-                      <option value={2}>2nd</option>
-                      <option value={3}>3rd</option>
-                      <option value={4}>4th</option>
-                      <option value={5}>5th</option>
-                      <option value={6}>6th</option>
-                    </select>
-                    <span className="text-slate-500">occurrence, starting at position</span>
-                    <select
-                      className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-300 w-14"
-                      value={rule.cycleOffset ?? 0}
-                      onChange={(e) => updateRuleAtIndex(globalIdx, { cycleOffset: parseInt(e.target.value) })}
-                    >
-                      {Array.from({ length: rule.cycleLength ?? 2 }, (_, i) => (
-                        <option key={i} value={i}>{i + 1}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                {/* When (unified recurrence) */}
+                <RecurrencePicker
+                  value={ruleToWhen(rule)}
+                  onChange={(w) => updateRuleAtIndex(globalIdx, { ...whenToLegacy(w), ...whenToColumns(w) })}
+                />
 
                 {/* Enforcement */}
                 <div className="flex items-center gap-1.5 text-xs pl-1">
@@ -415,10 +355,7 @@ function AvailabilityEditor({
                 {/* Human-readable summary */}
                 <div className="text-[10px] text-slate-500 italic border-t border-slate-600/30 pt-1.5 mt-1">
                   {rule.type === "available" ? (rule.strength === "preference" ? "Prefers to work" : "Works") : (rule.strength === "preference" ? "Prefers not to work" : "Cannot work")}
-                  {" "}{DAY_LABELS[rule.dayOfWeek]}s
-                  {rule.pattern === "pp_week_1" && " in pay period week 1"}
-                  {rule.pattern === "pp_week_2" && " in pay period week 2"}
-                  {rule.pattern === "every_n" && ` (every ${rule.cycleLength === 2 ? "other" : rule.cycleLength === 3 ? "3rd" : `${rule.cycleLength}th`} occurrence)`}
+                  {": "}{describeWhen(ruleToWhen(rule))}
                   {condName && `, only when ${condName} ${rule.conditionType === "working" ? "is" : "is not"} working`}
                   .
                 </div>
@@ -474,60 +411,30 @@ function ShiftEligibilityEditor({
     <div className="mt-2 space-y-2 pl-2 border-l-2 border-slate-700">
       <div className="text-[10px] uppercase tracking-wider text-slate-600">Eligibility rules</div>
       {rules.map((rule, idx) => (
-        <div key={idx} className="flex items-center gap-1.5 text-xs flex-wrap">
-          <select
-            value={rule.dayOfWeek}
-            onChange={(e) => updateRule(idx, { dayOfWeek: parseInt(e.target.value) })}
-            className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600"
-          >
-            {DAY_INDICES.map((d) => <option key={d} value={d}>{DAY_LABELS[d]}</option>)}
-          </select>
-          <select
-            value={rule.type}
-            onChange={(e) => updateRule(idx, { type: e.target.value })}
-            className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600"
-          >
-            <option value="eligible">eligible</option>
-            <option value="ineligible">ineligible</option>
-          </select>
-          <select
-            value={rule.pattern}
-            onChange={(e) => updateRule(idx, { pattern: e.target.value })}
-            className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600"
-          >
-            {Object.entries(PATTERN_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-          {rule.pattern === "every_n" && (
-            <>
-              <input
-                type="number" min={2} max={12}
-                value={rule.cycleLength ?? 2}
-                onChange={(e) => updateRule(idx, { cycleLength: parseInt(e.target.value) || 2 })}
-                className="w-10 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
-                title="Cycle length (N): the rule repeats every N week-slots. Week-slots are counted across pay periods — PP week 1, PP week 2, next PP week 1, and so on."
-              />
-              <span
-                className="text-slate-500 cursor-help underline decoration-dotted"
-                title="Offset: which week-slot in the N-slot cycle this rule applies to. 0-indexed — 0 = the first slot in the cycle, up to N−1. Slots are counted across pay periods (PP week 1 = 0, PP week 2 = 1, next PP week 1 = 2 …), so the rule fires whenever (slot mod N) equals this offset."
-              >offset</span>
-              <input
-                type="number" min={0} max={(rule.cycleLength ?? 2) - 1}
-                value={rule.cycleOffset ?? 0}
-                onChange={(e) => updateRule(idx, { cycleOffset: parseInt(e.target.value) || 0 })}
-                className="w-10 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
-                title="Offset: which week-slot in the N-slot cycle this rule applies to. 0-indexed — 0 = the first slot, up to N−1."
-              />
-            </>
-          )}
-          <select
-            value={rule.strength}
-            onChange={(e) => updateRule(idx, { strength: e.target.value })}
-            className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600"
-          >
-            <option value="rule">Hard</option>
-            <option value="preference">Prefer</option>
-          </select>
-          <button onClick={() => removeRule(idx)} className="text-slate-500 hover:text-red-400 ml-1">×</button>
+        <div key={idx} className="bg-slate-700/30 border border-slate-600/50 rounded-lg p-2.5 space-y-2">
+          <div className="flex items-center gap-1.5 text-xs flex-wrap">
+            <select
+              value={rule.type}
+              onChange={(e) => updateRule(idx, { type: e.target.value })}
+              className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600"
+            >
+              <option value="eligible">eligible</option>
+              <option value="ineligible">ineligible</option>
+            </select>
+            <select
+              value={rule.strength}
+              onChange={(e) => updateRule(idx, { strength: e.target.value })}
+              className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600"
+            >
+              <option value="rule">Hard</option>
+              <option value="preference">Prefer</option>
+            </select>
+            <button onClick={() => removeRule(idx)} className="text-slate-500 hover:text-red-400 ml-auto">×</button>
+          </div>
+          <RecurrencePicker
+            value={ruleToWhen(rule)}
+            onChange={(w) => updateRule(idx, { ...whenToLegacy(w), ...whenToColumns(w) })}
+          />
         </div>
       ))}
       <button onClick={addRule} className="text-xs text-blue-400 hover:text-blue-300">+ Add rule</button>
