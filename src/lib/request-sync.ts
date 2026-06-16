@@ -78,13 +78,19 @@ export async function placeApprovedRequestShift(
  *
  * `excludeRequestId` skips a request the caller is explicitly transitioning, so
  * a manual un-approve isn't instantly re-derived back to approved.
+ *
+ * Returns the requests whose status it flipped (id + new status) so a caller can
+ * mirror the change into client state without a full refetch — auto-schedule uses
+ * this to keep the grid's request overlay in sync the moment shifts are applied.
  */
+export type RequestStatusChange = { id: string; status: "approved" | "pending" };
+
 export async function syncRequestApprovals(
   affected: Cell[],
   approverUserId: string | null,
   opts: { excludeRequestId?: string | null } = {}
-): Promise<void> {
-  if (affected.length === 0) return;
+): Promise<RequestStatusChange[]> {
+  if (affected.length === 0) return [];
 
   const staffIds = [...new Set(affected.map((c) => c.staffId))];
   const dates = affected.map((c) => c.date);
@@ -106,7 +112,7 @@ export async function syncRequestApprovals(
       status: true, autoApproved: true,
     },
   });
-  if (requests.length === 0) return;
+  if (requests.length === 0) return [];
 
   const offShiftIds = new Set(
     (await prisma.shiftType.findMany({ where: { isOffShift: true }, select: { id: true } })).map((s) => s.id)
@@ -129,6 +135,7 @@ export async function syncRequestApprovals(
   }
 
   const updates: Promise<unknown>[] = [];
+  const changes: RequestStatusChange[] = [];
   for (const r of requests) {
     const dayMap = byStaff.get(r.staffId);
     const satisfied = isRequestSatisfied(
@@ -149,12 +156,15 @@ export async function syncRequestApprovals(
         where: { id: r.id },
         data: { status: "approved", autoApproved: true, approvedAt: new Date(), approvedBy: approverUserId },
       }));
+      changes.push({ id: r.id, status: "approved" });
     } else if (action === "revert") {
       updates.push(prisma.scheduleRequest.update({
         where: { id: r.id },
         data: { status: "pending", autoApproved: false, approvedAt: null, approvedBy: null },
       }));
+      changes.push({ id: r.id, status: "pending" });
     }
   }
   await Promise.all(updates);
+  return changes;
 }

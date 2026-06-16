@@ -363,12 +363,12 @@ export async function PUT(req: NextRequest) {
     });
   }
 
-  await syncRequestApprovals(
+  const requestChanges = await syncRequestApprovals(
     applied.map((a) => ({ staffId: a.staffId, date: a.date })),
     userId
   );
 
-  return NextResponse.json({ applied, skipped });
+  return NextResponse.json({ applied, skipped, requestChanges });
 }
 
 export async function DELETE(req: NextRequest) {
@@ -412,10 +412,10 @@ export async function DELETE(req: NextRequest) {
     where: { id: { in: toDelete.map((a) => a.id) } },
   });
 
-  await syncRequestApprovals(
+  const requestChanges = await syncRequestApprovals(
     removed.map((a) => ({ staffId: a.staffId, date: a.date })),
     userId
   );
 
-  return NextResponse.json({ removed });
+  return NextResponse.json({ removed, requestChanges });
 }

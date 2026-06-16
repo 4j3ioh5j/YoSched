@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } from "@/lib/constraints";
-import { buildAlerts, buildPPHoursAlerts, buildAlertSections, groupAlertsByDate, type PPHoursEntry } from "@/lib/alerts";
+import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
@@ -49,6 +49,22 @@ const REQ_CAT_CLASSES: Record<RequestCategory | "mixed", { ring: string; ringFai
   want: { ring: "ring-emerald-400", ringFaint: "ring-emerald-400/40", text: "text-emerald-300", bg: "bg-emerald-900/15" },
   off: { ring: "ring-sky-400", ringFaint: "ring-sky-400/40", text: "text-sky-300", bg: "bg-sky-900/15" },
   mixed: { ring: "ring-violet-400", ringFaint: "ring-violet-400/40", text: "text-violet-300", bg: "bg-violet-900/15" },
+};
+
+// RQ overlay filter: show every request, or just one approval state. "denied" maps
+// to the declined status; "pending" is anything still awaiting a decision.
+type RequestFilter = "all" | "approved" | "pending" | "denied";
+const REQUEST_FILTERS: { value: RequestFilter; label: string; short: string }[] = [
+  { value: "all", label: "All requests", short: "All" },
+  { value: "approved", label: "Approved only", short: "Appr" },
+  { value: "pending", label: "Pending only", short: "Pend" },
+  { value: "denied", label: "Denied only", short: "Den" },
+];
+const REQUEST_FILTER_STATUSES: Record<RequestFilter, RequestStatus[]> = {
+  all: ["pending", "approved", "declined"],
+  approved: ["approved"],
+  pending: ["pending"],
+  denied: ["declined"],
 };
 import { useEscape } from "@/lib/use-escape";
 
@@ -432,6 +448,35 @@ export function ScheduleGrid({
       return next;
     });
   }, []);
+  // Which requests the RQ overlay draws: "all" (any non-terminal + denied), or one
+  // status in isolation. Lets the scheduler see, e.g., only what's still unfulfilled,
+  // or audit what was denied, without losing the others. Persisted per browser.
+  const [requestFilter, setRequestFilter] = useState<RequestFilter>(() => {
+    if (typeof window === "undefined") return "all";
+    const saved = localStorage.getItem("yosched:requestFilter");
+    return saved === "approved" || saved === "pending" || saved === "denied" ? saved : "all";
+  });
+  const [requestMenuOpen, setRequestMenuOpen] = useState(false);
+  // Picking a filter mode implies "show requests" — turn the overlay on so the
+  // choice is visible immediately, and persist both.
+  const chooseRequestFilter = useCallback((f: RequestFilter) => {
+    setRequestFilter(f);
+    setShowRequests(true);
+    setRequestMenuOpen(false);
+    try {
+      localStorage.setItem("yosched:requestFilter", f);
+      localStorage.setItem("yosched:showRequests", "true");
+    } catch { /* private mode / quota */ }
+  }, []);
+  // Request mode creates/edits PENDING requests, so a filter that hides pending
+  // ("approved"/"denied" only) would mask the very requests being entered. On
+  // entering request mode, widen to "all" if the current filter hides pending.
+  // Transient (not persisted) so the saved preference returns next session, and
+  // only on the mode transition so it never fights a deliberate in-mode re-pick.
+  useEffect(() => {
+    if (!requestMode) return;
+    setRequestFilter((f) => (f === "approved" || f === "denied" ? "all" : f));
+  }, [requestMode]);
   const [saving, setSaving] = useState<string | null>(null);
   const [dragSource, setDragSource] = useState<{ staffId: string; date: string } | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
@@ -752,23 +797,26 @@ export function ScheduleGrid({
     [shiftTypes],
   );
 
-  // Request chrome (boxed border + bare letters + corner badge) is for PENDING
-  // requests only — the open asks still awaiting a decision. Once approved, a
-  // request is honored by a real assignment and reads as a normal shift, so it
-  // drops the chrome. Hard-constraint violations still raise the warning dot.
-  // Keyed `${staffId}:${date}`; empty cells omitted.
+  // Request chrome (boxed border + bare letters + corner badge) surfaces the
+  // original requests under the RQ overlay, scoped by `requestFilter`: "all" shows
+  // every request with its outcome (approved / pending / denied), or one status in
+  // isolation. The box treatment encodes the state — solid = approved, faint =
+  // pending, struck rose = denied — so an approved request stays visible after
+  // auto-schedule instead of silently dropping its chrome. Hard-constraint
+  // violations still raise the warning dot. Keyed `${staffId}:${date}`; empty
+  // cells omitted.
   const requestsByCell = useMemo(() => {
     const map = new Map<string, GridRequest[]>();
     if (localRequests.length === 0) return map;
+    const statuses = REQUEST_FILTER_STATUSES[requestFilter];
     for (const date of dates) {
       for (const p of visibleStaff) {
-        const rs = requestsForStaffDate(localRequests, p.id, date, { includePending: true })
-          .filter((r) => r.status === "pending");
+        const rs = requestsForStaffDate(localRequests, p.id, date, { statuses });
         if (rs.length > 0) map.set(`${p.id}:${date}`, rs);
       }
     }
     return map;
-  }, [localRequests, dates, visibleStaff]);
+  }, [localRequests, dates, visibleStaff, requestFilter]);
 
   // Approved requests only — these are the ones that exert scheduling force, so
   // they're what the cell-warning checks consume (checkRequestConflict ignores
@@ -784,7 +832,7 @@ export function ScheduleGrid({
       const lines = reqs.map((r) => {
         const desc = describeRequest(r, (id) => shiftTypeMap.get(id)?.code ?? id);
         const recv = formatDate(parseDate(r.receivedAt.split("T")[0]), dateFormat);
-        const status = r.status === "approved" ? "approved" : "pending";
+        const status = r.status === "approved" ? "approved" : r.status === "declined" ? "denied" : "pending";
         return `• ${desc} — ${status}, rec'd ${recv}`;
       });
       return [header, ...lines].join("\n");
@@ -1380,21 +1428,24 @@ export function ScheduleGrid({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ staffId, date, shiftTypeId: assignment.shiftTypeId }),
         });
-        const saved = await res.json();
+        const { requestChanges, ...saved } = await res.json();
         setLocalAssignments((prev) =>
           prev.map((a) => (a.staffId === staffId && a.date === date ? saved : a)),
         );
+        applyRequestDelta({ requests: requestChanges });
       } catch { /* optimistic stays */ }
     } else {
       setLocalAssignments((prev) =>
         prev.filter((a) => !(a.staffId === staffId && a.date === date)),
       );
       try {
-        await fetch("/api/assignments", {
+        const res = await fetch("/api/assignments", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ staffId, date }),
         });
+        const data = await res.json().catch(() => null);
+        applyRequestDelta({ requests: data?.requestChanges });
       } catch { /* optimistic stays */ }
     }
     setSaving(null);
@@ -1432,10 +1483,14 @@ export function ScheduleGrid({
       }
       if (!res.ok) throw new Error(`write failed: ${res.status}`);
       if (next) {
-        const saved = await res.json();
+        const { requestChanges, ...saved } = await res.json();
         setLocalAssignments((cur) =>
           cur.map((a) => (a.staffId === staffId && a.date === date ? saved : a)),
         );
+        applyRequestDelta({ requests: requestChanges });
+      } else {
+        const data = await res.json().catch(() => null);
+        applyRequestDelta({ requests: data?.requestChanges });
       }
       return true;
     } catch {
@@ -1937,8 +1992,8 @@ export function ScheduleGrid({
           body: JSON.stringify({ shiftTypeId: dedSt.id, groups }),
         });
         if (!res.ok) throw new Error(String(res.status));
-        const { applied, cleared, skippedGroups } = (await res.json()) as {
-          applied: AssignmentData[]; cleared: { staffId: string; date: string }[]; skippedGroups: { date: string; reason: string }[];
+        const { applied, cleared, skippedGroups, requestChanges } = (await res.json()) as {
+          applied: AssignmentData[]; cleared: { staffId: string; date: string }[]; skippedGroups: { date: string; reason: string }[]; requestChanges?: AffectedDelta["requests"];
         };
         const appliedKeys = new Set(applied.map((a) => `${a.staffId}:${a.date}`));
         const clearedKeys = new Set(cleared.map((c) => `${c.staffId}:${c.date}`));
@@ -1961,6 +2016,7 @@ export function ScheduleGrid({
         for (const a of applied) undoOps.push({ staffId: a.staffId, date: a.date, prev: prevByKey.get(`${a.staffId}:${a.date}`) ?? null, next: a });
         for (const c of cleared) undoOps.push({ staffId: c.staffId, date: c.date, prev: prevByKey.get(`${c.staffId}:${c.date}`) ?? null, next: null });
         if (undoOps.length) pushUndo(undoOps);
+        applyRequestDelta({ requests: requestChanges });
 
         const serverLocked = skippedGroups.filter((s) => s.reason === "locked").length;
         const serverConflict = skippedGroups.filter((s) => s.reason === "conflict").length;
@@ -2064,7 +2120,7 @@ export function ScheduleGrid({
           body: JSON.stringify({ cells: sets }),
         });
         if (!res.ok) throw new Error(String(res.status));
-        const { applied, skippedLocked = 0 } = (await res.json()) as { applied: AssignmentData[]; skippedLocked?: number };
+        const { applied, skippedLocked = 0, requestChanges } = (await res.json()) as { applied: AssignmentData[]; skippedLocked?: number; requestChanges?: AffectedDelta["requests"] };
         const appliedKeys = new Set(applied.map((a) => `${a.staffId}:${a.date}`));
 
         // Reconcile to exactly what the server persisted: drop temps, add authoritative
@@ -2084,6 +2140,7 @@ export function ScheduleGrid({
         // One undo group covering everything that actually persisted.
         const undoOps: UndoOp[] = applied.map((a) => ({ staffId: a.staffId, date: a.date, prev: prevByKey.get(`${a.staffId}:${a.date}`) ?? null, next: a }));
         if (undoOps.length) pushUndo(undoOps);
+        applyRequestDelta({ requests: requestChanges });
 
         setPasteToast(pasteSummary(applied.length, resolution, skippedLocked));
       } catch {
@@ -2167,11 +2224,12 @@ export function ScheduleGrid({
         body: JSON.stringify({ cells, shiftTypeId: st.id }),
       });
       if (res.ok) {
-        const { applied } = await res.json() as { applied: AssignmentData[] };
+        const { applied, requestChanges } = await res.json() as { applied: AssignmentData[]; requestChanges?: AffectedDelta["requests"] };
         setLocalAssignments((prev) => {
           const savedKeys = new Set(applied.map((s) => `${s.staffId}:${s.date}`));
           return [...prev.filter((a) => !savedKeys.has(`${a.staffId}:${a.date}`)), ...applied];
         });
+        applyRequestDelta({ requests: requestChanges });
       }
     } catch { /* optimistic stays */ }
     setSaving(null);
@@ -2244,22 +2302,24 @@ export function ScheduleGrid({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ staffId, date, shiftTypeId }),
         });
-        const saved = await res.json();
+        const { requestChanges, ...saved } = await res.json();
         setLocalAssignments((prev) =>
           prev.map((a) => (a.staffId === staffId && a.date === date ? saved : a)),
         );
+        applyRequestDelta({ requests: requestChanges });
       } else {
         const res = await fetch("/api/assignments/bulk", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cells, shiftTypeId }),
         });
-        const { applied: saved }: { applied: AssignmentData[] } = await res.json();
+        const { applied: saved, requestChanges }: { applied: AssignmentData[]; requestChanges?: AffectedDelta["requests"] } = await res.json();
         setLocalAssignments((prev) => {
           const keys = new Set(saved.map((s) => `${s.staffId}:${s.date}`));
           const filtered = prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`));
           return [...filtered, ...saved];
         });
+        applyRequestDelta({ requests: requestChanges });
       }
     } catch {
       // Revert temps on failure
@@ -2316,17 +2376,21 @@ export function ScheduleGrid({
 
     try {
       if (cells.length === 1) {
-        await fetch("/api/assignments", {
+        const res = await fetch("/api/assignments", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(cells[0]),
         });
+        const data = await res.json().catch(() => null);
+        applyRequestDelta({ requests: data?.requestChanges });
       } else {
-        await fetch("/api/assignments/bulk", {
+        const res = await fetch("/api/assignments/bulk", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cells }),
         });
+        const data = await res.json().catch(() => null);
+        applyRequestDelta({ requests: data?.requestChanges });
       }
     } catch {
       window.location.reload();
@@ -2626,6 +2690,7 @@ export function ScheduleGrid({
         if (result.swapped) next.push(result.swapped);
         return next;
       });
+      applyRequestDelta({ requests: result.requestChanges });
     } catch {
       window.location.reload();
     } finally {
@@ -2737,6 +2802,10 @@ export function ScheduleGrid({
         const filtered = prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`));
         return [...filtered, ...applied];
       });
+      // Mirror server-side auto-approvals so the RQ overlay reflects the new
+      // statuses immediately (a satisfied pending request becomes approved). Without
+      // this, local request state drifts until the page remounts.
+      applyRequestDelta({ requests: data.requestChanges });
 
       pushUndo(undoOps);
       setAutoSuggestions(null);
@@ -2775,6 +2844,9 @@ export function ScheduleGrid({
 
       const keys = new Set(removed.map((a) => `${a.staffId}:${a.date}`));
       setLocalAssignments((prev) => prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`)));
+      // Clearing auto assignments reverts the approvals they triggered back to
+      // pending — keep the overlay in step.
+      applyRequestDelta({ requests: data.requestChanges });
 
       pushUndo(undoOps);
     } catch (e) {
@@ -2816,13 +2888,33 @@ export function ScheduleGrid({
     return buildPPHoursAlerts(entries, firstOfMonth, lastOfMonth);
   }, [sortedPPs, ppHours, visibleStaff, firstOfMonth, lastOfMonth]);
 
-  // The Alerts modal's sections (pay-period hours first, then daily staffing).
+  // Pending-request alerts: each still-unfulfilled (status "pending") request for a
+  // visible staff member whose range touches the viewed month, surfaced as an
+  // actionable to-do. Anchored/keyed in buildRequestAlerts; the message (initials +
+  // description + date range) is formatted here where shift codes / dateFormat live.
+  const requestAlerts = useMemo(() => {
+    const visIds = new Set(visibleStaff.map((p) => p.id));
+    const entries: RequestAlertEntry[] = [];
+    for (const r of localRequests) {
+      if (r.status !== "pending" || !visIds.has(r.staffId)) continue;
+      const initials = staffInitialsMap.get(r.staffId) ?? "?";
+      const desc = describeRequest(r, (id) => shiftTypeMap.get(id)?.code ?? id);
+      const range =
+        r.startDate === r.endDate
+          ? formatDate(parseDate(r.startDate), dateFormat)
+          : `${formatDate(parseDate(r.startDate), dateFormat)}–${formatDate(parseDate(r.endDate), dateFormat)}`;
+      entries.push({ id: r.id, startDate: r.startDate, endDate: r.endDate, message: `${initials}: ${desc} (${range})` });
+    }
+    return buildRequestAlerts(entries, firstOfMonth, lastOfMonth);
+  }, [localRequests, visibleStaff, staffInitialsMap, shiftTypeMap, dateFormat, firstOfMonth, lastOfMonth]);
+
+  // The Alerts modal's sections (pending requests, then pay-period hours, then daily staffing).
   const alertSections = useMemo(
-    () => buildAlertSections(staffingAlerts, ppHoursAlerts),
-    [staffingAlerts, ppHoursAlerts],
+    () => buildAlertSections(staffingAlerts, ppHoursAlerts, requestAlerts),
+    [staffingAlerts, ppHoursAlerts, requestAlerts],
   );
   // Every alert across categories; counts/severity ignore muted ones.
-  const allAlerts = useMemo(() => [...ppHoursAlerts, ...staffingAlerts], [ppHoursAlerts, staffingAlerts]);
+  const allAlerts = useMemo(() => [...requestAlerts, ...ppHoursAlerts, ...staffingAlerts], [requestAlerts, ppHoursAlerts, staffingAlerts]);
 
   // Muted alert keys, shared across logins (seeded server-side, kept live here).
   const [mutedKeys, setMutedKeys] = useState<Set<string>>(() => new Set(mutedAlertKeys));
@@ -2941,13 +3033,43 @@ export function ScheduleGrid({
         >
           PP Totals
         </button>
-        <button
-          onClick={toggleShowRequests}
-          className={["px-3 py-1 text-sm rounded transition-colors", showRequests ? "bg-violet-700 hover:bg-violet-600 text-violet-100" : "bg-slate-700 hover:bg-slate-600 text-slate-400"].join(" ")}
-          title="Show or hide requests on the schedule (?)"
-        >
-          RQ
-        </button>
+        <div className="relative inline-flex">
+          <button
+            onClick={toggleShowRequests}
+            className={["px-3 py-1 text-sm rounded-l transition-colors", showRequests ? "bg-violet-700 hover:bg-violet-600 text-violet-100" : "bg-slate-700 hover:bg-slate-600 text-slate-400"].join(" ")}
+            title="Show or hide requests on the schedule (?)"
+          >
+            RQ{showRequests && requestFilter !== "all" ? <span className="ml-1 text-[10px] opacity-80">{REQUEST_FILTERS.find((f) => f.value === requestFilter)?.short}</span> : null}
+          </button>
+          <button
+            onClick={() => setRequestMenuOpen((o) => !o)}
+            className={["px-1.5 py-1 text-sm rounded-r border-l transition-colors", showRequests ? "bg-violet-700 hover:bg-violet-600 text-violet-100 border-violet-800" : "bg-slate-700 hover:bg-slate-600 text-slate-400 border-slate-800"].join(" ")}
+            title="Choose which requests to show"
+            aria-haspopup="menu"
+            aria-expanded={requestMenuOpen}
+          >
+            ▾
+          </button>
+          {requestMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setRequestMenuOpen(false)} />
+              <div className="absolute left-0 top-full mt-1 z-20 min-w-[150px] rounded border border-slate-600 bg-slate-800 py-1 shadow-lg" role="menu">
+                {REQUEST_FILTERS.map((f) => (
+                  <button
+                    key={f.value}
+                    role="menuitemradio"
+                    aria-checked={requestFilter === f.value}
+                    onClick={() => chooseRequestFilter(f.value)}
+                    className={["flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors", requestFilter === f.value ? "bg-violet-700/40 text-violet-100" : "text-slate-300 hover:bg-slate-700"].join(" ")}
+                  >
+                    <span className="w-3 text-violet-300">{requestFilter === f.value ? "✓" : ""}</span>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <button
           onClick={() => setShowVersions(true)}
           className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300 flex items-center gap-1.5"
@@ -3311,10 +3433,16 @@ export function ScheduleGrid({
                     const reqs = showRequests ? requestsByCell.get(cellKey) : undefined;
                     const reqSummary = reqs ? summarizeCellRequests(reqs, (id) => shiftTypeMap.get(id)?.code ?? id) : null;
                     const reqCls = reqSummary ? REQ_CAT_CLASSES[reqSummary.category] : null;
-                    // Boxed, category-colored request cell; selection/active/drag win.
+                    // Approval-state treatment: approved/mixed = solid category ring,
+                    // pending = faint + dimmed, denied = struck rose (overrides color).
+                    const reqDenied = reqSummary?.statusKind === "denied";
+                    const reqSolid = reqSummary?.statusKind === "approved" || reqSummary?.statusKind === "mixed";
+                    const reqTextCls = reqDenied ? "text-rose-300 line-through decoration-rose-400/70" : reqCls?.text ?? "";
+                    const reqDim = reqSummary && !reqSolid && !reqDenied ? "opacity-60" : "";
+                    // Boxed request cell; selection/active/drag win.
                     const reqBox =
                       reqSummary && !isSelected && !isActiveCell && !isDragTarget && !isPickerTarget
-                        ? `ring-2 ring-inset ${reqSummary.hasApproved ? reqCls!.ring : reqCls!.ringFaint} ${reqCls!.bg}`
+                        ? `ring-2 ring-inset ${reqDenied ? "ring-rose-500/60" : reqSolid ? reqCls!.ring : reqCls!.ringFaint} ${reqDenied ? "bg-rose-950/25" : reqCls!.bg}`
                         : "";
                     // Empty cells get a lightweight "initials on date" tooltip on the <td>.
                     // Populated cells, requests, suggestions, and the saving state render their
@@ -3393,7 +3521,7 @@ export function ScheduleGrid({
                         ) : reqSummary ? (
                           // Empty cell with request(s): show the letters in category color.
                           <div
-                            className={`text-[10px] font-bold leading-tight ${reqCls!.text} ${reqSummary.hasApproved ? "" : "opacity-60"}`}
+                            className={`text-[10px] font-bold leading-tight ${reqTextCls} ${reqDim}`}
                             onMouseEnter={(e) => showTip(setTooltip, requestTooltip(reqs!, date), e)}
                             onMouseLeave={() => setTooltip(null)}
                           >
@@ -3405,7 +3533,7 @@ export function ScheduleGrid({
                           // Assigned cell with request(s): bare corner marker (no pill) carries the tooltip.
                           // label is letters for a single request, the count for multiple.
                           <span
-                            className={`absolute top-0 left-0 px-0.5 text-[8px] font-bold leading-none ${reqCls!.text} ${reqSummary.hasApproved ? "" : "opacity-60"}`}
+                            className={`absolute top-0 left-0 px-0.5 text-[8px] font-bold leading-none ${reqTextCls} ${reqDim}`}
                             onMouseEnter={(e) => showTip(setTooltip, requestTooltip(reqs!, date), e)}
                             onMouseLeave={() => setTooltip(null)}
                           >
@@ -3845,7 +3973,7 @@ export function ScheduleGrid({
                       </div>
                     ))}
                   </div>
-                  <p className="text-[11px] text-slate-500 pt-1">Request overlay (ring + letters): solid ring = approved, faint ring = pending.</p>
+                  <p className="text-[11px] text-slate-500 pt-1">Request overlay (ring + letters) — kind sets the color:</p>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                     {([
                       { label: "want", desc: "Wants the shift", c: REQ_CAT_CLASSES.want },
@@ -3860,6 +3988,21 @@ export function ScheduleGrid({
                         <span className="text-[11px] text-slate-500 truncate">{desc}</span>
                       </div>
                     ))}
+                  </div>
+                  <p className="text-[11px] text-slate-500 pt-1">…and the box shows its approval state (toggle with the RQ ▾ menu):</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-5 rounded ring-2 ring-inset ring-emerald-400 bg-emerald-900/15" />
+                      <span className="text-[11px] text-slate-400 truncate">Solid ring = approved</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-5 rounded ring-2 ring-inset ring-emerald-400/40 bg-emerald-900/15 opacity-60" />
+                      <span className="text-[11px] text-slate-400 truncate">Faint ring = pending</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-5 rounded ring-2 ring-inset ring-rose-500/60 bg-rose-950/25" />
+                      <span className="text-[11px] text-slate-400 truncate">Struck rose = denied</span>
+                    </div>
                   </div>
                   <p className="text-[11px] text-slate-500 pt-1">Cell states:</p>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1">

@@ -3,7 +3,7 @@ import { roundPPHours } from "./constraints";
 
 // Alerts come in categories, each rendered as its own section in the Alerts
 // modal. Every alert carries a stable, value-bearing `key` used to mute it.
-export type AlertCategory = "staffing" | "pp-hours";
+export type AlertCategory = "staffing" | "pp-hours" | "requests";
 
 export type Alert = {
   category: AlertCategory;
@@ -114,16 +114,57 @@ export function buildPPHoursAlerts(
   return items;
 }
 
+// One still-pending (unfulfilled) request, anchored to its date range so the
+// alert can be month-filtered and clicked-to-jump. `message` is built by the
+// caller (it owns date/shift formatting); this layer only scopes + keys it.
+export type RequestAlertEntry = {
+  id: string;
+  startDate: string; // inclusive ISO "YYYY-MM-DD"
+  endDate: string; // inclusive ISO "YYYY-MM-DD"
+  message: string;
+};
+
 /**
- * Assemble the ordered sections shown in the Alerts modal. Pay-period hours
- * first, then daily staffing. Sections are returned even when empty so the
- * modal can render a consistent layout (the UI decides whether to hide zeros).
+ * Build the pending-request alerts: every request still awaiting fulfillment
+ * whose date range overlaps the viewed month. Anchored to the first covered day
+ * within the month (so the click-to-jump lands inside the visible grid even when
+ * the request started in a prior month). Always a warning (amber) — a pending
+ * ask is a to-do, not an error. Keyed by request id (a pending request that gets
+ * approved/declined simply drops out of the list).
+ */
+export function buildRequestAlerts(
+  entries: RequestAlertEntry[],
+  firstOfMonth: string,
+  lastOfMonth: string,
+): Alert[] {
+  const items: Alert[] = [];
+  for (const e of entries) {
+    if (e.endDate < firstOfMonth || e.startDate > lastOfMonth) continue;
+    const anchor = e.startDate < firstOfMonth ? firstOfMonth : e.startDate;
+    items.push({
+      category: "requests",
+      key: `request|${e.id}`,
+      date: anchor,
+      message: e.message,
+      type: "warn",
+    });
+  }
+  return items;
+}
+
+/**
+ * Assemble the ordered sections shown in the Alerts modal. Pending requests
+ * first (they're actionable to-dos), then pay-period hours, then daily staffing.
+ * Sections are returned even when empty so the modal can render a consistent
+ * layout (the UI decides whether to hide zeros).
  */
 export function buildAlertSections(
   staffingAlerts: Alert[],
   ppHoursAlerts: Alert[],
+  requestAlerts: Alert[] = [],
 ): AlertSection[] {
   return [
+    { category: "requests", title: "Pending requests", alerts: requestAlerts },
     { category: "pp-hours", title: "Pay period hours", alerts: ppHoursAlerts },
     { category: "staffing", title: "Daily staffing", alerts: staffingAlerts },
   ];

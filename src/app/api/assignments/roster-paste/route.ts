@@ -117,11 +117,12 @@ export async function PUT(req: NextRequest) {
   }
 
   // Request-approval sync over the UNION of applied + cleared. Non-fatal post-commit.
+  let requestChanges: Awaited<ReturnType<typeof syncRequestApprovals>> = [];
   try {
-    await syncRequestApprovals([...applied.map((a) => ({ staffId: a.staffId, date: a.date })), ...cleared], userId);
+    requestChanges = await syncRequestApprovals([...applied.map((a) => ({ staffId: a.staffId, date: a.date })), ...cleared], userId);
   } catch (err) {
     console.error("roster-paste: request-approval sync failed after commit (assignments persisted)", err);
   }
 
-  return NextResponse.json({ applied, cleared, skippedGroups });
+  return NextResponse.json({ applied, cleared, skippedGroups, requestChanges });
 }

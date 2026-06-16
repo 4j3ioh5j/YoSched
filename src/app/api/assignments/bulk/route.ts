@@ -51,12 +51,12 @@ export async function PUT(req: NextRequest) {
     });
   }
 
-  await syncRequestApprovals(
+  const requestChanges = await syncRequestApprovals(
     results.map((r) => ({ staffId: r.staffId, date: r.date })),
     userId
   );
 
-  return NextResponse.json({ applied: results, skipped });
+  return NextResponse.json({ applied: results, skipped, requestChanges });
 }
 
 export async function DELETE(req: NextRequest) {
@@ -87,7 +87,7 @@ export async function DELETE(req: NextRequest) {
     clearedCells.push({ staffId, date });
   }
 
-  await syncRequestApprovals(clearedCells, userId);
+  const requestChanges = await syncRequestApprovals(clearedCells, userId);
 
-  return NextResponse.json({ ok: true, cleared: clearedCells.length, skipped });
+  return NextResponse.json({ ok: true, cleared: clearedCells.length, skipped, requestChanges });
 }

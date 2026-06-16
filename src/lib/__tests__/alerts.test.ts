@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildAlerts,
   buildPPHoursAlerts,
+  buildRequestAlerts,
   buildAlertSections,
   groupAlertsByDate,
   parseAlertKey,
@@ -133,17 +134,50 @@ describe("buildPPHoursAlerts", () => {
 });
 
 describe("buildAlertSections", () => {
-  it("orders pay-period hours before daily staffing and preserves each list", () => {
+  it("orders pending requests, then pay-period hours, then daily staffing and preserves each list", () => {
     const staffing: Alert[] = [
       { category: "staffing", key: "staffing|2026-07-10|x", date: "2026-07-10", message: "x", type: "warn" },
     ];
     const pp: Alert[] = [
       { category: "pp-hours", key: "pp|s1|2026-07-01|76|80", date: "2026-07-14", message: "y", type: "warn" },
     ];
-    const sections = buildAlertSections(staffing, pp);
-    expect(sections.map((s) => s.category)).toEqual(["pp-hours", "staffing"]);
-    expect(sections[0].alerts).toBe(pp);
-    expect(sections[1].alerts).toBe(staffing);
+    const requests: Alert[] = [
+      { category: "requests", key: "request|r1", date: "2026-07-04", message: "z", type: "warn" },
+    ];
+    const sections = buildAlertSections(staffing, pp, requests);
+    expect(sections.map((s) => s.category)).toEqual(["requests", "pp-hours", "staffing"]);
+    expect(sections[0].alerts).toBe(requests);
+    expect(sections[1].alerts).toBe(pp);
+    expect(sections[2].alerts).toBe(staffing);
+  });
+
+  it("defaults the requests section to empty when omitted", () => {
+    const sections = buildAlertSections([], []);
+    expect(sections.map((s) => s.category)).toEqual(["requests", "pp-hours", "staffing"]);
+    expect(sections[0].alerts).toEqual([]);
+  });
+});
+
+describe("buildRequestAlerts", () => {
+  const entry = (id: string, startDate: string, endDate: string, message = "m") => ({ id, startDate, endDate, message });
+
+  it("emits a warn alert keyed by request id, anchored to the start date", () => {
+    const alerts = buildRequestAlerts([entry("r1", "2026-07-04", "2026-07-04", "JD: Off (Jul 4)")], "2026-07-01", "2026-07-31");
+    expect(alerts).toEqual([
+      { category: "requests", key: "request|r1", date: "2026-07-04", message: "JD: Off (Jul 4)", type: "warn" },
+    ]);
+  });
+
+  it("clamps the anchor to the first of the month when the request started earlier", () => {
+    const alerts = buildRequestAlerts([entry("r2", "2026-06-28", "2026-07-03")], "2026-07-01", "2026-07-31");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].date).toBe("2026-07-01");
+  });
+
+  it("excludes requests whose range does not overlap the viewed month", () => {
+    const before = entry("r3", "2026-06-01", "2026-06-30");
+    const after = entry("r4", "2026-08-01", "2026-08-05");
+    expect(buildRequestAlerts([before, after], "2026-07-01", "2026-07-31")).toEqual([]);
   });
 });
 

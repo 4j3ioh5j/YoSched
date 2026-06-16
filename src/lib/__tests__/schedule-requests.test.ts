@@ -644,6 +644,20 @@ describe("requestCategory / summarizeCellRequests", () => {
     const s = summarizeCellRequests([req({ kind: "OFF", status: "pending" })], codeOf);
     expect(s?.hasApproved).toBe(false);
   });
+
+  it("statusKind reflects the cell's single approval state", () => {
+    expect(summarizeCellRequests([req({ kind: "OFF", status: "approved" })], codeOf)?.statusKind).toBe("approved");
+    expect(summarizeCellRequests([req({ kind: "OFF", status: "pending" })], codeOf)?.statusKind).toBe("pending");
+    expect(summarizeCellRequests([req({ kind: "OFF", status: "declined" })], codeOf)?.statusKind).toBe("denied");
+  });
+
+  it("statusKind is 'mixed' when a cell carries differing states", () => {
+    const s = summarizeCellRequests(
+      [req({ kind: "OFF", status: "approved" }), req({ kind: "NEGATE_SHIFT", shiftTypeIds: ["orc"], status: "declined" })],
+      codeOf
+    );
+    expect(s?.statusKind).toBe("mixed");
+  });
 });
 
 describe("buildSelfRequestInput", () => {

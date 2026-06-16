@@ -45,9 +45,9 @@ export async function PUT(req: NextRequest) {
     include: { shiftType: true },
   });
 
-  await syncRequestApprovals([{ staffId, date }], userId);
+  const requestChanges = await syncRequestApprovals([{ staffId, date }], userId);
 
-  return NextResponse.json(formatAssignment(assignment, date));
+  return NextResponse.json({ ...formatAssignment(assignment, date), requestChanges });
 }
 
 export async function POST(req: NextRequest) {
@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
       results.cleared = { staffId: from.staffId, date: from.date };
     }
 
-    await syncRequestApprovals(
+    results.requestChanges = await syncRequestApprovals(
       [
         { staffId: from.staffId, date: from.date },
         { staffId: to.staffId, date: to.date },
@@ -159,7 +159,7 @@ export async function DELETE(req: NextRequest) {
     },
   });
 
-  await syncRequestApprovals([{ staffId, date }], userId);
+  const requestChanges = await syncRequestApprovals([{ staffId, date }], userId);
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, requestChanges });
 }

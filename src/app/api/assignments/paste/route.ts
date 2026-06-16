@@ -77,8 +77,9 @@ export async function PUT(req: NextRequest) {
   // reported failure (the client would revert its optimistic state and skip undo while
   // the server keeps the rows, diverging the two). So swallow a post-commit sync error
   // and still return `applied`; a later write/refresh re-derives approval status.
+  let requestChanges: Awaited<ReturnType<typeof syncRequestApprovals>> = [];
   try {
-    await syncRequestApprovals(
+    requestChanges = await syncRequestApprovals(
       toApply.map((c) => ({ staffId: c.staffId, date: c.date })),
       userId
     );
@@ -96,5 +97,5 @@ export async function PUT(req: NextRequest) {
     color: a.shiftType.color ?? "#6b7280",
   }));
 
-  return NextResponse.json({ applied, skippedLocked });
+  return NextResponse.json({ applied, skippedLocked, requestChanges });
 }

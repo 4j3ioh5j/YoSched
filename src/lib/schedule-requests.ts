@@ -317,6 +317,13 @@ export type CellRequestSummary = {
   single: boolean; // exactly one request on the cell
   count: number;
   hasApproved: boolean; // at least one approved → solid box; else faint (all pending)
+  // The cell's approval state, driving the box treatment in the grid overlay:
+  //   "approved" — every request on the cell is approved (honored) → solid box
+  //   "pending"  — every request still awaiting a decision → faint box
+  //   "denied"   — every request was declined → struck rose box
+  //   "mixed"    — the cell carries requests of differing states (e.g. one approved,
+  //                one denied) → solid box, lean on the tooltip for the breakdown
+  statusKind: "approved" | "pending" | "denied" | "mixed";
 };
 
 /** Collapse a cell's requests into the grid's visual summary (box color + label).
@@ -332,6 +339,15 @@ export function summarizeCellRequests(
   const category: RequestCategory | "mixed" = cats.size === 1 ? [...cats][0] : "mixed";
   const single = reqs.length === 1;
   const hasApproved = reqs.some((r) => r.status === "approved");
+
+  // Collapse the cell's request statuses into one display state. "declined" reads as
+  // "denied"; anything not approved/declined (i.e. pending) folds into "pending". A
+  // cell with more than one distinct state is "mixed".
+  const stateOf = (s: RequestStatus): "approved" | "pending" | "denied" =>
+    s === "approved" ? "approved" : s === "declined" ? "denied" : "pending";
+  const states = new Set(reqs.map((r) => stateOf(r.status)));
+  const statusKind: "approved" | "pending" | "denied" | "mixed" =
+    states.size === 1 ? [...states][0] : "mixed";
 
   let label: string;
   if (single) {
@@ -352,7 +368,7 @@ export function summarizeCellRequests(
     label = String(reqs.length);
   }
 
-  return { category, label, single, count: reqs.length, hasApproved };
+  return { category, label, single, count: reqs.length, hasApproved, statusKind };
 }
 
 /** Does this staff have any approved request affecting `date`? (grid: show badge) */
