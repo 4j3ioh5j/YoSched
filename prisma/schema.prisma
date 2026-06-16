@@ -496,11 +496,12 @@ model ShiftMinimumTarget {
   maxCount    Int?
   window      String
   windowDays  Int?
+  windowCount Int    @default(1) // multiplier: "per N windows" (e.g. 1 per 3 pay periods). Ignored for window="days".
 
   staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
 
-  @@unique([staffId, shiftTypeId, window])
+  @@unique([staffId, shiftTypeId, window, windowCount], map: "shift_min_targets_staff_shift_window_count_key")
   @@map("shift_minimum_targets")
 }
 

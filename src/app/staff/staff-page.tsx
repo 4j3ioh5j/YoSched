@@ -59,6 +59,7 @@ type ShiftMinimumTargetData = {
   maxCount?: number | null;
   window: string;
   windowDays?: number | null;
+  windowCount?: number | null;
 };
 
 type Staff = {
@@ -414,10 +415,10 @@ function AvailabilityEditor({
 }
 
 const WINDOW_LABELS: Record<string, string> = {
-  week: "per week",
-  pay_period: "per pay period",
-  month: "per month",
-  days: "per N days",
+  week: "weeks",
+  pay_period: "pay periods",
+  month: "months",
+  days: "days",
 };
 
 function ShiftEligibilityEditor({
@@ -509,7 +510,7 @@ function ShiftEligibilityEditor({
 
       <div className="pt-2 border-t border-slate-700/50">
         <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">Min / Max targets</div>
-        <div className="flex items-center gap-1.5 text-xs">
+        <div className="flex items-center gap-1.5 text-xs flex-wrap">
           <span className="text-slate-400">At least</span>
           <input
             type="number" min={0} max={99}
@@ -517,7 +518,7 @@ function ShiftEligibilityEditor({
             onChange={(e) => {
               const val = parseInt(e.target.value) || 0;
               if (val === 0 && !minimumTarget?.maxCount) { onMinimumChange(undefined); return; }
-              onMinimumChange({ shiftTypeId: shiftType.id, minCount: val, maxCount: minimumTarget?.maxCount, window: minimumTarget?.window ?? "pay_period", windowDays: minimumTarget?.windowDays });
+              onMinimumChange({ shiftTypeId: shiftType.id, minCount: val, maxCount: minimumTarget?.maxCount, window: minimumTarget?.window ?? "pay_period", windowDays: minimumTarget?.windowDays, windowCount: minimumTarget?.windowCount ?? 1 });
             }}
             className="w-10 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
           />
@@ -529,30 +530,47 @@ function ShiftEligibilityEditor({
               const val = parseInt(e.target.value) || 0;
               const maxVal = val === 0 ? null : val;
               if (val === 0 && (minimumTarget?.minCount ?? 0) === 0) { onMinimumChange(undefined); return; }
-              onMinimumChange({ shiftTypeId: shiftType.id, minCount: minimumTarget?.minCount ?? 0, maxCount: maxVal, window: minimumTarget?.window ?? "pay_period", windowDays: minimumTarget?.windowDays });
+              onMinimumChange({ shiftTypeId: shiftType.id, minCount: minimumTarget?.minCount ?? 0, maxCount: maxVal, window: minimumTarget?.window ?? "pay_period", windowDays: minimumTarget?.windowDays, windowCount: minimumTarget?.windowCount ?? 1 });
             }}
             className="w-10 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
+          />
+          <span className="text-slate-400">per</span>
+          <input
+            type="number" min={1} max={minimumTarget?.window === "days" ? 365 : 12}
+            value={minimumTarget?.window === "days" ? (minimumTarget?.windowDays ?? 7) : (minimumTarget?.windowCount ?? 1)}
+            onChange={(e) => {
+              if (!minimumTarget) return;
+              const v = Math.max(1, parseInt(e.target.value) || 1);
+              if (minimumTarget.window === "days") onMinimumChange({ ...minimumTarget, windowDays: v });
+              else onMinimumChange({ ...minimumTarget, windowCount: v });
+            }}
+            disabled={!minimumTarget}
+            title={minimumTarget?.window === "days" ? "Rolling window length in days" : "Number of windows per bucket (e.g. 3 = per 3 pay periods)"}
+            className="w-12 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center disabled:opacity-40"
           />
           <select
             value={minimumTarget?.window ?? "pay_period"}
             onChange={(e) => {
               if (!minimumTarget) return;
-              onMinimumChange({ ...minimumTarget, window: e.target.value });
+              const w = e.target.value;
+              onMinimumChange({
+                ...minimumTarget,
+                window: w,
+                windowDays: w === "days" ? (minimumTarget.windowDays ?? 7) : minimumTarget.windowDays,
+                windowCount: w === "days" ? (minimumTarget.windowCount ?? 1) : (minimumTarget.windowCount ?? 1),
+              });
             }}
             disabled={!minimumTarget}
             className="bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600 disabled:opacity-40"
           >
             {Object.entries(WINDOW_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
-          {minimumTarget?.window === "days" && (
-            <input
-              type="number" min={1} max={365}
-              value={minimumTarget.windowDays ?? 7}
-              onChange={(e) => onMinimumChange({ ...minimumTarget, windowDays: parseInt(e.target.value) || 7 })}
-              className="w-12 bg-slate-700 text-slate-200 rounded px-1 py-0.5 border border-slate-600 text-center"
-            />
-          )}
         </div>
+        {minimumTarget && minimumTarget.minCount > 0 && minimumTarget.minCount === (minimumTarget.maxCount ?? -1) && (
+          <div className="text-[10px] text-slate-500 mt-1">
+            = exactly {minimumTarget.minCount} per {minimumTarget.window === "days" ? `${minimumTarget.windowDays ?? 7} days` : `${(minimumTarget.windowCount ?? 1) > 1 ? `${minimumTarget.windowCount} ` : ""}${WINDOW_LABELS[minimumTarget.window]}`}
+          </div>
+        )}
       </div>
     </div>
   );

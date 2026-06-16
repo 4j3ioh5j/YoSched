@@ -89,6 +89,7 @@ export async function PUT(req: NextRequest) {
             maxCount: (t.maxCount as number | null) ?? null,
             window: t.window as string,
             windowDays: t.windowDays as number | undefined,
+            windowCount: (t.windowCount as number | undefined) ?? 1,
           })),
         });
       }

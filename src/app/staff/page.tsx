@@ -65,6 +65,7 @@ export default async function Staff() {
             maxCount: mt.maxCount,
             window: mt.window,
             windowDays: mt.windowDays,
+            windowCount: mt.windowCount,
           })),
           specialQualifications: p.specialQualifications,
           isActive: p.isActive,

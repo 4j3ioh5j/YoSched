@@ -187,6 +187,70 @@ describe("getWindowBounds", () => {
       expect(bounds).toBeNull();
     });
   });
+
+  describe("windowCount (per N windows)", () => {
+    // 6 consecutive 14-day pay periods anchored at PP[0] = 2025-05-11.
+    const PP6 = [
+      { startDate: "2025-05-11", endDate: "2025-05-24" }, // idx 0
+      { startDate: "2025-05-25", endDate: "2025-06-07" }, // idx 1
+      { startDate: "2025-06-08", endDate: "2025-06-21" }, // idx 2
+      { startDate: "2025-06-22", endDate: "2025-07-05" }, // idx 3
+      { startDate: "2025-07-06", endDate: "2025-07-19" }, // idx 4
+      { startDate: "2025-07-20", endDate: "2025-08-02" }, // idx 5
+    ];
+    const t = (window: ShiftMinTarget["window"], windowCount: number, windowDays?: number): ShiftMinTarget => ({
+      shiftTypeId: "st-or",
+      minCount: 1,
+      window,
+      windowCount,
+      windowDays,
+    });
+
+    it("windowCount=1 reduces to a single pay period (backwards-compatible)", () => {
+      expect(getWindowBounds(t("pay_period", 1), "2025-05-30", PP6)).toEqual({ start: "2025-05-25", end: "2025-06-07" });
+    });
+
+    it("pay_period x3 tiles into fixed non-overlapping 3-PP blocks anchored at PP[0]", () => {
+      // idx 1 → floor(1/3)=block 0 → PP0..PP2
+      expect(getWindowBounds(t("pay_period", 3), "2025-05-30", PP6)).toEqual({ start: "2025-05-11", end: "2025-06-21" });
+      // idx 2 → still block 0
+      expect(getWindowBounds(t("pay_period", 3), "2025-06-15", PP6)).toEqual({ start: "2025-05-11", end: "2025-06-21" });
+      // idx 3 → floor(3/3)=block 1 → PP3..PP5
+      expect(getWindowBounds(t("pay_period", 3), "2025-06-25", PP6)).toEqual({ start: "2025-06-22", end: "2025-08-02" });
+    });
+
+    it("the same '1 per 3 PP' bucket is shared across all 3 of its pay periods (so the cap is one per block)", () => {
+      const b1 = getWindowBounds(t("pay_period", 3), "2025-05-15", PP6);
+      const b2 = getWindowBounds(t("pay_period", 3), "2025-06-20", PP6);
+      expect(b1).toEqual(b2); // dates in PP0 and PP2 fall in the same block
+    });
+
+    it("pay_period xN clamps the block end to the last available PP", () => {
+      const PP5 = PP6.slice(0, 5); // PP0..PP4
+      // idx 3 → block 1 = PP3..PP5, but PP5 missing → clamp to PP4
+      expect(getWindowBounds(t("pay_period", 3), "2025-06-25", PP5)).toEqual({ start: "2025-06-22", end: "2025-07-19" });
+    });
+
+    it("week x2 tiles into fixed 2-week blocks anchored at the 1970-01-05 Monday epoch", () => {
+      // 2025-05-12 (Mon) is week-index 2888 (even) → block start week 2888
+      expect(getWindowBounds(t("week", 2), "2025-05-12", PP6)).toEqual({ start: "2025-05-12", end: "2025-05-25" });
+      // next week (2025-05-19, odd index) shares the same block
+      expect(getWindowBounds(t("week", 2), "2025-05-19", PP6)).toEqual({ start: "2025-05-12", end: "2025-05-25" });
+      // 2025-05-26 (even index 2890) → next block
+      expect(getWindowBounds(t("week", 2), "2025-05-26", PP6)).toEqual({ start: "2025-05-26", end: "2025-06-08" });
+    });
+
+    it("month x3 tiles into calendar quarters anchored at the year boundary", () => {
+      // May 2025 → Apr–Jun block (months align to Jan/Apr/Jul/Oct)
+      expect(getWindowBounds(t("month", 3), "2025-05-15", PP6)).toEqual({ start: "2025-04-01", end: "2025-06-30" });
+      expect(getWindowBounds(t("month", 3), "2025-04-01", PP6)).toEqual({ start: "2025-04-01", end: "2025-06-30" });
+      expect(getWindowBounds(t("month", 3), "2025-07-01", PP6)).toEqual({ start: "2025-07-01", end: "2025-09-30" });
+    });
+
+    it("windowCount is ignored for the rolling 'days' window (uses windowDays)", () => {
+      expect(getWindowBounds(t("days", 3, 7), "2025-05-12", PP6)).toEqual({ start: "2025-05-12", end: "2025-05-18" });
+    });
+  });
 });
 
 describe("checkMinimumTargetMet", () => {

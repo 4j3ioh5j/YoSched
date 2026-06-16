@@ -188,6 +188,7 @@ export async function POST(req: NextRequest) {
         maxCount: mt.maxCount,
         window: mt.window as "week" | "pay_period" | "month" | "days",
         windowDays: mt.windowDays,
+        windowCount: mt.windowCount,
       })),
     })),
     shiftTypes: shiftTypes.map((st) => ({
