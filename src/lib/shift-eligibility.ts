@@ -1,4 +1,4 @@
-import { matchesPattern, type PayPeriodRange } from "./availability";
+import { matchesWhen, ruleToWhen, type PayPeriodRange } from "./recurrence";
 
 export type ShiftEligibilityRule = {
   shiftTypeId: string;
@@ -8,6 +8,14 @@ export type ShiftEligibilityRule = {
   pattern: "every" | "pp_week_1" | "pp_week_2" | "every_n";
   cycleLength?: number | null;
   cycleOffset?: number | null;
+  // New normalized WHEN columns (present after slice-3b backfill / picker save).
+  whenKind?: string | null;
+  whenDays?: number[] | null;
+  whenPpWeek?: number | null;
+  whenOrds?: number[] | null;
+  whenCycleUnit?: string | null;
+  whenCycleN?: number | null;
+  whenCycleOffset?: number | null;
 };
 
 export type ShiftMinTarget = {
@@ -32,19 +40,15 @@ export function evaluateShiftEligibility(
   const shiftRules = rules.filter((r) => r.shiftTypeId === shiftTypeId);
   if (shiftRules.length === 0) return null;
 
-  const dow = new Date(dateStr + "T12:00:00").getDay();
-  const dayRules = shiftRules.filter((r) => r.dayOfWeek === dow);
-
-  if (dayRules.length === 0) {
-    return { eligible: false, weight: 0 };
-  }
-
   let hardEligible = false;
   let hardIneligible = false;
   let weight = 0;
 
-  for (const rule of dayRules) {
-    if (!matchesPattern(rule, dateStr, payPeriods)) continue;
+  // matchesWhen applies the weekday gate, so iterate all rules for this shift.
+  // No matching rule → weight 0 → {eligible:false, weight:0}, matching the old
+  // "no rule for this day-of-week" early return.
+  for (const rule of shiftRules) {
+    if (!matchesWhen(ruleToWhen(rule), dateStr, payPeriods)) continue;
 
     if (rule.type === "eligible") {
       if (rule.strength === "rule") hardEligible = true;

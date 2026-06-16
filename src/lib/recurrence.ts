@@ -10,7 +10,31 @@
 // axis (min/max/exactly per N windows) lives in shift-eligibility.ts
 // (getWindowBounds / windowCount).
 
-import { ppWeekForDate, ppIndexForDate, type PayPeriodRange } from "./availability";
+// Pay-period helpers live here (the lowest-level recurrence module) rather than
+// in availability.ts, so availability.ts can delegate to matchesWhen without a
+// circular import. availability.ts re-exports these for existing callers.
+export type PayPeriodRange = { startDate: string; endDate: string };
+
+export function ppWeekForDate(dateStr: string, payPeriods: PayPeriodRange[]): 1 | 2 | null {
+  for (const pp of payPeriods) {
+    if (dateStr >= pp.startDate && dateStr <= pp.endDate) {
+      const start = new Date(pp.startDate + "T12:00:00");
+      const d = new Date(dateStr + "T12:00:00");
+      const dayIndex = Math.round((d.getTime() - start.getTime()) / 86400000);
+      return dayIndex < 7 ? 1 : 2;
+    }
+  }
+  return null;
+}
+
+export function ppIndexForDate(dateStr: string, payPeriods: PayPeriodRange[]): number {
+  for (let i = 0; i < payPeriods.length; i++) {
+    if (dateStr >= payPeriods[i].startDate && dateStr <= payPeriods[i].endDate) {
+      return i;
+    }
+  }
+  return -1;
+}
 
 export type OccurrenceKind =
   | "every" // every occurrence of the chosen weekday(s)
@@ -120,7 +144,7 @@ export function matchesWhen(
       const ords = p.ords ?? [];
       if (ords.length === 0) return true;
       const ord = ppOrdinalForDate(dateStr, payPeriods);
-      if (ord === null) return true; // outside known PPs — match (consistent with legacy every_n)
+      if (ord === null) return false; // outside known PPs — a PP-anchored rule can't apply
       if (ords.includes(ord)) return true;
       return ords.includes(-1) && isLastWeekdayOccurrenceInPP(dateStr, payPeriods);
     }
@@ -129,7 +153,12 @@ export function matchesWhen(
       const n = Math.max(1, Math.floor(p.cycleN ?? 1));
       const offset = p.cycleOffset ?? 0;
       const ppIdx = ppIndexForDate(dateStr, payPeriods);
-      if (ppIdx < 0) return true; // consistent with legacy every_n (ppIdx<0 -> match)
+      if (ppIdx < 0) {
+        // "payPeriod" is PP-anchored → can't apply outside known PPs. "week" keeps
+        // the legacy every_n behavior (ppIdx<0 → match) so the slice-3 migration of
+        // every_n rules is byte-identical even for out-of-PP dates.
+        return p.cycleUnit !== "payPeriod";
+      }
       // "week" = the across-PP week-slot index used by legacy every_n; "payPeriod"
       // = the pay-period index (enables every-other-PP parity).
       const idx =
@@ -172,4 +201,45 @@ export function legacyPatternToWhen(rule: {
     default:
       return { daysOfWeek, kind: "every" };
   }
+}
+
+// A rule row carrying either the new normalized WHEN columns or the legacy ones.
+// During the dual-column transition both may be present; `whenKind` is the sole
+// discriminator (nullable, no default) — null means "this row predates / was not
+// written by a WHEN-aware path", so we fall back to the legacy columns.
+export type RecurrenceRuleRow = {
+  dayOfWeek: number;
+  pattern: string;
+  cycleLength?: number | null;
+  cycleOffset?: number | null;
+  whenKind?: string | null;
+  whenDays?: number[] | null;
+  whenPpWeek?: number | null;
+  whenOrds?: number[] | null;
+  whenCycleUnit?: string | null;
+  whenCycleN?: number | null;
+  whenCycleOffset?: number | null;
+};
+
+// Map the explicit new WHEN columns to a WhenPattern. Only called when
+// whenKind != null. Malformed explicit rows are deterministic (and tested):
+// kind="ppWeek" with null whenPpWeek matches nothing (ppWeek never equals null);
+// kind="cycle" with null whenCycleN falls to n=1 in matchesWhen, i.e. every
+// occurrence. Backfill (COALESCE) and the picker guarantee these don't occur.
+export function buildWhenFromColumns(rule: RecurrenceRuleRow): WhenPattern {
+  return {
+    daysOfWeek: rule.whenDays ?? [],
+    kind: rule.whenKind as OccurrenceKind,
+    ppWeek: (rule.whenPpWeek ?? undefined) as 1 | 2 | undefined,
+    ords: rule.whenOrds ?? [],
+    cycleUnit: (rule.whenCycleUnit ?? undefined) as "week" | "payPeriod" | undefined,
+    cycleN: rule.whenCycleN ?? undefined,
+    cycleOffset: rule.whenCycleOffset ?? undefined,
+  };
+}
+
+// The single entry point readers use: prefer the explicit WHEN columns, else the
+// legacy bridge. Keeps the scheduler correct across the dual-column transition.
+export function ruleToWhen(rule: RecurrenceRuleRow): WhenPattern {
+  return rule.whenKind != null ? buildWhenFromColumns(rule) : legacyPatternToWhen(rule);
 }

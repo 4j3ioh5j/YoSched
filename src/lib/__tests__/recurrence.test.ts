@@ -6,6 +6,8 @@ import {
   ppOrdinalForDate,
   isLastWeekdayOccurrenceInPP,
   legacyPatternToWhen,
+  ruleToWhen,
+  buildWhenFromColumns,
   type WhenPattern,
 } from "../recurrence";
 import { matchesPattern, type PayPeriodRange } from "../availability";
@@ -189,5 +191,60 @@ describe("legacyPatternToWhen — behavior-identical to legacy matchesPattern", 
         }
       }
     }
+  });
+});
+
+describe("ruleToWhen — discriminator + fallback boundary", () => {
+  it("null whenKind falls back to the legacy columns", () => {
+    const legacy = { dayOfWeek: 2, pattern: "every_n", cycleLength: 2, cycleOffset: 0 };
+    const when = ruleToWhen(legacy); // whenKind undefined
+    expect(when).toEqual(legacyPatternToWhen(legacy));
+    expect(matchesWhen(when, "2025-05-13", PP)).toBe(true); // PP0 wk1
+    expect(matchesWhen(when, "2025-05-20", PP)).toBe(false); // PP0 wk2
+  });
+
+  it("non-null whenKind uses the explicit WHEN columns (ignores legacy fields)", () => {
+    // Legacy fields say "every Monday"; explicit columns say "1st & 3rd Tuesday".
+    const row = {
+      dayOfWeek: 1,
+      pattern: "every",
+      whenKind: "ordinalMonth",
+      whenDays: [2],
+      whenOrds: [1, 3],
+    };
+    const when = ruleToWhen(row);
+    expect(matchesWhen(when, "2025-05-06", PP)).toBe(true); // 1st Tue
+    expect(matchesWhen(when, "2025-05-20", PP)).toBe(true); // 3rd Tue
+    expect(matchesWhen(when, "2025-05-12", PP)).toBe(false); // a Monday (legacy would match)
+    expect(matchesWhen(when, "2025-05-13", PP)).toBe(false); // 2nd Tue
+  });
+
+  it("explicit whenKind with empty whenDays means any day", () => {
+    const when = buildWhenFromColumns({ dayOfWeek: 0, pattern: "every", whenKind: "every", whenDays: [] });
+    for (const d of ALL_DATES) expect(matchesWhen(when, d, PP)).toBe(true);
+  });
+
+  describe("malformed explicit rows have a deterministic, documented boundary", () => {
+    it("kind='ppWeek' with null whenPpWeek matches nothing", () => {
+      const when = buildWhenFromColumns({ dayOfWeek: 2, pattern: "every", whenKind: "ppWeek", whenDays: [2] });
+      expect(matchesWhen(when, "2025-05-13", PP)).toBe(false);
+      expect(matchesWhen(when, "2025-05-20", PP)).toBe(false);
+    });
+    it("kind='cycle' with null whenCycleN falls to n=1 (matches every occurrence)", () => {
+      const when = buildWhenFromColumns({ dayOfWeek: 2, pattern: "every", whenKind: "cycle", whenDays: [2], whenCycleUnit: "week" });
+      for (const d of ALL_DATES.filter((x) => dow(x) === 2)) expect(matchesWhen(when, d, PP)).toBe(true);
+    });
+  });
+});
+
+describe("matchesWhen — outside known pay periods", () => {
+  const OUT = "2025-09-01"; // after PP[3] (ends 2025-07-05)
+  it("PP-anchored kinds do not apply outside known PPs", () => {
+    expect(matchesWhen({ daysOfWeek: [], kind: "ppWeek", ppWeek: 1 }, OUT, PP)).toBe(false);
+    expect(matchesWhen({ daysOfWeek: [], kind: "ordinalPayPeriod", ords: [1] }, OUT, PP)).toBe(false);
+    expect(matchesWhen({ daysOfWeek: [], kind: "cycle", cycleUnit: "payPeriod", cycleN: 2, cycleOffset: 0 }, OUT, PP)).toBe(false);
+  });
+  it("cycle 'week' keeps legacy every_n behavior (matches) outside known PPs", () => {
+    expect(matchesWhen({ daysOfWeek: [], kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0 }, OUT, PP)).toBe(true);
   });
 });

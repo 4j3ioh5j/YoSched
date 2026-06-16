@@ -1,3 +1,11 @@
+import {
+  ppWeekForDate,
+  ppIndexForDate,
+  matchesWhen,
+  ruleToWhen,
+  type PayPeriodRange,
+} from "./recurrence";
+
 export type AvailabilityRule = {
   dayOfWeek: number;
   type: "available" | "unavailable";
@@ -7,38 +15,20 @@ export type AvailabilityRule = {
   cycleOffset?: number | null;
   conditionStaffId?: string | null;
   conditionType?: "working" | "not_working" | null;
+  // New normalized WHEN columns (present after the slice-3b backfill / picker
+  // save). ruleToWhen prefers these when whenKind is set, else the legacy fields.
+  whenKind?: string | null;
+  whenDays?: number[] | null;
+  whenPpWeek?: number | null;
+  whenOrds?: number[] | null;
+  whenCycleUnit?: string | null;
+  whenCycleN?: number | null;
+  whenCycleOffset?: number | null;
 };
 
-export type PayPeriodRange = { startDate: string; endDate: string };
-
-export function ppWeekForDate(
-  dateStr: string,
-  payPeriods: PayPeriodRange[]
-): 1 | 2 | null {
-  for (const pp of payPeriods) {
-    if (dateStr >= pp.startDate && dateStr <= pp.endDate) {
-      const start = new Date(pp.startDate + "T12:00:00");
-      const d = new Date(dateStr + "T12:00:00");
-      const dayIndex = Math.round(
-        (d.getTime() - start.getTime()) / (86400000)
-      );
-      return dayIndex < 7 ? 1 : 2;
-    }
-  }
-  return null;
-}
-
-export function ppIndexForDate(
-  dateStr: string,
-  payPeriods: PayPeriodRange[]
-): number {
-  for (let i = 0; i < payPeriods.length; i++) {
-    if (dateStr >= payPeriods[i].startDate && dateStr <= payPeriods[i].endDate) {
-      return i;
-    }
-  }
-  return -1;
-}
+// The pay-period helpers + PayPeriodRange moved to recurrence.ts (to break a
+// circular import); re-export them so existing importers from here keep working.
+export { ppWeekForDate, ppIndexForDate, type PayPeriodRange };
 
 export function matchesPattern(
   rule: { pattern: string; cycleLength?: number | null; cycleOffset?: number | null },
@@ -76,19 +66,16 @@ export function evaluateAvailability(
   payPeriods: PayPeriodRange[],
   isStaffAssigned?: (staffId: string, date: string) => boolean
 ): { available: boolean; weight: number } {
-  const dow = new Date(dateStr + "T12:00:00").getDay();
-  const dayRules = rules.filter((r) => r.dayOfWeek === dow);
-
-  if (dayRules.length === 0) {
-    return { available: false, weight: 0 };
-  }
-
   let hardAvailable = false;
   let hardUnavailable = false;
   let weight = 0;
 
-  for (const rule of dayRules) {
-    if (!matchesPattern(rule, dateStr, payPeriods)) continue;
+  // matchesWhen applies the weekday gate, so iterate all rules (no dayOfWeek
+  // pre-filter). A rule that doesn't apply to this date simply doesn't match.
+  // With no matching rules, weight stays 0 → unavailable, exactly as the old
+  // "no rules for this day-of-week → {available:false, weight:0}" early return.
+  for (const rule of rules) {
+    if (!matchesWhen(ruleToWhen(rule), dateStr, payPeriods)) continue;
 
     if (rule.conditionStaffId && rule.conditionType && isStaffAssigned) {
       const assigned = isStaffAssigned(rule.conditionStaffId, dateStr);
