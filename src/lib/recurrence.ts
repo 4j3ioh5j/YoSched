@@ -66,6 +66,15 @@ function dowOf(dateStr: string): number {
   return new Date(dateStr + "T12:00:00").getDay();
 }
 
+// Any-day patterns (no weekday filter) only make sense as kind "every" — an
+// ordinal/cycle qualifier with no weekday is unintuitive and, worse, doesn't
+// mean "every day". Used where "any day" is a first-class choice (standing
+// commitments) to keep the stored shape canonical and prevent a hidden
+// non-every qualifier from persisting behind an "Any day" selection.
+export function normalizeAnyDay(w: WhenPattern): WhenPattern {
+  return (w.daysOfWeek?.length ?? 0) === 0 ? { daysOfWeek: [], kind: "every" } : w;
+}
+
 // True when a pattern is the trivial "every occurrence of one specific weekday"
 // — i.e. semantically identical to a legacy `pattern="every"` single-day rule.
 // This is what the staff "Working days" quick-toggle manages; anything richer

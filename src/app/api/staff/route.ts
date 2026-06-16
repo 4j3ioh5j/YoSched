@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { provisionStaffLogin, resetLoginForStaff, deleteLoginForStaff, ensureStaffLogin } from "@/lib/user-lifecycle";
-import { ruleToWhen, whenToColumns } from "@/lib/recurrence";
+import { ruleToWhen, whenToColumns, standingToWhen, normalizeAnyDay } from "@/lib/recurrence";
 import { NextRequest, NextResponse } from "next/server";
 
 // Derive the normalized WHEN columns for a rule on save, keeping them in sync
@@ -25,10 +25,33 @@ function whenColumns(r: Record<string, unknown>) {
   );
 }
 
+// StandingCommitment's legacy columns are dayOfWeek + frequency (not pattern/
+// cycle*), so it needs its own WHEN derive: prefer explicit when* from the picker,
+// else bridge the legacy fields. normalizeAnyDay guards non-UI clients that send
+// whenKind plus an empty whenDays (an any-day rule must be kind "every", never a
+// hidden ordinal/cycle). Writes only StandingCommitment's real columns.
+function standingWhenColumns(r: Record<string, unknown>) {
+  return whenToColumns(
+    normalizeAnyDay(
+      standingToWhen({
+        dayOfWeek: (r.dayOfWeek as number | null) ?? null,
+        frequency: (r.frequency as string) ?? "weekly",
+        whenKind: r.whenKind as string | null | undefined,
+        whenDays: r.whenDays as number[] | null | undefined,
+        whenPpWeek: r.whenPpWeek as number | null | undefined,
+        whenOrds: r.whenOrds as number[] | null | undefined,
+        whenCycleUnit: r.whenCycleUnit as string | null | undefined,
+        whenCycleN: r.whenCycleN as number | null | undefined,
+        whenCycleOffset: r.whenCycleOffset as number | null | undefined,
+      }),
+    ),
+  );
+}
+
 export async function PUT(req: NextRequest) {
   const { error } = await getSession("staff:edit");
   if (error) return error;
-  const { id, eligibleShiftTypeIds, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, ...data } = await req.json();
+  const { id, eligibleShiftTypeIds, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, standingCommitments, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   await prisma.$transaction(async (tx) => {
@@ -118,6 +141,22 @@ export async function PUT(req: NextRequest) {
         });
       }
     }
+
+    if (Array.isArray(standingCommitments)) {
+      await tx.standingCommitment.deleteMany({ where: { staffId: id } });
+      if (standingCommitments.length > 0) {
+        await tx.standingCommitment.createMany({
+          data: standingCommitments.map((r: Record<string, unknown>) => ({
+            staffId: id,
+            shiftTypeId: r.shiftTypeId as string,
+            dayOfWeek: (r.dayOfWeek as number | null) ?? null,
+            frequency: (r.frequency as string) ?? "weekly",
+            notes: (r.notes as string) || null,
+            ...standingWhenColumns(r),
+          })),
+        });
+      }
+    }
   });
 
   // Keep the paired login in step with the staff active-state.
@@ -137,7 +176,7 @@ export async function PUT(req: NextRequest) {
 
   const result = await prisma.staff.findUnique({
     where: { id },
-    include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true },
+    include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true },
   });
 
   return NextResponse.json(result);
@@ -205,7 +244,7 @@ export async function POST(req: NextRequest) {
 
   const result = await prisma.staff.findUnique({
     where: { id: created.id },
-    include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true },
+    include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true },
   });
 
   return NextResponse.json(result);

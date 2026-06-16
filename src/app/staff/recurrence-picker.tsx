@@ -1,6 +1,6 @@
 "use client";
 
-import { type WhenPattern, describeWhen } from "@/lib/recurrence";
+import { type WhenPattern, describeWhen, normalizeAnyDay } from "@/lib/recurrence";
 
 // Sentence-builder for the unified WHEN axis (which occurrences a rule lands on).
 // Owns the weekday set + the occurrence qualifier; the parent owns persistence
@@ -82,33 +82,52 @@ function applyKindOption(w: WhenPattern, opt: KindOption): WhenPattern {
 export function RecurrencePicker({
   value,
   onChange,
+  allowAnyDay = false,
 }: {
   value: WhenPattern;
   onChange: (w: WhenPattern) => void;
+  // When true, an explicit "Any day" choice (daysOfWeek = []) is allowed — used
+  // by standing commitments, where "any applicable day" is a first-class option.
+  // In that mode the occurrence qualifier is pinned to "every" (an ordinal/cycle
+  // with no weekday filter has unintuitive semantics). Default false: the weekday
+  // set is kept >= 1, as the availability/eligibility editors require.
+  allowAnyDay?: boolean;
 }) {
   const days = value.daysOfWeek ?? [];
+  const anyDay = allowAnyDay && days.length === 0;
   const kindOpt = kindOptionOf(value);
   const isOrdinal = value.kind === "ordinalMonth" || value.kind === "ordinalPayPeriod";
   const isCycle = value.kind === "cycle";
   const cycleN = Math.max(1, Math.floor(value.cycleN ?? 2));
 
+  // All edits funnel through emit. Under allowAnyDay it normalizes an empty
+  // weekday set to kind "every", so a stale ordinal/cycle qualifier can never
+  // persist hidden behind an "Any day" selection.
+  const emit = (w: WhenPattern) => onChange(allowAnyDay ? normalizeAnyDay(w) : w);
+
   function toggleDay(d: number) {
     if (days.includes(d)) {
-      // Keep at least one weekday — an empty set means "any day" in the model,
-      // which would silently fire the rule every day. The user swaps by adding
-      // the new day first, then removing the old.
-      if (days.length === 1) return;
-      onChange({ ...value, daysOfWeek: days.filter((x) => x !== d) });
+      // Without allowAnyDay, keep at least one weekday — an empty set means
+      // "any day", which would silently fire the rule every day. The user swaps
+      // by adding the new day first, then removing the old. With allowAnyDay the
+      // empty set is a deliberate "Any day" choice (emit normalizes it to every).
+      if (days.length === 1 && !allowAnyDay) return;
+      emit({ ...value, daysOfWeek: days.filter((x) => x !== d) });
     } else {
-      onChange({ ...value, daysOfWeek: [...days, d].sort((a, b) => a - b) });
+      emit({ ...value, daysOfWeek: [...days, d].sort((a, b) => a - b) });
     }
+  }
+
+  // "Any day": clear the weekday set and pin the qualifier to "every".
+  function setAnyDay() {
+    emit({ daysOfWeek: [], kind: "every" });
   }
 
   function toggleOrd(ord: number) {
     const cur = value.ords ?? [];
     const next = cur.includes(ord) ? cur.filter((x) => x !== ord) : [...cur, ord];
     // Keep at least one ordinal selected so the rule stays meaningful.
-    onChange({ ...value, ords: next.length > 0 ? next : cur });
+    emit({ ...value, ords: next.length > 0 ? next : cur });
   }
 
   return (
@@ -116,6 +135,20 @@ export function RecurrencePicker({
       {/* Weekday chips */}
       <div className="flex items-center gap-1 flex-wrap">
         <span className="text-slate-500 text-xs mr-0.5">On</span>
+        {allowAnyDay && (
+          <button
+            type="button"
+            onClick={setAnyDay}
+            className={[
+              "px-2 h-7 text-xs rounded font-medium transition-colors border mr-1",
+              anyDay
+                ? "bg-blue-600/50 text-blue-200 border-blue-500/50"
+                : "bg-slate-700 text-slate-500 border-slate-600 hover:brightness-125",
+            ].join(" ")}
+          >
+            Any day
+          </button>
+        )}
         {DAY_INDICES.map((d) => {
           const on = days.includes(d);
           return (
@@ -135,16 +168,16 @@ export function RecurrencePicker({
           );
         })}
       </div>
-      {days.length === 0 && (
+      {days.length === 0 && !anyDay && (
         <div className="text-[10px] text-amber-400/80 pl-1">Pick at least one weekday.</div>
       )}
 
-      {/* Occurrence qualifier */}
-      <div className="flex items-center gap-1.5 text-xs flex-wrap">
+      {/* Occurrence qualifier — hidden for "Any day" (pinned to every) */}
+      <div className={`flex items-center gap-1.5 text-xs flex-wrap ${anyDay ? "hidden" : ""}`}>
         <select
           className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-200"
           value={kindOpt}
-          onChange={(e) => onChange(applyKindOption(value, e.target.value as KindOption))}
+          onChange={(e) => emit(applyKindOption(value, e.target.value as KindOption))}
         >
           {KIND_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
@@ -162,7 +195,7 @@ export function RecurrencePicker({
               value={cycleN}
               onChange={(e) => {
                 const n = Math.max(1, parseInt(e.target.value) || 1);
-                onChange({ ...value, cycleN: n, cycleOffset: Math.min(value.cycleOffset ?? 0, n - 1) });
+                emit({ ...value, cycleN: n, cycleOffset: Math.min(value.cycleOffset ?? 0, n - 1) });
               }}
               className="w-12 bg-slate-700 border border-slate-600 rounded px-1 py-1 text-xs text-center text-slate-200"
             />
@@ -170,7 +203,7 @@ export function RecurrencePicker({
             <select
               className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-200"
               value={value.cycleOffset ?? 0}
-              onChange={(e) => onChange({ ...value, cycleOffset: parseInt(e.target.value) })}
+              onChange={(e) => emit({ ...value, cycleOffset: parseInt(e.target.value) })}
             >
               {Array.from({ length: cycleN }, (_, i) => (
                 <option key={i} value={i}>{i + 1}</option>

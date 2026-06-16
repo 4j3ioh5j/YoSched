@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useEscape } from "@/lib/use-escape";
 import type { StaffLoginStatus } from "@/lib/staff-login-status";
-import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, whenToLegacy, describeWhen } from "@/lib/recurrence";
+import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, whenToLegacy, describeWhen, standingToWhen, whenToStandingLegacy } from "@/lib/recurrence";
 import { RecurrencePicker } from "./recurrence-picker";
 import { FrequencyPicker } from "./frequency-picker";
 import { describeFrequency, type ShiftMinTarget } from "@/lib/shift-eligibility";
@@ -79,6 +79,16 @@ type ShiftMinimumTargetData = {
   windowCount?: number | null;
 };
 
+// StandingCommitment carries the unified WHEN columns plus its own legacy shape
+// (dayOfWeek + frequency, NOT pattern/cycle*). The picker writes when* + the
+// whenToStandingLegacy back-projection; the scheduler reads via standingToWhen.
+type StandingCommitmentData = WhenFields & {
+  shiftTypeId: string;
+  dayOfWeek: number | null;
+  frequency: string;
+  notes?: string | null;
+};
+
 type Staff = {
   id: string;
   name: string;
@@ -91,6 +101,7 @@ type Staff = {
   eligibleShiftTypeIds: string[];
   shiftEligibilityRules: ShiftEligibilityRuleData[];
   shiftMinimumTargets: ShiftMinimumTargetData[];
+  standingCommitments: StandingCommitmentData[];
   specialQualifications: string[];
   isActive: boolean;
   isAutoScheduled: boolean;
@@ -557,6 +568,106 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
   );
 }
 
+function StandingCommitmentsEditor({
+  commitments,
+  allShiftTypes,
+  onChange,
+}: {
+  commitments: StandingCommitmentData[];
+  allShiftTypes: ShiftTypeInfo[];
+  onChange: (next: StandingCommitmentData[]) => void;
+}) {
+  const schedulableShifts = allShiftTypes.filter((st) => st.autoSchedulable);
+
+  function update(idx: number, patch: Partial<StandingCommitmentData>) {
+    onChange(commitments.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
+  }
+  function remove(idx: number) {
+    onChange(commitments.filter((_, i) => i !== idx));
+  }
+  function add() {
+    const first = schedulableShifts[0];
+    if (!first) return;
+    // Default: any-day weekly (the common "standing days" shape).
+    onChange([
+      ...commitments,
+      {
+        shiftTypeId: first.id,
+        dayOfWeek: null,
+        frequency: "weekly",
+        notes: "",
+        whenKind: "every",
+        whenDays: [],
+        whenPpWeek: null,
+        whenOrds: [],
+        whenCycleUnit: null,
+        whenCycleN: null,
+        whenCycleOffset: null,
+      },
+    ]);
+  }
+
+  return (
+    <div className="space-y-2">
+      {commitments.length === 0 && (
+        <div className="text-xs text-slate-600 italic">
+          None. The auto-scheduler pre-assigns standing commitments before filling other shifts.
+        </div>
+      )}
+      <div className="space-y-1.5">
+        {commitments.map((c, idx) => {
+          const code = schedulableShifts.find((s) => s.id === c.shiftTypeId)?.code ?? "?";
+          return (
+            <div key={idx} className="bg-slate-700/30 border border-slate-600/50 rounded-lg p-3 space-y-2">
+              <div className="flex items-center gap-1.5 flex-wrap text-xs">
+                <span className="text-slate-400">Always work</span>
+                <select
+                  className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs font-medium text-blue-300"
+                  value={c.shiftTypeId}
+                  onChange={(e) => update(idx, { shiftTypeId: e.target.value })}
+                >
+                  {schedulableShifts.map((st) => (
+                    <option key={st.id} value={st.id}>{st.code}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => remove(idx)}
+                  className="text-slate-600 hover:text-red-400 ml-auto transition-colors"
+                  title="Remove commitment"
+                >
+                  ×
+                </button>
+              </div>
+              <RecurrencePicker
+                allowAnyDay
+                value={standingToWhen(c)}
+                onChange={(w) => update(idx, { ...whenToStandingLegacy(w), ...whenToColumns(w) })}
+              />
+              <input
+                type="text"
+                value={c.notes ?? ""}
+                onChange={(e) => update(idx, { notes: e.target.value })}
+                placeholder="Notes (optional)"
+                className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-300 placeholder:text-slate-600"
+              />
+              <div className="text-[10px] text-slate-500 italic border-t border-slate-600/30 pt-1.5 mt-1">
+                Pre-assigns {code}: {describeWhen(standingToWhen(c))}.
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <button
+        onClick={add}
+        disabled={schedulableShifts.length === 0}
+        className="mt-1 px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 border border-slate-600 rounded transition-colors text-slate-300 disabled:opacity-40"
+      >
+        + Add commitment
+      </button>
+    </div>
+  );
+}
+
 export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTypes }: Props) {
   const [staff, setStaff] = useState(initial);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -730,6 +841,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
         eligibleShiftTypeIds: (created.eligibleShifts ?? []).map((es: { shiftTypeId: string }) => es.shiftTypeId),
         shiftEligibilityRules: [],
         shiftMinimumTargets: [],
+        standingCommitments: [],
         specialQualifications: created.specialQualifications ?? [],
         isActive: created.isActive,
         isAutoScheduled: created.isAutoScheduled ?? true,
@@ -1023,6 +1135,14 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
                   onChange={(rules) => updateField(ep.id, "availabilityRules", rules)}
                   allStaff={staff.filter((p) => p.isActive).map((p) => ({ id: p.id, initials: p.initials }))}
                   currentStaffId={ep.id}
+                />
+              </div>
+              <div className="py-2.5">
+                <div className="text-sm text-slate-200 mb-2">Standing commitments</div>
+                <StandingCommitmentsEditor
+                  commitments={ep.standingCommitments}
+                  allShiftTypes={allShiftTypes}
+                  onChange={(next) => updateField(ep.id, "standingCommitments", next)}
                 />
               </div>
             </div>

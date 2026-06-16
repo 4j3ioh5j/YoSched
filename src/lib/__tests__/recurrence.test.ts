@@ -15,6 +15,7 @@ import {
   ordinalLabel,
   standingToWhen,
   whenToStandingLegacy,
+  normalizeAnyDay,
   type WhenPattern,
 } from "../recurrence";
 import { matchesPattern, type PayPeriodRange } from "../availability";
@@ -446,5 +447,30 @@ describe("whenToStandingLegacy — inert back-projection", () => {
   it("round-trips the seeded any-day weekly commitment", () => {
     const legacy = { dayOfWeek: null, frequency: "weekly" };
     expect(whenToStandingLegacy(standingToWhen(legacy))).toEqual(legacy);
+  });
+
+  it("normalizeAnyDay forces empty-weekday patterns to kind every (no hidden qualifier)", () => {
+    expect(normalizeAnyDay({ daysOfWeek: [], kind: "ordinalMonth", ords: [1] })).toEqual({ daysOfWeek: [], kind: "every" });
+    expect(normalizeAnyDay({ daysOfWeek: [], kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0 })).toEqual({ daysOfWeek: [], kind: "every" });
+    // a pattern with weekdays is returned unchanged
+    const w: WhenPattern = { daysOfWeek: [2], kind: "ordinalMonth", ords: [1] };
+    expect(normalizeAnyDay(w)).toBe(w);
+  });
+
+  it("a picker-written standing row round-trips losslessly via standingToWhen", () => {
+    // The S6b editor writes { ...whenToStandingLegacy(w), ...whenToColumns(w) } onto
+    // the commitment; standingToWhen must read it back to the same matching shape.
+    const patterns: WhenPattern[] = [
+      { daysOfWeek: [], kind: "every" }, // any day
+      { daysOfWeek: [2], kind: "every" }, // specific weekday
+      { daysOfWeek: [2], kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0 }, // biweekly
+      { daysOfWeek: [4], kind: "ordinalMonth", ords: [1] }, // monthly, 1st
+    ];
+    for (const w of patterns) {
+      const row = { ...whenToStandingLegacy(w), ...whenToColumns(w) };
+      for (const d of ALL_DATES) {
+        expect(matchesWhen(standingToWhen(row), d, PP)).toBe(matchesWhen(w, d, PP));
+      }
+    }
   });
 });
