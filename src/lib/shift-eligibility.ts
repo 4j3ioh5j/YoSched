@@ -31,6 +31,79 @@ export type ShiftMinTarget = {
   windowCount?: number | null;
 };
 
+// ── Frequency (HOW-OFTEN) mode helpers (slice 5 picker) ──────────────────────
+// The editor surfaces an explicit mode, but the stored shape stays min/max so
+// the scheduler is unchanged (checkMinimumTargetMet reads minCount, isAtMaximum
+// reads maxCount). These convert between the explicit mode and the min/max pair.
+export type FrequencyMode = "atLeast" | "atMost" | "exactly" | "between";
+
+export function frequencyModeOf(t: { minCount: number; maxCount?: number | null }): FrequencyMode {
+  const min = t.minCount ?? 0;
+  const max = t.maxCount ?? null;
+  if (max == null) return "atLeast"; // no upper bound
+  if (min <= 0) return "atMost"; // floor of 0 → only a cap
+  if (min === max) return "exactly";
+  return "between";
+}
+
+// Inverse of frequencyModeOf. `a` is the primary count (min / exact / lower
+// bound); `b` is the cap (used by atMost / upper bound of between).
+export function applyFrequencyMode(
+  mode: FrequencyMode,
+  a: number,
+  b: number,
+): { minCount: number; maxCount: number | null } {
+  switch (mode) {
+    case "atLeast":
+      return { minCount: a, maxCount: null };
+    case "atMost":
+      return { minCount: 0, maxCount: b };
+    case "exactly":
+      return { minCount: a, maxCount: a };
+    case "between":
+      return { minCount: a, maxCount: b };
+  }
+}
+
+const WINDOW_UNIT_LABELS: Record<ShiftMinTarget["window"], { one: string; many: string }> = {
+  week: { one: "week", many: "weeks" },
+  pay_period: { one: "pay period", many: "pay periods" },
+  month: { one: "month", many: "months" },
+  days: { one: "day", many: "days" },
+};
+
+// Window phrase: "pay period" / "3 pay periods". "days" is a ROLLING window
+// (windowDays), labelled "rolling N days" so it isn't confused with the fixed
+// week/pay-period/month buckets. Unknown window strings fall back to the raw
+// value rather than throwing, so legacy/invalid rows still render.
+export function describeWindow(t: Pick<ShiftMinTarget, "window" | "windowDays" | "windowCount">): string {
+  if (t.window === "days") {
+    const d = Math.max(1, Math.floor(t.windowDays ?? 7));
+    return `rolling ${d} ${d === 1 ? "day" : "days"}`;
+  }
+  const n = Math.max(1, Math.floor(t.windowCount ?? 1));
+  const lbl = WINDOW_UNIT_LABELS[t.window] ?? { one: t.window, many: `${t.window}s` };
+  return n === 1 ? lbl.one : `${n} ${lbl.many}`;
+}
+
+// Natural-language summary of a target, e.g. "At least 2 per 3 pay periods".
+// Renders existing/invalid rows gracefully — a between row with min > max is
+// ordered low-to-high rather than printing "Between 3 and 1".
+export function describeFrequency(t: ShiftMinTarget): string {
+  const mode = frequencyModeOf(t);
+  const min = t.minCount ?? 0;
+  const max = t.maxCount ?? 0;
+  const count =
+    mode === "atLeast"
+      ? `At least ${min}`
+      : mode === "atMost"
+        ? `At most ${max}`
+        : mode === "exactly"
+          ? `Exactly ${min}`
+          : `Between ${Math.min(min, max)} and ${Math.max(min, max)}`;
+  return `${count} per ${describeWindow(t)}`;
+}
+
 export function evaluateShiftEligibility(
   rules: ShiftEligibilityRule[],
   shiftTypeId: string,

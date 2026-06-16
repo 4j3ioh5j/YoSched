@@ -4,6 +4,11 @@ import {
   getWindowBounds,
   checkMinimumTargetMet,
   countInWindow,
+  frequencyModeOf,
+  applyFrequencyMode,
+  describeFrequency,
+  describeWindow,
+  type FrequencyMode,
   type ShiftEligibilityRule,
   type ShiftMinTarget,
 } from "../shift-eligibility";
@@ -294,5 +299,59 @@ describe("countInWindow", () => {
     const all = ["2025-05-01", "2025-05-30"];
     const result = countInWindow(all, "2025-05-11", "2025-05-24");
     expect(result).toEqual([]);
+  });
+});
+
+describe("frequency mode helpers", () => {
+  const mk = (minCount: number, maxCount: number | null): ShiftMinTarget => ({
+    shiftTypeId: "s", minCount, maxCount, window: "pay_period", windowCount: 1,
+  });
+
+  it("frequencyModeOf derives the mode from min/max", () => {
+    expect(frequencyModeOf(mk(2, null))).toBe("atLeast");
+    expect(frequencyModeOf(mk(0, 3))).toBe("atMost");
+    expect(frequencyModeOf(mk(2, 2))).toBe("exactly");
+    expect(frequencyModeOf(mk(1, 3))).toBe("between");
+  });
+
+  it("applyFrequencyMode is the inverse mapping", () => {
+    expect(applyFrequencyMode("atLeast", 2, 0)).toEqual({ minCount: 2, maxCount: null });
+    expect(applyFrequencyMode("atMost", 0, 3)).toEqual({ minCount: 0, maxCount: 3 });
+    expect(applyFrequencyMode("exactly", 2, 9)).toEqual({ minCount: 2, maxCount: 2 });
+    expect(applyFrequencyMode("between", 1, 3)).toEqual({ minCount: 1, maxCount: 3 });
+  });
+
+  it("round-trips: applyFrequencyMode(frequencyModeOf(t), min, max) preserves t", () => {
+    const cases: ShiftMinTarget[] = [mk(2, null), mk(0, 3), mk(2, 2), mk(1, 3)];
+    for (const t of cases) {
+      const mode: FrequencyMode = frequencyModeOf(t);
+      expect(applyFrequencyMode(mode, t.minCount, t.maxCount ?? 0)).toEqual({
+        minCount: t.minCount,
+        maxCount: t.maxCount ?? null,
+      });
+    }
+  });
+
+  it("describeWindow handles windowCount and rolling days, singular/plural", () => {
+    expect(describeWindow({ window: "pay_period", windowCount: 1 })).toBe("pay period");
+    expect(describeWindow({ window: "pay_period", windowCount: 3 })).toBe("3 pay periods");
+    expect(describeWindow({ window: "month", windowCount: 1 })).toBe("month");
+    expect(describeWindow({ window: "days", windowDays: 1 })).toBe("rolling 1 day");
+    expect(describeWindow({ window: "days", windowDays: 14 })).toBe("rolling 14 days");
+  });
+
+  it("describeFrequency renders each mode", () => {
+    expect(describeFrequency(mk(2, null))).toBe("At least 2 per pay period");
+    expect(describeFrequency({ ...mk(0, 3), windowCount: 3 })).toBe("At most 3 per 3 pay periods");
+    expect(describeFrequency({ ...mk(1, 1), window: "month" })).toBe("Exactly 1 per month");
+    expect(describeFrequency({ ...mk(1, 3), window: "days", windowDays: 7 })).toBe("Between 1 and 3 per rolling 7 days");
+  });
+
+  it("renders existing invalid rows gracefully (CR #983)", () => {
+    // min > max → ordered low-to-high, not "Between 3 and 1".
+    expect(describeFrequency(mk(3, 1))).toBe("Between 1 and 3 per pay period");
+    // unknown window string → falls back to the raw value, no throw.
+    expect(describeWindow({ window: "quarter" as ShiftMinTarget["window"], windowCount: 2 })).toBe("2 quarters");
+    expect(describeFrequency({ ...mk(2, null), window: "quarter" as ShiftMinTarget["window"] })).toBe("At least 2 per quarter");
   });
 });
