@@ -153,6 +153,30 @@ function getShiftHours(
   return overrides.get(key) ?? shiftType.defaultHours;
 }
 
+// The most hours a staff member could work in a single day, given the shifts
+// they can actually receive. This bounds "can this person still reach their
+// pay-period hour target in the days that remain?" Valuing every open day at
+// only the (short) fill shift understates real capacity — staff work 12h/16h
+// shifts too — and falsely excludes full-timers from long shifts (e.g. ORC),
+// which is the ORC under-distribution bug. Restrict to shifts the staff is
+// eligible for, that count toward FTE, are real work (not off/leave), are
+// auto-schedulable, and carry positive hours. Returns 0 when none qualify, so
+// callers can fall back to that staff's fill-shift hours.
+export function maxReachableDailyHours(
+  staff: ScheduleStaff,
+  shiftTypes: ScheduleShiftType[],
+  overrides: Map<string, number>
+): number {
+  let max = 0;
+  for (const st of shiftTypes) {
+    if (!staff.eligibleShiftTypeIds.includes(st.id)) continue;
+    if (!st.countsTowardFte || st.isOffShift || st.isLeave || !st.autoSchedulable) continue;
+    const hrs = getShiftHours(staff.id, st, overrides);
+    if (hrs > max) max = hrs;
+  }
+  return max;
+}
+
 function prevDate(dateStr: string): string {
   const d = new Date(dateStr + "T12:00:00");
   d.setDate(d.getDate() - 1);
@@ -695,7 +719,13 @@ export function autoSchedule({
     const current = ppHoursForStaff(staffId, pp);
     if (current + addHours > target) return true;
 
+    // Value each remaining open day at the staff's longest reachable shift, not
+    // the short fill shift, so a full-timer who can still hit target via 12h/16h
+    // shifts isn't wrongly excluded. Fall back to this staff's fill-shift hours
+    // (override-aware) when no longer shift qualifies.
     const fillHrs = getShiftHours(staffId, fillShift, overrideMap);
+    const reachableHrs = maxReachableDailyHours(staff, shiftTypes, overrideMap);
+    const perDayHrs = reachableHrs > 0 ? reachableHrs : fillHrs;
     let availDays = 0;
     const cur = new Date(pp.startDate + "T12:00:00");
     const end = new Date(pp.endDate + "T12:00:00");
@@ -713,7 +743,7 @@ export function autoSchedule({
     const remainingAvail = availDays - daysConsumed;
     const hoursAfterAssign = current + addHours;
     const hoursStillNeeded = target - hoursAfterAssign;
-    const maxFillable = remainingAvail * fillHrs;
+    const maxFillable = remainingAvail * perDayHrs;
 
     return hoursStillNeeded > 0 && maxFillable < hoursStillNeeded;
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { daysBetween, bestSpread, autoSchedule, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult } from "../auto-scheduler";
+import { daysBetween, bestSpread, autoSchedule, maxReachableDailyHours, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult } from "../auto-scheduler";
 import { type ScheduleRequestData } from "../schedule-requests";
 
 // ─── helpers ───
@@ -1335,5 +1335,118 @@ describe("autoSchedule — schedule request preferences", () => {
     });
     expect(has(r, "p1", "2025-05-12", "AL")).toBe(true);
     expect(has(r, "p1", "2025-05-12", "SL")).toBe(false);
+  });
+});
+
+// ─── Slice 2: ORC under-distribution fix (handoff #190) ───
+
+describe("maxReachableDailyHours", () => {
+  const empty = new Map<string, number>();
+  const ORh = makeShift("st-or", "OR", { defaultHours: 8, isFillShift: true });
+  const ORLh = makeShift("st-orl", "ORL", { defaultHours: 12 });
+  const ORCh = makeShift("st-orc", "ORC", { defaultHours: 16 });
+  const LEAVEh = makeShift("st-al", "AL", { defaultHours: 8, isLeave: true });
+  const OFFh = makeShift("st-off", "X", { isOffShift: true, countsTowardFte: false, autoSchedulable: false });
+  // A long but non-auto-schedulable shift (e.g. a meeting block) the staff can't be auto-given.
+  const NONSCHEDh = makeShift("st-mtg", "MTG", { defaultHours: 20, autoSchedulable: false });
+  const allShifts = [ORh, ORLh, ORCh, LEAVEh, OFFh, NONSCHEDh];
+
+  it("returns the longest eligible, FTE-counting, schedulable work shift", () => {
+    const s = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-orc", "st-off"] });
+    expect(maxReachableDailyHours(s, allShifts, empty)).toBe(16); // ORC
+  });
+
+  it("ignores shifts the staff isn't eligible for", () => {
+    const s = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] }); // no ORC
+    expect(maxReachableDailyHours(s, allShifts, empty)).toBe(12); // ORL
+  });
+
+  it("excludes off, leave, and non-auto-schedulable shifts even when longer", () => {
+    const s = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-al", "st-off", "st-mtg"] });
+    // AL=leave, X=off, MTG=non-schedulable(20h) → only OR(8h) qualifies
+    expect(maxReachableDailyHours(s, allShifts, empty)).toBe(8);
+  });
+
+  it("respects per-staff hour overrides", () => {
+    const s = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] });
+    const ov = new Map<string, number>([["p1:st-orc", 10]]); // p1's ORC is 10h, not 16
+    expect(maxReachableDailyHours(s, allShifts, ov)).toBe(10); // max(OR 8, ORC 10)
+  });
+
+  it("returns 0 when no qualifying shift exists (caller falls back to fill hours)", () => {
+    const s = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-off", "st-al"] });
+    expect(maxReachableDailyHours(s, allShifts, empty)).toBe(0);
+  });
+});
+
+describe("autoSchedule — ORC distribution (Slice 2)", () => {
+  // Recovery-only ORC: a 16h shift that forces an X the next day (ORC→X each_day).
+  // Before the fix, wouldBreakPPHours valued every open day at the 8h fill shift,
+  // so weekday-only full-timers (BC/LM) were falsely judged unable to reach their
+  // PP target and dropped from the primary pool. The pool collapsed to the single
+  // staff with extra availability (YA), who then absorbed the whole week
+  // (ORC/off/ORC/off/ORC = 3 ORC). Valuing days at the real reachable shift hours
+  // (ORC=16h) keeps everyone feasible, so run-count fairness spreads ORC evenly.
+  const everyDay = [0, 1, 2, 3, 4, 5, 6].map((d) => ({
+    dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
+  }));
+  const weekdaysOnly = [1, 2, 3, 4, 5].map((d) => ({
+    dayOfWeek: d, type: "available" as const, strength: "rule" as const, pattern: "every" as const,
+  }));
+  const ORC = makeShift("st-orc", "ORC", { defaultHours: 16, schedulePriority: 2, autoSchedulable: true });
+  const eligible = ["st-or", "st-orc", "st-off"];
+
+  it("does not let a single full-timer absorb a week of ORC; weekday-only staff are not zeroed", () => {
+    const r = runSchedule({
+      dates: weekdayDates("2025-05-12", 5), // Mon..Fri (one week)
+      staff: [
+        makeStaff("ya", "YA", { eligibleShiftTypeIds: eligible, availabilityRules: everyDay }),
+        makeStaff("bc", "BC", { eligibleShiftTypeIds: eligible, availabilityRules: weekdaysOnly }),
+        makeStaff("lm", "LM", { eligibleShiftTypeIds: eligible, availabilityRules: weekdaysOnly }),
+      ],
+      shiftTypes: [OR, ORC, OFF],
+      // 88h/PP target makes weekday-only staff "tight" under the old flat-8h estimate
+      // (8 remaining days × 8h = 64 < 72h still needed) → they were wrongly excluded.
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 88 }],
+      staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "ORC", dayKey: String(d), minCount: 1 })),
+      requiredFollowers: [
+        { sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false },
+      ],
+    });
+    const orcCount = (id: string) => r.suggestions.filter((s) => s.code === "ORC" && s.staffId === id).length;
+    const total = r.suggestions.filter((s) => s.code === "ORC").length;
+
+    expect(total).toBe(5); // 1/day × 5 weekdays
+    // No single staff clusters 3-in-a-week (the bug); with total=5 and max≤2 every
+    // staff necessarily gets ≥1, so BC and LM are no longer zeroed.
+    for (const id of ["ya", "bc", "lm"]) {
+      expect(orcCount(id)).toBeLessThanOrEqual(2);
+    }
+    expect(orcCount("bc")).toBeGreaterThanOrEqual(1);
+    expect(orcCount("lm")).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("step 3: fill off-day feasibility (CR #939 carry-over)", () => {
+  // The fill shift is NOT distributed in Step 2 (it's excluded there); its staffing
+  // requirements are met during Step 3's FTE fill. When a staff has surplus days and
+  // must choose an off day, the off-day picker must not vacate a day where the fill
+  // shift is still required and otherwise unstaffed (the fillStaffedCount guard).
+  it("won't take an off day that would leave a fill-required day understaffed", () => {
+    const r = runSchedule({
+      dates: weekdayDates("2025-05-12", 5), // Mon..Fri
+      // single weekday-only full-timer; default makeStaff availability is Mon–Fri
+      staff: [makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-off"] })],
+      shiftTypes: [OR, OFF],
+      // target 32 = 4×8h → 4 fill days + exactly 1 weekday off out of the 5
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 32 }],
+      // OR required on Monday — the off-day picker's first/highest-scoring candidate
+      // (Mon extends the prior weekend) would vacate it; feasibility must veto that.
+      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }],
+    });
+    const orcOnMon = r.suggestions.filter((s) => s.code === "OR" && s.date === "2025-05-12");
+    expect(orcOnMon).toHaveLength(1); // Monday stays staffed
+    // exactly one weekday off (4 OR placed across Mon–Fri)
+    expect(r.suggestions.filter((s) => s.code === "OR").length).toBe(4);
   });
 });
