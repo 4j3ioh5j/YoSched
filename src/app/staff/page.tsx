@@ -110,6 +110,13 @@ export default async function Staff() {
             type: da.type,
             strength: da.strength,
             pattern: da.pattern,
+            whenKind: da.whenKind,
+            whenDays: da.whenDays,
+            whenPpWeek: da.whenPpWeek,
+            whenOrds: da.whenOrds,
+            whenCycleUnit: da.whenCycleUnit,
+            whenCycleN: da.whenCycleN,
+            whenCycleOffset: da.whenCycleOffset,
           })),
         }))}
         allShiftTypes={allShiftTypes.map((st) => ({

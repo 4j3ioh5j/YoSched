@@ -238,6 +238,15 @@ export async function POST(req: NextRequest) {
         type: da.type,
         strength: da.strength,
         pattern: da.pattern,
+        // Carry the explicit WHEN columns so a non-legacy default rule (e.g. an
+        // ordinal/multi-day default) survives the copy to the new staff member.
+        whenKind: da.whenKind,
+        whenDays: da.whenDays,
+        whenPpWeek: da.whenPpWeek,
+        whenOrds: da.whenOrds,
+        whenCycleUnit: da.whenCycleUnit,
+        whenCycleN: da.whenCycleN,
+        whenCycleOffset: da.whenCycleOffset,
       })),
     });
   }

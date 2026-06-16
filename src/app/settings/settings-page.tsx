@@ -78,6 +78,15 @@ type DefaultAvailabilityRule = {
   type: string;
   strength: string;
   pattern: string;
+  // Unified WHEN columns (slice 6c) — carried so explicit ordinal/multi-day
+  // default rules survive a load→save round-trip.
+  whenKind?: string | null;
+  whenDays?: number[] | null;
+  whenPpWeek?: number | null;
+  whenOrds?: number[] | null;
+  whenCycleUnit?: string | null;
+  whenCycleN?: number | null;
+  whenCycleOffset?: number | null;
 };
 
 type EmploymentTypeData = {
@@ -2369,6 +2378,8 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
         defaultEligibleShiftTypeIds: (created.defaultEligibleShifts ?? []).map((ds: { shiftTypeId: string }) => ds.shiftTypeId),
         defaultAvailabilityRules: (created.defaultAvailability ?? []).map((da: DefaultAvailabilityRule) => ({
           dayOfWeek: da.dayOfWeek, type: da.type, strength: da.strength, pattern: da.pattern,
+          whenKind: da.whenKind, whenDays: da.whenDays, whenPpWeek: da.whenPpWeek, whenOrds: da.whenOrds,
+          whenCycleUnit: da.whenCycleUnit, whenCycleN: da.whenCycleN, whenCycleOffset: da.whenCycleOffset,
         })),
         sortOrder: created.sortOrder,
         staffCount: 0,

@@ -108,7 +108,7 @@ type Staff = {
   sortOrder: number;
 };
 
-type DefaultAvailabilityRule = {
+type DefaultAvailabilityRule = WhenFields & {
   dayOfWeek: number;
   type: string;
   strength: string;
@@ -718,6 +718,13 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
         type: r.type,
         strength: r.strength,
         pattern: r.pattern,
+        whenKind: r.whenKind,
+        whenDays: r.whenDays,
+        whenPpWeek: r.whenPpWeek,
+        whenOrds: r.whenOrds,
+        whenCycleUnit: r.whenCycleUnit,
+        whenCycleN: r.whenCycleN,
+        whenCycleOffset: r.whenCycleOffset,
       })),
     } : p));
   }
@@ -837,6 +844,15 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
           cycleOffset: ar.cycleOffset,
           conditionStaffId: ar.conditionStaffId,
           conditionType: ar.conditionType,
+          // Carry when* from the server-copied defaults, else the next save
+          // re-derives legacy and overwrites an explicit ordinal/multi-day default.
+          whenKind: ar.whenKind,
+          whenDays: ar.whenDays,
+          whenPpWeek: ar.whenPpWeek,
+          whenOrds: ar.whenOrds,
+          whenCycleUnit: ar.whenCycleUnit,
+          whenCycleN: ar.whenCycleN,
+          whenCycleOffset: ar.whenCycleOffset,
         })),
         eligibleShiftTypeIds: (created.eligibleShifts ?? []).map((es: { shiftTypeId: string }) => es.shiftTypeId),
         shiftEligibilityRules: [],

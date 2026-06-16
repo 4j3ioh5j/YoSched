@@ -1,6 +1,26 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
+import { ruleToWhen, whenToColumns } from "@/lib/recurrence";
 import { NextRequest, NextResponse } from "next/server";
+
+// Derive the normalized WHEN columns for a default-availability rule on save,
+// keeping them in sync with the legacy columns. ruleToWhen prefers explicit when*
+// fields (slice-6c picker) and otherwise bridges the legacy dayOfWeek/pattern.
+function whenColumns(r: Record<string, unknown>) {
+  return whenToColumns(
+    ruleToWhen({
+      dayOfWeek: r.dayOfWeek as number,
+      pattern: (r.pattern as string) ?? "every",
+      whenKind: r.whenKind as string | null | undefined,
+      whenDays: r.whenDays as number[] | null | undefined,
+      whenPpWeek: r.whenPpWeek as number | null | undefined,
+      whenOrds: r.whenOrds as number[] | null | undefined,
+      whenCycleUnit: r.whenCycleUnit as string | null | undefined,
+      whenCycleN: r.whenCycleN as number | null | undefined,
+      whenCycleOffset: r.whenCycleOffset as number | null | undefined,
+    }),
+  );
+}
 
 export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
@@ -40,6 +60,7 @@ export async function PUT(req: NextRequest) {
           type: (r.type as string) ?? "available",
           strength: (r.strength as string) ?? "rule",
           pattern: (r.pattern as string) ?? "every",
+          ...whenColumns(r),
         })),
       });
     }
@@ -80,6 +101,7 @@ export async function POST(req: NextRequest) {
         type: (r.type as string) ?? "available",
         strength: (r.strength as string) ?? "rule",
         pattern: (r.pattern as string) ?? "every",
+        ...whenColumns(r),
       })),
     });
   }
