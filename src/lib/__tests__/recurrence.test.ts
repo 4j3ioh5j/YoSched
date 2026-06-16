@@ -13,6 +13,8 @@ import {
   describeWhen,
   whenToLegacy,
   ordinalLabel,
+  standingToWhen,
+  whenToStandingLegacy,
   type WhenPattern,
 } from "../recurrence";
 import { matchesPattern, type PayPeriodRange } from "../availability";
@@ -388,5 +390,61 @@ describe("whenToLegacy — inert back-projection", () => {
     for (const d of ALL_DATES) {
       expect(matchesWhen(ruleToWhen(row), d, PP)).toBe(matchesWhen(w, d, PP));
     }
+  });
+});
+
+describe("standingToWhen — StandingCommitment legacy bridge (slice 6)", () => {
+  it("maps legacy dayOfWeek + frequency", () => {
+    expect(standingToWhen({ dayOfWeek: 1, frequency: "weekly" })).toEqual({ daysOfWeek: [1], kind: "every" });
+    expect(standingToWhen({ dayOfWeek: 1, frequency: "biweekly" })).toEqual({
+      daysOfWeek: [1], kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0,
+    });
+    expect(standingToWhen({ dayOfWeek: 1, frequency: "monthly" })).toEqual({
+      daysOfWeek: [1], kind: "ordinalMonth", ords: [1],
+    });
+  });
+
+  it("treats a null dayOfWeek as any-day 'every' regardless of frequency (preserves legacy)", () => {
+    // The old scheduler fired a day-null commitment on every applicable day no
+    // matter the frequency (it short-circuited on dayOfWeek===null).
+    expect(standingToWhen({ dayOfWeek: null, frequency: "weekly" })).toEqual({ daysOfWeek: [], kind: "every" });
+    expect(standingToWhen({ dayOfWeek: null, frequency: "monthly" })).toEqual({ daysOfWeek: [], kind: "every" });
+    // ...and any-day "every" matches every date.
+    for (const d of ALL_DATES) {
+      expect(matchesWhen(standingToWhen({ dayOfWeek: null, frequency: "weekly" }), d, PP)).toBe(true);
+    }
+  });
+
+  it("prefers explicit when* columns when whenKind is set", () => {
+    const w = standingToWhen({ dayOfWeek: 2, frequency: "weekly", whenKind: "ppWeek", whenDays: [2], whenPpWeek: 1 });
+    expect(w).toEqual({ daysOfWeek: [2], kind: "ppWeek", ppWeek: 1, ords: [], cycleN: undefined, cycleOffset: undefined, cycleUnit: undefined });
+  });
+
+  it("biweekly fires every other week; monthly fires the 1st matching weekday", () => {
+    // Mondays in range: 2025-05-12, 19, 26, 06-02, 09, 16, 23, 30.
+    const biweekly = standingToWhen({ dayOfWeek: 1, frequency: "biweekly" });
+    const monMatches = ALL_DATES.filter((d) => matchesWhen(biweekly, d, PP));
+    expect(monMatches).toEqual(["2025-05-12", "2025-05-26", "2025-06-09", "2025-06-23"]);
+    // Monthly Monday = 1st Monday of each calendar month: May 5 (not in range), Jun 2.
+    const monthly = standingToWhen({ dayOfWeek: 1, frequency: "monthly" });
+    expect(ALL_DATES.filter((d) => matchesWhen(monthly, d, PP))).toEqual(["2025-06-02"]);
+  });
+});
+
+describe("whenToStandingLegacy — inert back-projection", () => {
+  it("maps single-weekday patterns to dayOfWeek + frequency", () => {
+    expect(whenToStandingLegacy({ daysOfWeek: [3], kind: "every" })).toEqual({ dayOfWeek: 3, frequency: "weekly" });
+    expect(whenToStandingLegacy({ daysOfWeek: [3], kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0 })).toEqual({ dayOfWeek: 3, frequency: "biweekly" });
+    expect(whenToStandingLegacy({ daysOfWeek: [3], kind: "ordinalMonth", ords: [1] })).toEqual({ dayOfWeek: 3, frequency: "monthly" });
+  });
+
+  it("maps any-day and multi-day patterns to dayOfWeek=null", () => {
+    expect(whenToStandingLegacy({ daysOfWeek: [], kind: "every" })).toEqual({ dayOfWeek: null, frequency: "weekly" });
+    expect(whenToStandingLegacy({ daysOfWeek: [1, 3], kind: "every" })).toEqual({ dayOfWeek: null, frequency: "weekly" });
+  });
+
+  it("round-trips the seeded any-day weekly commitment", () => {
+    const legacy = { dayOfWeek: null, frequency: "weekly" };
+    expect(whenToStandingLegacy(standingToWhen(legacy))).toEqual(legacy);
   });
 });

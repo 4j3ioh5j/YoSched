@@ -203,6 +203,15 @@ model StandingCommitment {
   dayOfWeek   Int?      // 0-6, null = any applicable day
   frequency   String    @default("weekly") // weekly, biweekly, monthly
   notes       String?
+  // Unified WHEN model (recurrence.ts). whenKind null = read legacy dayOfWeek +
+  // frequency above (standingToWhen bridge). Backfilled from those columns.
+  whenKind        String?
+  whenDays        Int[]   @default([])
+  whenPpWeek      Int?
+  whenOrds        Int[]   @default([])
+  whenCycleUnit   String?
+  whenCycleN      Int?
+  whenCycleOffset Int?
 
   staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)

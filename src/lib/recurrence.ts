@@ -374,3 +374,65 @@ export function whenToLegacy(w: WhenPattern): LegacyColumns {
       return plain;
   }
 }
+
+// ── StandingCommitment WHEN bridge (slice 6) ─────────────────────────────────
+// StandingCommitment's legacy columns are `dayOfWeek` (nullable) + `frequency`
+// (weekly|biweekly|monthly), NOT the pattern/cycle* shape availability rules use,
+// so it needs its own bridge (whenToLegacy / legacyPatternToWhen don't apply).
+
+export type StandingCommitmentRow = {
+  dayOfWeek: number | null;
+  frequency: string;
+  whenKind?: string | null;
+  whenDays?: number[] | null;
+  whenPpWeek?: number | null;
+  whenOrds?: number[] | null;
+  whenCycleUnit?: string | null;
+  whenCycleN?: number | null;
+  whenCycleOffset?: number | null;
+};
+
+// Read a standing commitment as a WhenPattern. Prefers the explicit when* columns
+// (whenKind set); else maps the legacy dayOfWeek/frequency. A null dayOfWeek means
+// "any applicable day" — kind "every" with no weekday filter — which preserves the
+// legacy scheduler behavior (a day-null commitment fired on every available day
+// regardless of frequency).
+export function standingToWhen(sc: StandingCommitmentRow): WhenPattern {
+  if (sc.whenKind != null) {
+    return buildWhenFromColumns({
+      dayOfWeek: sc.dayOfWeek ?? 0,
+      pattern: "every",
+      whenKind: sc.whenKind,
+      whenDays: sc.whenDays,
+      whenPpWeek: sc.whenPpWeek,
+      whenOrds: sc.whenOrds,
+      whenCycleUnit: sc.whenCycleUnit,
+      whenCycleN: sc.whenCycleN,
+      whenCycleOffset: sc.whenCycleOffset,
+    });
+  }
+  const daysOfWeek = sc.dayOfWeek != null ? [sc.dayOfWeek] : [];
+  if (sc.dayOfWeek == null) return { daysOfWeek, kind: "every" };
+  switch (sc.frequency) {
+    case "biweekly":
+      return { daysOfWeek, kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0 };
+    case "monthly":
+      // "monthly on weekday W" = the 1st occurrence of W in the calendar month.
+      return { daysOfWeek, kind: "ordinalMonth", ords: [1] };
+    case "weekly":
+    default:
+      return { daysOfWeek, kind: "every" };
+  }
+}
+
+// Inert back-projection of a WhenPattern to StandingCommitment's legacy columns.
+// A single weekday maps to dayOfWeek; multi-day / any-day → null. Authoritative
+// reads use the when* columns (standingToWhen), so this only keeps the legacy
+// columns sensible.
+export function whenToStandingLegacy(w: WhenPattern): { dayOfWeek: number | null; frequency: string } {
+  const dayOfWeek = (w.daysOfWeek?.length ?? 0) === 1 ? w.daysOfWeek[0] : null;
+  let frequency = "weekly";
+  if (w.kind === "cycle" && w.cycleUnit === "week") frequency = "biweekly";
+  else if (w.kind === "ordinalMonth") frequency = "monthly";
+  return { dayOfWeek, frequency };
+}

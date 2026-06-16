@@ -230,6 +230,46 @@ describe("autoSchedule", () => {
       const standing = result.suggestions.filter((s) => s.step === "standing");
       expect(standing).toHaveLength(0);
     });
+
+    // Slice 6: the scheduler now honors biweekly/monthly recurrences (previously
+    // dropped — only weekly / any-day fired). Routed through standingToWhen + matchesWhen.
+    const TWO_PP = [
+      { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 },
+      { startDate: "2025-05-25", endDate: "2025-06-07", targetHours: 40 },
+    ];
+
+    it("biweekly commitment fires every other week only", () => {
+      const result = runSchedule({
+        standingCommitments: [
+          { staffId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "biweekly" },
+        ],
+        dates: weekdayDates("2025-05-12", 20), // 4 weeks Mon–Fri
+        payPeriods: TWO_PP,
+      });
+      const mondays = result.suggestions
+        .filter((s) => s.staffId === "p1" && s.step === "standing")
+        .map((s) => s.date)
+        .sort();
+      // PP0-wk1 + PP1-wk1 Mondays; PP0-wk2 (05-19) + PP1-wk2 (06-02) skipped.
+      expect(mondays).toEqual(["2025-05-12", "2025-05-26"]);
+    });
+
+    it("monthly commitment fires on the 1st matching weekday of the month only", () => {
+      const result = runSchedule({
+        standingCommitments: [
+          { staffId: "p1", shiftTypeId: "st-or", dayOfWeek: 1, frequency: "monthly" },
+        ],
+        dates: weekdayDates("2025-05-12", 20),
+        payPeriods: TWO_PP,
+      });
+      const days = result.suggestions
+        .filter((s) => s.staffId === "p1" && s.step === "standing")
+        .map((s) => s.date)
+        .sort();
+      // 1st Monday of May = 05-05 (before range); 1st Monday of June = 06-02.
+      // In-range May Mondays (12/19/26) are the 2nd/3rd/4th → not matched.
+      expect(days).toEqual(["2025-06-02"]);
+    });
   });
 
   describe("step 2: staffing requirements", () => {

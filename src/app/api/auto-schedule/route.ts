@@ -251,6 +251,13 @@ export async function POST(req: NextRequest) {
       shiftTypeId: sc.shiftTypeId,
       dayOfWeek: sc.dayOfWeek,
       frequency: sc.frequency,
+      whenKind: sc.whenKind,
+      whenDays: sc.whenDays,
+      whenPpWeek: sc.whenPpWeek,
+      whenOrds: sc.whenOrds,
+      whenCycleUnit: sc.whenCycleUnit,
+      whenCycleN: sc.whenCycleN,
+      whenCycleOffset: sc.whenCycleOffset,
     })),
     staffOverrides: staffOverrides.map((po) => ({
       staffId: po.staffId,

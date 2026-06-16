@@ -3,6 +3,7 @@ import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule, type PayP
 import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
 import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
 import { foldRequestsForDate, detectRequestConflicts, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode } from "./schedule-requests";
+import { matchesWhen, standingToWhen } from "./recurrence";
 
 export type ScheduleStaff = {
   id: string;
@@ -79,6 +80,15 @@ type StandingCommitment = {
   shiftTypeId: string;
   dayOfWeek: number | null;
   frequency: string;
+  // Unified WHEN columns (slice 6). When present (whenKind != null) they are
+  // authoritative; otherwise standingToWhen bridges dayOfWeek + frequency.
+  whenKind?: string | null;
+  whenDays?: number[] | null;
+  whenPpWeek?: number | null;
+  whenOrds?: number[] | null;
+  whenCycleUnit?: string | null;
+  whenCycleN?: number | null;
+  whenCycleOffset?: number | null;
 };
 
 type StaffOverride = {
@@ -864,47 +874,50 @@ export function autoSchedule({
   }
 
   // ── STEP 1: Apply standing commitments ──
+  const scPayPeriods = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
   for (const sc of standingCommitments) {
     const st = stById.get(sc.shiftTypeId);
     if (!st || !st.autoSchedulable) continue;
     const member = staff.find((p) => p.id === sc.staffId);
     if (!member?.isActive) continue;
+    const when = standingToWhen(sc);
 
     for (const date of dates) {
       if (isAssigned(sc.staffId, date)) continue;
-      const dow = getDow(date);
 
-      if (sc.dayOfWeek !== null && sc.dayOfWeek !== dow) continue;
-      if (sc.frequency === "weekly" || sc.dayOfWeek === null) {
-        const avail = evaluateAvailability(
-          member.availabilityRules, date, payPeriods,
-          (pid, d) => isAssigned(pid, d)
+      // matchesWhen applies both the weekday filter and the occurrence qualifier
+      // (every / biweekly cycle / monthly ordinal / explicit when*). Replaces the
+      // legacy `frequency==="weekly" || dayOfWeek===null` gate, which silently
+      // dropped biweekly/monthly commitments tied to a specific weekday.
+      if (!matchesWhen(when, date, scPayPeriods)) continue;
+
+      const avail = evaluateAvailability(
+        member.availabilityRules, date, payPeriods,
+        (pid, d) => isAssigned(pid, d)
+      );
+      if (!avail.available) continue;
+      if (holidaySet.has(date)) continue;
+
+      if (member.shiftEligibilityRules && member.shiftEligibilityRules.length > 0) {
+        const eligResult = evaluateShiftEligibility(
+          member.shiftEligibilityRules, st.id, date, scPayPeriods,
         );
-        if (!avail.available) continue;
-        if (holidaySet.has(date)) continue;
-
-        if (member.shiftEligibilityRules && member.shiftEligibilityRules.length > 0) {
-          const eligResult = evaluateShiftEligibility(
-            member.shiftEligibilityRules, st.id, date,
-            payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
-          );
-          if (eligResult !== null && !eligResult.eligible && !(eligResult.weight < 0 && eligResult.weight > -10)) continue;
-        }
-
-        if (isAtMaximum(member, st, date)) continue;
-        // An approved hard OFF / NEGATE_SHIFT request overrides a standing
-        // commitment (this path doesn't flow through isAvailable).
-        if (requestBlocksWork(sc.staffId, date, st)) continue;
-
-        assign(
-          sc.staffId,
-          date,
-          st,
-          `Standing commitment: ${st.code}`,
-          "standing",
-          0.9
-        );
+        if (eligResult !== null && !eligResult.eligible && !(eligResult.weight < 0 && eligResult.weight > -10)) continue;
       }
+
+      if (isAtMaximum(member, st, date)) continue;
+      // An approved hard OFF / NEGATE_SHIFT request overrides a standing
+      // commitment (this path doesn't flow through isAvailable).
+      if (requestBlocksWork(sc.staffId, date, st)) continue;
+
+      assign(
+        sc.staffId,
+        date,
+        st,
+        `Standing commitment: ${st.code}`,
+        "standing",
+        0.9
+      );
     }
   }
 
