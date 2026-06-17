@@ -1018,6 +1018,82 @@ describe("autoSchedule", () => {
       expect(orc[0].staffId).toBe("p1"); // LO wins despite breaking PP hours
     });
 
+    it("rolling max: a '1 per 2 PP' cap respaces a near-boundary ORC instead of allowing two close together", () => {
+      // RM has min 1 / max 1 ORC per 2 pay periods. An ORC already sits at the end
+      // of PP1 (2025-06-06). We schedule PP2+PP3. With the OLD fixed-block tiling,
+      // PP2 fell in block 1 ([PP2,PP3]) — separate from the PP1 seed in block 0 —
+      // so an ORC would have been placed early in PP2, only ~2 weeks after the
+      // seed (the RM bug). With the rolling max, every PP2 date is within a 2-PP
+      // span of the seed and is blocked; the ORC is respaced into PP3.
+      const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true, defaultHours: 8 });
+      const FOUR_PP = [
+        { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }, // PP0
+        { startDate: "2025-05-25", endDate: "2025-06-07", targetHours: 40 }, // PP1
+        { startDate: "2025-06-08", endDate: "2025-06-21", targetHours: 40 }, // PP2
+        { startDate: "2025-06-22", endDate: "2025-07-05", targetHours: 40 }, // PP3
+      ];
+      const rm = makeStaff("p1", "RM", {
+        eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+        shiftMinimumTargets: [
+          { shiftTypeId: "st-orc", minCount: 1, maxCount: 1, window: "pay_period" as const, windowCount: 2 },
+        ],
+      });
+      const result = runSchedule({
+        dates: weekdayDates("2025-06-09", 20), // all weekdays of PP2 (06-09..06-20) + PP3 (06-23..07-04)
+        staff: [rm],
+        shiftTypes: [OR, ORC, OFF],
+        payPeriods: FOUR_PP,
+        existingAssignments: [
+          { staffId: "p1", date: "2025-06-06", shiftTypeId: "st-orc", code: "ORC", isLocked: true }, // PP1
+        ],
+        // daily ORC requirement so the scheduler actively tries to place ORC every day
+        staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "ORC", dayKey: String(d), minCount: 1 })),
+      });
+      const orc = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORC");
+      // count preserved: the min still gets satisfied (one new ORC placed) ...
+      expect(orc.length).toBeGreaterThanOrEqual(1);
+      // ... but NONE in PP2 (all within a rolling 2-PP span of the 2025-06-06 seed) ...
+      expect(orc.some((s) => s.date >= "2025-06-08" && s.date <= "2025-06-21")).toBe(false);
+      // ... and it lands in PP3, respaced ~2 PP from the seed.
+      expect(orc.every((s) => s.date >= "2025-06-22")).toBe(true);
+      // and the final audit does NOT falsely flag the (legal, respaced) result.
+      expect(result.warnings.some((w) => w.includes("RM") && w.includes("exceeds max"))).toBe(false);
+    });
+
+    it("rolling max: the final audit flags a rolling cap violation forced by locked assignments", () => {
+      // Two locked ORCs sit 14 days apart in ADJACENT pay periods (PP1 + PP2) —
+      // inside a rolling 2-PP span, so '1 per 2 PP' is violated. The old fixed-block
+      // audit put them in different blocks ([0,1] vs [2,3]) and stayed silent; the
+      // rolling audit must surface it (locked placements bypass isAvailable).
+      const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true, defaultHours: 8 });
+      const FOUR_PP = [
+        { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }, // PP0
+        { startDate: "2025-05-25", endDate: "2025-06-07", targetHours: 40 }, // PP1
+        { startDate: "2025-06-08", endDate: "2025-06-21", targetHours: 40 }, // PP2
+        { startDate: "2025-06-22", endDate: "2025-07-05", targetHours: 40 }, // PP3
+      ];
+      const rm = makeStaff("p1", "RM", {
+        eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+        shiftMinimumTargets: [
+          { shiftTypeId: "st-orc", minCount: 1, maxCount: 1, window: "pay_period" as const, windowCount: 2 },
+        ],
+      });
+      const result = runSchedule({
+        dates: weekdayDates("2025-06-09", 5),
+        staff: [rm],
+        shiftTypes: [OR, ORC, OFF],
+        payPeriods: FOUR_PP,
+        existingAssignments: [
+          { staffId: "p1", date: "2025-05-30", shiftTypeId: "st-orc", code: "ORC", isLocked: true }, // PP1
+          { staffId: "p1", date: "2025-06-13", shiftTypeId: "st-orc", code: "ORC", isLocked: true }, // PP2
+        ],
+        staffingRequirements: [],
+      });
+      expect(
+        result.warnings.some((w) => w.includes("RM") && w.includes("exceeds max") && w.includes("rolling")),
+      ).toBe(true);
+    });
+
     it("does NOT override the PP-hours cap for a low-FTE staff WITHOUT a hard minimum", () => {
       // Same setup but LO has no minimum target — the soft hours cap still protects
       // them, so the broadly-available full-timer takes the ORC slot. This guards that

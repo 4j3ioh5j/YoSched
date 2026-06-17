@@ -1,7 +1,7 @@
 import { computeFairness, type FairnessSummary, type EquityFactor } from "./fairness";
 import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule, type PayPeriodRange } from "./availability";
 import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
-import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
+import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, isAtRollingMaximum, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
 import { foldRequestsForDate, detectRequestConflicts, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode } from "./schedule-requests";
 import { matchesWhen, standingToWhen } from "./recurrence";
 
@@ -654,26 +654,28 @@ export function autoSchedule({
     return getMinimumDeficit(staff, st, date) > 0;
   }
 
+  // MAX caps use a ROLLING window (isAtRollingMaximum): a placement is blocked if
+  // any N-window span CONTAINING this date already holds maxCount, so two shifts
+  // can't land close together just because a fixed block boundary falls between
+  // them. (MIN targets stay fixed-block — see getMinimumDeficit. For windowCount=1
+  // the rolling and fixed windows coincide, so behavior is unchanged.)
   function isAtMaximum(staff: ScheduleStaff, st: ScheduleShiftType, date: string): boolean {
     if (!staff.shiftMinimumTargets || staff.shiftMinimumTargets.length === 0) return false;
     const targets = staff.shiftMinimumTargets.filter((t) => t.shiftTypeId === st.id && t.maxCount != null);
     if (targets.length === 0) return false;
 
-    for (const target of targets) {
-      const bounds = getWindowBounds(
-        target, date,
-        payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
-      );
-      if (!bounds) continue;
-
-      let count = 0;
-      for (const [k, v] of grid.entries()) {
-        if (k.startsWith(staff.id + ":") && v.code === st.code && !v.noCount) {
-          const d = k.split(":")[1];
-          if (d >= bounds.start && d <= bounds.end) count++;
-        }
+    // The candidate `date` is not yet in the grid, so these are the existing
+    // counting placements only — isAtRollingMaximum adds the candidate implicitly.
+    const assignedDates: string[] = [];
+    for (const [k, v] of grid.entries()) {
+      if (k.startsWith(staff.id + ":") && v.code === st.code && !v.noCount) {
+        assignedDates.push(k.split(":")[1]);
       }
-      if (count >= target.maxCount!) return true;
+    }
+
+    const ppRanges = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
+    for (const target of targets) {
+      if (isAtRollingMaximum(target, date, assignedDates, ppRanges)) return true;
     }
     return false;
   }
@@ -1171,7 +1173,9 @@ export function autoSchedule({
 
             const assignedDates: string[] = [];
             for (const date of pickedDates) {
-              if (isAtMaximum(chosen, st, date)) break;
+              // Rolling max is date-dependent — skip a capped date, keep placing
+              // the rest of the spread rather than stopping at the first one.
+              if (isAtMaximum(chosen, st, date)) continue;
               const desirability = dwMap.get(`${st.id}:${getDow(date)}`) ?? 0;
               assign(
                 chosen.id, date, st,
@@ -1323,7 +1327,10 @@ export function autoSchedule({
 
         for (const candidate of candidateDates) {
           if (countInWindow() >= target.minCount) break;
-          if (isAtMaximum(staff, st, candidate)) break;
+          // Rolling max is date-dependent: a candidate too close to an earlier
+          // placement is capped, but a LATER one in this block may be fine — so
+          // skip it and keep trying (respace) rather than abandoning the minimum.
+          if (isAtMaximum(staff, st, candidate)) continue;
           assign(
             staff.id, candidate, st,
             `${st.code} (min target: ${target.minCount}/${target.window === "pay_period" ? "PP" : target.window})`,
@@ -1527,7 +1534,9 @@ export function autoSchedule({
         for (const date of fillDates) {
           if (hours >= target) break;
           const shift = holidaySet.has(date) && holShift ? holShift : fillShift;
-          if (isAtMaximum(staff, shift, date)) { cappedByMax = true; break; }
+          // Rolling max is date-dependent — note the cap but keep trying later
+          // dates (the warning below only fires if we still fall short of target).
+          if (isAtMaximum(staff, shift, date)) { cappedByMax = true; continue; }
           const shiftHrs = getShiftHours(staff.id, shift, overrideMap);
           assign(staff.id, date, shift,
             `${shift.code} to fill hours (${hours}/${target}hrs)`,
@@ -1579,8 +1588,30 @@ export function autoSchedule({
         if (!met) {
           warnings.push(`${staff.initials}: only ${current}/${needed} ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
         }
-        if (target.maxCount != null && assigned.length > target.maxCount) {
-          warnings.push(`${staff.initials}: ${assigned.length}/${target.maxCount} max ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
+      }
+
+      // MIN is audited per fixed block above. MAX is a ROLLING cap
+      // (isAtRollingMaximum), so audit it with the same rolling semantics — a
+      // fixed-block count can't see a violation that straddles a block boundary,
+      // nor one introduced by a locked / honored placement that bypassed
+      // isAvailable. A date is flagged when some N-window span containing it holds
+      // more than maxCount counting the OTHER placements.
+      if (target.maxCount != null) {
+        const placed: string[] = [];
+        for (const [k, v] of grid.entries()) {
+          if (k.startsWith(staff.id + ":") && v.code === st.code && !v.noCount) {
+            placed.push(k.split(":")[1]);
+          }
+        }
+        const overCap = placed
+          .filter((d) => isAtRollingMaximum(target, d, placed.filter((x) => x !== d), ppRanges))
+          .sort();
+        if (overCap.length > 0) {
+          const windowDesc =
+            target.window === "days"
+              ? `${target.windowDays}d`
+              : `${(target.windowCount ?? 1) > 1 ? `${target.windowCount} ` : ""}${target.window}`;
+          warnings.push(`${staff.initials}: ${st.code} exceeds max ${target.maxCount} per ${windowDesc} (rolling) — ${overCap.join(", ")}`);
         }
       }
     }

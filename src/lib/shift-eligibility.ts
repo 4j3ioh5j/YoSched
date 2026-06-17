@@ -1,4 +1,4 @@
-import { matchesWhen, ruleToWhen, type PayPeriodRange } from "./recurrence";
+import { matchesWhen, ruleToWhen, ppIndexForDate, type PayPeriodRange } from "./recurrence";
 
 export type ShiftEligibilityRule = {
   shiftTypeId: string;
@@ -22,9 +22,17 @@ export type ShiftMinTarget = {
   window: "week" | "pay_period" | "month" | "days";
   windowDays?: number | null;
   // Multiplier for week/pay_period/month windows: "per N windows" (e.g. 1 per 3
-  // pay periods). Tiles the calendar into fixed, non-overlapping blocks of N
-  // anchored at a stable epoch (PP[0] / a reference Monday / year 0), so both
-  // min and max stay well-defined. Defaults to 1. Ignored for window="days".
+  // pay periods). Defaults to 1. Ignored for window="days".
+  //
+  // MIN and MAX use DIFFERENT window semantics for windowCount > 1:
+  //  - MIN ("at least") is fixed-block — getWindowBounds tiles the calendar into
+  //    non-overlapping blocks of N anchored at a stable epoch (PP[0] / a reference
+  //    Monday / year 0), giving a bounded region to fill toward.
+  //  - MAX ("at most") is ROLLING — isAtRollingMaximum caps occurrences within ANY
+  //    N-window span containing the candidate, so two placements can't sit close
+  //    together just because a fixed block boundary happens to fall between them
+  //    (the boundary-straddle artifact: see handoffs #202 / #194). For N=1 the two
+  //    semantics coincide exactly (a single window).
   windowCount?: number | null;
 };
 
@@ -218,6 +226,107 @@ export function countInWindow(
   windowEnd: string,
 ): string[] {
   return allAssignedDates.filter((d) => d >= windowStart && d <= windowEnd);
+}
+
+// Integer index of the fixed-unit window containing `dateStr`, for the rolling
+// MAX check. Indices are contiguous (consecutive windows differ by 1) and use
+// the SAME epochs as getWindowBounds, so rolling spans line up with the tiled
+// blocks. Returns null when the date has no index (outside seeded pay periods,
+// or window="days"/unknown — rolling-days is handled directly in dayUnits below).
+export function windowIndexForDate(
+  window: ShiftMinTarget["window"],
+  dateStr: string,
+  payPeriods: PayPeriodRange[],
+): number | null {
+  switch (window) {
+    case "pay_period": {
+      const idx = ppIndexForDate(dateStr, payPeriods);
+      return idx < 0 ? null : idx;
+    }
+    case "week": {
+      const d = new Date(dateStr + "T12:00:00");
+      const monday = new Date(d);
+      monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      const EPOCH_MON = new Date("1970-01-05T12:00:00");
+      return Math.round((monday.getTime() - EPOCH_MON.getTime()) / (7 * 86400000));
+    }
+    case "month": {
+      const [y, m] = dateStr.split("-").map(Number); // m is 1-based
+      return y * 12 + (m - 1);
+    }
+    default:
+      return null;
+  }
+}
+
+// Whole-day distance between two YYYY-MM-DD strings (a - b, in days).
+function dayDelta(a: string, b: string): number {
+  const da = new Date(a + "T12:00:00").getTime();
+  const db = new Date(b + "T12:00:00").getTime();
+  return Math.round((da - db) / 86400000);
+}
+
+// Would placing `candidateDate` exceed maxCount for some ROLLING N-window span
+// that contains it? `assignedDates` are the staff's existing COUNTING dates for
+// this shift (the candidate itself is NOT included). Mirrors the old isAtMaximum
+// contract: returns true when the relevant span is ALREADY at the cap, so adding
+// one more would exceed it.
+//
+// week/pay_period/month: count by window index — block iff any span of N
+//   consecutive windows that includes the candidate's window already holds
+//   >= maxCount. N=1 reduces to "the candidate's own window", i.e. the previous
+//   fixed-window behavior, exactly.
+// days: a true sliding day-window of length windowDays — block iff any window of
+//   that length containing the candidate already holds >= maxCount. This fixes
+//   the prior forward-only bug (#194) where only [candidate .. candidate+L-1] was
+//   checked, missing earlier placements.
+export function isAtRollingMaximum(
+  target: ShiftMinTarget,
+  candidateDate: string,
+  assignedDates: string[],
+  payPeriods: PayPeriodRange[],
+): boolean {
+  if (target.maxCount == null) return false;
+  const max = target.maxCount;
+
+  if (target.window === "days") {
+    const L = target.windowDays ?? 0;
+    if (L <= 0) return false;
+    // Spans of length L (in days) that contain the candidate start anywhere in
+    // [candidate-(L-1) .. candidate]. Block if any such span already holds >= max.
+    for (let offset = 0; offset < L; offset++) {
+      // span = [candidate - (L-1) + offset .. that + L-1]
+      const lo = -(L - 1) + offset;
+      const hi = lo + L - 1;
+      let count = 0;
+      for (const d of assignedDates) {
+        const delta = dayDelta(d, candidateDate);
+        if (delta >= lo && delta <= hi) count++;
+      }
+      if (count >= max) return true;
+    }
+    return false;
+  }
+
+  const ic = windowIndexForDate(target.window, candidateDate, payPeriods);
+  if (ic == null) return false;
+  const n = Math.max(1, Math.floor(target.windowCount ?? 1));
+
+  const indices: number[] = [];
+  for (const d of assignedDates) {
+    const idx = windowIndexForDate(target.window, d, payPeriods);
+    if (idx != null) indices.push(idx);
+  }
+
+  // Spans of N consecutive windows containing window `ic` start at j in [ic-n+1 .. ic].
+  for (let j = ic - n + 1; j <= ic; j++) {
+    let count = 0;
+    for (const idx of indices) {
+      if (idx >= j && idx <= j + n - 1) count++;
+    }
+    if (count >= max) return true;
+  }
+  return false;
 }
 
 function fmt(d: Date): string {

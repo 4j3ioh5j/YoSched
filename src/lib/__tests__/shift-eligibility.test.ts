@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   evaluateShiftEligibility,
   getWindowBounds,
+  isAtRollingMaximum,
+  windowIndexForDate,
   checkMinimumTargetMet,
   countInWindow,
   frequencyModeOf,
@@ -266,6 +268,140 @@ describe("getWindowBounds", () => {
 
     it("windowCount is ignored for the rolling 'days' window (uses windowDays)", () => {
       expect(getWindowBounds(t("days", 3, 7), "2025-05-12", PP6)).toEqual({ start: "2025-05-12", end: "2025-05-18" });
+    });
+  });
+});
+
+describe("windowIndexForDate", () => {
+  const PP6 = [
+    { startDate: "2025-05-11", endDate: "2025-05-24" }, // idx 0
+    { startDate: "2025-05-25", endDate: "2025-06-07" }, // idx 1
+    { startDate: "2025-06-08", endDate: "2025-06-21" }, // idx 2
+  ];
+  it("pay_period returns the containing PP index, null when outside seeded PPs", () => {
+    expect(windowIndexForDate("pay_period", "2025-05-15", PP6)).toBe(0);
+    expect(windowIndexForDate("pay_period", "2025-05-30", PP6)).toBe(1);
+    expect(windowIndexForDate("pay_period", "2024-01-01", PP6)).toBeNull();
+  });
+  it("week index is contiguous (consecutive Mondays differ by 1)", () => {
+    const a = windowIndexForDate("week", "2025-05-12", PP6)!; // Monday
+    const b = windowIndexForDate("week", "2025-05-19", PP6)!; // next Monday
+    expect(b - a).toBe(1);
+    // any day in the same Mon–Sun week shares the index
+    expect(windowIndexForDate("week", "2025-05-18", PP6)).toBe(a); // Sunday of that week
+  });
+  it("month index is y*12+(m-1) and contiguous across the year boundary", () => {
+    expect(windowIndexForDate("month", "2025-05-15", PP6)).toBe(2025 * 12 + 4);
+    const dec = windowIndexForDate("month", "2025-12-31", PP6)!;
+    const jan = windowIndexForDate("month", "2026-01-01", PP6)!;
+    expect(jan - dec).toBe(1);
+  });
+  it("returns null for the rolling 'days' window", () => {
+    expect(windowIndexForDate("days", "2025-05-15", PP6)).toBeNull();
+  });
+});
+
+describe("isAtRollingMaximum", () => {
+  // 6 consecutive 14-day pay periods anchored at PP[0] = 2025-05-11.
+  const PP6 = [
+    { startDate: "2025-05-11", endDate: "2025-05-24" }, // idx 0
+    { startDate: "2025-05-25", endDate: "2025-06-07" }, // idx 1
+    { startDate: "2025-06-08", endDate: "2025-06-21" }, // idx 2
+    { startDate: "2025-06-22", endDate: "2025-07-05" }, // idx 3
+    { startDate: "2025-07-06", endDate: "2025-07-19" }, // idx 4
+    { startDate: "2025-07-20", endDate: "2025-08-02" }, // idx 5
+  ];
+  const m = (
+    window: ShiftMinTarget["window"],
+    opts: { windowCount?: number; maxCount?: number; windowDays?: number } = {},
+  ): ShiftMinTarget => ({
+    shiftTypeId: "st-or",
+    minCount: 0,
+    maxCount: opts.maxCount ?? 1,
+    window,
+    windowCount: opts.windowCount ?? 1,
+    windowDays: opts.windowDays,
+  });
+
+  it("returns false when maxCount is null (no cap configured)", () => {
+    const t = { ...m("pay_period", { windowCount: 2 }), maxCount: null };
+    expect(isAtRollingMaximum(t, "2025-06-15", ["2025-05-30"], PP6)).toBe(false);
+  });
+
+  describe("pay_period, windowCount=2, max=1 (RM's '1 per 2 PP')", () => {
+    const t = m("pay_period", { windowCount: 2, maxCount: 1 });
+    it("BLOCKS a placement in the PP adjacent to an existing one (the boundary-straddle the fixed block missed)", () => {
+      // existing in idx1 (2025-05-30), candidate in idx2 (2025-06-15): a 2-PP
+      // span [idx1,idx2] holds the existing one → blocked. Fixed tiling put these
+      // in different blocks ([0,1] vs [2,3]) and wrongly allowed both.
+      expect(isAtRollingMaximum(t, "2025-06-15", ["2025-05-30"], PP6)).toBe(true);
+    });
+    it("ALLOWS a placement two pay periods away (respaced)", () => {
+      // existing idx1 (2025-05-30), candidate idx3 (2025-06-25): no 2-PP span
+      // contains both → allowed.
+      expect(isAtRollingMaximum(t, "2025-06-25", ["2025-05-30"], PP6)).toBe(false);
+    });
+    it("ALLOWS placement when there is no prior assignment", () => {
+      expect(isAtRollingMaximum(t, "2025-06-15", [], PP6)).toBe(false);
+    });
+  });
+
+  describe("windowCount=1 reduces exactly to a single window", () => {
+    const t = m("pay_period", { windowCount: 1, maxCount: 1 });
+    it("blocks a second placement in the SAME pay period", () => {
+      expect(isAtRollingMaximum(t, "2025-05-20", ["2025-05-15"], PP6)).toBe(true);
+    });
+    it("allows a placement in the NEXT pay period (no rolling spillover at N=1)", () => {
+      expect(isAtRollingMaximum(t, "2025-05-30", ["2025-05-15"], PP6)).toBe(false);
+    });
+  });
+
+  describe("days window is a true sliding day-range (fixes #194 forward-only bug)", () => {
+    const t = m("days", { maxCount: 1, windowDays: 14 });
+    it("BLOCKS when a prior placement is within windowDays BEFORE the candidate", () => {
+      // 2025-05-20 is 5 days before the candidate — the old forward-only check
+      // ([candidate .. candidate+13]) missed this; the sliding window catches it.
+      expect(isAtRollingMaximum(t, "2025-05-25", ["2025-05-20"], PP6)).toBe(true);
+    });
+    it("BLOCKS when a prior placement is within windowDays AFTER the candidate", () => {
+      expect(isAtRollingMaximum(t, "2025-05-25", ["2025-05-30"], PP6)).toBe(true);
+    });
+    it("ALLOWS when the nearest placement is windowDays or more away", () => {
+      expect(isAtRollingMaximum(t, "2025-05-25", ["2025-06-09"], PP6)).toBe(false); // 15 days after
+      expect(isAtRollingMaximum(t, "2025-05-25", ["2025-05-10"], PP6)).toBe(false); // 15 days before
+    });
+    it("returns false when windowDays is missing", () => {
+      expect(isAtRollingMaximum(m("days", { maxCount: 1 }), "2025-05-25", ["2025-05-26"], PP6)).toBe(false);
+    });
+  });
+
+  describe("week, windowCount=2, max=1", () => {
+    const t = m("week", { windowCount: 2, maxCount: 1 });
+    it("blocks placements one week apart (within a 2-week span)", () => {
+      expect(isAtRollingMaximum(t, "2025-05-19", ["2025-05-12"], PP6)).toBe(true);
+    });
+    it("allows placements two weeks apart (non-overlapping 2-week spans)", () => {
+      expect(isAtRollingMaximum(t, "2025-05-26", ["2025-05-12"], PP6)).toBe(false);
+    });
+  });
+
+  describe("month, windowCount=3, max=1 (quarter)", () => {
+    const t = m("month", { windowCount: 3, maxCount: 1 });
+    it("blocks placements within 3 months", () => {
+      expect(isAtRollingMaximum(t, "2025-06-15", ["2025-05-15"], PP6)).toBe(true);
+    });
+    it("allows placements 3+ months apart", () => {
+      expect(isAtRollingMaximum(t, "2025-09-15", ["2025-05-15"], PP6)).toBe(false);
+    });
+  });
+
+  describe("maxCount=2 permits a burst then caps", () => {
+    const t = m("pay_period", { windowCount: 2, maxCount: 2 });
+    it("allows a second within the rolling span", () => {
+      expect(isAtRollingMaximum(t, "2025-06-15", ["2025-05-30"], PP6)).toBe(false);
+    });
+    it("blocks a third within the rolling span", () => {
+      expect(isAtRollingMaximum(t, "2025-06-15", ["2025-05-26", "2025-05-30"], PP6)).toBe(true);
     });
   });
 });
