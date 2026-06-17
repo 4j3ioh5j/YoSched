@@ -239,26 +239,35 @@ function AvailabilityEditor({
         <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1.5">Working days</div>
         <div className="flex gap-1">
           {DAY_INDICES.map((d) => {
-            // Reflect only the plain rule the toggle actually manages, so the
-            // lit state and the click action stay consistent (an advanced
-            // available rule on this day lives in the list below, not here).
+            // Lit state reflects only the plain rule the toggle manages, so the
+            // lit state and the click action stay consistent. But an advanced
+            // rule (available/unavailable/preference/conditioned) covering this
+            // day lives in the list below and would otherwise be invisible here
+            // — flag it with an amber dot (mirroring the roster grid) so the
+            // toggle never reads as a plain on/off when a rule is also in play.
             const active = rules.some((r) => isPlainRule(r) && ruleCoversDay(r, d));
+            const adv = hasAdvancedRule(rules, d);
             return (
               <button
                 key={d}
                 onClick={() => toggleDay(d)}
+                title={adv ? `${DAY_LABELS[d]} is also governed by a rule below — see Rules` : undefined}
                 className={[
-                  "w-10 h-8 text-xs rounded font-medium transition-colors",
+                  "relative w-10 h-8 text-xs rounded font-medium transition-colors",
                   active ? "bg-blue-600/50 text-blue-200 border border-blue-500/50" : "bg-slate-700 text-slate-500 border border-slate-600",
+                  adv ? "ring-1 ring-amber-400/40" : "",
                   "hover:brightness-125",
                 ].join(" ")}
               >
                 {DAY_LABELS[d]}
+                {adv && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-amber-400" />}
               </button>
             );
           })}
         </div>
-        <div className="text-[10px] text-slate-600 mt-1">Click to toggle basic availability. Use rules below for advanced scheduling.</div>
+        <div className="text-[10px] text-slate-600 mt-1">
+          Click to toggle basic availability. <span className="text-amber-400/80">Amber dot</span> = a rule below also covers that day. Use rules for advanced scheduling.
+        </div>
       </div>
 
       {/* Layer 2: Advanced rules */}
