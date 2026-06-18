@@ -173,7 +173,7 @@ function OverviewCharts({ data, trackedShiftCodes, allShiftCodes, showHoliday, p
             <BarChart data={shiftData} margin={{ left: -10, right: 10, top: 5, bottom: 5 }} barGap={1} barCategoryGap="15%">
               <XAxis dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 10, fontFamily: "monospace" }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} />
               <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
-              <Tooltip content={<ChartTooltipContent />} />
+              <Tooltip content={<ChartTooltipContent />} cursor={false} isAnimationActive={false} />
               {holidayVisible && (
                 <Bar dataKey="Holidays" name="Holidays" fill={HOLIDAY_COLOR} fillOpacity={0.75} radius={[2, 2, 0, 0]} minPointSize={3} />
               )}
