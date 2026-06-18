@@ -80,6 +80,7 @@ export function PieView({
                   </div>
                 );
               }}
+              isAnimationActive={false}
             />
           </PieChart>
         </ResponsiveContainer>
