@@ -391,6 +391,14 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
   }, [spec]);
 
+  // Distinct calendar years present in the data (YYYY prefix of each ISO date),
+  // most-recent first — drives the "Years" date-range chips.
+  const availableYears = useMemo(() => {
+    const years = new Set<number>();
+    for (const a of raw.assignments) years.add(Number(a.date.slice(0, 4)));
+    return [...years].sort((x, y) => y - x);
+  }, [raw.assignments]);
+
   // Date range scopes the raw assignments BEFORE compute, so metrics genuinely
   // recompute over the chosen time subset.
   const scopedRaw = useMemo<RawStatsData>(() => {
@@ -588,6 +596,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
           <DateRangePicker
             value={spec.dateRange}
             payPeriods={payPeriods}
+            availableYears={availableYears}
             onChange={(dateRange) => setSpec((s) => ({ ...s, dateRange }))}
           />
           <StaffPicker

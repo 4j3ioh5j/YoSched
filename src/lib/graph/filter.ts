@@ -33,6 +33,9 @@ export type PayPeriodRef = { id: string; startDate: string; endDate: string };
  *
  * - `custom`: inclusive [start, end]; an empty bound is unbounded on that side
  *   (so the default `{start:"", end:""}` keeps everything).
+ * - `years`: keep rows whose calendar year (the `YYYY` prefix of the ISO date)
+ *   is in the selected set. An empty selection is a no-op (all rows), matching
+ *   the pay-period behavior so the page never silently blanks out.
  * - `payPeriods`: keep rows whose date falls within any selected pay period's
  *   inclusive [startDate, endDate]. An empty selection (no periods, or none
  *   matched in `payPeriods`) is treated as "all" — a no-op — so the page never
@@ -47,6 +50,11 @@ export function filterAssignmentsByDate<T extends { date: string }>(
     const { start, end } = range;
     if (!start && !end) return rows;
     return rows.filter((r) => (!start || r.date >= start) && (!end || r.date <= end));
+  }
+  if (range.kind === "years") {
+    if (range.years.length === 0) return rows;
+    const years = new Set(range.years.map((y) => String(y)));
+    return rows.filter((r) => years.has(r.date.slice(0, 4)));
   }
   const selected = new Set(range.payPeriodIds);
   const intervals = payPeriods.filter((p) => selected.has(p.id));

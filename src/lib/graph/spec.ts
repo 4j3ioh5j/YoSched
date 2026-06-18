@@ -22,6 +22,7 @@ export type GraphChart = "bar" | "pie" | "radar" | "heatmap";
 
 export type GraphDateRange =
   | { kind: "payPeriods"; payPeriodIds: string[] }
+  | { kind: "years"; years: number[] }
   | { kind: "custom"; start: string; end: string };
 
 export type GraphStaffFilter = {
@@ -85,6 +86,12 @@ function coerceDateRange(v: unknown): GraphDateRange {
     const o = v as Record<string, unknown>;
     if (o.kind === "payPeriods" && Array.isArray(o.payPeriodIds)) {
       return { kind: "payPeriods", payPeriodIds: o.payPeriodIds.filter((x): x is string => typeof x === "string") };
+    }
+    if (o.kind === "years" && Array.isArray(o.years)) {
+      return {
+        kind: "years",
+        years: o.years.filter((x): x is number => typeof x === "number" && Number.isInteger(x)),
+      };
     }
     if (o.kind === "custom" && typeof o.start === "string" && typeof o.end === "string") {
       return { kind: "custom", start: o.start, end: o.end };

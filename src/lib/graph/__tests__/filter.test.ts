@@ -32,6 +32,7 @@ describe("filterByMinFte", () => {
 describe("filterAssignmentsByDate", () => {
   const a = (date: string) => ({ date });
   const rows = [a("2026-01-05"), a("2026-01-20"), a("2026-02-10"), a("2026-03-01")];
+  const multiYearRows = [a("2024-06-01"), a("2025-03-15"), a("2026-01-05"), a("2026-12-31")];
   const payPeriods: PayPeriodRef[] = [
     { id: "pp1", startDate: "2026-01-01", endDate: "2026-01-14" },
     { id: "pp2", startDate: "2026-01-15", endDate: "2026-01-31" },
@@ -72,6 +73,30 @@ describe("filterAssignmentsByDate", () => {
   it("treats unknown pay-period ids as a no-op (all rows)", () => {
     const range: GraphDateRange = { kind: "payPeriods", payPeriodIds: ["nope"] };
     expect(filterAssignmentsByDate(rows, range, payPeriods)).toBe(rows);
+  });
+
+  it("keeps only rows in a single selected year", () => {
+    const range: GraphDateRange = { kind: "years", years: [2026] };
+    expect(filterAssignmentsByDate(multiYearRows, range, payPeriods).map((r) => r.date)).toEqual([
+      "2026-01-05", "2026-12-31",
+    ]);
+  });
+
+  it("unions multiple selected years (non-contiguous)", () => {
+    const range: GraphDateRange = { kind: "years", years: [2024, 2026] };
+    expect(filterAssignmentsByDate(multiYearRows, range, payPeriods).map((r) => r.date)).toEqual([
+      "2024-06-01", "2026-01-05", "2026-12-31",
+    ]);
+  });
+
+  it("treats an empty year selection as a no-op (all rows)", () => {
+    const range: GraphDateRange = { kind: "years", years: [] };
+    expect(filterAssignmentsByDate(multiYearRows, range, payPeriods)).toBe(multiYearRows);
+  });
+
+  it("returns nothing for a year not present in the data", () => {
+    const range: GraphDateRange = { kind: "years", years: [2099] };
+    expect(filterAssignmentsByDate(multiYearRows, range, payPeriods)).toEqual([]);
   });
 });
 

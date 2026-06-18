@@ -59,6 +59,19 @@ describe("encodeSpec / decodeSpec", () => {
     expect(decoded.staff.names).toEqual(["a", "b"]);
   });
 
+  it("round-trips a years date range", () => {
+    const spec: GraphSpec = { ...DEFAULT_SPEC, dateRange: { kind: "years", years: [2026, 2025] } };
+    expect(decodeSpec(encodeSpec(spec))).toEqual(spec);
+  });
+
+  it("drops non-integer entries from a years date range", () => {
+    const raw = encodeURIComponent(JSON.stringify({
+      version: 1,
+      dateRange: { kind: "years", years: [2026, "2025", 2024.5, null] },
+    }));
+    expect(decodeSpec(raw)!.dateRange).toEqual({ kind: "years", years: [2026] });
+  });
+
   it("defaults groupByShiftCode from DEFAULT_SPEC when the URL omits it", () => {
     const raw = encodeURIComponent(JSON.stringify({ version: 1, metric: "hours" }));
     expect(decodeSpec(raw)!.groupByShiftCode).toBe(DEFAULT_SPEC.groupByShiftCode);

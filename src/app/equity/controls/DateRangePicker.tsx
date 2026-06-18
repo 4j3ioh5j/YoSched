@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { GraphDateRange } from "@/lib/graph/spec";
 import type { PayPeriodRef } from "@/lib/graph/filter";
 
-type Mode = "all" | "periods" | "custom";
+type Mode = "all" | "periods" | "years" | "custom";
 
 /**
  * Initial display mode from the value. Note "all" and an empty custom range
@@ -15,6 +15,7 @@ type Mode = "all" | "periods" | "custom";
  */
 function modeOf(range: GraphDateRange): Mode {
   if (range.kind === "payPeriods") return "periods";
+  if (range.kind === "years") return "years";
   if (!range.start && !range.end) return "all";
   return "custom";
 }
@@ -31,16 +32,20 @@ function ppLabel(startDate: string, endDate: string): string {
 const SEG: { mode: Mode; label: string }[] = [
   { mode: "all", label: "All dates" },
   { mode: "periods", label: "Pay periods" },
+  { mode: "years", label: "Years" },
   { mode: "custom", label: "Custom" },
 ];
 
 export function DateRangePicker({
   value,
   payPeriods,
+  availableYears,
   onChange,
 }: {
   value: GraphDateRange;
   payPeriods: PayPeriodRef[];
+  /** Calendar years present in the data, sorted most-recent first. */
+  availableYears: number[];
   onChange: (r: GraphDateRange) => void;
 }) {
   const [mode, setMode] = useState<Mode>(() => modeOf(value));
@@ -50,8 +55,9 @@ export function DateRangePicker({
     setMode(next);
     if (next === "all") onChange({ kind: "custom", start: "", end: "" });
     else if (next === "periods") onChange({ kind: "payPeriods", payPeriodIds: [] });
+    else if (next === "years") onChange({ kind: "years", years: [] });
     // "custom": start an empty custom range for the user to fill (only needed
-    // when coming from "periods"; an existing custom value is left intact).
+    // when coming from another mode; an existing custom value is left intact).
     else if (value.kind !== "custom") onChange({ kind: "custom", start: "", end: "" });
   }
 
@@ -63,7 +69,16 @@ export function DateRangePicker({
     onChange({ kind: "payPeriods", payPeriodIds: [...set] });
   }
 
+  function toggleYear(year: number) {
+    if (value.kind !== "years") return;
+    const set = new Set(value.years);
+    if (set.has(year)) set.delete(year);
+    else set.add(year);
+    onChange({ kind: "years", years: [...set].sort((a, b) => b - a) });
+  }
+
   const selected = value.kind === "payPeriods" ? new Set(value.payPeriodIds) : new Set<string>();
+  const selectedYears = value.kind === "years" ? new Set(value.years) : new Set<number>();
 
   return (
     <div className="flex flex-col gap-2">
@@ -94,6 +109,24 @@ export function DateRangePicker({
                 className={`px-2 py-0.5 text-[10px] font-mono rounded border transition-colors ${active ? "bg-blue-600/20 text-blue-300 border-blue-500/40" : "bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700"}`}
               >
                 {ppLabel(pp.startDate, pp.endDate)}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {mode === "years" && (
+        <div className="flex flex-wrap gap-1.5 pl-[72px]">
+          {availableYears.length === 0 && <span className="text-[11px] text-slate-600">No data</span>}
+          {availableYears.map((y) => {
+            const active = selectedYears.has(y);
+            return (
+              <button
+                key={y}
+                onClick={() => toggleYear(y)}
+                className={`px-2 py-0.5 text-[10px] font-mono rounded border transition-colors ${active ? "bg-blue-600/20 text-blue-300 border-blue-500/40" : "bg-slate-800 text-slate-500 border-slate-700 hover:bg-slate-700"}`}
+              >
+                {y}
               </button>
             );
           })}
