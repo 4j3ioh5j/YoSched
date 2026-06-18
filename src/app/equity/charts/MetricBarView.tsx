@@ -78,7 +78,11 @@ export function MetricBarView({
           <BarChart data={rows} margin={{ left: -10, right: 10, top: 5, bottom: 5 }} barCategoryGap="20%">
             <XAxis dataKey="initials" tick={{ fill: "#94a3b8", fontSize: 10, fontFamily: "monospace" }} axisLine={{ stroke: "#334155" }} tickLine={false} interval={0} />
             <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} tickLine={false} />
-            <Tooltip content={<BarTip unit={unit} />} cursor={{ fill: "#33415533" }} />
+            <Tooltip
+              content={<BarTip unit={unit} />}
+              cursor={false}
+              isAnimationActive={false}
+            />
             {signed && <ReferenceLine y={0} stroke="#475569" />}
             <Bar dataKey="value" name={titleFor(metric)} fill={colorFor(metric)} fillOpacity={0.75} radius={[2, 2, 0, 0]} minPointSize={2} />
           </BarChart>
