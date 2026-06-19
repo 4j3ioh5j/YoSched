@@ -3327,14 +3327,13 @@ export function ScheduleGrid({
                       const hours = provHours?.get(p.id) ?? 0;
                       const target = pp.targetHours * p.ftePercentage;
                       const diff = hours - target;
-                      const pct = target > 0 ? hours / target : 0;
 
+                      // Binary signal: green only when hours EXACTLY hit target,
+                      // red for any divergence. No ranges, no intermediate colors.
+                      // (epsilon guards float rounding, matching PP_HOURS_EPSILON.)
                       let color = "text-slate-500";
                       if (hours > 0) {
-                        if (pct >= 0.95 && pct <= 1.05) color = "text-emerald-400";
-                        else if (pct > 1.05) color = "text-red-400";
-                        else if (pct >= 0.7) color = "text-amber-400";
-                        else color = "text-slate-400";
+                        color = Math.abs(diff) < 0.001 ? "text-emerald-400" : "text-red-400";
                       }
 
                       const diffLabel = diff >= 0 ? `+${diff}` : `${diff}`;
