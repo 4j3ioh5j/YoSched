@@ -834,6 +834,93 @@ describe("autoSchedule", () => {
     });
   });
 
+  describe("soft (preference) targets — Pay-period preferences", () => {
+    const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true });
+    const orcReqs = [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "ORC", dayKey: String(d), minCount: 1 }));
+
+    it("soft min target raises NO warning when unmet (a hard one would)", () => {
+      const staff = [
+        makeStaff("p1", "AB", {
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+          shiftMinimumTargets: [{ shiftTypeId: "st-orc", minCount: 10, window: "pay_period", strength: "preference" }],
+        }),
+      ];
+      const result = runSchedule({ dates: weekdayDates("2025-05-12", 5), staff, shiftTypes: [OR, ORC, OFF], staffingRequirements: orcReqs });
+      // 10/PP is impossible in 5 days — the equivalent hard target warns (see
+      // "warns when minimum cannot be met"); the soft one must stay silent.
+      expect(result.warnings.some((w) => w.includes("AB") && w.includes("ORC"))).toBe(false);
+    });
+
+    it("soft min target still biases the mix toward the preferred shift", () => {
+      const staff = [
+        makeStaff("p1", "AB", {
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+          shiftMinimumTargets: [{ shiftTypeId: "st-orc", minCount: 3, window: "pay_period", strength: "preference" }],
+        }),
+        makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
+      ];
+      const result = runSchedule({ dates: weekdayDates("2025-05-12", 5), staff, shiftTypes: [OR, ORC, OFF], staffingRequirements: orcReqs });
+      const p1Orc = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORC").length;
+      const p2Orc = result.suggestions.filter((s) => s.staffId === "p2" && s.code === "ORC").length;
+      expect(p1Orc).toBeGreaterThanOrEqual(3); // proactively placed toward the soft target
+      expect(p1Orc).toBeGreaterThan(p2Orc);    // and the staff with the target gets more
+    });
+
+    it("soft min target respects pay-period hour protection (does not bypass the hours cap)", () => {
+      const staff = [
+        makeStaff("p1", "AB", {
+          eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
+          // Impossible within hours: 10 ORC × 8h = 80h against a 40h pay period.
+          // A HARD min would override hour protection and over-fill; a SOFT min
+          // must stay within the budget (Step 2b hour gate).
+          shiftMinimumTargets: [{ shiftTypeId: "st-orc", minCount: 10, window: "pay_period", strength: "preference" }],
+        }),
+      ];
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 10),
+        staff,
+        shiftTypes: [OR, ORC, OFF],
+        payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
+      });
+      const orc = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORC").length;
+      expect(orc).toBeGreaterThan(0);     // still biases toward the preference...
+      expect(orc).toBeLessThanOrEqual(5); // ...but capped at 40h/8h, not the min of 10
+    });
+
+    it("soft max does NOT cap placement (penalty, not gate)", () => {
+      // A hard max of 2 caps a daily standing commitment to 2 (see "caps standing
+      // commitments at maxCount"); a soft max must not block — all 5 land.
+      const p = makeStaff("p1", "AB", {
+        eligibleShiftTypeIds: ["st-or", "st-off"],
+        shiftMinimumTargets: [{ shiftTypeId: "st-or", minCount: 0, maxCount: 2, window: "pay_period", strength: "preference" }],
+      });
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        staff: [p],
+        standingCommitments: [{ staffId: "p1", shiftTypeId: "st-or", ...sw(null, "weekly") }],
+      });
+      const orCount = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "OR").length;
+      expect(orCount).toBeGreaterThan(2);
+    });
+
+    it("soft max does NOT warn when exceeded by existing assignments", () => {
+      const p = makeStaff("p1", "AB", {
+        eligibleShiftTypeIds: ["st-or", "st-off"],
+        shiftMinimumTargets: [{ shiftTypeId: "st-or", minCount: 0, maxCount: 1, window: "pay_period", strength: "preference" }],
+      });
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        staff: [p],
+        existingAssignments: [
+          { staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or", code: "OR", isLocked: false },
+          { staffId: "p1", date: "2025-05-13", shiftTypeId: "st-or", code: "OR", isLocked: false },
+        ],
+      });
+      // The hard equivalent warns (see "warns when maxCount is exceeded"); soft stays silent.
+      expect(result.warnings.some((w) => w.includes("AB") && w.includes("max") && w.includes("OR"))).toBe(false);
+    });
+  });
+
   describe("maxCount enforcement", () => {
     it("caps assignments at maxCount per window", () => {
       const p = makeStaff("p1", "AB", {

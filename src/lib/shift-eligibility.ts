@@ -34,6 +34,13 @@ export type ShiftMinTarget = {
   //    (the boundary-straddle artifact: see handoffs #202 / #194). For N=1 the two
   //    semantics coincide exactly (a single window).
   windowCount?: number | null;
+  // Enforcement strength. "rule" (or undefined) is HARD — the historical behavior
+  // for per-staff targets: a min overrides the PP-hours cap and warns if unmet, a
+  // max hard-gates placement. "preference" is SOFT — used by the department-wide
+  // Pay-period preferences: it biases staff selection but never gates placement
+  // and raises no unmet/over-cap warnings. Undefined defaults to hard so existing
+  // targets (and tests) are unchanged.
+  strength?: "preference" | "rule";
 };
 
 // ── Frequency (HOW-OFTEN) mode helpers (slice 5 picker) ──────────────────────

@@ -238,6 +238,9 @@ export async function POST(req: NextRequest) {
         window: t.window,
         windowDays: t.windowDays,
         windowCount: t.windowCount,
+        // strength drives soft-vs-hard enforcement in the engine: per-staff
+        // targets are "rule" (hard), department defaults carry their own strength.
+        strength: t.strength,
       })),
     })),
     shiftTypes: shiftTypes.map((st) => ({

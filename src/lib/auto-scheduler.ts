@@ -617,9 +617,21 @@ export function autoSchedule({
     });
   }
 
-  function getMinimumDeficit(staff: ScheduleStaff, st: ScheduleShiftType, date: string): number {
+  // Undefined strength is HARD ("rule"), preserving per-staff target behavior and
+  // existing tests. "preference" is SOFT (department-wide Pay-period preferences):
+  // biases selection but never gates placement or warns.
+  function targetIsHard(t: ShiftMinTarget): boolean {
+    return (t.strength ?? "rule") === "rule";
+  }
+
+  // Deficit toward minCount targets. `onlyStrength` restricts to hard ("rule") or
+  // soft ("preference") targets; omit to count all. Soft and hard deficits are
+  // weighed separately in pickStaff so a soft preference never outranks a hard min.
+  function getMinimumDeficit(staff: ScheduleStaff, st: ScheduleShiftType, date: string, onlyStrength?: "rule" | "preference"): number {
     if (!staff.shiftMinimumTargets || staff.shiftMinimumTargets.length === 0) return 0;
-    const targets = staff.shiftMinimumTargets.filter((t) => t.shiftTypeId === st.id);
+    const targets = staff.shiftMinimumTargets.filter(
+      (t) => t.shiftTypeId === st.id && (onlyStrength == null || (t.strength ?? "rule") === onlyStrength),
+    );
     if (targets.length === 0) return 0;
 
     let maxDeficit = 0;
@@ -650,8 +662,9 @@ export function autoSchedule({
   // low-FTE staff loses every eligible day to broadly-available staff and can never
   // satisfy the minimum. pickStaff already sorts by deficit, so once they're in the
   // pool they win the contested slot. maxCount (via isAtMaximum) still caps them.
+  // HARD minimums only — a soft preference must not override hour protection.
   function hasUnmetMinimum(staff: ScheduleStaff, st: ScheduleShiftType, date: string): boolean {
-    return getMinimumDeficit(staff, st, date) > 0;
+    return getMinimumDeficit(staff, st, date, "rule") > 0;
   }
 
   // MAX caps use a ROLLING window (isAtRollingMaximum): a placement is blocked if
@@ -659,9 +672,14 @@ export function autoSchedule({
   // can't land close together just because a fixed block boundary falls between
   // them. (MIN targets stay fixed-block — see getMinimumDeficit. For windowCount=1
   // the rolling and fixed windows coincide, so behavior is unchanged.)
-  function isAtMaximum(staff: ScheduleStaff, st: ScheduleShiftType, date: string): boolean {
+  // Shared rolling-max check, filtered by hardness. `wantHard=true` powers the
+  // hard GATE (isAtMaximum); `wantHard=false` powers the soft PENALTY
+  // (isOverSoftMaximum) used only to deprioritize in pickStaff.
+  function atRollingMax(staff: ScheduleStaff, st: ScheduleShiftType, date: string, wantHard: boolean): boolean {
     if (!staff.shiftMinimumTargets || staff.shiftMinimumTargets.length === 0) return false;
-    const targets = staff.shiftMinimumTargets.filter((t) => t.shiftTypeId === st.id && t.maxCount != null);
+    const targets = staff.shiftMinimumTargets.filter(
+      (t) => t.shiftTypeId === st.id && t.maxCount != null && targetIsHard(t) === wantHard,
+    );
     if (targets.length === 0) return false;
 
     // The candidate `date` is not yet in the grid, so these are the existing
@@ -678,6 +696,17 @@ export function autoSchedule({
       if (isAtRollingMaximum(target, date, assignedDates, ppRanges)) return true;
     }
     return false;
+  }
+
+  // HARD max gate — blocks placement (used everywhere a max must be respected).
+  function isAtMaximum(staff: ScheduleStaff, st: ScheduleShiftType, date: string): boolean {
+    return atRollingMax(staff, st, date, true);
+  }
+
+  // SOFT max — never blocks; a staff already at/over their preferred cap is just
+  // ranked behind others in pickStaff so the mix drifts toward the preference.
+  function isOverSoftMaximum(staff: ScheduleStaff, st: ScheduleShiftType, date: string): boolean {
+    return atRollingMax(staff, st, date, false);
   }
 
   function getRequiredCount(st: ScheduleShiftType, date: string): number {
@@ -955,12 +984,23 @@ export function autoSchedule({
     function pickStaff(pool: ScheduleStaff[], date?: string): ScheduleStaff {
       pool.sort((a, b) => {
         if (date) {
-          const defA = getMinimumDeficit(a, st, date);
-          const defB = getMinimumDeficit(b, st, date);
-          if (defA !== defB) return defB - defA;
-          // Soft request preference: below hard minimum need, above even-
-          // distribution. A staff who prefers this shift sorts ahead of one
-          // who's indifferent; one who soft-avoids it (or prefers off) sorts behind.
+          // Hard minimum deficit first — a staff who MUST reach a required minimum
+          // outranks everyone (overrides the hours cap via hasUnmetMinimum too).
+          const hardA = getMinimumDeficit(a, st, date, "rule");
+          const hardB = getMinimumDeficit(b, st, date, "rule");
+          if (hardA !== hardB) return hardB - hardA;
+          // Soft (preference) minimum deficit — Pay-period preferences — biases the
+          // mix toward the target but ranks strictly below any hard minimum.
+          const softA = getMinimumDeficit(a, st, date, "preference");
+          const softB = getMinimumDeficit(b, st, date, "preference");
+          if (softA !== softB) return softB - softA;
+          // Soft max: a staff already at/over their preferred cap sorts behind one
+          // who isn't (penalty, not a block).
+          const overA = isOverSoftMaximum(a, st, date) ? 1 : 0;
+          const overB = isOverSoftMaximum(b, st, date) ? 1 : 0;
+          if (overA !== overB) return overA - overB;
+          // Soft request preference: a staff who prefers this shift sorts ahead of
+          // one who's indifferent; one who soft-avoids it (or prefers off) behind.
           const biasA = requestBias(a.id, date, st);
           const biasB = requestBias(b.id, date, st);
           if (biasA !== biasB) return biasB - biasA;
@@ -1321,7 +1361,10 @@ export function autoSchedule({
           !isAssigned(staff.id, d) && isAvailable(staff, d, st)
         );
         if (candidateDates.length === 0) {
-          warnings.push(`${staff.initials}: no available days for ${st.code} min target in ${target.window} (${bounds.start}..${bounds.end})`);
+          // Soft (preference) targets bias but never warn — only hard minimums do.
+          if (targetIsHard(target)) {
+            warnings.push(`${staff.initials}: no available days for ${st.code} min target in ${target.window} (${bounds.start}..${bounds.end})`);
+          }
           continue;
         }
 
@@ -1331,6 +1374,10 @@ export function autoSchedule({
           // placement is capped, but a LATER one in this block may be fine — so
           // skip it and keep trying (respace) rather than abandoning the minimum.
           if (isAtMaximum(staff, st, candidate)) continue;
+          // Soft (preference) targets respect pay-period hour protection — a
+          // preference biases the mix but must never push a staffer past their
+          // hours. Hard minimums intentionally override the cap (hasUnmetMinimum).
+          if (!targetIsHard(target) && wouldBreakPPHours(staff.id, candidate, st)) continue;
           assign(
             staff.id, candidate, st,
             `${st.code} (min target: ${target.minCount}/${target.window === "pay_period" ? "PP" : target.window})`,
@@ -1585,7 +1632,8 @@ export function autoSchedule({
           }
         }
         const { met, current, needed } = checkMinimumTargetMet(target, assigned);
-        if (!met) {
+        // Soft (preference) targets are advisory-only — bias without warnings.
+        if (!met && targetIsHard(target)) {
           warnings.push(`${staff.initials}: only ${current}/${needed} ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
         }
       }
@@ -1596,7 +1644,8 @@ export function autoSchedule({
       // nor one introduced by a locked / honored placement that bypassed
       // isAvailable. A date is flagged when some N-window span containing it holds
       // more than maxCount counting the OTHER placements.
-      if (target.maxCount != null) {
+      // Only HARD max caps are audited — a soft max is a penalty, not a violation.
+      if (target.maxCount != null && targetIsHard(target)) {
         const placed: string[] = [];
         for (const [k, v] of grid.entries()) {
           if (k.startsWith(staff.id + ":") && v.code === st.code && !v.noCount) {
