@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth-guard";
 import { autoSchedule } from "@/lib/auto-scheduler";
 import { parsePendingRequestMode, type ScheduleRequestData } from "@/lib/schedule-requests";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
+import { effectiveTargetsForStaff, type DepartmentShiftTarget } from "@/lib/department-targets";
 
 export async function POST(req: NextRequest) {
   const { error } = await getSession("schedule:auto");
@@ -57,6 +58,7 @@ export async function POST(req: NextRequest) {
     followRules,
     shiftEligibilityRules,
     shiftMinimumTargets,
+    departmentTargets,
     scheduleRequests,
     requiredFollowers,
   ] = await Promise.all([
@@ -90,6 +92,7 @@ export async function POST(req: NextRequest) {
     prisma.shiftFollowRule.findMany(),
     prisma.shiftEligibilityRule.findMany(),
     prisma.shiftMinimumTarget.findMany(),
+    prisma.departmentShiftTarget.findMany(),
     // Approved + pending requests overlapping the (effective) scheduling window.
     // Overlap = req.startDate <= windowEnd AND req.endDate >= windowStart. We always
     // load pending too; the scheduler's `pendingRequestMode` decides whether pending
@@ -120,6 +123,12 @@ export async function POST(req: NextRequest) {
 
   const shiftCodeMap = new Map<string, string>();
   for (const st of shiftTypes) shiftCodeMap.set(st.id, st.code);
+
+  // Department defaults only reach a staffer when the shift is auto-schedulable.
+  // If a shift isn't auto-schedulable, its department target is a no-op for
+  // everyone; combined with per-staff eligibility below, a dept default only
+  // affects people for whom that shift is actually auto-scheduled.
+  const autoSchedulableShiftIds = new Set(shiftTypes.filter((st) => st.autoSchedulable).map((st) => st.id));
 
   const eligibilityMap = new Map<string, string[]>();
   for (const pes of staffEligibleShifts) {
@@ -152,6 +161,21 @@ export async function POST(req: NextRequest) {
     }
     minTargetsMap.get(mt.staffId)!.push(mt);
   }
+
+  // Department-wide "Pay-period preferences": defaults expressed per 1.0 FTE that
+  // apply to every staffer, scaled to their FTE and overridden by any per-staff
+  // target sharing the same (shift, window, windowCount). Normalize the window
+  // union once so the FTE-scaling helper stays typed.
+  const deptTargets: DepartmentShiftTarget[] = departmentTargets.map((d) => ({
+    shiftTypeId: d.shiftTypeId,
+    minCount: d.minCount,
+    maxCount: d.maxCount,
+    window: d.window as "week" | "pay_period" | "month" | "days",
+    windowDays: d.windowDays,
+    windowCount: d.windowCount,
+    strength: d.strength === "rule" ? "rule" : "preference",
+    perFte: d.perFte,
+  }));
 
   const result = autoSchedule({
     dates,
@@ -189,13 +213,31 @@ export async function POST(req: NextRequest) {
         whenCycleN: er.whenCycleN,
         whenCycleOffset: er.whenCycleOffset,
       })),
-      shiftMinimumTargets: (minTargetsMap.get(p.id) ?? []).map((mt) => ({
-        shiftTypeId: mt.shiftTypeId,
-        minCount: mt.minCount,
-        maxCount: mt.maxCount,
-        window: mt.window as "week" | "pay_period" | "month" | "days",
-        windowDays: mt.windowDays,
-        windowCount: mt.windowCount,
+      // Per-staff targets merged with FTE-scaled department defaults (staff wins
+      // on a key collision). Slice 1 feeds these into the EXISTING min/max
+      // machinery in the engine shape; the strength/source carried by
+      // effectiveTargetsForStaff is consumed in slice 2 (soft-vs-hard).
+      shiftMinimumTargets: effectiveTargetsForStaff(
+        (minTargetsMap.get(p.id) ?? []).map((mt) => ({
+          shiftTypeId: mt.shiftTypeId,
+          minCount: mt.minCount,
+          maxCount: mt.maxCount,
+          window: mt.window as "week" | "pay_period" | "month" | "days",
+          windowDays: mt.windowDays,
+          windowCount: mt.windowCount,
+        })),
+        deptTargets,
+        p.ftePercentage ?? 1.0,
+        // Dept defaults apply only to shifts this staffer is eligible for AND that
+        // are auto-schedulable — so ORL targets never touch staff who don't do ORL.
+        new Set((eligibilityMap.get(p.id) ?? []).filter((id) => autoSchedulableShiftIds.has(id))),
+      ).map((t) => ({
+        shiftTypeId: t.shiftTypeId,
+        minCount: t.minCount,
+        maxCount: t.maxCount,
+        window: t.window,
+        windowDays: t.windowDays,
+        windowCount: t.windowCount,
       })),
     })),
     shiftTypes: shiftTypes.map((st) => ({

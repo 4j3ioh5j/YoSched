@@ -6,6 +6,7 @@ import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKe
 import { PENDING_REQUEST_MODES, type PendingRequestMode } from "@/lib/schedule-requests";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
 import { RecurrencePicker } from "../staff/recurrence-picker";
+import { FrequencyPicker } from "../staff/frequency-picker";
 
 const CanEditContext = createContext(true);
 function useCanEdit() { return useContext(CanEditContext); }
@@ -163,6 +164,7 @@ type Props = {
   holidays: Holiday[];
   desirabilityWeights: DesirabilityWeight[];
   schedulingPrefs: SchedulingPrefs;
+  departmentTargets: DeptTargetData[];
   employmentTypes: EmploymentTypeData[];
   equityFactors: EquityFactorData[];
   shiftCodes: string[];
@@ -2196,6 +2198,143 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
   );
 }
 
+// ─── Pay-period preferences (department-wide, per-FTE shift targets) ─────────
+
+type DeptTargetData = {
+  id: string;
+  shiftTypeId: string;
+  minCount: number;
+  maxCount: number | null;
+  window: string;
+  windowDays: number | null;
+  windowCount: number | null;
+  strength: string; // "preference" (soft) | "rule" (hard)
+  perFte: boolean;
+};
+
+// Department-wide shift count targets expressed PER 1.0 FTE. Reuses the same
+// FrequencyPicker (min/max + window) used for per-staff targets; adds a soft/hard
+// toggle. The scheduler scales each target to a staffer's FTE and lets any
+// per-staff target override the department default. One target per shift type
+// here (the common case); the unique key on the server is (shift, window, count).
+function PayPeriodPrefsSection({ initial, shiftTypes }: { initial: DeptTargetData[]; shiftTypes: ShiftType[] }) {
+  const canEdit = useCanEdit();
+  const [rows, setRows] = useState<DeptTargetData[]>(initial);
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+
+  // Only auto-schedulable work shifts: a target on a shift the auto-scheduler
+  // never places would be a no-op, so don't offer it here.
+  const workShifts = shiftTypes.filter((st) => !st.isOffShift && !st.isLeave && st.autoSchedulable);
+  const rowFor = (shiftTypeId: string) => rows.find((r) => r.shiftTypeId === shiftTypeId);
+
+  type PickerTarget = { shiftTypeId: string; minCount: number; maxCount?: number | null; window: string; windowDays?: number | null; windowCount?: number | null };
+
+  async function save(shiftTypeId: string, target: PickerTarget | undefined, strengthOverride?: string) {
+    const existing = rowFor(shiftTypeId);
+    setStatus("saving");
+    setError("");
+    try {
+      if (!target) {
+        if (existing) {
+          const res = await fetch("/api/settings/department-shift-targets", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: existing.id }),
+          });
+          if (!res.ok) throw new Error(await res.text());
+          setRows((rs) => rs.filter((r) => r.id !== existing.id));
+        }
+      } else {
+        const windowCount = target.window === "days" ? 1 : target.windowCount ?? 1;
+        // Changing the window/period creates a different unique key on the server;
+        // drop the old row first so a shift never accumulates orphaned targets.
+        if (existing && (existing.window !== target.window || (existing.windowCount ?? 1) !== windowCount)) {
+          await fetch("/api/settings/department-shift-targets", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: existing.id }),
+          });
+        }
+        const res = await fetch("/api/settings/department-shift-targets", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            shiftTypeId,
+            minCount: target.minCount,
+            maxCount: target.maxCount ?? null,
+            window: target.window,
+            windowDays: target.windowDays ?? null,
+            windowCount,
+            strength: strengthOverride ?? existing?.strength ?? "preference",
+            perFte: true,
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const saved = (await res.json()) as DeptTargetData;
+        setRows((rs) => [...rs.filter((r) => r.shiftTypeId !== shiftTypeId), saved]);
+      }
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
+      setStatus("error");
+    }
+  }
+
+  function toggleStrength(shiftTypeId: string) {
+    const r = rowFor(shiftTypeId);
+    if (!r) return;
+    save(
+      shiftTypeId,
+      { shiftTypeId, minCount: r.minCount, maxCount: r.maxCount, window: r.window, windowDays: r.windowDays, windowCount: r.windowCount },
+      r.strength === "rule" ? "preference" : "rule",
+    );
+  }
+
+  return (
+    <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
+      <SectionHeader
+        title="Pay-period preferences"
+        description="Department-wide shift targets, expressed per 1.0 FTE. The auto-scheduler scales each target to a staffer's FTE (e.g. 2 per 1.0 FTE → ~2 at 0.8 FTE) to bias the shift mix. Only affects staff who are eligible for that shift; a per-staff target for the same shift overrides the department default. Staffing requirements are always respected first."
+        status={status}
+        error={error}
+      />
+      <div className="space-y-2 mt-4">
+        {workShifts.map((st) => {
+          const row = rowFor(st.id);
+          const target = row ? { shiftTypeId: st.id, minCount: row.minCount, maxCount: row.maxCount, window: row.window, windowDays: row.windowDays, windowCount: row.windowCount } : undefined;
+          return (
+            <div key={st.id} className="flex items-center gap-3 py-1.5 border-b border-slate-700/40 last:border-0">
+              <div className="w-16 shrink-0 text-sm font-medium text-slate-200" title={st.name}>{st.code}</div>
+              <div className="flex-1">
+                <FrequencyPicker
+                  shiftTypeId={st.id}
+                  target={target}
+                  onChange={(t) => canEdit && save(st.id, t as PickerTarget | undefined)}
+                />
+              </div>
+              <button
+                onClick={() => canEdit && toggleStrength(st.id)}
+                disabled={!canEdit || !row}
+                title={row?.strength === "rule" ? "Hard rule — must be met (warns if unmet)" : "Soft preference — biases the mix, never overrides staffing"}
+                className={[
+                  "shrink-0 px-2 py-1 rounded text-[11px] font-medium border transition-colors",
+                  !row ? "opacity-30 border-slate-700 text-slate-500" : row.strength === "rule" ? "bg-amber-600/20 border-amber-500 text-amber-300" : "bg-blue-600/20 border-blue-500 text-blue-300",
+                  !canEdit || !row ? "cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                {row?.strength === "rule" ? "Hard" : "Soft"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-[11px] text-slate-500 mt-3">Soft/hard enforcement of these targets lands in a follow-up; for now they feed the same min/max logic as per-staff targets.</p>
+    </section>
+  );
+}
+
 // ─── Email (SMTP) Section ───────────────────────────────────────────────────
 
 function EmailSettingsSection() {
@@ -3310,7 +3449,7 @@ function AdditionalColumnsSection({
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, canEdit = true }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, canEdit = true }: Props) {
   const undo = useUndo();
   const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
 
@@ -3333,6 +3472,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
         <SchedulingPrefsSection initial={schedulingPrefs} />
+        <PayPeriodPrefsSection initial={departmentTargets} shiftTypes={shiftTypes} />
         <EmailSettingsSection />
         <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
         <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />

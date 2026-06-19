@@ -12,13 +12,14 @@ export default async function Settings() {
   const { error, permissions } = await getSession("settings:view");
   if (error) redirect("/");
   const canEditSettings = permissions!.includes("settings:edit");
-  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, departmentTargets, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
     prisma.holiday.findMany({ orderBy: { date: "asc" } }),
     prisma.desirabilityWeight.findMany(),
     prisma.schedulingPreferences.findFirst(),
+    prisma.departmentShiftTarget.findMany({ orderBy: { shiftType: { sortOrder: "asc" } } }),
     prisma.employmentType.findMany({
       orderBy: { sortOrder: "asc" },
       include: { _count: { select: { staff: true } }, defaultEligibleShifts: true, defaultAvailability: true },
@@ -96,6 +97,17 @@ export default async function Settings() {
           reason: dw.reason,
         }))}
         schedulingPrefs={schedulingPrefs}
+        departmentTargets={departmentTargets.map((d) => ({
+          id: d.id,
+          shiftTypeId: d.shiftTypeId,
+          minCount: d.minCount,
+          maxCount: d.maxCount,
+          window: d.window,
+          windowDays: d.windowDays,
+          windowCount: d.windowCount,
+          strength: d.strength,
+          perFte: d.perFte,
+        }))}
         employmentTypes={employmentTypes.map((et) => ({
           id: et.id,
           name: et.name,

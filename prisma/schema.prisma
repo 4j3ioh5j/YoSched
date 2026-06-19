@@ -104,6 +104,7 @@ model ShiftType {
   requiredFollowerAsFollower RequiredFollower[] @relation("requiredFollowerFollower")
   shiftEligibilityRules        ShiftEligibilityRule[]
   shiftMinimumTargets          ShiftMinimumTarget[]
+  departmentTargets            DepartmentShiftTarget[]
   requestLeaveShifts           ScheduleRequest[] @relation("requestLeaveShift")
 
   @@map("shift_types")
@@ -527,6 +528,31 @@ model ShiftMinimumTarget {
 
   @@unique([staffId, shiftTypeId, window, windowCount], map: "shift_min_targets_staff_shift_window_count_key")
   @@map("shift_minimum_targets")
+}
+
+// Department-wide shift count targets ("Pay-period preferences"). Same min/max +
+// window shape as ShiftMinimumTarget, but NOT keyed to a staff member: each row
+// is a default that applies to everyone, with counts expressed PER 1.0 FTE
+// (perFte) and scaled to each staff's ftePercentage at schedule time. A per-staff
+// ShiftMinimumTarget for the same (shiftType, window, windowCount) OVERRIDES the
+// department default. `strength` lets a row be a soft preference (bias only) or a
+// hard rule; soft-vs-hard enforcement lands in slice 2 — slice 1 feeds these into
+// the existing min/max machinery.
+model DepartmentShiftTarget {
+  id          String  @id @default(cuid())
+  shiftTypeId String
+  minCount    Int
+  maxCount    Int?
+  window      String
+  windowDays  Int?
+  windowCount Int     @default(1) // multiplier: "per N windows" (ignored for window="days")
+  strength    String  @default("preference") // "preference" (soft) | "rule" (hard)
+  perFte      Boolean @default(true)          // counts are per 1.0 FTE → scaled to each staff's FTE
+
+  shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftTypeId, window, windowCount], map: "dept_shift_targets_shift_window_count_key")
+  @@map("department_shift_targets")
 }
 
 model CountColumn {
