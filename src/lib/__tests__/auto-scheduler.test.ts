@@ -1799,3 +1799,167 @@ describe("step 3: fill off-day feasibility (CR #939 carry-over)", () => {
     expect(r.suggestions.filter((s) => s.code === "OR").length).toBe(4);
   });
 });
+
+describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
+  // ORL=12h is the only non-fill-divisible lever (OR fill = 8h). Distribution
+  // can leave one staff a few hours OVER and another UNDER target; STEP 3b
+  // corrects it with same-day OR↔ORL exchanges, which preserve per-day coverage.
+  const ORL = makeShift("st-orl", "ORL", { defaultHours: 12, schedulePriority: 2, maxPerDay: 1 });
+  const ICU = makeShift("st-icu", "ICU", { defaultHours: 10, schedulePriority: 2, maxPerDay: 1 });
+  const availDays = (days: number[]) =>
+    days.map((d) => ({ type: "available" as const, strength: "rule" as const, ...wEvery(d) }));
+
+  // PP-counted FTE hours for a staff from the returned suggestions.
+  function ppHours(result: AutoScheduleResult, staffId: string, shifts: ScheduleShiftType[], ppStart: string, ppEnd: string): number {
+    const byId = new Map(shifts.map((s) => [s.id, s] as const));
+    let h = 0;
+    for (const s of result.suggestions) {
+      if (s.staffId !== staffId || s.date < ppStart || s.date > ppEnd) continue;
+      const st = byId.get(s.shiftTypeId);
+      if (!st || !st.countsTowardFte) continue;
+      const dow = new Date(s.date + "T12:00:00").getDay();
+      if ((dow === 0 || dow === 6) && !st.countsOnWeekend) continue;
+      h += st.defaultHours;
+    }
+    return h;
+  }
+
+  it("rebalances a +4/-4 split to target via same-day OR↔ORL exchange (BC/DH case)", () => {
+    // p1 has all 5 weekdays, p2 only Mon–Thu. Target 44 forces every available
+    // day to be worked, and exactly: p1 needs 1 ORL, p2 needs 3. ORL coverage is
+    // 1/day Mon–Thu (4 slots = 1+3). Even distribution misallocates 2/2, leaving
+    // p1 +4 and p2 -4; STEP 3b swaps to 0/0 without breaking ORL coverage.
+    const shifts = [OR, ORL, OFF];
+    const result = runSchedule({
+      dates: weekdayDates("2025-05-12", 5),
+      staff: [
+        makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] }),
+        makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"], availabilityRules: availDays([1, 2, 3, 4]) }),
+      ],
+      shiftTypes: shifts,
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 44 }],
+      staffingRequirements: [1, 2, 3, 4].map((d) => ({ shiftCode: "ORL", dayKey: String(d), minCount: 1 })),
+    });
+
+    expect(ppHours(result, "p1", shifts, "2025-05-11", "2025-05-24")).toBe(44);
+    expect(ppHours(result, "p2", shifts, "2025-05-11", "2025-05-24")).toBe(44);
+    // The repair pass actually acted.
+    expect(result.stats.byStep.repair ?? 0).toBeGreaterThanOrEqual(1);
+    // ORL coverage preserved: exactly 1 ORL on each required day.
+    for (const d of ["2025-05-12", "2025-05-13", "2025-05-14", "2025-05-15"]) {
+      expect(result.suggestions.filter((s) => s.code === "ORL" && s.date === d)).toHaveLength(1);
+    }
+    // Both on target → no hour-deviation warnings.
+    expect(result.warnings.some((w) => w.includes("target"))).toBe(false);
+  });
+
+  it("never creates an illegal adjacency or breaks coverage (follow-rule legality)", () => {
+    // ORL-after-ORL is blocked. Three non-consecutive ORLs can't fit in Mon–Thu,
+    // so perfect balance is impossible — the repair must still NOT place two ORLs
+    // back-to-back for anyone, and must keep ORL coverage intact.
+    const shifts = [OR, ORL, OFF];
+    const dates = weekdayDates("2025-05-12", 5);
+    const result = runSchedule({
+      dates,
+      staff: [
+        makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] }),
+        makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"], availabilityRules: availDays([1, 2, 3, 4]) }),
+      ],
+      shiftTypes: shifts,
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 44 }],
+      staffingRequirements: [1, 2, 3, 4].map((d) => ({ shiftCode: "ORL", dayKey: String(d), minCount: 1 })),
+      followRules: [{ sourceShiftId: "st-orl", allowedShiftId: "st-orl", allowOffShifts: false, mode: "block" }],
+    });
+
+    for (const id of ["p1", "p2"]) {
+      const orlDates = new Set(result.suggestions.filter((s) => s.staffId === id && s.code === "ORL").map((s) => s.date));
+      for (let i = 0; i < dates.length - 1; i++) {
+        expect(orlDates.has(dates[i]) && orlDates.has(dates[i + 1])).toBe(false);
+      }
+    }
+    for (const d of ["2025-05-12", "2025-05-13", "2025-05-14", "2025-05-15"]) {
+      expect(result.suggestions.filter((s) => s.code === "ORL" && s.date === d)).toHaveLength(1);
+    }
+  });
+
+  it("flags an irreducible overage from scarce eligibility (Class 2)", () => {
+    // ICU (10h) required every weekday but only p1 is eligible → p1 absorbs 5×10
+    // = 50h against a 40h target. No legal swap exists (p2 can't do ICU and the
+    // hours just shift), so the audit reports it as structural.
+    const shifts = [OR, ICU, OFF];
+    const result = runSchedule({
+      dates: weekdayDates("2025-05-12", 5),
+      staff: [
+        makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-icu", "st-off"] }),
+        makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-off"] }),
+      ],
+      shiftTypes: shifts,
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
+      staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "ICU", dayKey: String(d), minCount: 1 })),
+    });
+
+    expect(ppHours(result, "p1", shifts, "2025-05-11", "2025-05-24")).toBe(50);
+    expect(
+      result.warnings.some((w) => w.includes("AB") && w.includes("over target") && w.includes("ICU")),
+    ).toBe(true);
+  });
+
+  it("routes a scarce long shift to whoever it brings closest to target (Option B)", () => {
+    // p2 already has 24h locked this PP (target 36 → needs exactly one 12h ORL).
+    // p1 has 0h. The single ORL slot must go to p2 (best fit), not p1.
+    const shifts = [OR, ORL, OFF];
+    const result = runSchedule({
+      dates: ["2025-05-15", "2025-05-16"], // Thu, Fri
+      staff: [
+        makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] }),
+        makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] }),
+      ],
+      shiftTypes: shifts,
+      existingAssignments: ["2025-05-12", "2025-05-13", "2025-05-14"].map((date) => ({
+        staffId: "p2", date, shiftTypeId: "st-or", code: "OR", isLocked: true,
+      })),
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 36 }],
+      staffingRequirements: [{ shiftCode: "ORL", dayKey: "4", minCount: 1 }],
+    });
+
+    const orl = result.suggestions.find((s) => s.code === "ORL");
+    expect(orl?.staffId).toBe("p2");
+  });
+
+  it("never moves a required-follower SOURCE shift (followers stay intact)", () => {
+    // Same +4/-4 ORL imbalance as the rebalance test, but ORL is now a follower
+    // SOURCE (each ORL → an X recovery day). The repair must NOT relocate an ORL,
+    // because its follower was placed relative to it and we don't move followers
+    // here. Invariant: every ORL is still immediately followed by its X for the
+    // same staff (which would break if the repair had moved an ORL).
+    const shifts = [OR, ORL, OFF];
+    const dates = weekdayDates("2025-05-12", 5);
+    const result = runSchedule({
+      dates,
+      staff: [
+        makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] }),
+        makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"], availabilityRules: availDays([1, 2, 3, 4]) }),
+      ],
+      shiftTypes: shifts,
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 44 }],
+      staffingRequirements: [1, 2, 3].map((d) => ({ shiftCode: "ORL", dayKey: String(d), minCount: 1 })),
+      requiredFollowers: [
+        { sourceShiftId: "st-orl", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false },
+      ],
+    });
+
+    const orls = result.suggestions.filter((s) => s.code === "ORL");
+    expect(orls.length).toBeGreaterThan(0);
+    // No ORL was produced by the repair pass…
+    expect(orls.every((s) => s.step !== "repair")).toBe(true);
+    // …and every ORL still has its X recovery follower the next day.
+    for (const o of orls) {
+      const nx = new Date(o.date + "T12:00:00");
+      nx.setDate(nx.getDate() + 1);
+      const nextDate = `${nx.getFullYear()}-${String(nx.getMonth() + 1).padStart(2, "0")}-${String(nx.getDate()).padStart(2, "0")}`;
+      expect(
+        result.suggestions.some((s) => s.staffId === o.staffId && s.date === nextDate && s.code === "X"),
+      ).toBe(true);
+    }
+  });
+});

@@ -391,7 +391,11 @@ export function autoSchedule({
   // `noCount` marks a cell placed as a non-counting required follower: its worked
   // hours still count toward FTE, but it does NOT satisfy staffing requirements or
   // min/max targets for its shift (see countsTowardTargets).
-  const grid = new Map<string, { shiftTypeId: string; code: string; locked: boolean; noCount?: boolean }>();
+  // `step` records the engine step that placed the cell (undefined for cells
+  // loaded from existingAssignments). The hour-balancing repair (STEP 3b) reads
+  // it to swap only scheduler-placed coverage/fill cells, never authoritative
+  // placements (leave, standing commitments, honored requests, followers).
+  const grid = new Map<string, { shiftTypeId: string; code: string; locked: boolean; noCount?: boolean; step?: string }>();
   for (const a of existingAssignments) {
     grid.set(`${a.staffId}:${a.date}`, {
       shiftTypeId: a.shiftTypeId,
@@ -514,7 +518,7 @@ export function autoSchedule({
     const key = `${staffId}:${date}`;
     const existing = grid.get(key);
     if (existing && !(offShift && existing.shiftTypeId === offShift.id && !existing.locked)) return;
-    grid.set(key, { shiftTypeId: shiftType.id, code: shiftType.code, locked: false, noCount });
+    grid.set(key, { shiftTypeId: shiftType.id, code: shiftType.code, locked: false, noCount, step });
     suggestions.push({
       staffId,
       date,
@@ -982,6 +986,29 @@ export function autoSchedule({
     for (const p of eligible) runCount.set(p.id, 0);
 
     function pickStaff(pool: ScheduleStaff[], date?: string): ScheduleStaff {
+      // Option B: for shifts longer than the fill shift, prefer the staff whose
+      // resulting PP hours land closest to their target (best fit), so scarce
+      // long shifts (e.g. ORL=12h) go to whoever needs the extra hours to reach
+      // target — not merely whoever is next in the even-distribution rotation.
+      // This is ranked BELOW every hard/soft min/max + request signal AND below
+      // even distribution (it only breaks ties among equally-distributed
+      // candidates), so it can never concentrate a long shift on one person —
+      // preserving the Slice-2 ORC even-distribution guarantee. Gated to long
+      // shifts. It's the secondary lever; STEP 3b's repair pass is the guarantee.
+      const fillHrsForFit = fillShift ? fillShift.defaultHours : 0;
+      let fitMap: Map<string, number> | null = null;
+      if (date && fillHrsForFit > 0 && st.defaultHours > fillHrsForFit) {
+        const pp = findPPForDate(date);
+        if (pp) {
+          fitMap = new Map();
+          for (const p of pool) {
+            const target = pp.targetHours * p.ftePercentage;
+            if (target <= 0) { fitMap.set(p.id, Infinity); continue; }
+            const projected = ppHoursForStaff(p.id, pp) + getShiftHours(p.id, st, overrideMap);
+            fitMap.set(p.id, Math.abs(target - projected));
+          }
+        }
+      }
       pool.sort((a, b) => {
         if (date) {
           // Hard minimum deficit first — a staff who MUST reach a required minimum
@@ -1007,6 +1034,14 @@ export function autoSchedule({
         }
         const countDiff = (runCount.get(a.id) ?? 0) - (runCount.get(b.id) ?? 0);
         if (countDiff !== 0) return countDiff;
+        // Option B best-fit (long shifts only): among equally-distributed
+        // candidates, prefer whoever's post-assignment hours land closest to
+        // target. Subordinate to even distribution so it never concentrates.
+        if (fitMap) {
+          const fitA = fitMap.get(a.id) ?? Infinity;
+          const fitB = fitMap.get(b.id) ?? Infinity;
+          if (fitA !== fitB) return fitA - fitB;
+        }
         const lastA = lastRunDate.get(a.id) ?? "";
         const lastB = lastRunDate.get(b.id) ?? "";
         if (lastA !== lastB) return lastA.localeCompare(lastB);
@@ -1390,6 +1425,12 @@ export function autoSchedule({
 
   // ── STEP 3: Fill shift to hit FTE hour targets (day-off clustering) ──
 
+  // Records why STEP 3 couldn't lift a staff to target (key `staffId:ppStart` →
+  // "days" = not enough available days / fill-divisibility, "max" = blocked by a
+  // max-shift cap). The post-repair audit reads this so a residual shortfall is
+  // reported with its real cause AND reflects the final (post-repair) state.
+  const fillShortfallCause = new Map<string, string>();
+
   const holShift = shiftTypes.find((st) => st.code === "HOL" && st.countsTowardFte) ?? null;
 
   if (fillShift) {
@@ -1521,17 +1562,17 @@ export function autoSchedule({
           isAvailable(staff, d, fillShift)
         );
 
+        // Hour-deviation warnings are deferred to the post-repair audit so they
+        // reflect FINAL state — STEP 3b may still close an under-target gap by
+        // exchanging a longer shift in. Here we only record the CAUSE; the audit
+        // emits the warning if a shortfall survives the repair.
+        const shortfallKey = `${staff.id}:${pp.startDate}`;
         if (availableDates.length === 0) {
-          if (hoursNeeded > 0) {
-            warnings.push(`${staff.initials}: needs ${hoursNeeded}hrs but no available days in PP ${pp.startDate}`);
-          }
+          fillShortfallCause.set(shortfallKey, "days");
           continue;
         }
-
         if (availableDates.length * hoursPerDay < hoursNeeded) {
-          warnings.push(
-            `${staff.initials}: cannot reach ${target}hrs — max ${currentHours + availableDates.length * hoursPerDay}hrs with ${availableDates.length} days`
-          );
+          fillShortfallCause.set(shortfallKey, "days");
         }
 
         const fillDaysNeeded = Math.min(
@@ -1581,8 +1622,8 @@ export function autoSchedule({
         for (const date of fillDates) {
           if (hours >= target) break;
           const shift = holidaySet.has(date) && holShift ? holShift : fillShift;
-          // Rolling max is date-dependent — note the cap but keep trying later
-          // dates (the warning below only fires if we still fall short of target).
+          // Rolling max is date-dependent — skip a capped date, keep trying later
+          // ones. A residual shortfall is reported by the post-repair audit.
           if (isAtMaximum(staff, shift, date)) { cappedByMax = true; continue; }
           const shiftHrs = getShiftHours(staff.id, shift, overrideMap);
           assign(staff.id, date, shift,
@@ -1591,11 +1632,259 @@ export function autoSchedule({
           hours += shiftHrs;
         }
         if (cappedByMax && hours < target) {
-          warnings.push(`${staff.initials}: ${hours}/${target}hrs in PP ${pp.startDate} — capped by max shift limit`);
+          fillShortfallCause.set(`${staff.id}:${pp.startDate}`, "max");
         }
       }
     }
   }
+
+  // Counted FTE hours a shift contributes for a staff on a date (honors the
+  // weekend rule and per-staff overrides) — the unit the repair optimizes.
+  function countedHrs(staffId: string, st: ScheduleShiftType, date: string): number {
+    if (!st.countsTowardFte) return 0;
+    if (isWeekend(date) && !st.countsOnWeekend) return 0;
+    return getShiftHours(staffId, st, overrideMap);
+  }
+
+  // Authoritative placements the repair must never disturb. Cells with no step
+  // (loaded from existingAssignments), locked cells, and non-counting followers
+  // are also excluded below.
+  const NON_SWAPPABLE_STEPS = new Set(["request-leave", "request-shift", "standing", "follower", "off"]);
+
+  function isSwappableCell(cell: { shiftTypeId: string; locked: boolean; noCount?: boolean; step?: string }): boolean {
+    if (cell.locked || cell.noCount || !cell.step || NON_SWAPPABLE_STEPS.has(cell.step)) return false;
+    // A required-follower SOURCE (e.g. ORC→X recovery) must not move: its follower
+    // was placed relative to this cell and we don't relocate/revalidate followers
+    // here. (Follower cells themselves carry step "follower" and are excluded
+    // above.) Moving a source would orphan the old follower and drop the new
+    // holder's required follower.
+    if (followerBySource.has(cell.shiftTypeId)) return false;
+    const st = stById.get(cell.shiftTypeId);
+    if (!st) return false;
+    return st.countsTowardFte && !st.isLeave && !st.isOffShift && st.autoSchedulable;
+  }
+
+  // Could `staff` legally hold `st` on `date` if it replaced their current cell?
+  // Mirrors isAvailable's gates MINUS the empty-cell + per-day-cap checks (a
+  // same-day exchange preserves per-day counts), and INCLUDING availability
+  // legality (working-day rules / approved requests) per review feedback.
+  function canHoldForSwap(staff: ScheduleStaff, st: ScheduleShiftType, date: string, ppRangesAll: PayPeriodRange[]): boolean {
+    let eligible = eligibleShiftSets.get(staff.id)?.has(st.id) ?? false;
+    if (staff.shiftEligibilityRules && staff.shiftEligibilityRules.length > 0) {
+      const r = evaluateShiftEligibility(staff.shiftEligibilityRules, st.id, date, ppRangesAll);
+      if (r !== null) eligible = r.eligible || (r.weight < 0 && r.weight > -10);
+    }
+    if (!eligible) return false;
+    if (requestBlocksWork(staff.id, date, st)) return false;
+    if (!st.ignoresWorkingDays) {
+      const avail = evaluateAvailability(
+        staff.availabilityRules, date, payPeriods, (pid, d) => isAssigned(pid, d)
+      );
+      if (!avail.available) return false;
+    }
+    const prev = getCell(staff.id, prevDate(date));
+    if (prev && !isShiftAllowedAfter(followMap, prev.shiftTypeId, st.id, st.isOffShift)) return false;
+    const next = getCell(staff.id, nextDate(date));
+    if (next) {
+      const nextSt = stById.get(next.shiftTypeId);
+      if (nextSt && !isShiftAllowedAfter(followMap, st.id, next.shiftTypeId, nextSt.isOffShift)) return false;
+    }
+    if (isAtMaximum(staff, st, date)) return false;
+    return true;
+  }
+
+  // Would removing one `lostSt` from `staff` (at `date`) drop them below a HARD
+  // minimum target for that shift? (Soft preferences never block a hours fix.)
+  function swapBreaksHardMin(staff: ScheduleStaff, lostSt: ScheduleShiftType, date: string, ppRangesAll: PayPeriodRange[]): boolean {
+    const targets = (staff.shiftMinimumTargets ?? []).filter(
+      (t) => t.shiftTypeId === lostSt.id && (t.strength ?? "rule") === "rule" && t.minCount > 0,
+    );
+    for (const t of targets) {
+      const bounds = getWindowBounds(t, date, ppRangesAll);
+      if (!bounds) continue;
+      let count = 0;
+      for (const [k, v] of grid.entries()) {
+        if (k.startsWith(staff.id + ":") && v.code === lostSt.code && !v.noCount) {
+          const d = k.split(":")[1];
+          if (d >= bounds.start && d <= bounds.end) count++;
+        }
+      }
+      if (count - 1 < t.minCount) return true;
+    }
+    return false;
+  }
+
+  // Secondary tiebreak: does the swap improve soft (preference) min satisfaction?
+  // Gaining a shift you're soft-short on is good; losing one you're short on is bad.
+  function softPrefDelta(staff: ScheduleStaff, gainedSt: ScheduleShiftType, lostSt: ScheduleShiftType, date: string): number {
+    let delta = 0;
+    if (getMinimumDeficit(staff, gainedSt, date, "preference") > 0) delta += 1;
+    if (getMinimumDeficit(staff, lostSt, date, "preference") > 0) delta -= 1;
+    return delta;
+  }
+
+  function repairPayPeriodHours(): void {
+    const ppRangesAll: PayPeriodRange[] = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
+    const repairPPs = payPeriods.filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate));
+    const MAX_ITERS = 1000;
+
+    for (const pp of repairPPs) {
+      const ppDates = dates.filter((d) => d >= pp.startDate && d <= pp.endDate);
+      let guard = 0;
+      while (guard++ < MAX_ITERS) {
+        // Current per-staff deviation (hours − FTE-scaled target) for this PP.
+        const dev = new Map<string, number>();
+        for (const p of activeStaff) {
+          const target = pp.targetHours * p.ftePercentage;
+          if (target <= 0) continue;
+          dev.set(p.id, ppHoursForStaff(p.id, pp) - target);
+        }
+
+        type Swap = { aId: string; bId: string; date: string; aSt: ScheduleShiftType; bSt: ScheduleShiftType; gain: number; pref: number };
+        let best: Swap | null = null;
+
+        for (const date of ppDates) {
+          const cells: { id: string; staff: ScheduleStaff; st: ScheduleShiftType }[] = [];
+          for (const p of activeStaff) {
+            if (!dev.has(p.id)) continue;
+            const cell = grid.get(`${p.id}:${date}`);
+            if (!cell || !isSwappableCell(cell)) continue;
+            const st = stById.get(cell.shiftTypeId);
+            if (st) cells.push({ id: p.id, staff: p, st });
+          }
+          for (let i = 0; i < cells.length; i++) {
+            for (let j = i + 1; j < cells.length; j++) {
+              const A = cells[i], B = cells[j];
+              const devA = dev.get(A.id)!, devB = dev.get(B.id)!;
+              const hA = countedHrs(A.id, A.st, date), hB = countedHrs(B.id, B.st, date);
+              const hAnew = countedHrs(A.id, B.st, date), hBnew = countedHrs(B.id, A.st, date);
+              const devAn = devA - hA + hAnew;
+              const devBn = devB - hB + hBnew;
+              const gain = (Math.abs(devA) + Math.abs(devB)) - (Math.abs(devAn) + Math.abs(devBn));
+              if (gain <= 0) continue;
+              // Cheap reject before legality: only consider if it could beat best.
+              if (best && gain < best.gain) continue;
+              if (!canHoldForSwap(A.staff, B.st, date, ppRangesAll)) continue;
+              if (!canHoldForSwap(B.staff, A.st, date, ppRangesAll)) continue;
+              if (swapBreaksHardMin(A.staff, A.st, date, ppRangesAll)) continue;
+              if (swapBreaksHardMin(B.staff, B.st, date, ppRangesAll)) continue;
+              const pref = softPrefDelta(A.staff, B.st, A.st, date) + softPrefDelta(B.staff, A.st, B.st, date);
+              if (!best || gain > best.gain || (gain === best.gain && pref > best.pref)) {
+                best = { aId: A.id, bId: B.id, date, aSt: A.st, bSt: B.st, gain, pref };
+              }
+            }
+          }
+        }
+
+        if (!best) break;
+        // Apply: A takes B's shift, B takes A's shift. Sync grid AND suggestions
+        // (the returned schedule) so the saved result matches the repair.
+        applyRepairCell(best.aId, best.date, best.bSt);
+        applyRepairCell(best.bId, best.date, best.aSt);
+        byStep["repair"] = (byStep["repair"] || 0) + 1;
+      }
+    }
+  }
+
+  function applyRepairCell(staffId: string, date: string, st: ScheduleShiftType): void {
+    const key = `${staffId}:${date}`;
+    grid.set(key, { shiftTypeId: st.id, code: st.code, locked: false, noCount: false, step: "repair" });
+    for (let i = suggestions.length - 1; i >= 0; i--) {
+      const s = suggestions[i];
+      if (s.staffId === staffId && s.date === date) {
+        s.shiftTypeId = st.id;
+        s.code = st.code;
+        s.reason = `${st.code} (hour-balance repair)`;
+        s.step = "repair";
+        s.confidence = 0.65;
+        return;
+      }
+    }
+  }
+
+  function auditPayPeriodHours(): void {
+    const auditPPs = payPeriods.filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate));
+    // Eligible-pool size per shift code among active auto-scheduled staff. A tiny
+    // pool means coverage for that shift is structurally hard to balance.
+    const SCARCE_POOL = 3;
+    const poolByCode = new Map<string, number>();
+    for (const st of shiftTypes) {
+      let n = 0;
+      for (const p of activeStaff) if (eligibleShiftSets.get(p.id)?.has(st.id)) n++;
+      poolByCode.set(st.code, n);
+    }
+    for (const pp of auditPPs) {
+      for (const staff of activeStaff) {
+        const target = pp.targetHours * staff.ftePercentage;
+        if (target <= 0) continue;
+        const hours = ppHoursForStaff(staff.id, pp);
+        const dev = Math.round(hours - target);
+        if (dev === 0) continue;
+        // A scarce-eligibility shift this staff actually worked in the PP marks
+        // the deviation as structural (Class 2 — no engine fix).
+        let scarce: string | null = null;
+        const cur = new Date(pp.startDate + "T12:00:00");
+        const end = new Date(pp.endDate + "T12:00:00");
+        while (cur <= end) {
+          const d = toDateStr(cur);
+          const cell = getCell(staff.id, d);
+          if (cell) {
+            const st = stById.get(cell.shiftTypeId);
+            if (st && st.countsTowardFte && !st.isLeave && (poolByCode.get(st.code) ?? 99) <= SCARCE_POOL) {
+              scarce = st.code;
+              break;
+            }
+          }
+          cur.setDate(cur.getDate() + 1);
+        }
+        if (dev > 0) {
+          warnings.push(
+            `${staff.initials}: over target — ${hours}/${target}hrs (+${dev}) in PP ${pp.startDate}` +
+            (scarce ? ` — driven by ${scarce} (only ${poolByCode.get(scarce)} eligible); no legal rebalance` : ` — no legal rebalance available`),
+          );
+        } else {
+          // Prefer the specific STEP-3 cause (max cap / not enough days); fall
+          // back to eligibility-scarcity, then a generic note.
+          const cause = fillShortfallCause.get(`${staff.id}:${pp.startDate}`);
+          let detail: string;
+          if (cause === "max") detail = " — capped by max shift limit";
+          else if (cause === "days") detail = ` — cannot reach ${target}hrs with available days`;
+          else if (scarce) detail = ` — constrained by ${scarce} (only ${poolByCode.get(scarce)} eligible)`;
+          else detail = " — no legal rebalance available";
+          warnings.push(
+            `${staff.initials}: under target — ${hours}/${target}hrs (${dev}) in PP ${pp.startDate}${detail}`,
+          );
+        }
+      }
+    }
+  }
+
+  // ── STEP 3b: Hour-balancing repair (same-day shift-type exchanges) ──
+  //
+  // The steps above satisfy coverage and top hours UP toward each pay-period
+  // target, but treat the target only as a one-directional ceiling: a person can
+  // still land a few hours under (no fill-divisible way to close the gap) or over
+  // (a long coverage shift overshot). Because shifts come in different lengths
+  // (OR=8, ORL=12, ORC=16…), the fix is almost always to swap shift TYPES between
+  // two staff on the SAME day — which provably preserves per-day coverage counts
+  // AND every per-day cap (the count of each shift on that date is unchanged).
+  //
+  // This is a greedy hill-climb: repeatedly apply the single legal same-day
+  // exchange that most reduces total |hours − target| within a pay period, until
+  // none improves. Deviations are integers that strictly decrease each step, so
+  // it terminates. It NEVER worsens hours, breaks coverage, or violates a hard
+  // constraint (eligibility, availability, follow rules, hard min/max). Residual
+  // gaps it can't legally close are reported by the audit below (Class 2).
+  if (fillShift) {
+    repairPayPeriodHours();
+  }
+
+  // ── Post-repair hours audit ──
+  // Emit one warning per residual nonzero PP-hour deviation, AFTER the repair so
+  // it reflects final state. Tag deviations driven by scarce-eligibility shifts
+  // (tiny eligible pool, e.g. ICU/CARD) as structural — no legal rebalance exists
+  // (Class 2: needs more eligible staff / a count change, not an engine fix).
+  auditPayPeriodHours();
 
   // ── STEP 4: Fill all remaining empty cells with X (day off) ──
   if (offShift) {
