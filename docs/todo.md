@@ -9,30 +9,18 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## To do — before "Live" mode
 
-### 1. Settings → Shift types: split "Hours per shift" into weekday / weekend / holiday
-Today each shift type has a single **Hours per shift** field. Replace it with **three** fields:
-- **Hours per shift (weekdays)**
-- **Hours per shift (weekends)**
-- **Hours per shift (holidays)**
-
-Then integrate all three into the code so every place that computes a shift's hours uses the right
-value for the kind of day (weekday vs weekend vs holiday).
-
-*Implementation notes:* shift types currently store one `defaultHours`; this adds the weekend + holiday
-split at the shift-type level. The engine's hour math already distinguishes weekday vs weekend (from the
-per-staff overrides in handoff #225) but does **not** handle holidays yet. Needs a schema change +
-migration with back-compat (existing `defaultHours` → the weekday value). Keep the three hour-math sites
-in sync — engine `getShiftHours`, equity `graph/model.ts`, and `schedule-grid.tsx` (PP totals/alerts);
-see #225 / the three-sites note.
-
-### 2. Staff modal: "Override shift hours" toggle → per-staff, per-shift hours
+### 1. Staff modal: "Override shift hours" toggle → per-staff, per-shift hours
 Add a boolean **Override shift hours** to the Staff add/edit modal. When it's ON, open a shift picker
 that lets you set a **different number of hours for each shift, for that one staff member**, by day
 type. Example: **CARD (weekdays) = 8**.
 
 *Implementation notes:* per-staff weekday/weekend overrides already exist (`StaffShiftOverride`, handoff
-#225); this puts them behind the new boolean toggle and extends them to **holidays** to match item 1.
-Builds on item 1's weekday/weekend/holiday model.
+#225); this puts them behind the new boolean toggle and extends them to **holidays** to match the
+shipped shift-type model. Builds on the weekday/weekend/holiday shift-type model shipped in handoff
+**#232** — `StaffShiftOverride` still needs a `durationHrsHoliday` column; today holiday hours mirror
+the override's weekend value (Codex NOTE on #232). The settings UI already exposes a per-shift
+weekday/weekend editor (`ShiftHoursOverrideEditor` in `staff-page.tsx`) keyed off
+`defaultHoursWeekend > 0` — extend it with the toggle + holiday field.
 
 ---
 
@@ -64,6 +52,7 @@ Builds on item 1's weekday/weekend/holiday model.
 > weekday/weekend hours #225, the multi-option 4a/4b engine, and the 4c "Options" UI that was added
 > then rolled back), see handoffs **#190–#230** and `HANDOFFS.md`.
 
+- [x] **Shift types: split "Hours per shift" into weekday / weekend / holiday** — three per-day-type hour fields per shift type (`defaultHours` = weekday + new `defaultHoursWeekend`/`defaultHoursHoliday`); dropped the "Count hours on weekends" flag (0 vs non-zero now encodes it). All 3 hour-math sites holiday-aware (holiday wins over weekend). `28c738c`, #232.
 - [x] **Refresh the requests inbox after a schedule change honors/un-honors a request** — focus/visibility revalidation, client-only. `873a9ce`, #151.
 - [x] **Collapse fee-basis staff into one "OTHER" print column** — print-only, global Settings toggle, data-driven by `EmploymentType.collapsesIntoOther`. `b19bf31`, #149.
 - [x] **Printed schedule polish + page-width fit** — brand header, bold black headers, fixed row height, `table-layout:fixed` to fit the page. `a2ec652`/`7f2d23b`/`22dce87`, #148/#149.
