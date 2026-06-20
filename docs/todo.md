@@ -9,18 +9,8 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## To do — before "Live" mode
 
-### 1. Staff modal: "Override shift hours" toggle → per-staff, per-shift hours
-Add a boolean **Override shift hours** to the Staff add/edit modal. When it's ON, open a shift picker
-that lets you set a **different number of hours for each shift, for that one staff member**, by day
-type. Example: **CARD (weekdays) = 8**.
-
-*Implementation notes:* per-staff weekday/weekend overrides already exist (`StaffShiftOverride`, handoff
-#225); this puts them behind the new boolean toggle and extends them to **holidays** to match the
-shipped shift-type model. Builds on the weekday/weekend/holiday shift-type model shipped in handoff
-**#232** — `StaffShiftOverride` still needs a `durationHrsHoliday` column; today holiday hours mirror
-the override's weekend value (Codex NOTE on #232). The settings UI already exposes a per-shift
-weekday/weekend editor (`ShiftHoursOverrideEditor` in `staff-page.tsx`) keyed off
-`defaultHoursWeekend > 0` — extend it with the toggle + holiday field.
+Both pre-Live items are now shipped (shift-type hours by day type #232; per-staff "Override shift
+hours" toggle + holiday override #234). **"Live" mode (below) is unblocked.**
 
 ---
 
@@ -52,6 +42,7 @@ weekday/weekend editor (`ShiftHoursOverrideEditor` in `staff-page.tsx`) keyed of
 > weekday/weekend hours #225, the multi-option 4a/4b engine, and the 4c "Options" UI that was added
 > then rolled back), see handoffs **#190–#230** and `HANDOFFS.md`.
 
+- [x] **Staff modal: "Override shift hours" toggle → per-staff, per-shift hours by day type** — master toggle reveals a per-eligible-shift weekday/weekend/holiday editor; new `StaffShiftOverride.durationHrsHoliday` (nullable, mirrors weekend when unset); all 3 hour-math sites read the holiday column. `208ca9d`, #234.
 - [x] **Shift types: split "Hours per shift" into weekday / weekend / holiday** — three per-day-type hour fields per shift type (`defaultHours` = weekday + new `defaultHoursWeekend`/`defaultHoursHoliday`); dropped the "Count hours on weekends" flag (0 vs non-zero now encodes it). All 3 hour-math sites holiday-aware (holiday wins over weekend). `28c738c`, #232.
 - [x] **Refresh the requests inbox after a schedule change honors/un-honors a request** — focus/visibility revalidation, client-only. `873a9ce`, #151.
 - [x] **Collapse fee-basis staff into one "OTHER" print column** — print-only, global Settings toggle, data-driven by `EmploymentType.collapsesIntoOther`. `b19bf31`, #149.
