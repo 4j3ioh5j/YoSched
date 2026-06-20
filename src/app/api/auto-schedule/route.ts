@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { autoSchedule, autoScheduleCandidates, describeQualityTradeoff } from "@/lib/auto-scheduler";
+import { autoSchedule } from "@/lib/auto-scheduler";
 import { parsePendingRequestMode, parseRequestConflictPolicy, type ScheduleRequestData } from "@/lib/schedule-requests";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { effectiveTargetsForStaff, type DepartmentShiftTarget } from "@/lib/department-targets";
@@ -177,7 +177,7 @@ export async function POST(req: NextRequest) {
     perFte: d.perFte,
   }));
 
-  const input = {
+  const result = autoSchedule({
     dates,
     staff: staff.map((p) => ({
       id: p.id,
@@ -361,29 +361,9 @@ export async function POST(req: NextRequest) {
       scope: r.scope,
       countsTowardTargets: r.countsTowardTargets,
     })),
-  };
+  });
 
-  // Multi-option mode (Slice 4c): when the caller asks for >1 candidate, generate
-  // K distinct, equally-feasible alternatives ranked best-first and return them
-  // with a per-candidate trade-off headline vs the best. Back-compat: when
-  // `candidates` is omitted or ≤ 1, return today's single-result shape unchanged.
-  const wantCandidates = Number((body as { candidates?: unknown }).candidates);
-  if (Number.isFinite(wantCandidates) && wantCandidates > 1) {
-    const generated = autoScheduleCandidates(input, Math.min(Math.floor(wantCandidates), 8));
-    const best = generated[0]?.result.quality;
-    return NextResponse.json({
-      candidates: generated.map((c) => ({
-        seed: c.seed,
-        suggestions: c.result.suggestions,
-        warnings: c.result.warnings,
-        stats: c.result.stats,
-        quality: c.result.quality,
-        tradeoff: best ? describeQualityTradeoff(c.result.quality, best) : "",
-      })),
-    });
-  }
-
-  return NextResponse.json(autoSchedule(input));
+  return NextResponse.json(result);
 }
 
 export async function PUT(req: NextRequest) {

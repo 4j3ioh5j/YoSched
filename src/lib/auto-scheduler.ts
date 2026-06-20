@@ -176,48 +176,6 @@ export function compareScheduleQuality(a: ScheduleQuality, b: ScheduleQuality): 
   return 0;
 }
 
-// One-sentence trade-off summary of a candidate schedule vs a reference (usually
-// the best/rank-leading candidate), derived from the #220-tier quality breakdown
-// deltas (Slice 4c). This is the headline the compare/choose UI shows per option.
-// Each tier maps to plain language; we lead with what the candidate gives up
-// (costs) then what it gains, so a human reads the genuine trade. Reporting from
-// the breakdown — not a per-cell heuristic — keeps it faithful to the same
-// objective that ranks the candidates. `tol` ignores sub-threshold fairness noise.
-export function describeQualityTradeoff(
-  candidate: ScheduleQuality,
-  reference: ScheduleQuality,
-  fairnessTol = 0.05,
-): string {
-  const c = candidate.breakdown, r = reference.breakdown;
-  const costs: string[] = [];
-  const gains: string[] = [];
-
-  const phrase = (delta: number, worseWord: string, betterWord: string, unit: (n: number) => string) => {
-    if (delta > 0) costs.push(`${unit(delta)} ${worseWord}`);
-    else if (delta < 0) gains.push(`${unit(-delta)} ${betterWord}`);
-  };
-
-  // T0 hard breaches (should be ≤ reference for any surfaced candidate, but report
-  // honestly if equal-tier siblings differ). T1 PP-hours. T2 request grants.
-  phrase(c.hardBreaches - r.hardBreaches, "more hard-constraint breach(es)", "fewer hard-constraint breach(es)",
-    (n) => `${n}`);
-  phrase(c.ppHoursDeviation - r.ppHoursDeviation, "farther from pay-period targets", "closer to pay-period targets",
-    (n) => `${n}h`);
-  phrase(c.requestsDenied - r.requestsDenied, "more request-day(s) denied", "more request-day(s) granted",
-    (n) => `${n}`);
-  const fairDelta = c.fairnessSpread - r.fairnessSpread;
-  if (fairDelta > fairnessTol) costs.push("less even desirability spread");
-  else if (fairDelta < -fairnessTol) gains.push("more even desirability spread");
-
-  if (costs.length === 0 && gains.length === 0) return "Matches the best option on every measure";
-  const parts: string[] = [];
-  if (costs.length) parts.push(costs.join(", "));
-  if (gains.length) parts.push(`${costs.length ? "but " : ""}${gains.join(", ")}`);
-  // Capitalize first letter.
-  const s = parts.join("; ");
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
 function toDateStr(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");

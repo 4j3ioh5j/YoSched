@@ -515,20 +515,6 @@ export function ScheduleGrid({
   const [autoLoading, setAutoLoading] = useState(false);
 
   type SuggestionEntry = NonNullable<typeof autoSuggestions>[0];
-  // Multi-option candidates (Slice 4c): each is a full alternative schedule with a
-  // quality breakdown + a one-line trade-off vs the best. Selecting one loads its
-  // suggestions into the SAME overlay state above, so the grid render + Accept All
-  // flow are unchanged. null = single-result mode (no options generated).
-  type CandidateEntry = {
-    seed: number;
-    suggestions: SuggestionEntry[];
-    warnings: string[];
-    stats: { totalSlotsFilled: number; byStep: Record<string, number> };
-    quality: NonNullable<typeof autoQuality>;
-    tradeoff: string;
-  };
-  const [autoCandidates, setAutoCandidates] = useState<CandidateEntry[] | null>(null);
-  const [selectedSeed, setSelectedSeed] = useState<number | null>(null);
   const suggestionSet = useMemo(() => {
     if (!autoSuggestions) return new Set<string>();
     return new Set(autoSuggestions.map((s) => `${s.staffId}:${s.date}`));
@@ -2797,55 +2783,12 @@ export function ScheduleGrid({
         }),
       });
       const data = await res.json();
-      setAutoCandidates(null);
-      setSelectedSeed(null);
       setAutoSuggestions(data.suggestions);
       setAutoWarnings(data.warnings || []);
       setAutoStats(data.stats || null);
       setAutoQuality(data.quality || null);
     } catch (e) {
       console.error("Auto-schedule failed:", e);
-    } finally {
-      setAutoLoading(false);
-    }
-  }
-
-  // Load one candidate into the suggestion overlay (the grid + Accept All read
-  // these). Selecting a different option just swaps which schedule is previewed.
-  function selectCandidate(c: CandidateEntry) {
-    setSelectedSeed(c.seed);
-    setAutoSuggestions(c.suggestions);
-    setAutoWarnings(c.warnings || []);
-    setAutoStats(c.stats || null);
-    setAutoQuality(c.quality || null);
-  }
-
-  // Multi-option run (Slice 4c): ask the engine for K distinct, equally-feasible
-  // alternatives and preview the best. The user compares trade-offs and picks one;
-  // Accept All then applies whichever is selected. Falls back gracefully when the
-  // schedule is fully constrained (API returns a single candidate → behaves like a
-  // normal run with no picker).
-  async function runAutoScheduleOptions() {
-    setAutoLoading(true);
-    try {
-      const res = await fetch("/api/auto-schedule", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          startDate: dates[0],
-          endDate: dates[dates.length - 1],
-          candidates: 3,
-        }),
-      });
-      const data = await res.json();
-      const cands: CandidateEntry[] = data.candidates ?? [];
-      if (cands.length === 0) return;
-      // Only show the picker when there's a genuine choice; a single distinct
-      // option behaves like an ordinary run.
-      setAutoCandidates(cands.length > 1 ? cands : null);
-      selectCandidate(cands[0]);
-    } catch (e) {
-      console.error("Auto-schedule options failed:", e);
     } finally {
       setAutoLoading(false);
     }
@@ -2881,8 +2824,6 @@ export function ScheduleGrid({
       applyRequestDelta({ requests: data.requestChanges });
 
       pushUndo(undoOps);
-      setAutoCandidates(null);
-      setSelectedSeed(null);
       setAutoSuggestions(null);
       setAutoWarnings([]);
       setAutoStats(null);
@@ -3200,14 +3141,6 @@ export function ScheduleGrid({
                 {autoLoading ? "Working..." : "Auto-Schedule"}
               </button>
               <button
-                onClick={runAutoScheduleOptions}
-                disabled={autoLoading}
-                className="px-3 py-1 text-sm bg-emerald-800 hover:bg-emerald-700 disabled:opacity-50 rounded transition-colors text-emerald-100 font-medium"
-                title="Generate several equally-feasible options and compare their trade-offs before applying"
-              >
-                Options
-              </button>
-              <button
                 onClick={handleUndo}
                 className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-400"
                 title="Undo (Ctrl+Z)"
@@ -3266,40 +3199,6 @@ export function ScheduleGrid({
       {/* Auto-schedule review panel */}
       {autoSuggestions && (
         <div data-print-hide className="px-6 py-3 bg-emerald-950/50 border-b border-emerald-800 shrink-0">
-          {autoCandidates && autoCandidates.length > 1 && (
-            <div className="flex items-center gap-2 mb-2 flex-wrap">
-              <span className="text-xs text-emerald-400/80 font-medium mr-1">Options:</span>
-              {autoCandidates.map((c, i) => {
-                const isSel = c.seed === selectedSeed;
-                const q = c.quality.breakdown;
-                return (
-                  <button
-                    key={c.seed}
-                    onClick={() => selectCandidate(c)}
-                    title={`${i === 0 ? "Best overall. " : ""}${c.tradeoff}\n\nquality (lower is better): ${q.hardBreaches}b · ${q.ppHoursDeviation}h · ${q.requestsDenied}d · ${q.fairnessSpread}f`}
-                    className={`px-2 py-1 text-xs rounded transition-colors border ${
-                      isSel
-                        ? "bg-emerald-600 border-emerald-400 text-white font-semibold"
-                        : "bg-slate-800 border-slate-600 hover:bg-slate-700 text-slate-300"
-                    }`}
-                  >
-                    {i === 0 ? "★ " : ""}Option {i + 1}
-                    <span className="ml-1 opacity-70">
-                      {q.hardBreaches}·{q.ppHoursDeviation}·{q.requestsDenied}·{q.fairnessSpread}
-                    </span>
-                  </button>
-                );
-              })}
-              {(() => {
-                const sel = autoCandidates.find((c) => c.seed === selectedSeed);
-                return sel && sel.tradeoff ? (
-                  <span className="text-xs text-sky-300/80 ml-1 truncate max-w-[28rem]" title={sel.tradeoff}>
-                    {selectedSeed === autoCandidates[0].seed ? "Best overall" : `vs best — ${sel.tradeoff}`}
-                  </span>
-                ) : null;
-              })()}
-            </div>
-          )}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <span className="text-sm font-semibold text-emerald-300">
@@ -3333,7 +3232,7 @@ export function ScheduleGrid({
                 Accept All
               </button>
               <button
-                onClick={() => { setAutoCandidates(null); setSelectedSeed(null); setAutoSuggestions(null); setAutoWarnings([]); setAutoStats(null); setAutoQuality(null); }}
+                onClick={() => { setAutoSuggestions(null); setAutoWarnings([]); setAutoStats(null); setAutoQuality(null); }}
                 className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
               >
                 Dismiss
