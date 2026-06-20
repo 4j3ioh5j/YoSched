@@ -1,33 +1,76 @@
 # YoSched — TODO
 
-## Open
+This is the working task list, in plain English. **Keep it current:** when David asks to add or
+remove a task, update this file in the same session. Detailed open items are at the top; the shipped
+archive is at the bottom for traceability (full technical detail lives in the numbered handoffs in
+`~/Projects/handoffs/`, and `HANDOFFS.md` is the complete log).
 
-- [ ] **Multi-editor schedule coordination — Presence + conflict-detection** (approved 2026-06-11; 3 slices, correctness-first). With two `schedule:edit` users, edits were silent last-write-wins per cell and each grid sat stale. Plan (chose presence + conflict-detection over hard cell-locking):
-  - [x] **Slice 1 — grid focus/visibility revalidation** (`4ea4037`, deployed 2026-06-11) — the grid pulls in another editor's persisted changes on tab-back; idle-guarded so it never clobbers an open picker / in-flight save / drag. See handoff #152.
-  - [~] **Slice 2 — optimistic conflict-detection** — reuse the existing `Assignment.updatedAt` token (no migration); writes carry the last-seen token, server returns 409 + current value on a stale write, client offers "changed underneath you — overwrite?".
-    - [x] **2a (server CAS)** (`3a43197`, deployed 2026-06-11) — atomic compare-and-swap across all grid-driven write paths (assignments/bulk/auto-schedule); 409 `{staffId,date,current}`; pure helper + 15 tests; ships dormant/backward-compat. See handoff #153.
-    - [x] **2b — optimistic conflict UI** (name attribution) — COMPLETE
-      - [x] **2b-server** (`1982b8e`, deployed 2026-06-11) — `updatedBy` migration + stamping (6 routes) + private/batched name resolution in 409s + atomic force/swap locks. See handoff #154.
-      - [x] **2b-client** (`ad82558`, deployed 2026-06-11) — grid sends `baseUpdatedAt` per write; on conflict reverts + conflict dialog (Overwrite=force / Keep-theirs; bulk/auto "Overwrite all"); both-sides swap revert; undo pruning; full hard-refusal reconciliation. See handoff #155.
-  - [ ] **Slice 3 — presence** — `SchedulePresence` table + ~5s heartbeat poll (TTL-reaped); page banner of active editors + per-cell focus outline. Advisory. (Not started.)
+---
 
-## Done
+## To do — before "Live" mode
 
-- [x] **Refresh the request-box (inbox) status after a schedule assignment honors/un-honors a request** (`873a9ce`, PLAN #657 + REVIEW #659 APPROVED, deployed 2026-06-11) — The `/requests` inbox loaded its list once into `useState(initial)` with no refresh path, so a schedule assignment honoring/un-honoring a request (backend already writes the new status via `syncRequestApprovals`) was invisible until a hard reload. Added SWR-revalidateOnFocus-style behavior, client-only (`requests-page.tsx`): `router.refresh()` on window `focus` + document `visibilitychange`→visible, debounced 200ms (coalesces the two events + catches a write finishing just after refocus), reusing the existing force-dynamic server loader (no new endpoint). Refreshed server props are adopted into state via a `useRef`-guarded effect that defers while a mutation is in flight and only advances the ref on actual adoption (so a refresh landing mid-mutation isn't lost — CR #658 warning). No schema/API/logic change. See handoff #151.
+### 1. Settings → Shift types: split "Hours per shift" into weekday / weekend / holiday
+Today each shift type has a single **Hours per shift** field. Replace it with **three** fields:
+- **Hours per shift (weekdays)**
+- **Hours per shift (weekends)**
+- **Hours per shift (holidays)**
 
-- [x] **Collapse fee-basis staff into one "OTHER" print column** (`b19bf31`, PLAN #647 + REVIEW #649 APPROVED, deployed 2026-06-11) — Print-only: a single global Settings toggle (default ON) hides the individual fee-basis columns on the printout and shows one **OTHER** column with the comma-separated initials of fee-basis staff scheduled each day. On-screen grid unchanged. Which staff collapse is data-driven via `EmploymentType.collapsesIntoOther` (seeded ON for Fee Basis; runtime reads the flag, not the name) + global `SchedulingPreferences.collapseOtherOnPrint`. Pure `other-column.ts` helper + 4 tests; PP-summary rows stay aligned (blank OTHER cell). Migration `20260611131517`. See handoff #149.
+Then integrate all three into the code so every place that computes a shift's hours uses the right
+value for the kind of day (weekday vs weekend vs holiday).
 
-- [x] **Printed schedule polish + page-width fit** (`a2ec652`/`7f2d23b`/`22dce87`, deployed 2026-06-11) — Bold-centered "YoSched" brand above the month; bold + solid-black staff-initial headers and date column; light shade on "Bold on schedule" (CALL/ORC/ORL) cells; fixed row height. Fixed the width-bound print by forcing `table-layout:fixed` at 100% width (overriding the per-column widths) so the grid fits the page intrinsically instead of being shrunk. All `@media print`. See handoffs #148 + #149.
+*Implementation notes:* shift types currently store one `defaultHours`; this adds the weekend + holiday
+split at the shift-type level. The engine's hour math already distinguishes weekday vs weekend (from the
+per-staff overrides in handoff #225) but does **not** handle holidays yet. Needs a schema change +
+migration with back-compat (existing `defaultHours` → the weekday value). Keep the three hour-math sites
+in sync — engine `getShiftHours`, equity `graph/model.ts`, and `schedule-grid.tsx` (PP totals/alerts);
+see #225 / the three-sites note.
 
-- [x] **Consolidate staff request form to Request/Avoid (OR semantics)** (`b000686`, PLAN #621→v2 #623 + REVIEW #625 BLOCK→#627 APPROVED, deployed 2026-06-11) — Dropped the Time off / Leave tabs; staff My Requests now has two categories, **Request a shift** and **Avoid a shift**, each with Work and Leave/Time-off chip groups (Request also offers the Off chip), multi-select. A Request bundles its picks into one `REQUEST_SHIFT` (**OR** — scheduling any one satisfies it); Avoid into one `NEGATE_SHIFT`. Soft toggle + leave-queue feedback kept. No schema change (kinds reused; admin picker + legacy OFF/LEAVE untouched). Backend: `foldRequestsForDate` `isAwayShift` predicate (soft away→`avoidWorking`), auto-scheduler STEP 0b places off/leave Requests authoritatively by `sortOrder`, leave-queue counts away `REQUEST_SHIFT`s. +11 tests. See handoff #147. ⚠️ A deleted scratch file had a hardcoded staging DB credential — **rotate it** (still in git history).
+### 2. Staff modal: "Override shift hours" toggle → per-staff, per-shift hours
+Add a boolean **Override shift hours** to the Staff add/edit modal. When it's ON, open a shift picker
+that lets you set a **different number of hours for each shift, for that one staff member**, by day
+type. Example: **CARD (weekdays) = 8**.
 
-- [x] **Sortable /users columns + per-login persisted sort** (`76665ff`, PLAN #613 + REVIEW #615 + amend #617 APPROVED, deployed 2026-06-11) — Click any reasonable `/users` header (Name, Email, Group, Staff, Status, 2FA; Actions excluded) to sort; re-click flips asc/desc; active column shows a ▲/▼ caret. **Group sorts by hierarchy** (`group.level`), not alphabetically. Sort persists **per login server-side** (follows the account across devices) via new `User.uiPreferences` JSON + self-service `PUT /api/account/preferences` (own-row-only, 400 on bad shape); SSR loader seeds the initial sort. Pure tested comparator `src/lib/users-sort.ts` (group→level, null email/staff to the end, 3-rank Status, stable name/id tiebreak, locale-pinned collator) + 11 tests. Save debounced 400ms. Migration `20260611103901`. See handoff #146.
+*Implementation notes:* per-staff weekday/weekend overrides already exist (`StaffShiftOverride`, handoff
+#225); this puts them behind the new boolean toggle and extends them to **holidays** to match item 1.
+Builds on item 1's weekday/weekend/holiday model.
 
-- [x] **Printed schedule: month-only + B&W letters + "Bold on schedule" flag** (`0ac63a9`, PLAN #601 + REVIEW #603 APPROVED, deployed 2026-06-10) — All `@media print` only (screen unchanged). (1) Print only the calendar month — day rows carry `data-outside-month`, print CSS hides them so leading/trailing pay-period-padding days don't print. (2) Crisp B&W cell letters — shift-code div tagged `data-shift-code`; print CSS strips the colored pill (`transparent`/`#000`/no radius/padding, constant 10px). (3) New `ShiftType.boldOnSchedule` flag + Settings shift-modal checkbox (default on for CALL/ORC/ORL via the migration's own backfill UPDATE — no manual staging SQL); flagged shifts print bold. Migration `20260610151919`. Staging-verified: 3/23 shifts bold. See handoff #143.
+---
 
-- [x] **Users page + permissions admin overhaul** (`18bbef0`, CR #577 BLOCK→#583 APPROVED, deployed 2026-06-10) — Widened `/users` (`max-w-7xl`→`max-w-screen-2xl`); converted Groups & Permissions list + its edit form from inline downward accordions to **centered modals**. New **`requests:view`** permission; editor categories now mirror the nav tabs (split **My Requests** = `requests:self` and **Requests** = `requests:view` out of Schedule). `/requests` inbox re-gated `schedule:view`→`requests:view` (Staff excluded). New pure `isRequestVisibleToViewer` + server-side filter on the schedule page so users without `requests:view` never receive **others' pending** requests (own + approved only) — closes the grid-chrome leak; leave-queue standing (counts-only) untouched. Collapsed 4 drifting permission lists into one `src/lib/permission-catalog.ts` (fixes CR #578: API validator had dropped `requests:view`). See handoff #139.
+## Other open items
 
-- [x] **Rethink Staff ↔ Users linking** — eager auto-provisioning: every active staff gets a disabled shell login (3 gates: email, password, admin Active toggle), kept 2 entities 1:1 via `User.staffId`, manual link dropdown removed, `/users` is the activation home, `/staff` shows read-only login status. Last-active-admin invariant + shared `effectivePermissions`. Also dropped the unused `Staff.email` field and hardened the seed admin. 4 slices + seed, all CR-approved & deployed 2026-06-10. See handoffs #131, #132 + `docs/staff-users-linking-plan.md`.
+- [ ] **Verify the staging DB credential was rotated** — a since-deleted scratch file had a hardcoded
+  staging DB password that is still in git history (flagged in handoff #147). Confirm it was rotated; if
+  not, rotate it.
+- [ ] **Multi-editor coordination — Slice 3: presence** — `SchedulePresence` table + ~5s heartbeat poll
+  (TTL-reaped); page banner of active editors + per-cell focus outline. Advisory only. (Slices 1 & 2 —
+  focus-refresh + optimistic conflict detection — already shipped.) See handoffs #152–#155.
 
-- [x] **Statistics page truncated staff names** — `/equity` Staff Member column capped names at `max-w-[60px]` ("Corey Do…", "David He…"). Dropped the cap (whitespace-nowrap) + widened column w-44→w-56. Commit `c75ddcb`, deployed 2026-06-09.
-- [x] **Staff modals email field** — optional `Provider.email` (nullable) + Email input on the staff add/edit modal, validated via pure `normalizeOptionalEmail` (empty→null, else plausible-address, trimmed+lowercased), enforced in the staff API. Independent of the linked login User's email (see Staff↔Users rework). Migration `20260609170000_add_provider_email`. Commit `b7a487d`, deployed 2026-06-09.
+---
+
+## Next big feature (after the two items above)
+
+- **"Live" mode — interactive what-if scheduling.** Turn on Live, then edit any cell however you like
+  (drag, shift picker, keyboard, paste) and the engine **instantly re-solves** the rest to keep the
+  schedule feasible, **highlighting every cell it had to change**. Revert/advance arrows = undo/redo;
+  Accept commits, Cancel discards. Fully planned and de-risked (engine runs in-browser <5 ms; a real
+  edit ripples ~3 of 20 cells, not a rebuild). See handoff **#231** for the full plan and decisions.
+
+---
+
+## Shipped (archive)
+
+> One-liners for quick scanning — full detail is in the linked handoffs. This archive starts at
+> 2026-06-09; for everything shipped since (recurrence rework, request reconciliation, per-staff
+> weekday/weekend hours #225, the multi-option 4a/4b engine, and the 4c "Options" UI that was added
+> then rolled back), see handoffs **#190–#230** and `HANDOFFS.md`.
+
+- [x] **Refresh the requests inbox after a schedule change honors/un-honors a request** — focus/visibility revalidation, client-only. `873a9ce`, #151.
+- [x] **Collapse fee-basis staff into one "OTHER" print column** — print-only, global Settings toggle, data-driven by `EmploymentType.collapsesIntoOther`. `b19bf31`, #149.
+- [x] **Printed schedule polish + page-width fit** — brand header, bold black headers, fixed row height, `table-layout:fixed` to fit the page. `a2ec652`/`7f2d23b`/`22dce87`, #148/#149.
+- [x] **Staff request form → Request / Avoid (OR semantics)** — dropped Time-off/Leave tabs; Request a shift / Avoid a shift with multi-select chips. `b000686`, #147.
+- [x] **Sortable /users columns + per-login persisted sort** — click headers to sort, group sorts by hierarchy, sort saved per account. `76665ff`, #146.
+- [x] **Printed schedule: month-only + B&W letters + "Bold on schedule" flag** — print-only; new `ShiftType.boldOnSchedule` + Settings checkbox. `0ac63a9`, #143.
+- [x] **Users page + permissions admin overhaul** — widened page, centered modals, new `requests:view` permission, closed a pending-request grid leak. `18bbef0`, #139.
+- [x] **Rethink Staff ↔ Users linking** — auto-provisioned disabled shell logins, 1:1 via `User.staffId`, `/users` is the activation home. #131/#132 + `docs/staff-users-linking-plan.md`.
+- [x] **Statistics page: stop truncating staff names** — dropped the `/equity` name-width cap, widened the column. `c75ddcb`.
+- [x] **Staff modal email field** — optional, validated, independent of the linked login's email. `b7a487d`.
