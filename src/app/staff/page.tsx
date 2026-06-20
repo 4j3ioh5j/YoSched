@@ -122,7 +122,8 @@ export default async function Staff() {
           isLeave: st.isLeave,
           autoSchedulable: st.autoSchedulable,
           defaultHours: st.defaultHours,
-          countsOnWeekend: st.countsOnWeekend,
+          defaultHoursWeekend: st.defaultHoursWeekend,
+          defaultHoursHoliday: st.defaultHoursHoliday,
         }))}
       />
     </main>

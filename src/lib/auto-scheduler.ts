@@ -22,9 +22,10 @@ export type ScheduleShiftType = {
   id: string;
   code: string;
   name: string;
-  defaultHours: number;
+  defaultHours: number; // weekday hours (the base value)
+  defaultHoursWeekend: number; // hours on Sat/Sun; 0 = does not accrue weekend hours
+  defaultHoursHoliday: number; // hours on a holiday; 0 = none. Holiday wins over weekend.
   countsTowardFte: boolean;
-  countsOnWeekend: boolean;
   countsAsHolidayWork: boolean;
   isLeave: boolean;
   isOffShift: boolean;
@@ -99,8 +100,12 @@ type StaffOverride = {
   durationHrsWeekend?: number | null;
 };
 
+// A day's "kind" for hour math. Holiday takes precedence over weekend (a holiday
+// that falls on a Saturday is valued as a holiday, not a weekend).
+export type DayType = "weekday" | "weekend" | "holiday";
+
 // Resolved per-(staff,shiftType) hour override, split by day type.
-export type ShiftHourOverride = { weekday: number; weekend: number };
+export type ShiftHourOverride = { weekday: number; weekend: number; holiday: number };
 
 type DayPreference = {
   staffId: string;
@@ -192,20 +197,46 @@ function isWeekend(dateStr: string): boolean {
   return d === 0 || d === 6;
 }
 
+// Classify a date for hour math. Holiday wins over weekend.
+function dayTypeOf(dateStr: string, holidaySet: Set<string>): DayType {
+  if (holidaySet.has(dateStr)) return "holiday";
+  return isWeekend(dateStr) ? "weekend" : "weekday";
+}
+
 // Hours a shift is worth for a staff on a given day type. A per-staff override
-// can value the shift differently on weekdays vs weekends; with no override the
-// shift's defaultHours applies regardless. `isWeekend` is required so every
-// caller decides explicitly (capacity-bound callers without a single date take
-// the max/min of both day types — see call sites).
+// can value the shift differently per day type; with no override the shift's own
+// per-day-type defaults apply. `dayType` is required so every caller decides
+// explicitly (capacity-bound callers without a single date take the max/min over
+// day types — see call sites and maxShiftHours).
 export function getShiftHours(
   staffId: string,
   shiftType: ScheduleShiftType,
   overrides: Map<string, ShiftHourOverride>,
-  isWeekend: boolean
+  dayType: DayType
 ): number {
   const ov = overrides.get(`${staffId}:${shiftType.id}`);
-  if (!ov) return shiftType.defaultHours;
-  return isWeekend ? ov.weekend : ov.weekday;
+  if (ov) return ov[dayType];
+  return dayType === "holiday"
+    ? shiftType.defaultHoursHoliday
+    : dayType === "weekend"
+      ? shiftType.defaultHoursWeekend
+      : shiftType.defaultHours;
+}
+
+// The most hours this shift could be worth for a staff on any single day —
+// used by capacity bounds that have no specific date. A 0 (e.g. weekend/holiday
+// that doesn't count) never raises the max, so this matches "the longest real
+// day" the staff could work.
+function maxShiftHours(
+  staffId: string,
+  shiftType: ScheduleShiftType,
+  overrides: Map<string, ShiftHourOverride>
+): number {
+  return Math.max(
+    getShiftHours(staffId, shiftType, overrides, "weekday"),
+    getShiftHours(staffId, shiftType, overrides, "weekend"),
+    getShiftHours(staffId, shiftType, overrides, "holiday"),
+  );
 }
 
 // The most hours a staff member could work in a single day, given the shifts
@@ -226,12 +257,9 @@ export function maxReachableDailyHours(
   for (const st of shiftTypes) {
     if (!staff.eligibleShiftTypeIds.includes(st.id)) continue;
     if (!st.countsTowardFte || st.isOffShift || st.isLeave || !st.autoSchedulable) continue;
-    // No single date here — this bounds capacity, so take the larger of the two
-    // day types so a full-timer is never wrongly excluded from reaching target.
-    const hrs = Math.max(
-      getShiftHours(staff.id, st, overrides, false),
-      getShiftHours(staff.id, st, overrides, true),
-    );
+    // No single date here — this bounds capacity, so take the largest day type
+    // so a full-timer is never wrongly excluded from reaching target.
+    const hrs = maxShiftHours(staff.id, st, overrides);
     if (hrs > max) max = hrs;
   }
   return max;
@@ -484,9 +512,13 @@ export function autoSchedule({
 
   const overrideMap = new Map<string, ShiftHourOverride>();
   for (const o of staffOverrides) {
+    const weekend = o.durationHrsWeekend ?? o.durationHrs;
     overrideMap.set(`${o.staffId}:${o.shiftTypeId}`, {
       weekday: o.durationHrsWeekday ?? o.durationHrs,
-      weekend: o.durationHrsWeekend ?? o.durationHrs,
+      weekend,
+      // Item 1: the override has no holiday value yet — holidays mirror the
+      // weekend resolution (item 2 adds an explicit per-staff holiday override).
+      holiday: weekend,
     });
   }
 
@@ -686,10 +718,9 @@ export function autoSchedule({
       if (cell) {
         const st = stById.get(cell.shiftTypeId);
         if (st?.countsTowardFte) {
-          const isWknd = isWeekend(d);
-          if (!isWknd || st.countsOnWeekend) {
-            hours += getShiftHours(staffId, st, overrideMap, isWknd);
-          }
+          // A weekend/holiday the shift doesn't accrue on resolves to 0 hours,
+          // so no explicit day-type gate is needed.
+          hours += getShiftHours(staffId, st, overrideMap, dayTypeOf(d, holidaySet));
         }
       }
       cur.setDate(cur.getDate() + 1);
@@ -871,8 +902,8 @@ export function autoSchedule({
 
     const sameFollowerPP = !!followerPP && followerPP.startDate === pp.startDate;
     const followerHrs = eachDayFollower && eachDayFollower.follower.countsTowardFte && sameFollowerPP
-      ? getShiftHours(staffId, eachDayFollower.follower, overrideMap, followerDate ? isWeekend(followerDate) : false) : 0;
-    const addHours = (st.countsTowardFte ? getShiftHours(staffId, st, overrideMap, isWeekend(date)) : 0) + followerHrs;
+      ? getShiftHours(staffId, eachDayFollower.follower, overrideMap, followerDate ? dayTypeOf(followerDate, holidaySet) : "weekday") : 0;
+    const addHours = (st.countsTowardFte ? getShiftHours(staffId, st, overrideMap, dayTypeOf(date, holidaySet)) : 0) + followerHrs;
     const current = ppHoursForStaff(staffId, pp);
     if (current + addHours > target) return true;
 
@@ -880,12 +911,9 @@ export function autoSchedule({
     // the short fill shift, so a full-timer who can still hit target via 12h/16h
     // shifts isn't wrongly excluded. Fall back to this staff's fill-shift hours
     // (override-aware) when no longer shift qualifies.
-    // Generic per-open-day capacity estimate (no single date): take the larger
-    // of the two day types so a reachable target isn't understated.
-    const fillHrs = Math.max(
-      getShiftHours(staffId, fillShift, overrideMap, false),
-      getShiftHours(staffId, fillShift, overrideMap, true),
-    );
+    // Generic per-open-day capacity estimate (no single date): take the largest
+    // day type so a reachable target isn't understated.
+    const fillHrs = maxShiftHours(staffId, fillShift, overrideMap);
     const reachableHrs = maxReachableDailyHours(staff, shiftTypes, overrideMap);
     const perDayHrs = reachableHrs > 0 ? reachableHrs : fillHrs;
     let availDays = 0;
@@ -1128,7 +1156,7 @@ export function autoSchedule({
           for (const p of pool) {
             const target = pp.targetHours * p.ftePercentage;
             if (target <= 0) { fitMap.set(p.id, Infinity); continue; }
-            const projected = ppHoursForStaff(p.id, pp) + getShiftHours(p.id, st, overrideMap, isWeekend(date));
+            const projected = ppHoursForStaff(p.id, pp) + getShiftHours(p.id, st, overrideMap, dayTypeOf(date, holidaySet));
             fitMap.set(p.id, Math.abs(target - projected));
           }
         }
@@ -1353,13 +1381,10 @@ export function autoSchedule({
             // minimum overrides the cap); fall back to any hostable if none fit.
             const fits = hostable.filter((p) => {
               const target = pp.targetHours * p.ftePercentage;
-              // The group spans pairingFactor of remainDates (weekday/weekend mix
-              // not yet fixed); value each day at the larger day type so this cap
+              // The group spans pairingFactor of remainDates (day-type mix not
+              // yet fixed); value each day at the largest day type so this cap
               // pre-check stays conservative and never overfills a staffer.
-              const perDayHrs = Math.max(
-                getShiftHours(p.id, st, overrideMap, false),
-                getShiftHours(p.id, st, overrideMap, true),
-              );
+              const perDayHrs = maxShiftHours(p.id, st, overrideMap);
               const groupHrs = pairingFactor * perDayHrs;
               return !(target > 0 && ppHoursForStaff(p.id, pp) + groupHrs > target) || hasUnmetMinimum(p, st, remainDates[0]);
             });
@@ -1673,12 +1698,15 @@ export function autoSchedule({
         if (currentHours >= target) continue;
 
         // Per-day estimate used to size how many fill days are needed (no single
-        // date yet). Use the smaller day type so we never under-select fill days;
-        // the assignment loop below stops at target using each day's real hours.
-        const hoursPerDay = Math.min(
-          getShiftHours(staff.id, fillShift, overrideMap, false),
-          getShiftHours(staff.id, fillShift, overrideMap, true),
-        );
+        // date yet, and it's a divisor below). Use the smaller of weekday/weekend
+        // so we never under-select fill days — but only fold in the weekend value
+        // when the shift actually accrues weekend hours, else a non-counting
+        // weekend (0h) would zero the divisor. Holiday is excluded for the same
+        // reason and because holidays are a tiny fraction of fill dates; the
+        // assignment loop below stops at target using each day's real hours.
+        const fillWd = getShiftHours(staff.id, fillShift, overrideMap, "weekday");
+        const fillWe = getShiftHours(staff.id, fillShift, overrideMap, "weekend");
+        const hoursPerDay = fillWe > 0 ? Math.min(fillWd, fillWe) : fillWd;
         const hoursNeeded = target - currentHours;
 
         const availableDates = ppDates.filter((d) =>
@@ -1755,7 +1783,7 @@ export function autoSchedule({
           // Rolling max is date-dependent — skip a capped date, keep trying later
           // ones. A residual shortfall is reported by the post-repair audit.
           if (isAtMaximum(staff, shift, date)) { cappedByMax = true; continue; }
-          const shiftHrs = getShiftHours(staff.id, shift, overrideMap, isWeekend(date));
+          const shiftHrs = getShiftHours(staff.id, shift, overrideMap, dayTypeOf(date, holidaySet));
           assign(staff.id, date, shift,
             `${shift.code} to fill hours (${hours}/${target}hrs)`,
             "fill", 0.6);
@@ -1769,12 +1797,11 @@ export function autoSchedule({
   }
 
   // Counted FTE hours a shift contributes for a staff on a date (honors the
-  // weekend rule and per-staff overrides) — the unit the repair optimizes.
+  // per-day-type hours and per-staff overrides) — the unit the repair optimizes.
+  // A weekend/holiday the shift doesn't accrue on resolves to 0, so no extra gate.
   function countedHrs(staffId: string, st: ScheduleShiftType, date: string): number {
     if (!st.countsTowardFte) return 0;
-    const isWknd = isWeekend(date);
-    if (isWknd && !st.countsOnWeekend) return 0;
-    return getShiftHours(staffId, st, overrideMap, isWknd);
+    return getShiftHours(staffId, st, overrideMap, dayTypeOf(date, holidaySet));
   }
 
   // Authoritative placements the repair must never disturb. Cells with no step

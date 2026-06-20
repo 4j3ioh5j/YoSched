@@ -35,8 +35,9 @@ function makeShift(id: string, code: string, overrides: Partial<ScheduleShiftTyp
     code,
     name: code,
     defaultHours: 8,
+    defaultHoursWeekend: 0,
+    defaultHoursHoliday: 0,
     countsTowardFte: true,
-    countsOnWeekend: false,
     countsAsHolidayWork: true,
     isLeave: false,
     isOffShift: false,
@@ -570,7 +571,7 @@ describe("autoSchedule", () => {
         schedulePriority: 1,
         autoSchedulable: true,
         weekendPaired: true,
-        countsOnWeekend: true,
+        defaultHoursWeekend: 8, defaultHoursHoliday: 8,
       });
       const staff = [
         makeStaff("p1", "AB", {
@@ -622,7 +623,7 @@ describe("autoSchedule", () => {
     it("extends a paired weekend to a leading Friday holiday (FRI-SAT-SUN, same staff)", () => {
       const ORC = makeShift("st-orc", "ORC", {
         schedulePriority: 1, autoSchedulable: true,
-        weekendPaired: true, holidayWeekendPaired: true, countsOnWeekend: true,
+        weekendPaired: true, holidayWeekendPaired: true, defaultHoursWeekend: 8, defaultHoursHoliday: 8,
       });
       const result = runSchedule({
         dates: ["2025-05-23", "2025-05-24", "2025-05-25"], // Fri (holiday), Sat, Sun
@@ -643,7 +644,7 @@ describe("autoSchedule", () => {
     it("extends a paired weekend to a following Monday holiday (SAT-SUN-MON, same staff)", () => {
       const ORC = makeShift("st-orc", "ORC", {
         schedulePriority: 1, autoSchedulable: true,
-        weekendPaired: true, holidayWeekendPaired: true, countsOnWeekend: true,
+        weekendPaired: true, holidayWeekendPaired: true, defaultHoursWeekend: 8, defaultHoursHoliday: 8,
       });
       const result = runSchedule({
         dates: ["2025-05-24", "2025-05-25", "2025-05-26"], // Sat, Sun, Mon (Memorial Day)
@@ -664,7 +665,7 @@ describe("autoSchedule", () => {
     it("does NOT pull an adjacent holiday into the weekend group when holidayWeekendPaired is off", () => {
       const ORC = makeShift("st-orc", "ORC", {
         schedulePriority: 1, autoSchedulable: true,
-        weekendPaired: true, holidayWeekendPaired: false, countsOnWeekend: true,
+        weekendPaired: true, holidayWeekendPaired: false, defaultHoursWeekend: 8, defaultHoursHoliday: 8,
       });
       const result = runSchedule({
         dates: ["2025-05-23", "2025-05-24", "2025-05-25"], // Fri (holiday), Sat, Sun
@@ -998,7 +999,7 @@ describe("autoSchedule", () => {
     it("caps weekend-paired shifts at maxCount and warns", () => {
       const CALL = makeShift("st-call", "CALL", {
         weekendPaired: true,
-        countsOnWeekend: true,
+        defaultHoursWeekend: 8, defaultHoursHoliday: 8,
         schedulePriority: 1,
       });
       const p = makeStaff("p1", "AB", {
@@ -1889,14 +1890,14 @@ describe("maxReachableDailyHours", () => {
 
   it("respects per-staff hour overrides", () => {
     const s = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] });
-    const ov = new Map<string, ShiftHourOverride>([["p1:st-orc", { weekday: 10, weekend: 10 }]]); // p1's ORC is 10h, not 16
+    const ov = new Map<string, ShiftHourOverride>([["p1:st-orc", { weekday: 10, weekend: 10, holiday: 10 }]]); // p1's ORC is 10h, not 16
     expect(maxReachableDailyHours(s, allShifts, ov)).toBe(10); // max(OR 8, ORC 10)
   });
 
   it("uses the larger day type as the capacity bound (no single date)", () => {
     const s = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] });
     // ORC worth 6h on weekdays but 16h on weekends → capacity bound is 16.
-    const ov = new Map<string, ShiftHourOverride>([["p1:st-orc", { weekday: 6, weekend: 16 }]]);
+    const ov = new Map<string, ShiftHourOverride>([["p1:st-orc", { weekday: 6, weekend: 16, holiday: 16 }]]);
     expect(maxReachableDailyHours(s, allShifts, ov)).toBe(16);
   });
 
@@ -1906,24 +1907,27 @@ describe("maxReachableDailyHours", () => {
   });
 });
 
-describe("getShiftHours — weekday/weekend overrides", () => {
-  const ORL = makeShift("st-orl", "ORL", { defaultHours: 12 });
+describe("getShiftHours — weekday/weekend/holiday by day type", () => {
+  // Distinct per-day-type defaults so each branch is observable.
+  const ORL = makeShift("st-orl", "ORL", { defaultHours: 12, defaultHoursWeekend: 6, defaultHoursHoliday: 3 });
 
-  it("falls back to the shift's defaultHours when no override exists", () => {
+  it("falls back to the shift's own per-day-type defaults when no override exists", () => {
     const ov = new Map<string, ShiftHourOverride>();
-    expect(getShiftHours("p1", ORL, ov, false)).toBe(12);
-    expect(getShiftHours("p1", ORL, ov, true)).toBe(12);
+    expect(getShiftHours("p1", ORL, ov, "weekday")).toBe(12);
+    expect(getShiftHours("p1", ORL, ov, "weekend")).toBe(6);
+    expect(getShiftHours("p1", ORL, ov, "holiday")).toBe(3);
   });
 
-  it("returns the weekday value on weekdays and the weekend value on weekends", () => {
-    const ov = new Map<string, ShiftHourOverride>([["p1:st-orl", { weekday: 12, weekend: 4 }]]);
-    expect(getShiftHours("p1", ORL, ov, false)).toBe(12);
-    expect(getShiftHours("p1", ORL, ov, true)).toBe(4);
+  it("returns the override value for each day type when one exists", () => {
+    const ov = new Map<string, ShiftHourOverride>([["p1:st-orl", { weekday: 12, weekend: 4, holiday: 4 }]]);
+    expect(getShiftHours("p1", ORL, ov, "weekday")).toBe(12);
+    expect(getShiftHours("p1", ORL, ov, "weekend")).toBe(4);
+    expect(getShiftHours("p1", ORL, ov, "holiday")).toBe(4);
   });
 
   it("scopes overrides to the matching staff + shift only", () => {
-    const ov = new Map<string, ShiftHourOverride>([["p1:st-orl", { weekday: 6, weekend: 6 }]]);
-    expect(getShiftHours("p2", ORL, ov, false)).toBe(12); // different staff → default
+    const ov = new Map<string, ShiftHourOverride>([["p1:st-orl", { weekday: 6, weekend: 6, holiday: 6 }]]);
+    expect(getShiftHours("p2", ORL, ov, "weekday")).toBe(12); // different staff → default
   });
 });
 
@@ -2089,8 +2093,10 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
       const st = byId.get(s.shiftTypeId);
       if (!st || !st.countsTowardFte) continue;
       const dow = new Date(s.date + "T12:00:00").getDay();
-      if ((dow === 0 || dow === 6) && !st.countsOnWeekend) continue;
-      h += st.defaultHours;
+      // These repair tests don't use holidays; weekday vs weekend is enough.
+      // A non-counting weekend resolves to 0 (defaultHoursWeekend), matching
+      // the engine, so no separate gate is needed.
+      h += dow === 0 || dow === 6 ? st.defaultHoursWeekend : st.defaultHours;
     }
     return h;
   }

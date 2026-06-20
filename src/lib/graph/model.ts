@@ -5,8 +5,8 @@
  * shift-type / override data and produces the per-staff rows, department
  * averages, tracked shift codes, date range, and the full shift-code list that
  * the Statistics view renders. Extracted verbatim from the server page so the
- * hours (override + countsOnWeekend) and tally logic is one pure, unit-tested
- * unit — the parity gate required by the revamp plan (slice 1b). Isomorphic:
+ * hours (per-day-type defaults + override) and tally logic is one pure,
+ * unit-tested unit — the parity gate required by the revamp plan (slice 1b). Isomorphic:
  * no Prisma/Date-object dependency, so a later slice can run it client-side.
  */
 import { computeFairness } from "../fairness";
@@ -68,8 +68,9 @@ export type AssembleAssignment = {
 export type AssembleShiftType = {
   id: string;
   countsTowardFte: boolean;
-  countsOnWeekend: boolean;
-  defaultHours: number;
+  defaultHours: number; // weekday hours
+  defaultHoursWeekend: number; // 0 = does not accrue weekend hours
+  defaultHoursHoliday: number; // 0 = does not accrue holiday hours; holiday wins over weekend
 };
 
 export type AssembleOverride = {
@@ -95,8 +96,10 @@ export function assembleEquityModel(input: {
   assignments: AssembleAssignment[];
   shiftTypes: AssembleShiftType[];
   overrides: AssembleOverride[];
+  holidays: Array<{ date: string }>;
 }): EquityModel {
-  const { fairness, staff, assignments, shiftTypes, overrides } = input;
+  const { fairness, staff, assignments, shiftTypes, overrides, holidays } = input;
+  const holidaySet = new Set(holidays.map((h) => h.date));
 
   // Per-staff shift-code tallies. Off shifts are skipped, but the staff
   // entry is still created (matches the original loop ordering).
@@ -108,14 +111,18 @@ export function assembleEquityModel(input: {
     shiftTallies[pid][a.code] = (shiftTallies[pid][a.code] || 0) + 1;
   }
 
-  // Total FTE-counted hours per staff, honoring per-staff shift-hour
-  // overrides and the weekday-only (countsOnWeekend) rule.
+  // Total FTE-counted hours per staff, honoring per-staff shift-hour overrides
+  // and each shift's per-day-type hours (weekday / weekend / holiday). A day type
+  // the shift doesn't accrue on resolves to 0, so no explicit day-type gate.
   const staffHours: Record<string, number> = {};
-  const overrideMap = new Map<string, { weekday: number; weekend: number }>();
+  const overrideMap = new Map<string, { weekday: number; weekend: number; holiday: number }>();
   for (const o of overrides) {
+    const weekend = o.durationHrsWeekend ?? o.durationHrs;
+    // Item 1: overrides have no holiday value yet — mirror the weekend resolution.
     overrideMap.set(`${o.staffId}:${o.shiftTypeId}`, {
       weekday: o.durationHrsWeekday ?? o.durationHrs,
-      weekend: o.durationHrsWeekend ?? o.durationHrs,
+      weekend,
+      holiday: weekend,
     });
   }
   const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
@@ -123,10 +130,19 @@ export function assembleEquityModel(input: {
     const st = stMap.get(a.shiftTypeId);
     if (!st || !st.countsTowardFte) continue;
     const dow = new Date(a.date + "T12:00:00").getDay();
-    const isWknd = dow === 0 || dow === 6;
-    if (isWknd && !st.countsOnWeekend) continue;
+    const dayType: "weekday" | "weekend" | "holiday" = holidaySet.has(a.date)
+      ? "holiday"
+      : dow === 0 || dow === 6
+        ? "weekend"
+        : "weekday";
     const ov = overrideMap.get(`${a.staffId}:${a.shiftTypeId}`);
-    const hrs = ov ? (isWknd ? ov.weekend : ov.weekday) : st.defaultHours;
+    const hrs = ov
+      ? ov[dayType]
+      : dayType === "holiday"
+        ? st.defaultHoursHoliday
+        : dayType === "weekend"
+          ? st.defaultHoursWeekend
+          : st.defaultHours;
     staffHours[a.staffId] = (staffHours[a.staffId] || 0) + hrs;
   }
 
@@ -278,5 +294,6 @@ export function computeStatsModel(raw: RawStatsData): EquityModel {
     })),
     shiftTypes: raw.shiftTypes,
     overrides: raw.overrides,
+    holidays: raw.holidays,
   });
 }

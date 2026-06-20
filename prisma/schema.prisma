@@ -66,9 +66,10 @@ model ShiftType {
   id              String   @id @default(cuid())
   name            String
   code            String   @unique
-  defaultHours    Float
+  defaultHours    Float    // hours this shift is worth on a WEEKDAY (the base value)
+  defaultHoursWeekend Float @default(0) // hours on a Sat/Sun; 0 = does not accrue weekend hours (replaces the old countsOnWeekend flag)
+  defaultHoursHoliday Float @default(0) // hours on a holiday; 0 = does not accrue holiday hours. Holiday takes precedence over weekend.
   countsTowardFte Boolean  @default(true)
-  countsOnWeekend Boolean  @default(false)
   countsAsHolidayWork Boolean @default(true) // counts toward holiday-burden equity metric when worked on a holiday
   isLeave         Boolean  @default(false)
   isPaid          Boolean  @default(true)

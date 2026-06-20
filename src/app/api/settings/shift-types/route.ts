@@ -8,8 +8,8 @@ import { NextRequest, NextResponse } from "next/server";
 // resetting it to a default). The Settings UI sends the full object; other
 // callers can safely PATCH a subset.
 const EDITABLE_FIELDS = [
-  "name", "code", "defaultHours",
-  "countsTowardFte", "countsOnWeekend", "countsAsHolidayWork",
+  "name", "code", "defaultHours", "defaultHoursWeekend", "defaultHoursHoliday",
+  "countsTowardFte", "countsAsHolidayWork",
   "isLeave", "isPaid", "category", "color", "printBackgroundColor", "sortOrder",
   "schedulePriority", "isOffShift", "isFillShift", "weekendPaired", "holidayWeekendPaired",
   "ignoresWorkingDays", "maxPerDay", "autoSchedulable", "hotkey", "dedicatedColumn",
@@ -57,8 +57,9 @@ export async function POST(req: NextRequest) {
       name: data.name,
       code: data.code,
       defaultHours: data.defaultHours ?? 8,
+      defaultHoursWeekend: data.defaultHoursWeekend ?? 0,
+      defaultHoursHoliday: data.defaultHoursHoliday ?? 0,
       countsTowardFte: data.countsTowardFte ?? true,
-      countsOnWeekend: data.countsOnWeekend ?? false,
       countsAsHolidayWork: data.countsAsHolidayWork ?? true,
       isLeave: data.isLeave ?? false,
       isPaid: data.isPaid ?? true,

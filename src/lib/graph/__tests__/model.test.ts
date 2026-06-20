@@ -47,11 +47,11 @@ function fairness(
   };
 }
 
-// work = weekday-only (skipped on weekends); call = counts on weekends; off = not FTE.
+// work = weekday-only (0 weekend/holiday hours); call = full hours every day type; off = not FTE.
 const SHIFT_TYPES: AssembleShiftType[] = [
-  { id: "work", countsTowardFte: true, countsOnWeekend: false, defaultHours: 10 },
-  { id: "call", countsTowardFte: true, countsOnWeekend: true, defaultHours: 24 },
-  { id: "off", countsTowardFte: false, countsOnWeekend: false, defaultHours: 0 },
+  { id: "work", countsTowardFte: true, defaultHours: 10, defaultHoursWeekend: 0, defaultHoursHoliday: 0 },
+  { id: "call", countsTowardFte: true, defaultHours: 24, defaultHoursWeekend: 24, defaultHoursHoliday: 24 },
+  { id: "off", countsTowardFte: false, defaultHours: 0, defaultHoursWeekend: 0, defaultHoursHoliday: 0 },
 ];
 
 describe("assembleEquityModel — hours / weekend / override parity", () => {
@@ -73,6 +73,7 @@ describe("assembleEquityModel — hours / weekend / override parity", () => {
     ],
     shiftTypes: SHIFT_TYPES,
     overrides: [{ staffId: "p1", shiftTypeId: "call", durationHrs: 30 }],
+    holidays: [],
   });
 
   const p1 = () => model.data.find((d) => d.staffId === "p1")!;
@@ -124,6 +125,7 @@ describe("assembleEquityModel — staff mapping", () => {
       assignments: [],
       shiftTypes: SHIFT_TYPES,
       overrides: [],
+      holidays: [],
     });
     const row = model.data[0];
     expect(row.name).toBe("Alice");
@@ -148,7 +150,7 @@ describe("computeStatsModel — full engine wiring", () => {
           shiftType: { id: "call", code: "CALL", defaultHours: 24, countsTowardFte: true, countsAsHolidayWork: true, isLeave: false, isOffShift: false },
         },
       ],
-      shiftTypes: [{ id: "call", countsTowardFte: true, countsOnWeekend: true, defaultHours: 24 }],
+      shiftTypes: [{ id: "call", countsTowardFte: true, defaultHours: 24, defaultHoursWeekend: 24, defaultHoursHoliday: 24 }],
       desirabilityWeights: [],
       holidays: [],
       equityFactors: [],
@@ -187,10 +189,44 @@ describe("assembleEquityModel — off-shift handling", () => {
       assignments: [{ staffId: "p3", shiftTypeId: "off", date: "2026-06-08", code: "OFF", isOffShift: true }],
       shiftTypes: SHIFT_TYPES,
       overrides: [],
+      holidays: [],
     });
     expect(model.data).toHaveLength(1);
     expect(model.data[0].shiftTally).toEqual({});
     expect(model.data[0].totalHours).toBe(0);
     expect(model.shiftCodes).toEqual([]);
+  });
+});
+
+describe("assembleEquityModel — holiday hours", () => {
+  // weekday/weekend/holiday hours all differ, to prove the right one is picked
+  // and that holiday takes precedence over weekend.
+  const HSHIFTS: AssembleShiftType[] = [
+    { id: "work", countsTowardFte: true, defaultHours: 10, defaultHoursWeekend: 5, defaultHoursHoliday: 2 },
+  ];
+  // 2026-06-03 Wed (weekday), 2026-06-06 Sat (weekend).
+  function totalHours(date: string, holidays: string[]): number {
+    const model = assembleEquityModel({
+      fairness: fairness([metric("p1", "AA", 1.0)]),
+      staff: [{ id: "p1", name: "A", isAutoScheduled: true, ftePercentage: 1.0, employmentTypeName: "FTE" }],
+      assignments: [{ staffId: "p1", shiftTypeId: "work", date, code: "WORK", isOffShift: false }],
+      shiftTypes: HSHIFTS,
+      overrides: [],
+      holidays: holidays.map((d) => ({ date: d })),
+    });
+    return model.data.find((d) => d.staffId === "p1")!.totalHours;
+  }
+
+  it("uses weekday hours on a normal weekday", () => {
+    expect(totalHours("2026-06-03", [])).toBe(10);
+  });
+  it("uses weekend hours on a normal weekend", () => {
+    expect(totalHours("2026-06-06", [])).toBe(5);
+  });
+  it("uses holiday hours on a holiday weekday (holiday wins over weekday)", () => {
+    expect(totalHours("2026-06-03", ["2026-06-03"])).toBe(2);
+  });
+  it("uses holiday hours when a holiday falls on a weekend (holiday wins over weekend)", () => {
+    expect(totalHours("2026-06-06", ["2026-06-06"])).toBe(2);
   });
 });

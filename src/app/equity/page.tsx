@@ -73,8 +73,9 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
     shiftTypes: shiftTypes.map((st) => ({
       id: st.id,
       countsTowardFte: st.countsTowardFte,
-      countsOnWeekend: st.countsOnWeekend,
       defaultHours: st.defaultHours,
+      defaultHoursWeekend: st.defaultHoursWeekend,
+      defaultHoursHoliday: st.defaultHoursHoliday,
     })),
     desirabilityWeights: desirabilityWeights.map((dw) => ({
       shiftTypeId: dw.shiftTypeId,

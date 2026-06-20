@@ -15,9 +15,10 @@ type ShiftType = {
   id: string;
   code: string;
   name: string;
-  defaultHours: number;
+  defaultHours: number; // weekday hours
+  defaultHoursWeekend: number;
+  defaultHoursHoliday: number;
   countsTowardFte: boolean;
-  countsOnWeekend: boolean;
   countsAsHolidayWork: boolean;
   isLeave: boolean;
   isPaid: boolean;
@@ -647,8 +648,9 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules, initialRequi
         code: created.code,
         name: created.name,
         defaultHours: created.defaultHours,
+        defaultHoursWeekend: created.defaultHoursWeekend ?? 0,
+        defaultHoursHoliday: created.defaultHoursHoliday ?? 0,
         countsTowardFte: created.countsTowardFte,
-        countsOnWeekend: created.countsOnWeekend,
         countsAsHolidayWork: created.countsAsHolidayWork ?? true,
         isLeave: created.isLeave,
         isPaid: created.isPaid,
@@ -820,8 +822,14 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules, initialRequi
               <FieldRow label="Name" description="Full name of this shift type">
                 <input disabled={!canEdit} className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50" value={editingShift.name} onChange={(e) => updateField(editingShift.id, "name", e.target.value)} />
               </FieldRow>
-              <FieldRow label="Hours per shift" description="How many hours this shift counts for">
+              <FieldRow label="Hours per shift (weekdays)" description="How many hours this shift counts for on a weekday">
                 <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.defaultHours} onChange={(e) => updateField(editingShift.id, "defaultHours", parseFloat(e.target.value) || 0)} />
+              </FieldRow>
+              <FieldRow label="Hours per shift (weekends)" description="Hours this shift counts for on a Sat/Sun. 0 = does not accrue weekend hours.">
+                <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.defaultHoursWeekend} onChange={(e) => updateField(editingShift.id, "defaultHoursWeekend", parseFloat(e.target.value) || 0)} />
+              </FieldRow>
+              <FieldRow label="Hours per shift (holidays)" description="Hours this shift counts for on a holiday (takes precedence over weekend). 0 = does not accrue holiday hours.">
+                <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.defaultHoursHoliday} onChange={(e) => updateField(editingShift.id, "defaultHoursHoliday", parseFloat(e.target.value) || 0)} />
               </FieldRow>
               <FieldRow label="Category" description="Work shifts, leave, or other">
                 <select disabled={!canEdit} className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50" value={editingShift.category} onChange={(e) => updateField(editingShift.id, "category", e.target.value)}>
@@ -864,9 +872,6 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules, initialRequi
               </FieldRow>
               <FieldRow label="Counts toward FTE hours" description="Include these hours in pay period totals">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.countsTowardFte} onChange={(e) => updateField(editingShift.id, "countsTowardFte", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
-              </FieldRow>
-              <FieldRow label="Count hours on weekends" description="Include weekend hours in pay period totals">
-                <input disabled={!canEdit} type="checkbox" checked={editingShift.countsOnWeekend} onChange={(e) => updateField(editingShift.id, "countsOnWeekend", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Counts as holiday work" description="When worked on a holiday, this shift counts toward the holiday-burden equity metric. Includes call/duty shifts that don't accrue FTE hours; uncheck for shifts that shouldn't count (e.g. routine clinic).">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.countsAsHolidayWork} onChange={(e) => updateField(editingShift.id, "countsAsHolidayWork", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />

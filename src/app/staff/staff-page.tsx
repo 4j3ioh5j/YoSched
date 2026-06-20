@@ -131,8 +131,9 @@ type ShiftTypeInfo = {
   category: string;
   isLeave: boolean;
   autoSchedulable: boolean;
-  defaultHours: number;
-  countsOnWeekend: boolean;
+  defaultHours: number; // weekday hours
+  defaultHoursWeekend: number; // 0 = does not accrue weekend hours
+  defaultHoursHoliday: number; // 0 = does not accrue holiday hours
 };
 
 type Props = {
@@ -411,16 +412,20 @@ function ShiftHoursOverrideEditor({
   override: ShiftOverrideData | undefined;
   onChange: (o: ShiftOverrideData | undefined) => void;
 }) {
-  const def = shiftType.defaultHours;
+  const defWd = shiftType.defaultHours;
+  const defWe = shiftType.defaultHoursWeekend;
+  // A shift accrues weekend hours iff its weekend default is non-zero (this
+  // replaced the old countsOnWeekend flag).
+  const countsWeekend = defWe > 0;
   const weekday = override ? (override.durationHrsWeekday ?? override.durationHrs) : null;
   const weekend = override ? (override.durationHrsWeekend ?? override.durationHrs) : null;
 
   function commit(nextWeekday: number | null, nextWeekend: number | null) {
-    const wd = nextWeekday ?? def;
-    // For shifts that don't count on weekends there is no separate weekend value
-    // to set — weekend mirrors weekday so the row stays consistent.
-    const we = shiftType.countsOnWeekend ? (nextWeekend ?? def) : wd;
-    if (wd === def && we === def) { onChange(undefined); return; }
+    const wd = nextWeekday ?? defWd;
+    // Shifts that don't accrue weekend hours keep weekend at 0; otherwise the
+    // weekend value defaults to the shift's weekend hours.
+    const we = countsWeekend ? (nextWeekend ?? defWe) : 0;
+    if (wd === defWd && we === defWe) { onChange(undefined); return; }
     onChange({
       shiftTypeId: shiftType.id,
       durationHrs: wd,
@@ -440,22 +445,22 @@ function ShiftHoursOverrideEditor({
   return (
     <div className="flex items-center gap-3 flex-wrap">
       <label className="flex items-center gap-1 text-xs text-slate-400">
-        {shiftType.countsOnWeekend ? "Weekday" : "Hours"}
+        {countsWeekend ? "Weekday" : "Hours"}
         <input
           type="number" min={0} step="0.5"
           value={weekday ?? ""}
-          placeholder={String(def)}
+          placeholder={String(defWd)}
           onChange={(e) => commit(parse(e.target.value), weekend)}
           className={inputCls}
         />
       </label>
-      {shiftType.countsOnWeekend && (
+      {countsWeekend && (
         <label className="flex items-center gap-1 text-xs text-slate-400">
           Weekend
           <input
             type="number" min={0} step="0.5"
             value={weekend ?? ""}
-            placeholder={String(def)}
+            placeholder={String(defWe)}
             onChange={(e) => commit(weekday, parse(e.target.value))}
             className={inputCls}
           />
@@ -625,7 +630,7 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
               {hasMin && describeFrequency(minTarget! as ShiftMinTarget)}
               {(hasRules || hasMin) && hasOverride && ", "}
               {hasOverride && (
-                st.countsOnWeekend
+                st.defaultHoursWeekend > 0
                   ? `${override!.durationHrsWeekday ?? override!.durationHrs}/${override!.durationHrsWeekend ?? override!.durationHrs}h`
                   : `${override!.durationHrsWeekday ?? override!.durationHrs}h`
               )}

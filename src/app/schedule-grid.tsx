@@ -114,9 +114,10 @@ type ShiftType = {
   isLeave: boolean;
   isOffShift: boolean;
   ignoresWorkingDays: boolean;
-  defaultHours: number;
+  defaultHours: number; // weekday hours
+  defaultHoursWeekend: number; // 0 = does not accrue weekend hours
+  defaultHoursHoliday: number; // 0 = does not accrue holiday hours; holiday wins over weekend
   countsTowardFte: boolean;
-  countsOnWeekend: boolean;
   hotkey?: string | null;
   dedicatedColumn?: boolean;
   boldOnSchedule?: boolean;
@@ -872,11 +873,14 @@ export function ScheduleGrid({
   }, [staff]);
 
   const overrideMap = useMemo(() => {
-    const map = new Map<string, { weekday: number; weekend: number }>();
+    const map = new Map<string, { weekday: number; weekend: number; holiday: number }>();
     for (const o of staffOverrides) {
+      const weekend = o.durationHrsWeekend ?? o.durationHrs;
+      // Item 1: overrides have no holiday value yet — mirror the weekend resolution.
       map.set(`${o.staffId}:${o.shiftTypeId}`, {
         weekday: o.durationHrsWeekday ?? o.durationHrs,
-        weekend: o.durationHrsWeekend ?? o.durationHrs,
+        weekend,
+        holiday: weekend,
       });
     }
     return map;
@@ -894,11 +898,20 @@ export function ScheduleGrid({
     [payPeriods],
   );
 
-  function getHoursForAssignment(staffId: string, shiftTypeId: string, isWeekend: boolean): number {
+  function getHoursForAssignment(
+    staffId: string,
+    shiftTypeId: string,
+    dayType: "weekday" | "weekend" | "holiday",
+  ): number {
     const override = overrideMap.get(`${staffId}:${shiftTypeId}`);
-    if (override !== undefined) return isWeekend ? override.weekend : override.weekday;
+    if (override !== undefined) return override[dayType];
     const st = shiftTypeMap.get(shiftTypeId);
-    return st?.defaultHours ?? 0;
+    if (!st) return 0;
+    return dayType === "holiday"
+      ? st.defaultHoursHoliday
+      : dayType === "weekend"
+        ? st.defaultHoursWeekend
+        : st.defaultHours;
   }
 
   function shiftCountsTowardFte(shiftTypeId: string): boolean {
@@ -922,11 +935,14 @@ export function ScheduleGrid({
           const stId = a?.shiftTypeId ?? sug?.shiftTypeId;
           if (stId && shiftCountsTowardFte(stId)) {
             const dow = cursor.getDay();
-            const isWeekend = dow === 0 || dow === 6;
-            const st = shiftTypeMap.get(stId);
-            if (!isWeekend || st?.countsOnWeekend) {
-              hours += getHoursForAssignment(p.id, stId, isWeekend);
-            }
+            // Holiday wins over weekend. A day type the shift doesn't accrue on
+            // resolves to 0 hours, so no explicit day-type gate is needed.
+            const dayType = holidaySet.has(dateStr)
+              ? "holiday"
+              : dow === 0 || dow === 6
+                ? "weekend"
+                : "weekday";
+            hours += getHoursForAssignment(p.id, stId, dayType);
           }
           cursor.setDate(cursor.getDate() + 1);
         }
