@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { daysBetween, bestSpread, autoSchedule, autoScheduleCandidates, fnv1a, maxReachableDailyHours, getShiftHours, compareScheduleQuality, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult, type ShiftHourOverride, type ScheduleQuality } from "../auto-scheduler";
+import { daysBetween, bestSpread, autoSchedule, autoScheduleCandidates, fnv1a, describeQualityTradeoff, maxReachableDailyHours, getShiftHours, compareScheduleQuality, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult, type ShiftHourOverride, type ScheduleQuality } from "../auto-scheduler";
 import { type ScheduleRequestData } from "../schedule-requests";
 import { whenToColumns, legacyPatternToWhen, standingToWhen } from "../recurrence";
 
@@ -1954,6 +1954,45 @@ describe("compareScheduleQuality (lexicographic, #220 priority)", () => {
 
   it("treats identical ranks as equivalent", () => {
     expect(compareScheduleQuality(q([0, 2, 1, 3]), q([0, 2, 1, 3]))).toBe(0);
+  });
+});
+
+describe("describeQualityTradeoff (Slice 4c headline)", () => {
+  const q = (rank: number[]): ScheduleQuality => ({
+    breakdown: { hardBreaches: rank[0], ppHoursDeviation: rank[1], requestsDenied: rank[2], fairnessSpread: rank[3] },
+    rank,
+  });
+
+  it("reports a no-difference candidate as matching the best", () => {
+    expect(describeQualityTradeoff(q([0, 4, 1, 2]), q([0, 4, 1, 2]))).toBe("Matches the best option on every measure");
+  });
+
+  it("frames a pure cost (worse PP-hours) as a cost", () => {
+    // candidate 8h deviation vs best 4h → 4h farther from targets.
+    expect(describeQualityTradeoff(q([0, 8, 1, 2]), q([0, 4, 1, 2])))
+      .toBe("4h farther from pay-period targets");
+  });
+
+  it("frames a request grant gained vs the best as a gain", () => {
+    // candidate denies 0 vs best denies 1 → candidate grants one more day.
+    expect(describeQualityTradeoff(q([0, 4, 0, 2]), q([0, 4, 1, 2])))
+      .toBe("1 more request-day(s) granted");
+  });
+
+  it("leads with cost then gain when a candidate trades one tier for another", () => {
+    // candidate: +1 request denied (cost) but 4h closer to targets (gain).
+    expect(describeQualityTradeoff(q([0, 0, 2, 2]), q([0, 4, 1, 2])))
+      .toBe("1 more request-day(s) denied; but 4h closer to pay-period targets");
+  });
+
+  it("ignores sub-threshold fairness noise", () => {
+    expect(describeQualityTradeoff(q([0, 4, 1, 2.02]), q([0, 4, 1, 2.0])))
+      .toBe("Matches the best option on every measure");
+  });
+
+  it("reports a material fairness regression", () => {
+    expect(describeQualityTradeoff(q([0, 4, 1, 3]), q([0, 4, 1, 2])))
+      .toBe("Less even desirability spread");
   });
 });
 
