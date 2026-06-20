@@ -1867,6 +1867,46 @@ export function autoSchedule({
   // (Class 2: needs more eligible staff / a count change, not an engine fix).
   auditPayPeriodHours();
 
+  // ── Coverage-shortfall audit ──
+  // After all placement (incl. STEP 3b repair) but before STEP 4 day-off fill,
+  // flag every date × shift whose staffing minimum is still unmet, classifying
+  // WHY so a scheduler can tell an unavoidable leave-driven shortage (nothing to
+  // do — flag and move on) from a fixable distribution bug. This generalizes the
+  // old away-request-only check below; it inspects ALL shortfalls regardless of
+  // whether a request is involved. Reporting only — no placement or schema change.
+  for (const date of dates) {
+    for (const st of shiftTypes) {
+      if (st.isOffShift || st.isLeave) continue;
+      const required = getRequiredCount(st, date);
+      if (required <= 0) continue;
+      const assigned = countCoverage(st.code, date);
+      if (assigned >= required) continue;
+
+      const elig = eligibleStaff(st, date);
+      // An eligible body that's free to take the shift AND has pay-period hour
+      // headroom is a FIXABLE gap — STEP 3 should have used it. Shouldn't occur
+      // under current STEP 3 logic (defensive: if it fires, it signals a day-off
+      // distribution bug — see Slice 1b in handoff #219).
+      const hasFixableBody = elig.some(
+        (p) => isAvailable(p, date, st) && !wouldBreakPPHours(p.id, date, st),
+      );
+      // A body that could otherwise cover, but is held by a human-approved/locked
+      // cell (honored leave, honored shift request, or a pre-locked assignment).
+      const blockedByApproved = elig.some((p) => {
+        const cell = grid.get(`${p.id}:${date}`);
+        if (!cell) return false;
+        return cell.locked || cell.step === "request-leave" || cell.step === "request-shift";
+      });
+
+      const cause = hasFixableBody
+        ? "fixable — an eligible, under-cap staff member is free this day (distribution gap)"
+        : blockedByApproved
+          ? "limited by approved leave / locked assignments"
+          : "true shortage — every eligible staff member is unavailable or already at their pay-period hour cap";
+      warnings.push(`${date}: ${st.code} below its required minimum (${assigned}/${required}) — ${cause}`);
+    }
+  }
+
   // ── STEP 4: Fill all remaining empty cells with X (day off) ──
   if (offShift) {
     for (const date of dates) {
@@ -1953,27 +1993,18 @@ export function autoSchedule({
     }
 
     const maxLeavePerDay = schedulingPreferences.maxLeavePerDay ?? 0;
-    for (const [date, awaySet] of requestAwayByDate) {
-      // (a) soft leave cap: count EVERY away assignment on the day, not just honored ones.
-      if (maxLeavePerDay > 0) {
+    // Soft leave cap: count EVERY away assignment on the day, not just honored ones.
+    // (Staffing minimums stranded by honored-away requests are now reported by the
+    // generalized coverage-shortfall audit above, classified "limited by approved
+    // leave / locked assignments".)
+    if (maxLeavePerDay > 0) {
+      for (const [date] of requestAwayByDate) {
         let awayTotal = 0;
         for (const [k, v] of grid.entries()) {
           if (k.endsWith(`:${date}`) && isAwayShift(v.shiftTypeId)) awayTotal++;
         }
         if (awayTotal > maxLeavePerDay) {
           warnings.push(`${date}: ${awayTotal} staff away exceeds the soft leave limit of ${maxLeavePerDay} (honoring away requests)`);
-        }
-      }
-      // (b) staffing minimum stranded because an eligible staff was honored away.
-      for (const st of shiftTypes) {
-        if (st.isOffShift || st.isLeave) continue;
-        const required = getRequiredCount(st, date);
-        if (required <= 0) continue;
-        const assigned = countCoverage(st.code, date);
-        if (assigned >= required) continue;
-        const eligIds = new Set(eligibleStaff(st, date).map((p) => p.id));
-        if ([...awaySet].some((id) => eligIds.has(id))) {
-          warnings.push(`${date}: honoring away requests left ${st.code} below its required minimum (${assigned}/${required})`);
         }
       }
     }

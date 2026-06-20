@@ -1469,6 +1469,51 @@ describe("autoSchedule — schedule request preferences", () => {
     expect(r.warnings.some((w) => w.includes("2025-05-12") && w.includes("OR") && w.includes("below its required minimum"))).toBe(true);
   });
 
+  it("classifies an away-request-stranded minimum as limited by approved leave", () => {
+    const p1 = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-al", "st-off"] });
+    const r = runSchedule({
+      staff: [p1],
+      shiftTypes: [OR, AL, OFF],
+      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }], // Monday
+      scheduleRequests: [
+        req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-al" }),
+      ],
+    });
+    expect(
+      r.warnings.some(
+        (w) => w.includes("2025-05-12") && w.includes("OR") && w.includes("limited by approved leave"),
+      ),
+    ).toBe(true);
+  });
+
+  it("classifies an unmet minimum as a true shortage when every eligible staff is unavailable", () => {
+    // p1 is the only OR-eligible staff but is not available on Monday (dow 1),
+    // and is not on any approved leave — so there is simply no body to use.
+    const p1 = makeStaff("p1", "AB", {
+      eligibleShiftTypeIds: ["st-or", "st-off"],
+      availabilityRules: [2, 3, 4, 5].map((d) => ({ type: "available" as const, strength: "rule" as const, ...wEvery(d) })),
+    });
+    const r = runSchedule({
+      staff: [p1],
+      shiftTypes: [OR, OFF],
+      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }], // Monday
+    });
+    expect(
+      r.warnings.some(
+        (w) => w.includes("2025-05-12") && w.includes("OR") && w.includes("true shortage"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag a coverage shortfall when the staffing minimum is met", () => {
+    const r = runSchedule({
+      staff: [makeStaff("p1", "AB")],
+      shiftTypes: [OR, OFF],
+      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }], // Monday, p1 available
+    });
+    expect(r.warnings.some((w) => w.includes("OR") && w.includes("below its required minimum"))).toBe(false);
+  });
+
   it("warns (and places nothing) when a hard REQUEST_SHIFT names a shift the staff can't do", () => {
     const r = runSchedule({
       // default staff are eligible only for OR/off, not ADM
