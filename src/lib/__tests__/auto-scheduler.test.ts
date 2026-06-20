@@ -1882,10 +1882,12 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
     }
   });
 
-  it("flags an irreducible overage from scarce eligibility (Class 2)", () => {
-    // ICU (10h) required every weekday but only p1 is eligible → p1 absorbs 5×10
-    // = 50h against a 40h target. No legal swap exists (p2 can't do ICU and the
-    // hours just shift), so the audit reports it as structural.
+  it("flags an irreducible overage from scarce eligibility (coverage shortage)", () => {
+    // ICU (10h) is required every weekday but only p1 is eligible. ICU pairs in
+    // groups of 4 (4×10=40, 8h-divisible); the unpairable 5th required day is still
+    // COVERED rather than dropped — coverage wins for the remainder — so p1 absorbs
+    // 5×10=50h against a 40h target. No legal swap fixes it (p2 can't do ICU), so
+    // the post-repair audit reports it as a structural scarce-eligibility overage.
     const shifts = [OR, ICU, OFF];
     const result = runSchedule({
       dates: weekdayDates("2025-05-12", 5),
@@ -1961,5 +1963,37 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
         result.suggestions.some((s) => s.staffId === o.staffId && s.date === nextDate && s.code === "X"),
       ).toBe(true);
     }
+  });
+
+  it("only ever assigns ORL in pairs per staff per pay period (no lone ORL → no +4)", () => {
+    // ORL (12h) required every weekday across a 2-week PP (10 even slots). The
+    // distribution must hand ORLs out in COMPLETE pairs, so every staffer ends the
+    // PP with an even ORL count — never a lone 12h ORL that would strand them at +4
+    // over an 8h-divisible target. (This is the invariant that fixes the August
+    // "everyone +4" pattern.)
+    const shifts = [OR, ORL, OFF];
+    const result = runSchedule({
+      dates: weekdayDates("2025-05-12", 10), // Mon..Fri x2
+      staff: [
+        makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] }),
+        makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] }),
+        makeStaff("p3", "EF", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] }),
+        makeStaff("p4", "GH", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] }),
+      ],
+      shiftTypes: shifts,
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
+      staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "ORL", dayKey: String(d), minCount: 1 })),
+    });
+
+    let placed = 0;
+    let maxPer = 0;
+    for (const id of ["p1", "p2", "p3", "p4"]) {
+      const n = result.suggestions.filter((s) => s.staffId === id && s.code === "ORL").length;
+      expect(n % 2).toBe(0); // even — pairs only
+      placed += n;
+      maxPer = Math.max(maxPer, n);
+    }
+    expect(placed).toBeGreaterThan(0); // ORLs actually distributed
+    expect(maxPer).toBeGreaterThanOrEqual(2); // pairing happened
   });
 });

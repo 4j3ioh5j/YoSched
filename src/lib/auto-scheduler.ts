@@ -1178,118 +1178,99 @@ export function autoSchedule({
 
           if (ppNeedDates.length === 0) continue;
 
-          const numGroups = Math.floor(ppNeedDates.length / pairingFactor);
           const usedDates = new Set<string>();
 
-          for (let g = 0; g < numGroups; g++) {
-            const remainDates = ppNeedDates.filter(d => !usedDates.has(d));
-
-            let available = eligible.filter(p => {
-              const provAvail = remainDates.filter(d => isAvailable(p, d, st));
-              if (provAvail.length < pairingFactor) return false;
-              const groupHrs = pairingFactor * getShiftHours(p.id, st, overrideMap);
-              const currentHrs = ppHoursForStaff(p.id, pp);
-              const target = pp.targetHours * p.ftePercentage;
-              // An unmet hard minimum overrides the PP-hours cap (see hasUnmetMinimum).
-              if (target > 0 && currentHrs + groupHrs > target && !hasUnmetMinimum(p, st, remainDates[0])) return false;
-              return true;
-            });
-
-            if (available.length === 0) {
-              available = eligible.filter(p => {
-                const provAvail = remainDates.filter(d => isAvailable(p, d, st));
-                return provAvail.length >= pairingFactor;
-              });
-            }
-
-            if (available.length === 0) {
-              warnings.push(`No eligible ${st.code} staff for group ${g + 1} in PP ${pp.startDate}`);
-              continue;
-            }
-
-            const chosen = pickStaff([...available], remainDates[0]);
-            const provAvailDates = remainDates.filter(d => isAvailable(chosen, d, st));
-            provAvailDates.sort((a, b) => a.localeCompare(b));
-
-            // Anchor dates: PP boundaries (so shifts push toward the middle)
-            // plus dates where this staff already has other scheduled
-            // shifts in this PP (e.g., ORC + recovery day).
-            const anchorDates: string[] = [
-              prevDate(pp.startDate),
-              nextDate(pp.endDate),
-            ];
+          // Find a COMPLETE group of `pairingFactor` legal, uncapped, well-spread
+          // dates that `chosen` can take from `remainDates`, or null if they can't
+          // host a full group. Returning a partial is intentionally impossible —
+          // that is what used to leave a lone ORL (and a +4 overshoot).
+          const completeGroupFor = (chosen: ScheduleStaff, remainDates: string[]): string[] | null => {
+            const provAvailDates = remainDates
+              .filter((d) => isAvailable(chosen, d, st))
+              .sort((a, b) => a.localeCompare(b));
+            if (provAvailDates.length < pairingFactor) return null;
+            // Anchor dates: PP boundaries (push toward the middle) plus dates where
+            // this staff already has other scheduled shifts in this PP.
+            const anchorDates: string[] = [prevDate(pp.startDate), nextDate(pp.endDate)];
             for (const date of dates) {
               if (date < pp.startDate || date > pp.endDate) continue;
               const cell = getCell(chosen.id, date);
-              if (cell && cell.code !== st.code && !stById.get(cell.shiftTypeId)?.isOffShift) {
-                anchorDates.push(date);
-              }
+              if (cell && cell.code !== st.code && !stById.get(cell.shiftTypeId)?.isOffShift) anchorDates.push(date);
             }
-
-            function wouldViolateFollowRules(picked: string[], candidate: string): boolean {
+            const violatesFollow = (picked: string[], candidate: string): boolean => {
               if (!followMap.has(st.id)) return false;
               for (const pd of picked) {
                 if (nextDate(pd) === candidate && !isShiftAllowedAfter(followMap, st.id, st.id, st.isOffShift)) return true;
                 if (prevDate(pd) === candidate && !isShiftAllowedAfter(followMap, st.id, st.id, st.isOffShift)) return true;
               }
               return false;
-            }
+            };
+            const picked = bestSpread(provAvailDates, pairingFactor, anchorDates, (p, c) => !violatesFollow(p, c))
+              .filter((d) => !isAtMaximum(chosen, st, d));
+            return picked.length >= pairingFactor ? picked.slice(0, pairingFactor) : null;
+          };
 
-            const pickedDates = bestSpread(
-              provAvailDates,
-              pairingFactor,
-              anchorDates,
-              (picked, candidate) => !wouldViolateFollowRules(picked, candidate),
-            );
+          // Place COMPLETE groups only — never a partial. This keeps every staffer's
+          // count of this shift a multiple of pairingFactor per PP (e.g. ORL is only
+          // ever assigned in PAIRS), so a 12h ORL can't strand a full-timer at +4 over
+          // an 8h-divisible target. If the best-fit staffer can't host a full group,
+          // try the next; stop when no one can pair the remaining dates.
+          while (true) {
+            const remainDates = ppNeedDates.filter((d) => !usedDates.has(d));
+            if (remainDates.length < pairingFactor) break;
 
-            if (pickedDates.length < pairingFactor) {
-              warnings.push(`Could only place ${pickedDates.length}/${pairingFactor} ${st.code} for ${chosen.initials} in PP ${pp.startDate}`);
-            }
+            const hostable = eligible.filter((p) => remainDates.filter((d) => isAvailable(p, d, st)).length >= pairingFactor);
+            // Prefer staff a full group does NOT push over their PP target (a hard
+            // minimum overrides the cap); fall back to any hostable if none fit.
+            const fits = hostable.filter((p) => {
+              const target = pp.targetHours * p.ftePercentage;
+              const groupHrs = pairingFactor * getShiftHours(p.id, st, overrideMap);
+              return !(target > 0 && ppHoursForStaff(p.id, pp) + groupHrs > target) || hasUnmetMinimum(p, st, remainDates[0]);
+            });
 
-            const assignedDates: string[] = [];
-            for (const date of pickedDates) {
-              // Rolling max is date-dependent — skip a capped date, keep placing
-              // the rest of the spread rather than stopping at the first one.
-              if (isAtMaximum(chosen, st, date)) continue;
-              const desirability = dwMap.get(`${st.id}:${getDow(date)}`) ?? 0;
-              assign(
-                chosen.id, date, st,
-                `${st.code} (paired dist${desirability !== 0 ? `, desirability ${desirability > 0 ? "+" : ""}${desirability}` : ""})`,
-                stepName, 0.7
-              );
-              usedDates.add(date);
-              assignedDates.push(date);
-
-              placeEachDayFollower(chosen.id, date, st);
+            let placed = false;
+            for (const tier of [fits, hostable]) {
+              let poolList = [...tier];
+              while (poolList.length > 0) {
+                const chosen = pickStaff(poolList, remainDates[0]);
+                const group = completeGroupFor(chosen, remainDates);
+                if (group) {
+                  for (const date of group) {
+                    const desirability = dwMap.get(`${st.id}:${getDow(date)}`) ?? 0;
+                    assign(chosen.id, date, st, `${st.code} (paired dist${desirability !== 0 ? `, desirability ${desirability > 0 ? "+" : ""}${desirability}` : ""})`, stepName, 0.7);
+                    usedDates.add(date);
+                    recordAssignment(chosen.id, date);
+                    placeEachDayFollower(chosen.id, date, st);
+                  }
+                  placed = true;
+                  break;
+                }
+                poolList = poolList.filter((p) => p.id !== chosen.id);
+              }
+              if (placed) break;
             }
-            for (const date of assignedDates) {
-              recordAssignment(chosen.id, date);
-            }
+            if (!placed) break;
           }
 
-          // Remainder dates that couldn't form a complete group (partial PP)
-          const leftoverDates = ppNeedDates.filter(d => !usedDates.has(d));
+          // Genuinely unpairable remainder — an odd required day, or no one can host
+          // another full group (e.g. a scarce shift like ICU whose eligible pool
+          // can't form another complete group). This only fires AFTER complete-group
+          // packing, so a normal even-weekday ORL run leaves nothing here. Coverage
+          // is preserved exactly as before: prefer staff the placement won't push
+          // over target, but fall back to covering anyway (a scarce-shift overage the
+          // post-repair audit then flags) rather than dropping required coverage.
+          const leftoverDates = ppNeedDates.filter((d) => !usedDates.has(d));
           for (const date of leftoverDates) {
-            let available = eligible.filter(
-              p => isAvailable(p, date, st) &&
-                (!wouldBreakPPHours(p.id, date, st) || hasUnmetMinimum(p, st, date))
-            );
+            let available = eligible.filter((p) => isAvailable(p, date, st) && (!wouldBreakPPHours(p.id, date, st) || hasUnmetMinimum(p, st, date)));
+            if (available.length === 0) available = eligible.filter((p) => isAvailable(p, date, st));
             if (available.length === 0) {
-              available = eligible.filter(p => isAvailable(p, date, st));
-            }
-            if (available.length === 0) {
-              warnings.push(`No eligible ${st.code} staff for ${date} (partial PP)`);
+              warnings.push(`No eligible ${st.code} staff for ${date} (unpaired remainder) in PP ${pp.startDate}`);
               continue;
             }
             const chosen = pickStaff([...available], date);
             const desirability = dwMap.get(`${st.id}:${getDow(date)}`) ?? 0;
-            assign(
-              chosen.id, date, st,
-              `${st.code} (partial PP${desirability !== 0 ? `, desirability ${desirability > 0 ? "+" : ""}${desirability}` : ""})`,
-              stepName, 0.7
-            );
+            assign(chosen.id, date, st, `${st.code} (unpaired remainder${desirability !== 0 ? `, desirability ${desirability > 0 ? "+" : ""}${desirability}` : ""})`, stepName, 0.7);
             recordAssignment(chosen.id, date);
-
             placeEachDayFollower(chosen.id, date, st);
           }
         }
