@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { SettingsPage } from "./settings-page";
 import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
-import { parsePendingRequestMode } from "@/lib/schedule-requests";
+import { parsePendingRequestMode, parseRequestConflictPolicy } from "@/lib/schedule-requests";
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
 import { redirect } from "next/navigation";
 
@@ -39,6 +39,7 @@ export default async function Settings() {
     dateFormat: schedulingPrefsRow?.dateFormat ?? "MMMM D, YYYY",
     maxLeavePerDay: schedulingPrefsRow?.maxLeavePerDay ?? 0,
     pendingRequestMode: parsePendingRequestMode(schedulingPrefsRow?.pendingRequestMode),
+    requestConflictPolicy: parseRequestConflictPolicy(schedulingPrefsRow?.requestConflictPolicy),
   };
 
   return (

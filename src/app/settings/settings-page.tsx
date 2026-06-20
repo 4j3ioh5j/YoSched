@@ -3,7 +3,7 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
-import { PENDING_REQUEST_MODES, type PendingRequestMode } from "@/lib/schedule-requests";
+import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
 import { RecurrencePicker } from "../staff/recurrence-picker";
 import { FrequencyPicker } from "../staff/frequency-picker";
@@ -74,6 +74,7 @@ type SchedulingPrefs = {
   dateFormat: string;
   maxLeavePerDay: number;
   pendingRequestMode: PendingRequestMode;
+  requestConflictPolicy: RequestConflictPolicy;
 };
 
 type DefaultAvailabilityRule = {
@@ -2089,6 +2090,31 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
     full: { label: "Full strength", hint: "Honor pending exactly like approved requests" },
   };
 
+  const [policyStatus, setPolicyStatus] = useState<SaveStatus>("idle");
+  async function savePolicy(value: RequestConflictPolicy) {
+    const prev = prefs.requestConflictPolicy;
+    setPrefs((p) => ({ ...p, requestConflictPolicy: value }));
+    setPolicyStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestConflictPolicy: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setPolicyStatus("saved");
+      setTimeout(() => setPolicyStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, requestConflictPolicy: prev }));
+      setPolicyStatus("error");
+    }
+  }
+
+  const POLICY_LABELS: Record<RequestConflictPolicy, { label: string; hint: string }> = {
+    reconcile: { label: "Reconcile (first-come)", hint: "Place requests tentatively; grant each only if conflict-free, earliest request wins a contended slot" },
+    "honor-always": { label: "Honor always", hint: "Force every requested shift first and keep it, even past the staffer's hour cap" },
+  };
+
   const [leapStatus, setLeapStatus] = useState<SaveStatus>("idle");
   async function saveMaxLeave(value: number) {
     const prev = prefs.maxLeavePerDay;
@@ -2189,6 +2215,36 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
               >
                 <span className="text-sm font-medium">{MODE_LABELS[mode].label}</span>
                 <span className="text-[11px] text-slate-500 mt-0.5">{MODE_LABELS[mode].hint}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-slate-700/50">
+          <div className="text-sm font-medium text-slate-200">Conflicting shift requests</div>
+          <div className="text-xs text-slate-400">
+            How the auto-scheduler resolves requested shifts that contend for a scarce slot or would push a staffer past their pay-period hours. Approved (human-decided) requests are always honored and never revoked.
+            {policyStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
+            {policyStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
+            {policyStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
+          </div>
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            {REQUEST_CONFLICT_POLICIES.map((policy) => (
+              <button
+                key={policy}
+                onClick={() => canEdit && savePolicy(policy)}
+                disabled={!canEdit}
+                title={POLICY_LABELS[policy].hint}
+                className={[
+                  "flex flex-col items-start px-3 py-2 rounded-lg border text-left transition-colors",
+                  prefs.requestConflictPolicy === policy
+                    ? "bg-blue-600/20 border-blue-500 text-blue-300"
+                    : "bg-slate-700/30 border-slate-600/50 text-slate-300 hover:border-slate-500",
+                  !canEdit ? "opacity-60 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                <span className="text-sm font-medium">{POLICY_LABELS[policy].label}</span>
+                <span className="text-[11px] text-slate-500 mt-0.5">{POLICY_LABELS[policy].hint}</span>
               </button>
             ))}
           </div>

@@ -2,7 +2,7 @@ import { computeFairness, type FairnessSummary, type EquityFactor } from "./fair
 import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule, type PayPeriodRange } from "./availability";
 import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
 import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, isAtRollingMaximum, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
-import { foldRequestsForDate, detectRequestConflicts, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode } from "./schedule-requests";
+import { foldRequestsForDate, detectRequestConflicts, coversDate, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode, type RequestConflictPolicy } from "./schedule-requests";
 import { matchesWhen, standingToWhen } from "./recurrence";
 
 export type ScheduleStaff = {
@@ -116,6 +116,7 @@ type SchedulingPreferences = {
   fourDayWeekendWeight: number;
   pendingRequestMode?: PendingRequestMode; // how to treat PENDING requests; default "off"
   maxLeavePerDay?: number; // soft cap on staff away per day; 0/undefined = no cap (warn-only)
+  requestConflictPolicy?: RequestConflictPolicy; // forced-request contention resolution; default "reconcile"
 };
 
 export type Suggestion = {
@@ -349,6 +350,13 @@ export function autoSchedule({
   // pending forced to soft; "full" = pending at declared strength. Empty list ⇒ no-op.
   const requestList = scheduleRequests ?? [];
   const pendingMode: PendingRequestMode = schedulingPreferences.pendingRequestMode ?? "off";
+  // Contention policy for forced REQUEST_SHIFTs. "reconcile" (default) places them
+  // tentatively in STEP 0b and confirms/revokes them in the reconciliation pass after
+  // STEP 3b; "honor-always" keeps the pre-#221 force-first-and-keep behavior.
+  const reconcilePolicy: RequestConflictPolicy = schedulingPreferences.requestConflictPolicy ?? "reconcile";
+  // cellKey → metadata for a tentatively-placed (revocable) forced request. Only
+  // populated under "reconcile"; the reconciliation pass consumes & clears it.
+  const tentativeMeta = new Map<string, { receivedAt: string }>();
   const foldCache = new Map<string, FoldedRequests>();
   function foldFor(staffId: string, date: string): FoldedRequests {
     const key = `${staffId}:${date}`;
@@ -880,7 +888,24 @@ export function autoSchedule({
         for (const st of candidates) {
           if (st.isLeave || st.isOffShift) continue;
           if (!eligSet?.has(st.id) || !isAvailable(staff, date, st)) continue;
-          assign(staff.id, date, st, `Approved shift request: ${st.code}`, "request-shift", 1.0);
+          // Under "reconcile", a forced WORK request is placed TENTATIVELY (revocable)
+          // unless a HUMAN-approved request forces it (status approved & !autoApproved)
+          // — human decisions are authoritative and never reconciled. Record the
+          // earliest contributing revocable receivedAt for first-come ordering.
+          const contribs = foldFor(staff.id, date).contributing.filter(
+            (c) => c.kind === "REQUEST_SHIFT" && c.effective === "hard" && c.shiftTypeIds.includes(st.id),
+          );
+          const humanApproved = contribs.some((c) => c.status === "approved" && !c.autoApproved);
+          const revocable = reconcilePolicy === "reconcile" && !humanApproved;
+          assign(staff.id, date, st, `Approved shift request: ${st.code}`, revocable ? "request-tentative" : "request-shift", 1.0);
+          if (revocable) {
+            let earliest: string | null = null;
+            for (const c of contribs) {
+              if (c.status === "approved" && !c.autoApproved) continue; // not a revocable contributor
+              if (c.receivedAt && (earliest === null || c.receivedAt < earliest)) earliest = c.receivedAt;
+            }
+            tentativeMeta.set(`${staff.id}:${date}`, { receivedAt: earliest ?? "" });
+          }
           placed = true;
           break;
         }
@@ -1630,7 +1655,12 @@ export function autoSchedule({
   // Authoritative placements the repair must never disturb. Cells with no step
   // (loaded from existingAssignments), locked cells, and non-counting followers
   // are also excluded below.
-  const NON_SWAPPABLE_STEPS = new Set(["request-leave", "request-shift", "standing", "follower", "off"]);
+  // "request-tentative" is excluded too: a tentatively-placed forced request is owned
+  // by the reconciliation pass (which runs AFTER this repair). If STEP 3b were allowed
+  // to swap a tentative cell's shift to another staff, reconciliation would never see
+  // it — silently bypassing first-come ordering and the PP-cap revoke/backfill. The
+  // repair therefore leaves tentative cells alone; reconcileRequests() resolves them.
+  const NON_SWAPPABLE_STEPS = new Set(["request-leave", "request-shift", "request-tentative", "standing", "follower", "off"]);
 
   function isSwappableCell(cell: { shiftTypeId: string; locked: boolean; noCount?: boolean; step?: string }): boolean {
     if (cell.locked || cell.noCount || !cell.step || NON_SWAPPABLE_STEPS.has(cell.step)) return false;
@@ -1858,6 +1888,158 @@ export function autoSchedule({
   // gaps it can't legally close are reported by the audit below (Class 2).
   if (fillShift) {
     repairPayPeriodHours();
+  }
+
+  // ── Request reconciliation (tentative → confirm / revoke + backfill) ──
+  // (#221 Slice 2) Forced REQUEST_SHIFTs were placed TENTATIVELY in STEP 0b so the
+  // plan could build around them. Now that coverage and hours are settled, confirm
+  // each tentative cell only if it's conflict-free; otherwise revoke it and backfill
+  // the freed slot to whoever needs it. First-come (receivedAt) wins a contended
+  // slot; the requester's PP-hours cap is inviolable. Human-approved placements are
+  // never tentative, so they are untouched. No-op under the "honor-always" policy.
+  function reconcileRequests() {
+    // Revocable REQUEST_SHIFT claimants per `${shiftId}:${date}` (NOT human-approved).
+    const claimantsBySlot = new Map<string, { staffId: string; receivedAt: string }[]>();
+    for (const r of requestList) {
+      if (r.kind !== "REQUEST_SHIFT" || r.strength !== "hard") continue;
+      if (r.status === "approved" && r.autoApproved !== true) continue; // human-approved → authoritative
+      if (r.status === "pending" && pendingMode !== "full") continue; // pending only forced in "full"
+      if (r.status !== "approved" && r.status !== "pending") continue; // declined/withdrawn/fulfilled never force
+      const recv = r.receivedAt ?? "";
+      for (const date of dates) {
+        if (!coversDate(r, date)) continue;
+        for (const stId of r.shiftTypeIds) {
+          const st = stById.get(stId);
+          if (!st || st.isLeave || st.isOffShift) continue;
+          const slot = `${stId}:${date}`;
+          let arr = claimantsBySlot.get(slot);
+          if (!arr) { arr = []; claimantsBySlot.set(slot, arr); }
+          arr.push({ staffId: r.staffId, receivedAt: recv });
+        }
+      }
+    }
+
+    // A discretionary day-filling cell (STEP 3 "fill") the staff holds on `date`. It's
+    // reclaimable: backfill may convert it to the scarce requested shift (e.g. a YA OR
+    // fill day → the ORL they needed to hit target). Locked / follower / off cells aren't.
+    function fillCellAt(staffId: string, date: string) {
+      const c = grid.get(`${staffId}:${date}`);
+      return c && c.step === "fill" && !c.locked && !c.noCount ? c : null;
+    }
+
+    // Can `p` legally take `st` on `date`, treating a reclaimable fill cell as free?
+    function canTake(p: ScheduleStaff, date: string, st: ScheduleShiftType): boolean {
+      const key = `${p.id}:${date}`;
+      const fc = fillCellAt(p.id, date);
+      if (fc) grid.delete(key); // virtually free the fill day for the legality + hour test
+      const ok = isAvailable(p, date, st) && !wouldBreakPPHours(p.id, date, st);
+      if (fc) grid.set(key, fc);
+      return ok;
+    }
+
+    // Drop a reclaimable fill cell (grid + suggestion + stat) so its slot can be reused.
+    function releaseFill(staffId: string, date: string) {
+      const fc = fillCellAt(staffId, date);
+      if (!fc) return;
+      grid.delete(`${staffId}:${date}`);
+      const idx = suggestions.findIndex((s) => s.staffId === staffId && s.date === date && s.code === fc.code && s.step === "fill");
+      if (idx >= 0) suggestions.splice(idx, 1);
+      byStep["fill"] = Math.max(0, (byStep["fill"] ?? 0) - 1);
+    }
+
+    // Best backfill for a freed (st, date) slot: conflict-free claimants by first-come,
+    // then the neediest non-claimant by remaining PP hours. excludeId = deferred holder.
+    // Returns null when nothing can legally take the slot (Slice 1a then flags it).
+    function pickBackfill(st: ScheduleShiftType, date: string, excludeId: string): ScheduleStaff | null {
+      const recvByStaff = new Map<string, string>();
+      for (const c of claimantsBySlot.get(`${st.id}:${date}`) ?? []) {
+        const cur = recvByStaff.get(c.staffId);
+        if (cur === undefined || c.receivedAt < cur) recvByStaff.set(c.staffId, c.receivedAt);
+      }
+      const pp = findPPForDate(date);
+      const cands = eligibleStaff(st, date).filter((p) => p.id !== excludeId && canTake(p, date, st));
+      if (cands.length === 0) return null;
+      cands.sort((a, b) => {
+        const ra = recvByStaff.get(a.id);
+        const rb = recvByStaff.get(b.id);
+        if (!!ra !== !!rb) return ra ? -1 : 1; // claimants before non-claimants
+        if (ra && rb && ra !== rb) return ra < rb ? -1 : 1; // earlier receivedAt wins
+        const defA = pp ? pp.targetHours * a.ftePercentage - ppHoursForStaff(a.id, pp) : 0;
+        const defB = pp ? pp.targetHours * b.ftePercentage - ppHoursForStaff(b.id, pp) : 0;
+        if (defA !== defB) return defB - defA; // neediest hours first
+        return a.id.localeCompare(b.id);
+      });
+      return cands[0];
+    }
+
+    // Snapshot the tentative cells, then process by first-come so an earlier request
+    // resolves before a later one competes for the same slot.
+    const tentatives: { staffId: string; date: string; st: ScheduleShiftType; receivedAt: string }[] = [];
+    for (const [key, meta] of tentativeMeta) {
+      const cell = grid.get(key);
+      if (!cell || cell.step !== "request-tentative") continue;
+      const sep = key.lastIndexOf(":");
+      const st = stById.get(cell.shiftTypeId);
+      if (st) tentatives.push({ staffId: key.slice(0, sep), date: key.slice(sep + 1), st, receivedAt: meta.receivedAt });
+    }
+    tentatives.sort((a, b) =>
+      (a.receivedAt < b.receivedAt ? -1 : a.receivedAt > b.receivedAt ? 1 : 0)
+      || a.date.localeCompare(b.date)
+      || a.staffId.localeCompare(b.staffId),
+    );
+
+    for (const t of tentatives) {
+      const key = `${t.staffId}:${t.date}`;
+      const cell = grid.get(key);
+      if (!cell || cell.step !== "request-tentative") continue; // already resolved
+      const pp = findPPForDate(t.date);
+      const holder = activeStaff.find((p) => p.id === t.staffId);
+      if (!pp || !holder) continue; // can't reason → leave placed
+
+      // Over the requester's PP-hours cap WITH this cell? (cap is inviolable)
+      const target = pp.targetHours * holder.ftePercentage;
+      const holderOverCap = t.st.countsTowardFte && target > 0 && ppHoursForStaff(t.staffId, pp) > target;
+
+      // Temporarily free the slot so challenger / backfill legality (incl. maxPerDay)
+      // evaluates as if the holder weren't occupying it.
+      grid.delete(key);
+
+      // An EARLIER conflict-free claimant who should take the slot ahead of the holder.
+      let challenger: ScheduleStaff | null = null;
+      const sorted = (claimantsBySlot.get(`${t.st.id}:${t.date}`) ?? []).slice().sort(
+        (a, b) => (a.receivedAt < b.receivedAt ? -1 : a.receivedAt > b.receivedAt ? 1 : a.staffId.localeCompare(b.staffId)),
+      );
+      for (const c of sorted) {
+        if (c.staffId === t.staffId || !(c.receivedAt < t.receivedAt)) continue;
+        const cand = activeStaff.find((p) => p.id === c.staffId);
+        if (cand && canTake(cand, t.date, t.st)) { challenger = cand; break; }
+      }
+
+      if (!holderOverCap && !challenger) {
+        grid.set(key, cell); // rightful holder → confirm (restore)
+        continue;
+      }
+
+      // Holder loses the slot: drop its suggestion, then award to the best claimant.
+      const idx = suggestions.findIndex(
+        (s) => s.staffId === t.staffId && s.date === t.date && s.code === t.st.code && s.step === "request-tentative",
+      );
+      if (idx >= 0) suggestions.splice(idx, 1);
+      byStep["request-tentative"] = Math.max(0, (byStep["request-tentative"] ?? 0) - 1);
+
+      const chosen = pickBackfill(t.st, t.date, t.staffId);
+      const reason = holderOverCap ? "over pay-period hour cap" : "later than an earlier request";
+      if (chosen) {
+        releaseFill(chosen.id, t.date); // reclaim the chosen staff's fill day, if any
+        assign(chosen.id, t.date, t.st, `Reconciliation: ${t.st.code} re-homed (first-come / hour need)`, "fill", 0.9);
+        warnings.push(`${t.date}: deferred ${holder.initials}'s ${t.st.code} request (${reason}) — slot granted to ${chosen.initials}`);
+      } else {
+        warnings.push(`${t.date}: deferred ${holder.initials}'s ${t.st.code} request (${reason}) — no eligible backfill, slot left open`);
+      }
+    }
+  }
+  if (reconcilePolicy === "reconcile" && tentativeMeta.size > 0) {
+    reconcileRequests();
   }
 
   // ── Post-repair hours audit ──

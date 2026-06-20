@@ -48,6 +48,33 @@ export function parsePendingRequestMode(v: unknown): PendingRequestMode {
   return isPendingRequestMode(v) ? v : DEFAULT_PENDING_REQUEST_MODE;
 }
 
+// How the auto-scheduler resolves forced REQUEST_SHIFT placements that contend for a
+// scarce slot or would push the requester over their pay-period hour cap:
+//   "reconcile"    — place forced requests tentatively up front so the plan builds
+//                    AROUND them, then at the end CONFIRM each only if conflict-free
+//                    (within the requester's PP-hours cap, doesn't strand coverage,
+//                    no earlier request claims the slot). Otherwise REVOKE it and
+//                    backfill the freed slot to whoever needs it. First-come
+//                    (receivedAt) wins. Mirrors the human process (#220 steps 1 & 10:
+//                    requests are placed around, but granted last + conditionally).
+//   "honor-always" — pre-#221 behavior: a forced request is placed first and kept,
+//                    even if it pushes the requester past their hour cap.
+// Human-approved placements (status "approved" AND NOT autoApproved) are authoritative
+// in BOTH policies — placed locked and never revoked.
+export type RequestConflictPolicy = "reconcile" | "honor-always";
+export const REQUEST_CONFLICT_POLICIES: readonly RequestConflictPolicy[] = ["reconcile", "honor-always"];
+export const DEFAULT_REQUEST_CONFLICT_POLICY: RequestConflictPolicy = "reconcile";
+
+/** STRICT membership check — use to VALIDATE a user write (reject anything else 400). */
+export function isRequestConflictPolicy(v: unknown): v is RequestConflictPolicy {
+  return typeof v === "string" && (REQUEST_CONFLICT_POLICIES as readonly string[]).includes(v);
+}
+
+/** LENIENT parse for PERSISTED reads — unknown/legacy falls back to the default. */
+export function parseRequestConflictPolicy(v: unknown): RequestConflictPolicy {
+  return isRequestConflictPolicy(v) ? v : DEFAULT_REQUEST_CONFLICT_POLICY;
+}
+
 export type ScheduleRequestData = {
   id: string;
   staffId: string;
@@ -58,6 +85,11 @@ export type ScheduleRequestData = {
   leaveShiftTypeId: string | null; // LEAVE: the leave shift to pre-place
   strength: RequestStrength;
   status: RequestStatus;
+  // Provenance used by the auto-scheduler's request reconciliation (policy
+  // "reconcile"). Optional so existing callers/fixtures stay valid; absent ⇒
+  // treated as a human decision with no timestamp (queues last).
+  autoApproved?: boolean; // approval derived from a satisfying assignment (auto-revertible). human-approved = approved && !autoApproved
+  receivedAt?: string | null; // ISO timestamp the request came in; first-come ordering
 };
 
 // One request that contributed to a fold, plus the strength it was applied at AFTER
@@ -72,6 +104,8 @@ export type ContributingRequest = {
   effective: RequestStrength; // strength actually applied to the fold buckets
   shiftTypeIds: string[];
   leaveShiftTypeId: string | null;
+  autoApproved: boolean; // human-approved = status "approved" && !autoApproved
+  receivedAt: string | null; // ISO; first-come ordering for reconciliation
 };
 
 // The collapsed effect of a staff's in-scope requests on a single date. Every hard
@@ -169,6 +203,8 @@ export function foldRequestsForDate(
       effective: hard ? "hard" : "soft",
       shiftTypeIds: r.shiftTypeIds,
       leaveShiftTypeId: r.leaveShiftTypeId,
+      autoApproved: r.autoApproved ?? false,
+      receivedAt: r.receivedAt ?? null,
     });
 
     switch (r.kind) {

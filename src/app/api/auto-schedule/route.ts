@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { autoSchedule } from "@/lib/auto-scheduler";
-import { parsePendingRequestMode, type ScheduleRequestData } from "@/lib/schedule-requests";
+import { parsePendingRequestMode, parseRequestConflictPolicy, type ScheduleRequestData } from "@/lib/schedule-requests";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { effectiveTargetsForStaff, type DepartmentShiftTarget } from "@/lib/department-targets";
 
@@ -326,6 +326,7 @@ export async function POST(req: NextRequest) {
       // Lenient parse: a missing/legacy/corrupt stored value falls back to the default.
       pendingRequestMode: parsePendingRequestMode(schedulingPrefsRow?.pendingRequestMode),
       maxLeavePerDay: schedulingPrefsRow?.maxLeavePerDay ?? 0,
+      requestConflictPolicy: parseRequestConflictPolicy(schedulingPrefsRow?.requestConflictPolicy),
     },
     equityFactors: equityFactors.map((f) => ({
       factorType: f.factorType,
@@ -349,6 +350,8 @@ export async function POST(req: NextRequest) {
       leaveShiftTypeId: r.leaveShiftTypeId,
       strength: r.strength as ScheduleRequestData["strength"],
       status: r.status as ScheduleRequestData["status"],
+      autoApproved: r.autoApproved,
+      receivedAt: r.receivedAt ? r.receivedAt.toISOString() : null,
     })),
     requiredFollowers: requiredFollowers.map((r) => ({
       sourceShiftId: r.sourceShiftId,

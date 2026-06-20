@@ -1514,6 +1514,132 @@ describe("autoSchedule — schedule request preferences", () => {
     expect(r.warnings.some((w) => w.includes("OR") && w.includes("below its required minimum"))).toBe(false);
   });
 
+  // ── request reconciliation (#221 Slice 2) ──
+  describe("request reconciliation (tentative + first-come)", () => {
+    // ORL is a 12h shift, one per day, placed only via a request here (no staffing
+    // requirement, no schedulePriority → STEP 2 never touches it).
+    const ORL = makeShift("st-orl", "ORL", { defaultHours: 12, maxPerDay: 1 });
+    const pp = [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 12 }];
+    const fullReconcile = { ...defaultPrefs, pendingRequestMode: "full" as const };
+
+    it("revokes an over-cap requester's tentative shift and backfills the needy staff (SR/YA)", () => {
+      // SR (FTE 0.5 → target 6) requests the only ORL; 12h blows past their cap.
+      // YA (FTE 1 → target 12) needs exactly that ORL and isn't a requester.
+      const sr = makeStaff("sr", "SR", { ftePercentage: 0.5, eligibleShiftTypeIds: ["st-orl", "st-off"] });
+      const ya = makeStaff("ya", "YA", { eligibleShiftTypeIds: ["st-orl", "st-off"] });
+      const r = runSchedule({
+        dates: weekdayDates("2025-05-12", 1),
+        staff: [sr, ya],
+        shiftTypes: [OR, ORL, OFF],
+        payPeriods: pp,
+        schedulingPreferences: fullReconcile,
+        scheduleRequests: [
+          req({ staffId: "sr", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-orl"], status: "pending", receivedAt: "2025-05-01T00:00:00Z" }),
+        ],
+      });
+      expect(has(r, "ya", "2025-05-12", "ORL")).toBe(true);
+      expect(has(r, "sr", "2025-05-12", "ORL")).toBe(false);
+      // No corruption: exactly one ORL placed, and SR's freed cell is a day off.
+      expect(r.suggestions.filter((s) => s.code === "ORL")).toHaveLength(1);
+      expect(has(r, "sr", "2025-05-12", "X")).toBe(true);
+      expect(r.warnings.some((w) => w.includes("SR") && w.includes("ORL") && w.includes("YA"))).toBe(true);
+    });
+
+    it("does not let STEP 3b hour-repair swap a tentative cell out before reconciliation", () => {
+      // Holder SR is ALSO eligible for the OR fill shift, so a same-day SR(ORL)↔YA(OR)
+      // swap is legal and would reduce hour deviation — STEP 3b must NOT take it, or
+      // reconciliation would never see the tentative cell. The deferred-request warning
+      // (only reconciliation emits it) proves the tentative cell survived to be reconciled.
+      const sr = makeStaff("sr", "SR", { ftePercentage: 0.5, eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] });
+      const ya = makeStaff("ya", "YA", { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] });
+      const r = runSchedule({
+        dates: weekdayDates("2025-05-12", 1),
+        staff: [sr, ya],
+        shiftTypes: [OR, ORL, OFF],
+        payPeriods: pp,
+        schedulingPreferences: fullReconcile,
+        scheduleRequests: [
+          req({ staffId: "sr", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-orl"], status: "pending", receivedAt: "2025-05-01T00:00:00Z" }),
+        ],
+      });
+      expect(r.warnings.some((w) => w.includes("deferred") && w.includes("SR") && w.includes("ORL"))).toBe(true);
+      expect(has(r, "ya", "2025-05-12", "ORL")).toBe(true);
+      expect(has(r, "sr", "2025-05-12", "ORL")).toBe(false);
+      expect(r.suggestions.filter((s) => s.code === "ORL")).toHaveLength(1);
+    });
+
+    it("awards a contended slot to the earlier request (receivedAt), denying the later one", () => {
+      // AA placed first at STEP 0b (staff order) but requested LATER; BB requested earlier.
+      const aa = makeStaff("aa", "AA", { eligibleShiftTypeIds: ["st-orl", "st-off"] });
+      const bb = makeStaff("bb", "BB", { eligibleShiftTypeIds: ["st-orl", "st-off"] });
+      const r = runSchedule({
+        dates: weekdayDates("2025-05-12", 1),
+        staff: [aa, bb],
+        shiftTypes: [OR, ORL, OFF],
+        payPeriods: pp,
+        schedulingPreferences: fullReconcile,
+        scheduleRequests: [
+          req({ staffId: "aa", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-orl"], status: "pending", receivedAt: "2025-05-10T00:00:00Z" }),
+          req({ staffId: "bb", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-orl"], status: "pending", receivedAt: "2025-05-01T00:00:00Z" }),
+        ],
+      });
+      expect(has(r, "bb", "2025-05-12", "ORL")).toBe(true);
+      expect(has(r, "aa", "2025-05-12", "ORL")).toBe(false);
+      expect(r.suggestions.filter((s) => s.code === "ORL")).toHaveLength(1);
+    });
+
+    it("confirms a conflict-free request unchanged (no deferral)", () => {
+      const s = makeStaff("s1", "S1", { eligibleShiftTypeIds: ["st-orl", "st-off"] });
+      const r = runSchedule({
+        dates: weekdayDates("2025-05-12", 1),
+        staff: [s],
+        shiftTypes: [OR, ORL, OFF],
+        payPeriods: pp,
+        schedulingPreferences: fullReconcile,
+        scheduleRequests: [
+          req({ staffId: "s1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-orl"], status: "pending", receivedAt: "2025-05-01T00:00:00Z" }),
+        ],
+      });
+      expect(has(r, "s1", "2025-05-12", "ORL")).toBe(true);
+      expect(r.warnings.some((w) => w.includes("deferred"))).toBe(false);
+    });
+
+    it("never revokes a human-approved request even when it exceeds the hour cap", () => {
+      // Approved (not autoApproved) → authoritative. FTE 0.5 → target 6; ORL 12h is over cap.
+      const s = makeStaff("s1", "S1", { ftePercentage: 0.5, eligibleShiftTypeIds: ["st-orl", "st-off"] });
+      const r = runSchedule({
+        dates: weekdayDates("2025-05-12", 1),
+        staff: [s],
+        shiftTypes: [OR, ORL, OFF],
+        payPeriods: pp,
+        schedulingPreferences: fullReconcile,
+        scheduleRequests: [
+          req({ staffId: "s1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-orl"], status: "approved" }),
+        ],
+      });
+      expect(has(r, "s1", "2025-05-12", "ORL")).toBe(true);
+      expect(r.warnings.some((w) => w.includes("deferred"))).toBe(false);
+    });
+
+    it("honor-always keeps an over-cap forced request (no reconciliation)", () => {
+      const sr = makeStaff("sr", "SR", { ftePercentage: 0.5, eligibleShiftTypeIds: ["st-orl", "st-off"] });
+      const ya = makeStaff("ya", "YA", { eligibleShiftTypeIds: ["st-orl", "st-off"] });
+      const r = runSchedule({
+        dates: weekdayDates("2025-05-12", 1),
+        staff: [sr, ya],
+        shiftTypes: [OR, ORL, OFF],
+        payPeriods: pp,
+        schedulingPreferences: { ...fullReconcile, requestConflictPolicy: "honor-always" as const },
+        scheduleRequests: [
+          req({ staffId: "sr", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-orl"], status: "pending", receivedAt: "2025-05-01T00:00:00Z" }),
+        ],
+      });
+      expect(has(r, "sr", "2025-05-12", "ORL")).toBe(true);
+      expect(has(r, "ya", "2025-05-12", "ORL")).toBe(false);
+      expect(r.warnings.some((w) => w.includes("deferred"))).toBe(false);
+    });
+  });
+
   it("warns (and places nothing) when a hard REQUEST_SHIFT names a shift the staff can't do", () => {
     const r = runSchedule({
       // default staff are eligible only for OR/off, not ADM
