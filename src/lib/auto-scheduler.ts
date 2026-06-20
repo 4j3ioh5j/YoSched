@@ -264,6 +264,22 @@ export function daysBetween(a: string, b: string): number {
   );
 }
 
+// Deterministic 32-bit string hash (FNV-1a). Used ONLY as the final seeded
+// tiebreak in multi-option candidate generation (Slice 4b) — never for any
+// constraint, coverage, or quality decision — so its statistical bias is
+// irrelevant; all it must do is map equal strings to equal numbers and vary by
+// seed. Pure + deterministic (no Math.random), so a given seed+input always
+// reproduces the same schedule (resume-safe). Math.imul keeps the 32-bit
+// multiply exact across engines.
+export function fnv1a(str: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
 // Find the combination of `count` dates from `candidates` that maximizes
 // the minimum gap between any two selected dates (and optionally existing
 // anchor dates like previously-assigned ORC shifts for the same staff).
@@ -272,6 +288,10 @@ export function bestSpread(
   count: number,
   anchors: string[],
   isValid: (picked: string[], next: string) => boolean,
+  // Seeded tiebreak (Slice 4b). When provided, equal-minGap/equal-length combos
+  // are broken by the lower tieKey instead of "first wins". Omitted (or seed 0)
+  // ⇒ unchanged first-wins behavior, so seed 0 reproduces the pre-4b output.
+  tieKey?: (combo: string[]) => number,
 ): string[] {
   if (candidates.length <= count) {
     // Must use all — just filter for validity
@@ -306,6 +326,9 @@ export function bestSpread(
       if (s > bestMinGap || (s === bestMinGap && picked.length > bestCombo.length)) {
         bestMinGap = s;
         bestCombo = [...picked];
+      } else if (tieKey && s === bestMinGap && picked.length === bestCombo.length &&
+                 bestCombo.length > 0 && tieKey(picked) < tieKey(bestCombo)) {
+        bestCombo = [...picked];
       }
       return;
     }
@@ -322,6 +345,35 @@ export function bestSpread(
   search(0, []);
   return bestCombo;
 }
+
+export type AutoScheduleInput = {
+  dates: string[];
+  staff: ScheduleStaff[];
+  shiftTypes: ScheduleShiftType[];
+  existingAssignments: ScheduleAssignment[];
+  payPeriods: PayPeriod[];
+  holidays: Holiday[];
+  desirabilityWeights: DesirabilityWeight[];
+  standingCommitments: StandingCommitment[];
+  staffOverrides: StaffOverride[];
+  dayPreferences: DayPreference[];
+  historicalAssignments: ScheduleAssignment[];
+  staffingRequirements: StaffingRequirement[];
+  schedulingPreferences: SchedulingPreferences;
+  equityFactors: EquityFactor[];
+  followRules?: FollowRuleRow[];
+  scheduleRequests?: ScheduleRequestData[];
+  requiredFollowers?: RequiredFollowerRow[];
+  // Multi-option candidate seed (Slice 4b). 0/undefined ⇒ the canonical schedule,
+  // byte-for-byte identical to the pre-4b output (guaranteed by snapshot test).
+  // A positive seed appends a deterministic hash AFTER every existing tiebreak
+  // cascade, reordering ONLY true ties (no individually-infeasible placement).
+  // Because the engine is greedy, a different tie-order CAN still shift the final
+  // coverage — so a raw seeded run may end with more hard breaches than canonical;
+  // autoScheduleCandidates filters those out (it never surfaces a candidate worse
+  // than canonical on the inviolable tier). Use that, not raw seeds, for options.
+  seed?: number;
+};
 
 export function autoSchedule({
   dates,
@@ -341,25 +393,14 @@ export function autoSchedule({
   followRules,
   scheduleRequests,
   requiredFollowers,
-}: {
-  dates: string[];
-  staff: ScheduleStaff[];
-  shiftTypes: ScheduleShiftType[];
-  existingAssignments: ScheduleAssignment[];
-  payPeriods: PayPeriod[];
-  holidays: Holiday[];
-  desirabilityWeights: DesirabilityWeight[];
-  standingCommitments: StandingCommitment[];
-  staffOverrides: StaffOverride[];
-  dayPreferences: DayPreference[];
-  historicalAssignments: ScheduleAssignment[];
-  staffingRequirements: StaffingRequirement[];
-  schedulingPreferences: SchedulingPreferences;
-  equityFactors: EquityFactor[];
-  followRules?: FollowRuleRow[];
-  scheduleRequests?: ScheduleRequestData[];
-  requiredFollowers?: RequiredFollowerRow[];
-}): AutoScheduleResult {
+  seed,
+}: AutoScheduleInput): AutoScheduleResult {
+  // Seeded final tiebreak helper (Slice 4b). seed 0/undefined ⇒ returns 0 for
+  // every key, so all seeded comparisons are no-ops and the engine produces its
+  // canonical output unchanged. seed > 0 ⇒ a per-key deterministic hash applied
+  // strictly AFTER all other tiebreak levels.
+  const seedNum = seed ?? 0;
+  const seedTie = (key: string): number => (seedNum ? fnv1a(`${seedNum}:${key}`) : 0);
   const suggestions: Suggestion[] = [];
   const warnings: string[] = [];
   const byStep: Record<string, number> = {};
@@ -1128,7 +1169,11 @@ export function autoSchedule({
         const lastA = lastRunDate.get(a.id) ?? "";
         const lastB = lastRunDate.get(b.id) ?? "";
         if (lastA !== lastB) return lastA.localeCompare(lastB);
-        return historicalCount(a.id, st.code) - historicalCount(b.id, st.code);
+        const histDiff = historicalCount(a.id, st.code) - historicalCount(b.id, st.code);
+        if (histDiff !== 0) return histDiff;
+        // Final seeded tiebreak (Slice 4b): only reached when every level above
+        // is equal — a genuine tie. seed 0 ⇒ both 0 ⇒ stable order preserved.
+        return seedTie(a.id) - seedTie(b.id);
       });
       return pool[0];
     }
@@ -1288,7 +1333,8 @@ export function autoSchedule({
               }
               return false;
             };
-            const picked = bestSpread(provAvailDates, pairingFactor, anchorDates, (p, c) => !violatesFollow(p, c))
+            const picked = bestSpread(provAvailDates, pairingFactor, anchorDates, (p, c) => !violatesFollow(p, c),
+                seedNum ? (combo) => seedTie(`${chosen.id}|${combo.join(",")}`) : undefined)
               .filter((d) => !isAtMaximum(chosen, st, d));
             return picked.length >= pairingFactor ? picked.slice(0, pairingFactor) : null;
           };
@@ -1663,6 +1709,7 @@ export function autoSchedule({
           const indices = availableDates.map((_, i) => i);
           let bestOffIndices: number[] = [];
           let bestScore = -Infinity;
+          let bestTie = 0;
           let comboCount = 0;
 
           for (const offIndices of combinations(indices, daysOff)) {
@@ -1684,6 +1731,12 @@ export function autoSchedule({
             if (score > bestScore) {
               bestScore = score;
               bestOffIndices = offIndices;
+              bestTie = seedNum ? seedTie(`${staff.id}|${offIndices.map((i) => availableDates[i]).join(",")}`) : 0;
+            } else if (seedNum && score === bestScore && bestOffIndices.length > 0) {
+              // Seeded tiebreak (Slice 4b): among equally-scored off-day combos,
+              // the lower hash wins. seed 0 never enters this branch.
+              const tie = seedTie(`${staff.id}|${offIndices.map((i) => availableDates[i]).join(",")}`);
+              if (tie < bestTie) { bestOffIndices = offIndices; bestTie = tie; }
             }
             if (comboCount >= MAX_COMBOS) break;
           }
@@ -2341,4 +2394,75 @@ export function autoSchedule({
     },
     quality,
   };
+}
+
+// One generated alternative: the seed that produced it plus its full result.
+export type ScheduleCandidate = {
+  seed: number;
+  result: AutoScheduleResult;
+};
+
+// Canonical identity of a schedule's placement — order/reason/confidence-agnostic
+// so two seeds that land the exact same assignments are recognized as the same
+// candidate and de-duplicated.
+function suggestionSetKey(suggestions: Suggestion[]): string {
+  return suggestions
+    .map((s) => `${s.staffId}|${s.date}|${s.shiftTypeId}`)
+    .sort()
+    .join(";");
+}
+
+// Multi-option candidate generation (Slice 4b). Runs the engine for seeds
+// 0, 1, 2, … — seed 0 is the canonical schedule and is always included first —
+// de-dups runs that collapse to the same placement (common when ties are rare),
+// and returns up to `count` DISTINCT candidates ranked best-first by the global
+// quality objective (Slice 4a). Pure + deterministic: same input+count ⇒ same list.
+//
+// FEASIBILITY FLOOR: the seeded tiebreak only reorders TRUE ties and never makes
+// an individually-infeasible placement — but the engine is greedy, so a different
+// tie-order can still change which slots ultimately go unfilled. That means a
+// perturbed run can finish with MORE hard breaches than the canonical schedule.
+// We never surface such a candidate: an option that breaches the inviolable tier
+// (#220 T0, `hardBreaches`) worse than canonical is strictly dominated and
+// misleading. So every returned candidate has `hardBreaches <= canonical`. Lower
+// tiers (PP-hours, request grants, fairness) MAY vary — those are exactly the
+// legitimate trade-offs the compare/choose UI (Slice 4c) exists to show.
+//
+// `count` is the number of DISTINCT candidates wanted. We try a bounded budget of
+// seeds to find them (a highly-constrained schedule may yield fewer distinct
+// options than asked — the caller gets what genuinely exists). `attemptsPerWant`
+// caps wasted runs when ties are scarce.
+export function autoScheduleCandidates(
+  input: AutoScheduleInput,
+  count: number,
+  attemptsPerWant = 6,
+): ScheduleCandidate[] {
+  const want = Math.max(1, Math.floor(count));
+  const maxSeeds = want * attemptsPerWant + 1; // seeds 0 .. maxSeeds-1
+  const seen = new Set<string>();
+  const candidates: ScheduleCandidate[] = [];
+
+  // Canonical schedule (seed 0): always included, and its hard-breach count is
+  // the feasibility floor every other candidate must meet or beat.
+  const canonical = autoSchedule({ ...input, seed: 0 });
+  const baselineHard = canonical.quality.breakdown.hardBreaches;
+  seen.add(suggestionSetKey(canonical.suggestions));
+  candidates.push({ seed: 0, result: canonical });
+
+  for (let seed = 1; seed < maxSeeds && candidates.length < want; seed++) {
+    const result = autoSchedule({ ...input, seed });
+    // Drop any candidate that breaches the inviolable tier worse than canonical
+    // (a perturbed tie-order stranded coverage). Equal or better is kept; a
+    // better-than-canonical run will simply rank ahead of seed 0 below.
+    if (result.quality.breakdown.hardBreaches > baselineHard) continue;
+    const key = suggestionSetKey(result.suggestions);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push({ seed, result });
+  }
+
+  // Rank best-first by the lexicographic quality objective. Stable ties keep
+  // lower seeds (incl. the canonical seed 0) ahead, so output is deterministic.
+  candidates.sort((a, b) => compareScheduleQuality(a.result.quality, b.result.quality));
+  return candidates;
 }

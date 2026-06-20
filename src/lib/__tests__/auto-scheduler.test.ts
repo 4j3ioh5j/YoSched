@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { daysBetween, bestSpread, autoSchedule, maxReachableDailyHours, getShiftHours, compareScheduleQuality, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult, type ShiftHourOverride, type ScheduleQuality } from "../auto-scheduler";
+import { daysBetween, bestSpread, autoSchedule, autoScheduleCandidates, fnv1a, maxReachableDailyHours, getShiftHours, compareScheduleQuality, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult, type ShiftHourOverride, type ScheduleQuality } from "../auto-scheduler";
 import { type ScheduleRequestData } from "../schedule-requests";
 import { whenToColumns, legacyPatternToWhen, standingToWhen } from "../recurrence";
 
@@ -2266,5 +2266,133 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
     }
     expect(placed).toBeGreaterThan(0); // ORLs actually distributed
     expect(maxPer).toBeGreaterThanOrEqual(2); // pairing happened
+  });
+});
+
+describe("fnv1a (Slice 4b seeded tiebreak hash)", () => {
+  it("is deterministic and maps equal strings to equal numbers", () => {
+    expect(fnv1a("1:p1")).toBe(fnv1a("1:p1"));
+  });
+  it("varies by content (seed prefix and entity differ)", () => {
+    expect(fnv1a("1:p1")).not.toBe(fnv1a("2:p1"));
+    expect(fnv1a("1:p1")).not.toBe(fnv1a("1:p2"));
+  });
+});
+
+describe("autoSchedule — seeded candidates (Slice 4b)", () => {
+  // Order/reason/confidence-agnostic identity of a schedule's placement.
+  const placementKey = (r: AutoScheduleResult) =>
+    r.suggestions.map((s) => `${s.staffId}|${s.date}|${s.shiftTypeId}`).sort().join(";");
+
+  // A tie-rich scenario: 3 interchangeable full-timers, a 16h PP target over 5
+  // weekdays ⇒ each works 2 days / takes 3 off, with many equally-good day-off
+  // combos for the seeded tiebreak to choose among.
+  const tieRich = (over: Record<string, unknown> = {}) =>
+    runSchedule({
+      staff: [makeStaff("p1", "AB"), makeStaff("p2", "CD"), makeStaff("p3", "EF")],
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 16 }],
+      ...over,
+    });
+
+  it("seed 0 reproduces the canonical (no-seed) schedule byte-for-byte", () => {
+    expect(placementKey(runSchedule({ seed: 0 }))).toBe(placementKey(runSchedule()));
+    // Also in the tie-rich case where perturbation would otherwise show.
+    expect(placementKey(tieRich({ seed: 0 }))).toBe(placementKey(tieRich()));
+  });
+
+  it("is deterministic: the same seed yields the same schedule", () => {
+    expect(placementKey(tieRich({ seed: 7 }))).toBe(placementKey(tieRich({ seed: 7 })));
+  });
+
+  it("a positive seed perturbs true ties, producing distinct schedules", () => {
+    const base = placementKey(tieRich({ seed: 0 }));
+    const distinct = new Set<string>([base]);
+    let differsFromBase = false;
+    for (let s = 1; s <= 12; s++) {
+      const k = placementKey(tieRich({ seed: s }));
+      distinct.add(k);
+      if (k !== base) differsFromBase = true;
+    }
+    expect(differsFromBase).toBe(true);
+    expect(distinct.size).toBeGreaterThan(1);
+  });
+
+});
+
+describe("autoScheduleCandidates (Slice 4b)", () => {
+  const placementKey = (r: AutoScheduleResult) =>
+    r.suggestions.map((s) => `${s.staffId}|${s.date}|${s.shiftTypeId}`).sort().join(";");
+
+  const baseInput = () => ({
+    dates: weekdayDates("2025-05-12", 5),
+    staff: [makeStaff("p1", "AB"), makeStaff("p2", "CD"), makeStaff("p3", "EF")],
+    shiftTypes: [OR, OFF],
+    existingAssignments: [],
+    payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 16 }],
+    holidays: [],
+    desirabilityWeights: [],
+    standingCommitments: [],
+    staffOverrides: [],
+    dayPreferences: [],
+    historicalAssignments: [],
+    staffingRequirements: [],
+    schedulingPreferences: defaultPrefs,
+    equityFactors: [],
+    followRules: [],
+  });
+
+  it("returns up to `count` DISTINCT candidates ranked best-first by quality", () => {
+    const cands = autoScheduleCandidates(baseInput(), 4);
+    expect(cands.length).toBeGreaterThan(1);
+    expect(cands.length).toBeLessThanOrEqual(4);
+    // Distinct placements.
+    const keys = cands.map((c) => placementKey(c.result));
+    expect(new Set(keys).size).toBe(keys.length);
+    // Ranked non-decreasing (best first) under the lexicographic objective.
+    for (let i = 1; i < cands.length; i++) {
+      expect(compareScheduleQuality(cands[i - 1].result.quality, cands[i].result.quality)).toBeLessThanOrEqual(0);
+    }
+  });
+
+  it("never surfaces a candidate worse than canonical on the inviolable hard-breach tier", () => {
+    // The seeded tiebreak reorders true ties, but greedy placement means a
+    // perturbed run CAN strand coverage (more hardBreaches). The orchestrator
+    // must filter those out so no offered option breaches #220 T0 worse than
+    // the canonical schedule. Assert the floor holds for every candidate.
+    const canonicalHard = autoSchedule({ ...baseInput(), seed: 0 }).quality.breakdown.hardBreaches;
+    for (const c of autoScheduleCandidates(baseInput(), 6)) {
+      expect(c.result.quality.breakdown.hardBreaches).toBeLessThanOrEqual(canonicalHard);
+    }
+  });
+
+  it("always includes the canonical seed-0 schedule", () => {
+    const cands = autoScheduleCandidates(baseInput(), 5);
+    const canonical = placementKey(autoSchedule({ ...baseInput(), seed: 0 }));
+    expect(cands.some((c) => c.seed === 0)).toBe(true);
+    expect(cands.some((c) => placementKey(c.result) === canonical)).toBe(true);
+  });
+
+  it("is deterministic: same input + count ⇒ identical candidate list", () => {
+    const a = autoScheduleCandidates(baseInput(), 3);
+    const b = autoScheduleCandidates(baseInput(), 3);
+    expect(a.map((c) => c.seed)).toEqual(b.map((c) => c.seed));
+    expect(a.map((c) => placementKey(c.result))).toEqual(b.map((c) => placementKey(c.result)));
+  });
+
+  it("count<=1 returns exactly the canonical schedule", () => {
+    const cands = autoScheduleCandidates(baseInput(), 1);
+    expect(cands.length).toBe(1);
+    expect(cands[0].seed).toBe(0);
+  });
+
+  it("returns fewer than asked when the schedule is fully constrained (no ties)", () => {
+    // 2 staff, target 40 over 5 weekdays ⇒ both work all 5 days; no discretion,
+    // so every seed collapses to the one possible placement.
+    const cands = autoScheduleCandidates(
+      { ...baseInput(), staff: [makeStaff("p1", "AB"), makeStaff("p2", "CD")],
+        payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }] },
+      5,
+    );
+    expect(cands.length).toBe(1);
   });
 });
