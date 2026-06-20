@@ -136,6 +136,23 @@ export type Suggestion = {
   confidence: number;
 };
 
+// Global quality objective (#224 item 4, Slice 4a). Grades a FINISHED schedule —
+// it does NOT change how the engine builds one. `rank` is a lexicographic key in
+// #220 precedence order (each element "lower is better"): compare two schedules
+// element-by-element, first difference decides — so a better higher-priority term
+// is never traded for a lower one. Today's tiers: [hardBreaches, ppHoursDeviation,
+// requestsDenied, fairnessSpread]. Day-off quality (#226 T4) is a reserved lower
+// tier, added later before multi-option needs fine tiebreaking.
+export type ScheduleQuality = {
+  breakdown: {
+    hardBreaches: number;      // T0: unmet coverage (not human-approved) + hard min/max breaches
+    ppHoursDeviation: number;  // T1: Σ |worked − target| over staff×PP (measures #217)
+    requestsDenied: number;    // T2: non-human-approved REQUEST_SHIFT work-days not honored, counted per covered date (measures #221)
+    fairnessSpread: number;    // T3: stddev of FTE-normalized desirability load across staff
+  };
+  rank: number[];
+};
+
 export type AutoScheduleResult = {
   suggestions: Suggestion[];
   warnings: string[];
@@ -143,7 +160,21 @@ export type AutoScheduleResult = {
     totalSlotsFilled: number;
     byStep: Record<string, number>;
   };
+  quality: ScheduleQuality;
 };
+
+// Lexicographic comparison of two schedule qualities (lower rank = better).
+// Returns <0 if `a` is better, >0 if `b` is better, 0 if equivalent. This is the
+// ranking rule multi-option (Slice 4b) uses to surface the best candidate.
+export function compareScheduleQuality(a: ScheduleQuality, b: ScheduleQuality): number {
+  const ra = a.rank, rb = b.rank;
+  const n = Math.max(ra.length, rb.length);
+  for (let i = 0; i < n; i++) {
+    const av = ra[i] ?? 0, bv = rb[i] ?? 0;
+    if (av !== bv) return av - bv;
+  }
+  return 0;
+}
 
 function toDateStr(d: Date): string {
   const y = d.getFullYear();
@@ -1854,6 +1885,12 @@ export function autoSchedule({
     }
   }
 
+  // ── Schedule quality accumulators (#224 item 4, Slice 4a) ──
+  // Filled by the audit loops below (no extra iteration), assembled into
+  // result.quality just before return. See ScheduleQuality / compareScheduleQuality.
+  let qHardBreaches = 0;
+  let qPpHoursDeviation = 0;
+
   function auditPayPeriodHours(): void {
     const auditPPs = payPeriods.filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate));
     // Eligible-pool size per shift code among active auto-scheduled staff. A tiny
@@ -1871,6 +1908,7 @@ export function autoSchedule({
         if (target <= 0) continue;
         const hours = ppHoursForStaff(staff.id, pp);
         const dev = Math.round(hours - target);
+        qPpHoursDeviation += Math.abs(dev); // T1: two-directional PP-hours deviation
         if (dev === 0) continue;
         // A scarce-eligibility shift this staff actually worked in the PP marks
         // the deviation as structural (Class 2 — no engine fix).
@@ -2127,6 +2165,9 @@ export function autoSchedule({
           ? "limited by approved leave / locked assignments"
           : "true shortage — every eligible staff member is unavailable or already at their pay-period hour cap";
       warnings.push(`${date}: ${st.code} below its required minimum (${assigned}/${required}) — ${cause}`);
+      // T0: count the missing slots as a hard breach UNLESS the gap is sanctioned
+      // by a human-approved leave / locked cell (#220: human-approved > coverage).
+      if (!blockedByApproved) qHardBreaches += required - assigned;
     }
   }
 
@@ -2168,6 +2209,7 @@ export function autoSchedule({
         // Soft (preference) targets are advisory-only — bias without warnings.
         if (!met && targetIsHard(target)) {
           warnings.push(`${staff.initials}: only ${current}/${needed} ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
+          qHardBreaches += needed - current; // T0: hard minimum shortfall
         }
       }
 
@@ -2194,6 +2236,7 @@ export function autoSchedule({
               ? `${target.windowDays}d`
               : `${(target.windowCount ?? 1) > 1 ? `${target.windowCount} ` : ""}${target.window}`;
           warnings.push(`${staff.initials}: ${st.code} exceeds max ${target.maxCount} per ${windowDesc} (rolling) — ${overCap.join(", ")}`);
+          qHardBreaches += overCap.length; // T0: hard rolling-max overage
         }
       }
     }
@@ -2233,6 +2276,62 @@ export function autoSchedule({
     }
   }
 
+  // ── Assemble the global quality objective (#224 item 4, Slice 4a) ──
+  // T2: non-human-approved REQUEST_SHIFTs (forced under the active policy) that the
+  // final grid does NOT honor — the reconciliation outcome (#221). Same eligibility
+  // filter as reconcileRequests so the two stay consistent.
+  let qRequestsDenied = 0;
+  for (const r of requestList) {
+    if (r.kind !== "REQUEST_SHIFT" || r.strength !== "hard") continue;
+    if (r.status === "approved" && r.autoApproved !== true) continue; // human-approved → authoritative, not scored
+    if (r.status === "pending" && pendingMode !== "full") continue;
+    if (r.status !== "approved" && r.status !== "pending") continue;
+    // STEP 0b places one of the requested WORK shifts on EVERY covered date, and
+    // reconcileRequests claims a slot per (shift, date) — so a multi-day request
+    // wants the shift each day. Count denials PER covered date (a partially-honored
+    // multi-day request still contributes its unfilled days), scoped to work shifts
+    // (away placements aren't reconciled — that's #3, deferred).
+    const wantWork = r.shiftTypeIds.filter((id) => {
+      const st = stById.get(id);
+      return !!st && !st.isLeave && !st.isOffShift;
+    });
+    if (wantWork.length === 0) continue;
+    for (const date of dates) {
+      if (!coversDate(r, date)) continue;
+      const cell = grid.get(`${r.staffId}:${date}`);
+      if (!cell || !wantWork.includes(cell.shiftTypeId)) qRequestsDenied++;
+    }
+  }
+
+  // T3: evenness of the undesirable/desirable shift load across staff, measured on
+  // the FINISHED grid (so it differentiates candidates — the input `fairness` is
+  // history-based and identical across them). FTE-normalized desirability score per
+  // staff, then its standard deviation: lower = more even = fairer.
+  const desScores: number[] = [];
+  for (const staff of activeStaff) {
+    const fte = staff.ftePercentage > 0 ? staff.ftePercentage : 1;
+    let des = 0;
+    for (const date of dates) {
+      const cell = grid.get(`${staff.id}:${date}`);
+      if (!cell) continue;
+      des += dwMap.get(`${cell.shiftTypeId}:${getDow(date)}`) ?? 0;
+    }
+    desScores.push(des / fte);
+  }
+  const desMean = desScores.reduce((s, v) => s + v, 0) / (desScores.length || 1);
+  const desVar = desScores.reduce((s, v) => s + (v - desMean) ** 2, 0) / (desScores.length || 1);
+  const qFairnessSpread = Math.round(Math.sqrt(desVar) * 1000) / 1000;
+
+  const quality: ScheduleQuality = {
+    breakdown: {
+      hardBreaches: qHardBreaches,
+      ppHoursDeviation: qPpHoursDeviation,
+      requestsDenied: qRequestsDenied,
+      fairnessSpread: qFairnessSpread,
+    },
+    rank: [qHardBreaches, qPpHoursDeviation, qRequestsDenied, qFairnessSpread],
+  };
+
   return {
     suggestions,
     warnings,
@@ -2240,5 +2339,6 @@ export function autoSchedule({
       totalSlotsFilled: suggestions.length,
       byStep,
     },
+    quality,
   };
 }

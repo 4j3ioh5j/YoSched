@@ -511,6 +511,7 @@ export function ScheduleGrid({
   }> | null>(null);
   const [autoWarnings, setAutoWarnings] = useState<string[]>([]);
   const [autoStats, setAutoStats] = useState<{ totalSlotsFilled: number; byStep: Record<string, number> } | null>(null);
+  const [autoQuality, setAutoQuality] = useState<{ breakdown: { hardBreaches: number; ppHoursDeviation: number; requestsDenied: number; fairnessSpread: number } } | null>(null);
   const [autoLoading, setAutoLoading] = useState(false);
 
   type SuggestionEntry = NonNullable<typeof autoSuggestions>[0];
@@ -2785,6 +2786,7 @@ export function ScheduleGrid({
       setAutoSuggestions(data.suggestions);
       setAutoWarnings(data.warnings || []);
       setAutoStats(data.stats || null);
+      setAutoQuality(data.quality || null);
     } catch (e) {
       console.error("Auto-schedule failed:", e);
     } finally {
@@ -2825,6 +2827,7 @@ export function ScheduleGrid({
       setAutoSuggestions(null);
       setAutoWarnings([]);
       setAutoStats(null);
+      setAutoQuality(null);
     } catch (e) {
       console.error("Apply failed:", e);
     } finally {
@@ -3206,6 +3209,14 @@ export function ScheduleGrid({
                   {Object.entries(autoStats.byStep).map(([k, v]) => `${k}: ${v}`).join(" | ")}
                 </span>
               )}
+              {autoQuality && (
+                <span
+                  className="text-xs text-sky-300/80"
+                  title={`Schedule quality (lower is better, by priority):\nhard breaches: ${autoQuality.breakdown.hardBreaches}\nPP-hours deviation: ${autoQuality.breakdown.ppHoursDeviation}h\nrequests denied: ${autoQuality.breakdown.requestsDenied}\nfairness spread: ${autoQuality.breakdown.fairnessSpread}`}
+                >
+                  quality: {autoQuality.breakdown.hardBreaches}b · {autoQuality.breakdown.ppHoursDeviation}h · {autoQuality.breakdown.requestsDenied}d · {autoQuality.breakdown.fairnessSpread}f
+                </span>
+              )}
               {autoWarnings.length > 0 && (
                 <span className="text-xs text-amber-400" title={autoWarnings.join("\n")}>
                   {autoWarnings.length} warning{autoWarnings.length !== 1 ? "s" : ""}
@@ -3221,7 +3232,7 @@ export function ScheduleGrid({
                 Accept All
               </button>
               <button
-                onClick={() => { setAutoSuggestions(null); setAutoWarnings([]); setAutoStats(null); }}
+                onClick={() => { setAutoSuggestions(null); setAutoWarnings([]); setAutoStats(null); setAutoQuality(null); }}
                 className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
               >
                 Dismiss
