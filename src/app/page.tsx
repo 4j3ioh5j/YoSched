@@ -182,6 +182,7 @@ export default async function Home() {
           durationHrs: o.durationHrs,
           durationHrsWeekday: o.durationHrsWeekday,
           durationHrsWeekend: o.durationHrsWeekend,
+          durationHrsHoliday: o.durationHrsHoliday,
         }))}
         staffingMins={staffingMins.map((sm) => ({
           role: sm.role,

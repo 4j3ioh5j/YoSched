@@ -98,6 +98,9 @@ type StaffOverride = {
   // (legacy single value applies to both weekday and weekend).
   durationHrsWeekday?: number | null;
   durationHrsWeekend?: number | null;
+  // Null/undefined → mirror the weekend resolution (legacy rows had no holiday
+  // value; holidays were valued at the override's weekend hours).
+  durationHrsHoliday?: number | null;
 };
 
 // A day's "kind" for hour math. Holiday takes precedence over weekend (a holiday
@@ -106,6 +109,19 @@ export type DayType = "weekday" | "weekend" | "holiday";
 
 // Resolved per-(staff,shiftType) hour override, split by day type.
 export type ShiftHourOverride = { weekday: number; weekend: number; holiday: number };
+
+// Resolve a stored per-staff override into concrete per-day-type hours. The
+// day-type columns fall back to the legacy single `durationHrs`; an unset
+// holiday value mirrors the (resolved) weekend value, preserving how holidays
+// were valued before the holiday column existed.
+export function resolveShiftHourOverride(o: StaffOverride): ShiftHourOverride {
+  const weekend = o.durationHrsWeekend ?? o.durationHrs;
+  return {
+    weekday: o.durationHrsWeekday ?? o.durationHrs,
+    weekend,
+    holiday: o.durationHrsHoliday ?? weekend,
+  };
+}
 
 type DayPreference = {
   staffId: string;
@@ -512,14 +528,7 @@ export function autoSchedule({
 
   const overrideMap = new Map<string, ShiftHourOverride>();
   for (const o of staffOverrides) {
-    const weekend = o.durationHrsWeekend ?? o.durationHrs;
-    overrideMap.set(`${o.staffId}:${o.shiftTypeId}`, {
-      weekday: o.durationHrsWeekday ?? o.durationHrs,
-      weekend,
-      // Item 1: the override has no holiday value yet — holidays mirror the
-      // weekend resolution (item 2 adds an explicit per-staff holiday override).
-      holiday: weekend,
-    });
+    overrideMap.set(`${o.staffId}:${o.shiftTypeId}`, resolveShiftHourOverride(o));
   }
 
   // `noCount` marks a cell placed as a non-counting required follower: its worked

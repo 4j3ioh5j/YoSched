@@ -182,6 +182,9 @@ model StaffShiftOverride {
   // is treated as both weekday and weekend until a split is set).
   durationHrsWeekday Float?
   durationHrsWeekend Float?
+  // Null = fall back to the weekend resolution (legacy rows have no holiday value;
+  // holidays mirrored the weekend hours until an explicit per-staff holiday split).
+  durationHrsHoliday Float?
 
   staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)

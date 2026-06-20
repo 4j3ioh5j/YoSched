@@ -95,6 +95,7 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
       durationHrs: o.durationHrs,
       durationHrsWeekday: o.durationHrsWeekday,
       durationHrsWeekend: o.durationHrsWeekend,
+      durationHrsHoliday: o.durationHrsHoliday,
     })),
   };
 

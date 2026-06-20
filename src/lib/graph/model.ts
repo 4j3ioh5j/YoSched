@@ -80,6 +80,7 @@ export type AssembleOverride = {
   // Day-type-aware overrides; null/undefined falls back to durationHrs.
   durationHrsWeekday?: number | null;
   durationHrsWeekend?: number | null;
+  durationHrsHoliday?: number | null;
 };
 
 export type EquityModel = {
@@ -118,11 +119,11 @@ export function assembleEquityModel(input: {
   const overrideMap = new Map<string, { weekday: number; weekend: number; holiday: number }>();
   for (const o of overrides) {
     const weekend = o.durationHrsWeekend ?? o.durationHrs;
-    // Item 1: overrides have no holiday value yet — mirror the weekend resolution.
+    // An unset holiday value mirrors the weekend resolution (legacy back-compat).
     overrideMap.set(`${o.staffId}:${o.shiftTypeId}`, {
       weekday: o.durationHrsWeekday ?? o.durationHrs,
       weekend,
-      holiday: weekend,
+      holiday: o.durationHrsHoliday ?? weekend,
     });
   }
   const stMap = new Map(shiftTypes.map((st) => [st.id, st]));

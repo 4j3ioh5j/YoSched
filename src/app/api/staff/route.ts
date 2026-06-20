@@ -162,11 +162,13 @@ export async function PUT(req: NextRequest) {
           durationHrs: Number(o.durationHrs),
           durationHrsWeekday: o.durationHrsWeekday == null ? null : Number(o.durationHrsWeekday),
           durationHrsWeekend: o.durationHrsWeekend == null ? null : Number(o.durationHrsWeekend),
+          durationHrsHoliday: o.durationHrsHoliday == null ? null : Number(o.durationHrsHoliday),
         }))
         .filter((r) =>
           Number.isFinite(r.durationHrs) &&
           (r.durationHrsWeekday == null || Number.isFinite(r.durationHrsWeekday)) &&
-          (r.durationHrsWeekend == null || Number.isFinite(r.durationHrsWeekend)),
+          (r.durationHrsWeekend == null || Number.isFinite(r.durationHrsWeekend)) &&
+          (r.durationHrsHoliday == null || Number.isFinite(r.durationHrsHoliday)),
         );
       if (rows.length > 0) {
         await tx.staffShiftOverride.createMany({ data: rows });

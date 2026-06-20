@@ -142,6 +142,7 @@ type StaffOverride = {
   // Day-type-aware overrides; null/undefined falls back to durationHrs.
   durationHrsWeekday?: number | null;
   durationHrsWeekend?: number | null;
+  durationHrsHoliday?: number | null;
 };
 
 type StaffingMin = {
@@ -876,11 +877,11 @@ export function ScheduleGrid({
     const map = new Map<string, { weekday: number; weekend: number; holiday: number }>();
     for (const o of staffOverrides) {
       const weekend = o.durationHrsWeekend ?? o.durationHrs;
-      // Item 1: overrides have no holiday value yet — mirror the weekend resolution.
+      // An unset holiday value mirrors the weekend resolution (legacy back-compat).
       map.set(`${o.staffId}:${o.shiftTypeId}`, {
         weekday: o.durationHrsWeekday ?? o.durationHrs,
         weekend,
-        holiday: weekend,
+        holiday: o.durationHrsHoliday ?? weekend,
       });
     }
     return map;

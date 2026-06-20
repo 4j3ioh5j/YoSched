@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { daysBetween, bestSpread, autoSchedule, autoScheduleCandidates, fnv1a, maxReachableDailyHours, getShiftHours, compareScheduleQuality, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult, type ShiftHourOverride, type ScheduleQuality } from "../auto-scheduler";
+import { daysBetween, bestSpread, autoSchedule, autoScheduleCandidates, fnv1a, maxReachableDailyHours, getShiftHours, resolveShiftHourOverride, compareScheduleQuality, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult, type ShiftHourOverride, type ScheduleQuality } from "../auto-scheduler";
 import { type ScheduleRequestData } from "../schedule-requests";
 import { whenToColumns, legacyPatternToWhen, standingToWhen } from "../recurrence";
 
@@ -1928,6 +1928,33 @@ describe("getShiftHours — weekday/weekend/holiday by day type", () => {
   it("scopes overrides to the matching staff + shift only", () => {
     const ov = new Map<string, ShiftHourOverride>([["p1:st-orl", { weekday: 6, weekend: 6, holiday: 6 }]]);
     expect(getShiftHours("p2", ORL, ov, "weekday")).toBe(12); // different staff → default
+  });
+});
+
+describe("resolveShiftHourOverride — stored row → per-day-type hours", () => {
+  const base = { staffId: "p1", shiftTypeId: "st-orl" };
+
+  it("legacy single value applies to every day type", () => {
+    expect(resolveShiftHourOverride({ ...base, durationHrs: 9 }))
+      .toEqual({ weekday: 9, weekend: 9, holiday: 9 });
+  });
+
+  it("uses explicit weekday/weekend/holiday values when set", () => {
+    expect(resolveShiftHourOverride({
+      ...base, durationHrs: 12, durationHrsWeekday: 12, durationHrsWeekend: 8, durationHrsHoliday: 4,
+    })).toEqual({ weekday: 12, weekend: 8, holiday: 4 });
+  });
+
+  it("an unset holiday mirrors the resolved weekend (back-compat for pre-holiday rows)", () => {
+    expect(resolveShiftHourOverride({
+      ...base, durationHrs: 12, durationHrsWeekday: 12, durationHrsWeekend: 6, durationHrsHoliday: null,
+    })).toEqual({ weekday: 12, weekend: 6, holiday: 6 });
+  });
+
+  it("a 0 holiday is honored (not treated as unset)", () => {
+    expect(resolveShiftHourOverride({
+      ...base, durationHrs: 12, durationHrsWeekend: 6, durationHrsHoliday: 0,
+    })).toEqual({ weekday: 12, weekend: 6, holiday: 0 });
   });
 });
 
