@@ -76,6 +76,9 @@ export type AssembleOverride = {
   staffId: string;
   shiftTypeId: string;
   durationHrs: number;
+  // Day-type-aware overrides; null/undefined falls back to durationHrs.
+  durationHrsWeekday?: number | null;
+  durationHrsWeekend?: number | null;
 };
 
 export type EquityModel = {
@@ -108,8 +111,13 @@ export function assembleEquityModel(input: {
   // Total FTE-counted hours per staff, honoring per-staff shift-hour
   // overrides and the weekday-only (countsOnWeekend) rule.
   const staffHours: Record<string, number> = {};
-  const overrideMap = new Map<string, number>();
-  for (const o of overrides) overrideMap.set(`${o.staffId}:${o.shiftTypeId}`, o.durationHrs);
+  const overrideMap = new Map<string, { weekday: number; weekend: number }>();
+  for (const o of overrides) {
+    overrideMap.set(`${o.staffId}:${o.shiftTypeId}`, {
+      weekday: o.durationHrsWeekday ?? o.durationHrs,
+      weekend: o.durationHrsWeekend ?? o.durationHrs,
+    });
+  }
   const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
   for (const a of assignments) {
     const st = stMap.get(a.shiftTypeId);
@@ -117,7 +125,8 @@ export function assembleEquityModel(input: {
     const dow = new Date(a.date + "T12:00:00").getDay();
     const isWknd = dow === 0 || dow === 6;
     if (isWknd && !st.countsOnWeekend) continue;
-    const hrs = overrideMap.get(`${a.staffId}:${a.shiftTypeId}`) ?? st.defaultHours;
+    const ov = overrideMap.get(`${a.staffId}:${a.shiftTypeId}`);
+    const hrs = ov ? (isWknd ? ov.weekend : ov.weekday) : st.defaultHours;
     staffHours[a.staffId] = (staffHours[a.staffId] || 0) + hrs;
   }
 

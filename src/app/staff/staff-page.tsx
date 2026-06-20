@@ -79,6 +79,16 @@ type StandingCommitmentData = WhenFields & {
   notes?: string | null;
 };
 
+// Per-staff shift-hour override. durationHrs is the legacy base; the day-type
+// values fall back to it when null. The editor writes explicit weekday/weekend
+// values, so a UI-created row carries all three.
+type ShiftOverrideData = {
+  shiftTypeId: string;
+  durationHrs: number;
+  durationHrsWeekday: number | null;
+  durationHrsWeekend: number | null;
+};
+
 type Staff = {
   id: string;
   name: string;
@@ -92,6 +102,7 @@ type Staff = {
   shiftEligibilityRules: ShiftEligibilityRuleData[];
   shiftMinimumTargets: ShiftMinimumTargetData[];
   standingCommitments: StandingCommitmentData[];
+  shiftOverrides: ShiftOverrideData[];
   specialQualifications: string[];
   isActive: boolean;
   isAutoScheduled: boolean;
@@ -120,6 +131,8 @@ type ShiftTypeInfo = {
   category: string;
   isLeave: boolean;
   autoSchedulable: boolean;
+  defaultHours: number;
+  countsOnWeekend: boolean;
 };
 
 type Props = {
@@ -385,18 +398,92 @@ function AvailabilityEditor({
   );
 }
 
+// Per-staff weekday/weekend shift-hour override. Empty input = use the shift's
+// default; when both day types equal the default the override is cleared. A
+// UI-created row writes explicit weekday/weekend values (durationHrs mirrors the
+// weekday value as the legacy fallback).
+function ShiftHoursOverrideEditor({
+  shiftType,
+  override,
+  onChange,
+}: {
+  shiftType: ShiftTypeInfo;
+  override: ShiftOverrideData | undefined;
+  onChange: (o: ShiftOverrideData | undefined) => void;
+}) {
+  const def = shiftType.defaultHours;
+  const weekday = override ? (override.durationHrsWeekday ?? override.durationHrs) : null;
+  const weekend = override ? (override.durationHrsWeekend ?? override.durationHrs) : null;
+
+  function commit(nextWeekday: number | null, nextWeekend: number | null) {
+    const wd = nextWeekday ?? def;
+    // For shifts that don't count on weekends there is no separate weekend value
+    // to set — weekend mirrors weekday so the row stays consistent.
+    const we = shiftType.countsOnWeekend ? (nextWeekend ?? def) : wd;
+    if (wd === def && we === def) { onChange(undefined); return; }
+    onChange({
+      shiftTypeId: shiftType.id,
+      durationHrs: wd,
+      durationHrsWeekday: wd,
+      durationHrsWeekend: we,
+    });
+  }
+
+  function parse(v: string): number | null {
+    if (v.trim() === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+
+  const inputCls = "w-16 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600 text-xs";
+
+  return (
+    <div className="flex items-center gap-3 flex-wrap">
+      <label className="flex items-center gap-1 text-xs text-slate-400">
+        {shiftType.countsOnWeekend ? "Weekday" : "Hours"}
+        <input
+          type="number" min={0} step="0.5"
+          value={weekday ?? ""}
+          placeholder={String(def)}
+          onChange={(e) => commit(parse(e.target.value), weekend)}
+          className={inputCls}
+        />
+      </label>
+      {shiftType.countsOnWeekend && (
+        <label className="flex items-center gap-1 text-xs text-slate-400">
+          Weekend
+          <input
+            type="number" min={0} step="0.5"
+            value={weekend ?? ""}
+            placeholder={String(def)}
+            onChange={(e) => commit(weekday, parse(e.target.value))}
+            className={inputCls}
+          />
+        </label>
+      )}
+      {override && (
+        <button onClick={() => onChange(undefined)} className="text-[10px] text-slate-500 hover:text-red-400">reset</button>
+      )}
+    </div>
+  );
+}
+
 function ShiftEligibilityEditor({
   shiftType,
   rules,
   minimumTarget,
+  shiftOverride,
   onRulesChange,
   onMinimumChange,
+  onOverrideChange,
 }: {
   shiftType: ShiftTypeInfo;
   rules: ShiftEligibilityRuleData[];
   minimumTarget: ShiftMinimumTargetData | undefined;
+  shiftOverride: ShiftOverrideData | undefined;
   onRulesChange: (rules: ShiftEligibilityRuleData[]) => void;
   onMinimumChange: (target: ShiftMinimumTargetData | undefined) => void;
+  onOverrideChange: (o: ShiftOverrideData | undefined) => void;
 }) {
   function addRule() {
     onRulesChange([...rules, { shiftTypeId: shiftType.id, type: "eligible", strength: "rule", ...whenToColumns({ daysOfWeek: [1], kind: "every" }) }]);
@@ -450,6 +537,17 @@ function ShiftEligibilityEditor({
           onChange={onMinimumChange}
         />
       </div>
+
+      <div className="pt-2 border-t border-slate-700/50">
+        <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">
+          Hours override <span className="text-slate-600 normal-case">(default {shiftType.defaultHours}h)</span>
+        </div>
+        <ShiftHoursOverrideEditor
+          shiftType={shiftType}
+          override={shiftOverride}
+          onChange={onOverrideChange}
+        />
+      </div>
     </div>
   );
 }
@@ -485,6 +583,8 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
     const isExpanded = expandedShifts.has(st.id);
     const rulesForShift = ep.shiftEligibilityRules.filter((r) => r.shiftTypeId === st.id);
     const minTarget = ep.shiftMinimumTargets.find((t) => t.shiftTypeId === st.id);
+    const override = ep.shiftOverrides.find((o) => o.shiftTypeId === st.id);
+    const hasOverride = !!override;
 
     return (
       <div key={st.id} className="space-y-0">
@@ -511,18 +611,24 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
               className="text-slate-500 hover:text-slate-300 text-xs px-1"
               title="Configure eligibility rules"
             >
-              {hasRules || hasMin ? (
+              {hasRules || hasMin || hasOverride ? (
                 <span className="text-amber-500">{isExpanded ? "▾" : "▸"}</span>
               ) : (
                 <span>{isExpanded ? "▾" : "▸"}</span>
               )}
             </button>
           )}
-          {isEligible && (hasRules || hasMin) && !isExpanded && (
+          {isEligible && (hasRules || hasMin || hasOverride) && !isExpanded && (
             <span className="text-[10px] text-slate-500">
               {rulesForShift.length > 0 && `${rulesForShift.length} rule${rulesForShift.length > 1 ? "s" : ""}`}
               {hasRules && hasMin && ", "}
               {hasMin && describeFrequency(minTarget! as ShiftMinTarget)}
+              {(hasRules || hasMin) && hasOverride && ", "}
+              {hasOverride && (
+                st.countsOnWeekend
+                  ? `${override!.durationHrsWeekday ?? override!.durationHrs}/${override!.durationHrsWeekend ?? override!.durationHrs}h`
+                  : `${override!.durationHrsWeekday ?? override!.durationHrs}h`
+              )}
             </span>
           )}
         </div>
@@ -531,6 +637,7 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
             shiftType={st}
             rules={rulesForShift}
             minimumTarget={minTarget}
+            shiftOverride={override}
             onRulesChange={(newRules) => {
               const others = ep.shiftEligibilityRules.filter((r) => r.shiftTypeId !== st.id);
               updateField(ep.id, "shiftEligibilityRules", [...others, ...newRules]);
@@ -538,6 +645,10 @@ function EligibleShiftsSection({ ep, allShiftTypes, updateField }: {
             onMinimumChange={(newTarget) => {
               const others = ep.shiftMinimumTargets.filter((t) => t.shiftTypeId !== st.id);
               updateField(ep.id, "shiftMinimumTargets", newTarget ? [...others, newTarget] : others);
+            }}
+            onOverrideChange={(newOverride) => {
+              const others = ep.shiftOverrides.filter((o) => o.shiftTypeId !== st.id);
+              updateField(ep.id, "shiftOverrides", newOverride ? [...others, newOverride] : others);
             }}
           />
         )}
@@ -845,6 +956,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
         shiftEligibilityRules: [],
         shiftMinimumTargets: [],
         standingCommitments: [],
+        shiftOverrides: [],
         specialQualifications: created.specialQualifications ?? [],
         isActive: created.isActive,
         isAutoScheduled: created.isAutoScheduled ?? true,

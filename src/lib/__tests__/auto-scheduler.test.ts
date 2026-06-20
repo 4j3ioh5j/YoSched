@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { daysBetween, bestSpread, autoSchedule, maxReachableDailyHours, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult } from "../auto-scheduler";
+import { daysBetween, bestSpread, autoSchedule, maxReachableDailyHours, getShiftHours, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult, type ShiftHourOverride } from "../auto-scheduler";
 import { type ScheduleRequestData } from "../schedule-requests";
 import { whenToColumns, legacyPatternToWhen, standingToWhen } from "../recurrence";
 
@@ -1861,7 +1861,7 @@ describe("autoSchedule — schedule request preferences", () => {
 // ─── Slice 2: ORC under-distribution fix (handoff #190) ───
 
 describe("maxReachableDailyHours", () => {
-  const empty = new Map<string, number>();
+  const empty = new Map<string, ShiftHourOverride>();
   const ORh = makeShift("st-or", "OR", { defaultHours: 8, isFillShift: true });
   const ORLh = makeShift("st-orl", "ORL", { defaultHours: 12 });
   const ORCh = makeShift("st-orc", "ORC", { defaultHours: 16 });
@@ -1889,13 +1889,41 @@ describe("maxReachableDailyHours", () => {
 
   it("respects per-staff hour overrides", () => {
     const s = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] });
-    const ov = new Map<string, number>([["p1:st-orc", 10]]); // p1's ORC is 10h, not 16
+    const ov = new Map<string, ShiftHourOverride>([["p1:st-orc", { weekday: 10, weekend: 10 }]]); // p1's ORC is 10h, not 16
     expect(maxReachableDailyHours(s, allShifts, ov)).toBe(10); // max(OR 8, ORC 10)
+  });
+
+  it("uses the larger day type as the capacity bound (no single date)", () => {
+    const s = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] });
+    // ORC worth 6h on weekdays but 16h on weekends → capacity bound is 16.
+    const ov = new Map<string, ShiftHourOverride>([["p1:st-orc", { weekday: 6, weekend: 16 }]]);
+    expect(maxReachableDailyHours(s, allShifts, ov)).toBe(16);
   });
 
   it("returns 0 when no qualifying shift exists (caller falls back to fill hours)", () => {
     const s = makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-off", "st-al"] });
     expect(maxReachableDailyHours(s, allShifts, empty)).toBe(0);
+  });
+});
+
+describe("getShiftHours — weekday/weekend overrides", () => {
+  const ORL = makeShift("st-orl", "ORL", { defaultHours: 12 });
+
+  it("falls back to the shift's defaultHours when no override exists", () => {
+    const ov = new Map<string, ShiftHourOverride>();
+    expect(getShiftHours("p1", ORL, ov, false)).toBe(12);
+    expect(getShiftHours("p1", ORL, ov, true)).toBe(12);
+  });
+
+  it("returns the weekday value on weekdays and the weekend value on weekends", () => {
+    const ov = new Map<string, ShiftHourOverride>([["p1:st-orl", { weekday: 12, weekend: 4 }]]);
+    expect(getShiftHours("p1", ORL, ov, false)).toBe(12);
+    expect(getShiftHours("p1", ORL, ov, true)).toBe(4);
+  });
+
+  it("scopes overrides to the matching staff + shift only", () => {
+    const ov = new Map<string, ShiftHourOverride>([["p1:st-orl", { weekday: 6, weekend: 6 }]]);
+    expect(getShiftHours("p2", ORL, ov, false)).toBe(12); // different staff → default
   });
 });
 

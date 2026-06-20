@@ -51,7 +51,7 @@ function standingWhenColumns(r: Record<string, unknown>) {
 export async function PUT(req: NextRequest) {
   const { error } = await getSession("staff:edit");
   if (error) return error;
-  const { id, eligibleShiftTypeIds, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, standingCommitments, ...data } = await req.json();
+  const { id, eligibleShiftTypeIds, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, standingCommitments, shiftOverrides, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   await prisma.$transaction(async (tx) => {
@@ -147,6 +147,31 @@ export async function PUT(req: NextRequest) {
         });
       }
     }
+
+    // Per-staff shift-hour overrides. Replace-all like the other relations. A row
+    // is kept only when it actually differs from the shift's default (the client
+    // sends a row per dirty shift; an all-default row is dropped here to avoid
+    // accumulating no-op overrides). durationHrs is the legacy base; the day-type
+    // columns are null unless explicitly split.
+    if (Array.isArray(shiftOverrides)) {
+      await tx.staffShiftOverride.deleteMany({ where: { staffId: id } });
+      const rows = shiftOverrides
+        .map((o: Record<string, unknown>) => ({
+          staffId: id,
+          shiftTypeId: o.shiftTypeId as string,
+          durationHrs: Number(o.durationHrs),
+          durationHrsWeekday: o.durationHrsWeekday == null ? null : Number(o.durationHrsWeekday),
+          durationHrsWeekend: o.durationHrsWeekend == null ? null : Number(o.durationHrsWeekend),
+        }))
+        .filter((r) =>
+          Number.isFinite(r.durationHrs) &&
+          (r.durationHrsWeekday == null || Number.isFinite(r.durationHrsWeekday)) &&
+          (r.durationHrsWeekend == null || Number.isFinite(r.durationHrsWeekend)),
+        );
+      if (rows.length > 0) {
+        await tx.staffShiftOverride.createMany({ data: rows });
+      }
+    }
   });
 
   // Keep the paired login in step with the staff active-state.
@@ -166,7 +191,7 @@ export async function PUT(req: NextRequest) {
 
   const result = await prisma.staff.findUnique({
     where: { id },
-    include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true },
+    include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true, shiftOverrides: true },
   });
 
   return NextResponse.json(result);
@@ -241,7 +266,7 @@ export async function POST(req: NextRequest) {
 
   const result = await prisma.staff.findUnique({
     where: { id: created.id },
-    include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true },
+    include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true, shiftOverrides: true },
   });
 
   return NextResponse.json(result);

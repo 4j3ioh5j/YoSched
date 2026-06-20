@@ -14,7 +14,7 @@ export default async function Staff() {
     prisma.staff.findMany({
       orderBy: { sortOrder: "asc" },
       include: {
-        employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true,
+        employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true, shiftOverrides: true,
         loginUser: { select: { isActive: true, email: true, passwordHash: true } },
       },
     }),
@@ -84,6 +84,12 @@ export default async function Staff() {
             whenCycleN: sc.whenCycleN,
             whenCycleOffset: sc.whenCycleOffset,
           })),
+          shiftOverrides: p.shiftOverrides.map((o) => ({
+            shiftTypeId: o.shiftTypeId,
+            durationHrs: o.durationHrs,
+            durationHrsWeekday: o.durationHrsWeekday,
+            durationHrsWeekend: o.durationHrsWeekend,
+          })),
           specialQualifications: p.specialQualifications,
           isActive: p.isActive,
           isAutoScheduled: p.isAutoScheduled,
@@ -115,6 +121,8 @@ export default async function Staff() {
           category: st.category,
           isLeave: st.isLeave,
           autoSchedulable: st.autoSchedulable,
+          defaultHours: st.defaultHours,
+          countsOnWeekend: st.countsOnWeekend,
         }))}
       />
     </main>

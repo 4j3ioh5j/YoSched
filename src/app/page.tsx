@@ -179,6 +179,8 @@ export default async function Home() {
           staffId: o.staffId,
           shiftTypeId: o.shiftTypeId,
           durationHrs: o.durationHrs,
+          durationHrsWeekday: o.durationHrsWeekday,
+          durationHrsWeekend: o.durationHrsWeekend,
         }))}
         staffingMins={staffingMins.map((sm) => ({
           role: sm.role,

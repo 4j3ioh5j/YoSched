@@ -138,6 +138,9 @@ type StaffOverride = {
   staffId: string;
   shiftTypeId: string;
   durationHrs: number;
+  // Day-type-aware overrides; null/undefined falls back to durationHrs.
+  durationHrsWeekday?: number | null;
+  durationHrsWeekend?: number | null;
 };
 
 type StaffingMin = {
@@ -868,9 +871,12 @@ export function ScheduleGrid({
   }, [staff]);
 
   const overrideMap = useMemo(() => {
-    const map = new Map<string, number>();
+    const map = new Map<string, { weekday: number; weekend: number }>();
     for (const o of staffOverrides) {
-      map.set(`${o.staffId}:${o.shiftTypeId}`, o.durationHrs);
+      map.set(`${o.staffId}:${o.shiftTypeId}`, {
+        weekday: o.durationHrsWeekday ?? o.durationHrs,
+        weekend: o.durationHrsWeekend ?? o.durationHrs,
+      });
     }
     return map;
   }, [staffOverrides]);
@@ -887,9 +893,9 @@ export function ScheduleGrid({
     [payPeriods],
   );
 
-  function getHoursForAssignment(staffId: string, shiftTypeId: string): number {
+  function getHoursForAssignment(staffId: string, shiftTypeId: string, isWeekend: boolean): number {
     const override = overrideMap.get(`${staffId}:${shiftTypeId}`);
-    if (override !== undefined) return override;
+    if (override !== undefined) return isWeekend ? override.weekend : override.weekday;
     const st = shiftTypeMap.get(shiftTypeId);
     return st?.defaultHours ?? 0;
   }
@@ -918,7 +924,7 @@ export function ScheduleGrid({
             const isWeekend = dow === 0 || dow === 6;
             const st = shiftTypeMap.get(stId);
             if (!isWeekend || st?.countsOnWeekend) {
-              hours += getHoursForAssignment(p.id, stId);
+              hours += getHoursForAssignment(p.id, stId, isWeekend);
             }
           }
           cursor.setDate(cursor.getDate() + 1);

@@ -176,7 +176,11 @@ model StaffShiftOverride {
   id          String @id @default(cuid())
   staffId  String
   shiftTypeId String
-  durationHrs Float
+  durationHrs Float // legacy base / fallback when a day-type value is unset
+  // Day-type-aware hours. Null = fall back to durationHrs (legacy single value
+  // is treated as both weekday and weekend until a split is set).
+  durationHrsWeekday Float?
+  durationHrsWeekend Float?
 
   staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)

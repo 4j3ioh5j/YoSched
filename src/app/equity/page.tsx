@@ -92,6 +92,8 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
       staffId: o.staffId,
       shiftTypeId: o.shiftTypeId,
       durationHrs: o.durationHrs,
+      durationHrsWeekday: o.durationHrsWeekday,
+      durationHrsWeekend: o.durationHrsWeekend,
     })),
   };
 

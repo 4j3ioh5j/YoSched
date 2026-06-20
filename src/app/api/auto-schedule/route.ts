@@ -298,6 +298,8 @@ export async function POST(req: NextRequest) {
       staffId: po.staffId,
       shiftTypeId: po.shiftTypeId,
       durationHrs: po.durationHrs,
+      durationHrsWeekday: po.durationHrsWeekday,
+      durationHrsWeekend: po.durationHrsWeekend,
     })),
     dayPreferences: dayPreferences.map((dp) => ({
       staffId: dp.staffId,
