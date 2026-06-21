@@ -489,19 +489,6 @@ export function ScheduleGrid({
   const [activeDedCol, setActiveDedCol] = useState<string | null>(null);
   const [hoverCol, setHoverCol] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
-  // Auto-suggestion preview overlay (translucent dashed cells). Retained but now
-  // DORMANT: the unified "Auto-generate" flow (formerly "Live") folds the engine's
-  // fills into its own sandbox grid, so nothing populates this anymore. Tearing the
-  // overlay render path out of the cell renderer is a separate cleanup slice.
-  const [autoSuggestions, setAutoSuggestions] = useState<Array<{
-    staffId: string;
-    date: string;
-    shiftTypeId: string;
-    code: string;
-    reason: string;
-    step: string;
-    confidence: number;
-  }> | null>(null);
   const [autoLoading, setAutoLoading] = useState(false);
 
   // ── "Live" mode (#231): interactive what-if scheduling ──
@@ -557,19 +544,6 @@ export function ScheduleGrid({
   const liveUndoStack = useRef<LiveSnap[]>([]);
   const liveRedoStack = useRef<LiveSnap[]>([]);
   useEffect(() => { liveModeRef.current = liveMode; }, [liveMode]);
-
-  type SuggestionEntry = NonNullable<typeof autoSuggestions>[0];
-  const suggestionSet = useMemo(() => {
-    if (!autoSuggestions) return new Set<string>();
-    return new Set(autoSuggestions.map((s) => `${s.staffId}:${s.date}`));
-  }, [autoSuggestions]);
-
-  const suggestionMap = useMemo(() => {
-    if (!autoSuggestions) return new Map<string, SuggestionEntry>();
-    const m = new Map<string, SuggestionEntry>();
-    for (const s of autoSuggestions) m.set(`${s.staffId}:${s.date}`, s);
-    return m;
-  }, [autoSuggestions]);
 
   // Multi-select state
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -889,12 +863,9 @@ export function ScheduleGrid({
 
   // In Live, the schedule-health computations (cell warnings, day staffing, PP-hours
   // totals/colors, count columns) read the LIVE grid so breaches reflect the what-if;
-  // outside Live these ARE the saved assignment/suggestion maps, so normal behavior
-  // is unchanged. (Edit logic still reads assignmentMap — the SAVED state — for lock
-  // checks.) In Live the live grid already holds every cell, so no suggestion overlay.
-  const emptySuggestionMap = useRef(new Map<string, SuggestionEntry>()).current;
+  // outside Live this IS the saved assignment map, so normal behavior is unchanged.
+  // (Edit logic still reads assignmentMap — the SAVED state — for lock checks.)
   const effectiveAssignmentMap = (liveMode && liveOutcome) ? liveDisplayMap : assignmentMap;
-  const effectiveSuggestionMap = liveMode ? emptySuggestionMap : suggestionMap;
 
   // Reverse map for paste: UPPERCASE shift code → id (codes are unique). Lets a pasted
   // "ORC"/"x" resolve to a shift type without a server round-trip.
@@ -1034,8 +1005,7 @@ export function ScheduleGrid({
           const dateStr = toDateStr(cursor);
           const key = `${p.id}:${dateStr}`;
           const a = effectiveAssignmentMap.get(key);
-          const sug = !a ? effectiveSuggestionMap.get(key) : null;
-          const stId = a?.shiftTypeId ?? sug?.shiftTypeId;
+          const stId = a?.shiftTypeId;
           if (stId && shiftCountsTowardFte(stId)) {
             const dow = cursor.getDay();
             // Holiday wins over weekend. A day type the shift doesn't accrue on
@@ -1054,7 +1024,7 @@ export function ScheduleGrid({
       result.set(pp.startDate, staffHours);
     }
     return result;
-  }, [sortedPPs, visibleStaff, effectiveAssignmentMap, effectiveSuggestionMap, overrideMap, shiftTypeMap]);
+  }, [sortedPPs, visibleStaff, effectiveAssignmentMap, overrideMap, shiftTypeMap]);
 
   const followRuleMap = useMemo(() => buildFollowRuleMap(followRules ?? []), [followRules]);
 
@@ -1114,15 +1084,14 @@ export function ScheduleGrid({
         for (const p of staff) {
           const key = `${p.id}:${date}`;
           const a = effectiveAssignmentMap.get(key);
-          const sug = !a ? effectiveSuggestionMap.get(key) : null;
-          const code = a?.code ?? sug?.code;
+          const code = a?.code;
           if (code && codeSet.has(code)) count++;
         }
         counts[date] = count;
       }
       return counts;
     });
-  }, [dates, staff, effectiveAssignmentMap, effectiveSuggestionMap, countColumns]);
+  }, [dates, staff, effectiveAssignmentMap, countColumns]);
 
   // Shift types flagged for a dedicated column, in sort order. Each gets its own
   // column (left of the count columns) listing the initials of whoever covers
@@ -1133,18 +1102,16 @@ export function ScheduleGrid({
   );
 
   // Per dedicated column: date -> initials of staff covering that shift that
-  // day. Mirrors columnCounts (includes suggestions, scans all staff so
-  // coverage shows even when a staff's own column is hidden).
+  // day. Mirrors columnCounts (scans all staff so coverage shows even when a
+  // staff's own column is hidden).
   const dedicatedColumnInitialsData = useMemo(() => {
     return dedicatedColumns.map((st) =>
       dedicatedColumnInitials(staff, dates, st.code, (pid, date) => {
         const key = `${pid}:${date}`;
-        const a = effectiveAssignmentMap.get(key);
-        const sug = !a ? effectiveSuggestionMap.get(key) : null;
-        return a?.code ?? sug?.code;
+        return effectiveAssignmentMap.get(key)?.code;
       }),
     );
-  }, [dedicatedColumns, dates, staff, effectiveAssignmentMap, effectiveSuggestionMap]);
+  }, [dedicatedColumns, dates, staff, effectiveAssignmentMap]);
 
   // Print-only column model. Computes, for the printed schedule:
   //   - hiddenIds: staff whose individual column is hidden — they match no enabled
@@ -2941,51 +2908,8 @@ export function ScheduleGrid({
     return result;
   }, [picker, staffMap, shiftTypes, shiftTypeMap, assignmentMap, staff, holidaySet, staffingMins, followRuleMap, approvedRequests]);
 
-  function renderSuggestion(sug: SuggestionEntry, stMap: Map<string, ShiftType>) {
-    const st = stMap.get(sug.shiftTypeId);
-    const color = st?.color ?? "#6b7280";
-    const isHeavy = st ? followRuleMap.has(st.id) : false;
-    const isOff = st?.isOffShift;
-    return (
-      <div
-        className={[
-          "font-bold rounded px-1 py-0.5 leading-tight border border-dashed",
-          isHeavy ? "text-[12px]" : "text-[11px]",
-        ].join(" ")}
-        style={{
-          backgroundColor: isOff ? "transparent" : color + (isHeavy ? "50" : "30"),
-          color: isOff ? "#64748b" : color,
-          borderColor: isHeavy ? color + "90" : color + "40",
-          borderStyle: isHeavy ? "solid" : "dashed",
-        }}
-        onMouseEnter={(e) => showTip(setTooltip, `Suggested: ${sug.code}\n${sug.reason}`, e)}
-        onMouseLeave={() => setTooltip(null)}
-      >
-        {sug.code}
-      </div>
-    );
-  }
-
   // Selection count for picker header
   const selectionCount = selection.size;
-
-  // Build the Live baseline engine input: the fetched bundle's saved DB
-  // assignments, overlaid with any currently-previewed (not-yet-applied) auto
-  // suggestions so Live operates on exactly what the scheduler sees.
-  function buildLiveInput(bundle: AutoScheduleInput): AutoScheduleInput {
-    const byKey = new Map<string, AutoScheduleInput["existingAssignments"][number]>();
-    for (const a of bundle.existingAssignments) byKey.set(`${a.staffId}:${a.date}`, a);
-    for (const s of autoSuggestions ?? []) {
-      byKey.set(`${s.staffId}:${s.date}`, {
-        staffId: s.staffId,
-        date: s.date,
-        shiftTypeId: s.shiftTypeId,
-        code: s.code,
-        isLocked: false,
-      });
-    }
-    return { ...bundle, existingAssignments: [...byKey.values()] };
-  }
 
   async function enterLive() {
     if (!dates.length) return;
@@ -3002,7 +2926,8 @@ export function ScheduleGrid({
       const saved = new Map<string, string>();
       for (const a of bundle.existingAssignments) saved.set(`${a.staffId}:${a.date}`, a.shiftTypeId);
       liveSavedGridRef.current = saved;
-      const liveInput = buildLiveInput(bundle);
+      // The sandbox operates directly on the saved DB grid (no preview overlay).
+      const liveInput = bundle;
       liveInputRef.current = liveInput;
       livePinsRef.current = new Map();
       liveTouchedRef.current = new Set();
@@ -3095,8 +3020,6 @@ export function ScheduleGrid({
       });
       applyRequestDelta({ requests: data.requestChanges });
       pushUndo(undoOps);
-      // Clear any (dormant) previewed suggestions — folded into the saved grid.
-      setAutoSuggestions(null);
     } catch (e) {
       console.error("Live: accept failed", e);
     } finally {
@@ -3870,10 +3793,6 @@ export function ScheduleGrid({
                     const isDragSrc = dragSource?.staffId === p.id && dragSource?.date === date;
                     const isSelected = selection.has(cellKey);
                     const isActiveCell = activeCol === p.id && isActiveRow;
-                    const suggestion = suggestionMap.get(cellKey);
-                    // Live folds suggestions into its own grid, so the dashed
-                    // suggestion overlay is suppressed while Live is on.
-                    const isSuggested = !liveMode && !!suggestion;
                     const reqs = showRequests ? requestsByCell.get(cellKey) : undefined;
                     const reqSummary = reqs ? summarizeCellRequests(reqs, (id) => shiftTypeMap.get(id)?.code ?? id) : null;
                     const reqCls = reqSummary ? REQ_CAT_CLASSES[reqSummary.category] : null;
@@ -3889,9 +3808,9 @@ export function ScheduleGrid({
                         ? `ring-2 ring-inset ${reqDenied ? "ring-rose-500/60" : reqSolid ? reqCls!.ring : reqCls!.ringFaint} ${reqDenied ? "bg-rose-950/25" : reqCls!.bg}`
                         : "";
                     // Empty cells get a lightweight "initials on date" tooltip on the <td>.
-                    // Populated cells, requests, suggestions, and the saving state render their
-                    // own inner elements that carry their own tooltips, so skip those.
-                    const showEmptyTip = !a && !isSuggested && !isSaving && !reqSummary;
+                    // Populated cells, requests, and the saving state render their own inner
+                    // elements that carry their own tooltips, so skip those.
+                    const showEmptyTip = !a && !isSaving && !reqSummary;
 
                     return (
                       <td
@@ -3912,9 +3831,8 @@ export function ScheduleGrid({
                           isSelected ? (requestMode ? "ring-2 ring-inset ring-violet-400 bg-violet-900/30" : "ring-2 ring-inset ring-emerald-400 bg-emerald-900/20") : "",
                           isDragTarget ? "ring-2 ring-inset ring-cyan-400 bg-cyan-900/20" : "",
                           isDragSrc ? "opacity-30" : "",
-                          isSuggested && !a ? "bg-emerald-900/30" : "",
                           isRipple ? "ring-2 ring-inset ring-amber-400/80 bg-amber-500/10" : "",
-                          !a && !isSaving && !isSuggested ? "hover:bg-slate-700/30" : "",
+                          !a && !isSaving ? "hover:bg-slate-700/30" : "",
                           isActiveCell ? (requestMode ? "ring-2 ring-inset ring-violet-400 z-[2]" : "ring-2 ring-inset ring-blue-400 z-[2]") : "",
                         ].join(" ")}
                         style={{
@@ -3934,7 +3852,7 @@ export function ScheduleGrid({
                         onDragLeave={handleDragLeave}
                         onDrop={(e) => handleDrop(p.id, date, e)}
                       >
-                        {a && !(isSuggested && shiftTypeMap.get(a.shiftTypeId)?.isOffShift && !a.isLocked) ? (
+                        {a ? (
                           <div
                             draggable={canEdit && !a.isLocked}
                             onDragStart={(e) => handleDragStart(p.id, date, e)}
@@ -3959,8 +3877,6 @@ export function ScheduleGrid({
                           >
                             {a.code}
                           </div>
-                        ) : isSuggested ? (
-                          renderSuggestion(suggestion!, shiftTypeMap)
                         ) : isSaving ? (
                           <div className="text-[11px] text-slate-600">...</div>
                         ) : reqSummary ? (
