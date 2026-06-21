@@ -22,7 +22,7 @@ import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } fr
 // A schedule request as delivered to the grid (pure-module shape + display stamp).
 // source/notes are carried (beyond ScheduleRequestData) so a deleted request can
 // be restored verbatim on undo; autoApproved/approvedBy are re-derived by /restore.
-type GridRequest = ScheduleRequestData & { receivedAt: string; source: string; notes: string | null };
+type GridRequest = ScheduleRequestData & { receivedAt: string; source: string; notes: string | null; approvedAt?: string | null; approvedByName?: string | null };
 
 // Everything /api/requests/[id]/restore needs to recreate a request verbatim
 // under its original id — captured when a request is created/deleted so undo &
@@ -948,7 +948,13 @@ export function ScheduleGrid({
       : r.status === "fulfilled" ? "Fulfilled"
       : r.status === "withdrawn" ? "Withdrawn"
       : "Pending";
-    return `  • ${desc} — ${status}, rec'd ${recv}`;
+    // "by <name>" only for an actually-approved request (declined clears the
+    // approver; pending never had one) and only when a name was resolved
+    // (schedule:edit viewers). The decision date follows when known.
+    const named = r.status === "approved" && r.approvedByName;
+    const by = named ? ` by ${r.approvedByName}` : "";
+    const on = named && r.approvedAt ? ` (${formatDate(parseDate(r.approvedAt.split("T")[0]), dateFormat)})` : "";
+    return `  • ${desc} — ${status}${by}${on}, rec'd ${recv}`;
   }, [shiftTypeMap, dateFormat]);
 
   // ONE tooltip for every grid cell, parallel construction in all modes:
@@ -1760,14 +1766,34 @@ export function ScheduleGrid({
   // current assignment on each covered cell. Replaces local state for that
   // window so the grid always matches the server.
   type AffectedDelta = {
-    requests?: { id: string; status: RequestStatus }[];
+    // approvedByName/approvedAt are present from the PATCH route (schedule:edit);
+    // the assignment-write sync deltas omit them (name shows on next load instead).
+    requests?: { id: string; status: RequestStatus; autoApproved: boolean; approvedByName?: string | null; approvedAt?: string | null }[];
     cells?: { staffId: string; date: string; assignment: { id: string; shiftTypeId: string; isLocked: boolean } | null }[];
   };
   function applyRequestDelta(affected?: AffectedDelta) {
     if (!affected) return;
     if (affected.requests?.length) {
-      const m = new Map(affected.requests.map((r) => [r.id, r.status]));
-      setLocalRequests((prev) => prev.map((r) => (m.has(r.id) ? { ...r, status: m.get(r.id)! } : r)));
+      // Carry autoApproved too — a sync auto-approval (e.g. accepting an
+      // auto-generated schedule) flips a pending request to approved AND sets
+      // autoApproved=true; without it the row kept its old false and mislabeled
+      // as "Manually-approved".
+      const m = new Map(affected.requests.map((r) => [r.id, r]));
+      setLocalRequests((prev) => prev.map((r) => {
+        const d = m.get(r.id);
+        if (!d) return r;
+        // Always take the delta's approver fields so an explicit clear (a revert
+        // sends approvedByName=null) wipes the stale name instead of keeping it.
+        // The assignment-write sync path omits them → null here, and the real name
+        // is re-resolved on the next load / requests refetch.
+        return {
+          ...r,
+          status: d.status,
+          autoApproved: d.autoApproved,
+          approvedByName: d.approvedByName ?? null,
+          approvedAt: d.approvedAt ?? null,
+        };
+      }));
     }
     if (affected.cells?.length) {
       setLocalAssignments((prev) => {

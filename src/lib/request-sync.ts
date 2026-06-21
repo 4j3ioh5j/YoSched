@@ -83,7 +83,7 @@ export async function placeApprovedRequestShift(
  * mirror the change into client state without a full refetch — auto-schedule uses
  * this to keep the grid's request overlay in sync the moment shifts are applied.
  */
-export type RequestStatusChange = { id: string; staffId: string; status: "approved" | "pending" };
+export type RequestStatusChange = { id: string; staffId: string; status: "approved" | "pending"; autoApproved: boolean };
 
 /** Narrow a set of status changes to those the viewer is allowed to see, mapping
  *  to the bare {id, status} the client overlay consumes. A caller with
@@ -93,11 +93,11 @@ export type RequestStatusChange = { id: string; staffId: string; status: "approv
 export function visibleRequestChanges(
   changes: RequestStatusChange[],
   viewer: { permissions: string[]; staffId: string | null }
-): { id: string; status: "approved" | "pending" }[] {
+): { id: string; status: "approved" | "pending"; autoApproved: boolean }[] {
   const canViewAll = viewer.permissions.includes("requests:view");
   return changes
     .filter((c) => isRequestVisibleToViewer(c, { canViewAll, viewerStaffId: viewer.staffId }))
-    .map((c) => ({ id: c.id, status: c.status }));
+    .map((c) => ({ id: c.id, status: c.status, autoApproved: c.autoApproved }));
 }
 
 export async function syncRequestApprovals(
@@ -171,13 +171,13 @@ export async function syncRequestApprovals(
         where: { id: r.id },
         data: { status: "approved", autoApproved: true, approvedAt: new Date(), approvedBy: approverUserId },
       }));
-      changes.push({ id: r.id, staffId: r.staffId, status: "approved" });
+      changes.push({ id: r.id, staffId: r.staffId, status: "approved", autoApproved: true });
     } else if (action === "revert") {
       updates.push(prisma.scheduleRequest.update({
         where: { id: r.id },
         data: { status: "pending", autoApproved: false, approvedAt: null, approvedBy: null },
       }));
-      changes.push({ id: r.id, staffId: r.staffId, status: "pending" });
+      changes.push({ id: r.id, staffId: r.staffId, status: "pending", autoApproved: false });
     }
   }
   await Promise.all(updates);

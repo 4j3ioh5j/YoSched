@@ -1,10 +1,14 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { validateRequestInput } from "@/lib/schedule-requests";
+import { resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
 import type { ScheduleRequest } from "@/generated/prisma/client";
 
-function serialize(r: ScheduleRequest) {
+// approverName is the resolved display NAME of approvedBy, or null when the
+// viewer isn't schedule:edit (names are never sent to plain viewers) or the
+// request has no approver. Never the userId or email.
+function serialize(r: ScheduleRequest, approverName: string | null = null) {
   return {
     id: r.id,
     staffId: r.staffId,
@@ -19,6 +23,7 @@ function serialize(r: ScheduleRequest) {
     source: r.source,
     receivedAt: r.receivedAt.toISOString(),
     approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
+    approvedByName: approverName,
     notes: r.notes,
   };
 }
@@ -35,7 +40,13 @@ export async function GET() {
   const requests = await prisma.scheduleRequest.findMany({
     orderBy: { receivedAt: "desc" },
   });
-  return NextResponse.json(requests.map(serialize));
+  // Approver names only for schedulers (schedule:edit) — and only the names
+  // actually referenced. Plain viewers get null. Mirrors /requests page gating.
+  const canEdit = result.permissions!.includes("schedule:edit");
+  const names = canEdit ? await resolveUpdaterNames(requests.map((r) => r.approvedBy)) : new Map<string, string>();
+  return NextResponse.json(
+    requests.map((r) => serialize(r, canEdit && r.approvedBy ? names.get(r.approvedBy) ?? "Unknown" : null)),
+  );
 }
 
 // POST — create a new request (always starts pending; approval is a separate step).

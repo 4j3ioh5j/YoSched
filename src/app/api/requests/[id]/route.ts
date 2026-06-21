@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, placeApprovedRequestShift } from "@/lib/request-sync";
+import { resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { resolveRequestPlacement, releasableDates, eachDateInclusive, type RequestKind } from "@/lib/schedule-requests";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -97,7 +98,9 @@ async function affectedWindow(staffId: string, cells: { staffId: string; date: s
         startDate: { lte: at(dates[dates.length - 1]) },
         endDate: { gte: at(dates[0]) },
       },
-      select: { id: true, status: true },
+      // autoApproved is what the client overlay needs to label Auto- vs
+      // Manually-approved; approvedBy/approvedAt drive the "by <name> (<date>)".
+      select: { id: true, status: true, autoApproved: true, approvedBy: true, approvedAt: true },
     }),
     prisma.assignment.findMany({
       where: { staffId, date: { in: cells.map((c) => at(c.date)) } },
@@ -105,8 +108,17 @@ async function affectedWindow(staffId: string, cells: { staffId: string; date: s
     }),
   ]);
   const byDate = new Map(assignments.map((a) => [ymd(a.date), a]));
+  // This route is schedule:edit-only, so the caller is always allowed approver
+  // names (NAME only — same gating the /requests page applies to viewers).
+  const approverNames = await resolveUpdaterNames(requests.map((r) => r.approvedBy));
   return {
-    requests,
+    requests: requests.map((r) => ({
+      id: r.id,
+      status: r.status,
+      autoApproved: r.autoApproved,
+      approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
+      approvedByName: r.approvedBy ? approverNames.get(r.approvedBy) ?? "Unknown" : null,
+    })),
     cells: cells.map((c) => {
       const a = byDate.get(c.date);
       return {

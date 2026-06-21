@@ -4,6 +4,7 @@ import { ScheduleGrid } from "./schedule-grid";
 import { NavHeader } from "./nav-header";
 import { EditorPresenceBanner } from "./editor-presence-banner";
 import { getSession } from "@/lib/auth-guard";
+import { resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { isRequestVisibleToViewer } from "@/lib/schedule-requests";
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
 import { redirect } from "next/navigation";
@@ -69,6 +70,12 @@ export default async function Home() {
       // silenced alerts stay out of the counts for everyone.
       prisma.mutedAlert.findMany({ select: { alertKey: true } }),
     ]);
+
+  // Approver names for request tooltips — schedulers (schedule:edit) only, NAME
+  // only, and only the approvers actually referenced. Plain viewers get null.
+  const approverNames = canEdit
+    ? await resolveUpdaterNames(scheduleRequests.map((r) => r.approvedBy))
+    : new Map<string, string>();
 
   const fairness = computeFairness({
     assignments: assignments.map((a) => ({
@@ -262,6 +269,8 @@ export default async function Home() {
           status: r.status as "pending" | "approved" | "declined" | "withdrawn" | "fulfilled",
           autoApproved: r.autoApproved,
           receivedAt: r.receivedAt.toISOString(),
+          approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
+          approvedByName: canEdit && r.approvedBy ? approverNames.get(r.approvedBy) ?? "Unknown" : null,
           source: r.source,
           notes: r.notes,
         }))}
