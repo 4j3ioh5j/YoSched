@@ -9,8 +9,6 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Other open items
 
-- [ ] **Requests page: sortable headers + search field** — click column headers to sort the requests
-  list, and add a search field to filter requests.
 - [ ] **Multi-cell drag / batch in all modes** — dragging a *selection* of cells as a group does not
   exist in either normal or Live mode (base drag is single-cell). Batch via picker/keyboard already
   works in both modes; this adds group DRAG. Open design questions first: offset axis (shift dates vs
@@ -23,6 +21,7 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Shipped (archive)
 
+- [x] **Requests page: sortable headers + search field** — every data-column header on `/requests` is click-to-sort (1st click asc, same header again reverses; different header starts asc; ▲/▼/↕ indicators); a search box filters across everything visible in a row (multi-term AND, case-insensitive). Client-side, session-only. New pure tested `lib/request-list.ts` (null-approved rows sort last in both directions). `bd776b9`, #245.
 - [x] **Alerts collapsed by default, grouped by category** — the Alerts modal now opens fully collapsed (compact category overview: Pending requests / Pay period hours / Daily staffing); the user expands the category they want. New `ALERT_CATEGORIES` single-source constant; `useLayoutEffect` resets to all-collapsed on every open (no pre-paint flash). `55f15f6`, #244.
 
 > One-liners for quick scanning — full detail is in the linked handoffs. This archive starts at
