@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
+import { resolveAutoOverride } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
 
 type BulkItem = { staffId: string; date: string };
@@ -31,7 +32,7 @@ export async function PUT(req: NextRequest) {
       where: {
         staffId_date: { staffId, date: new Date(date + "T00:00:00Z") },
       },
-      update: { shiftTypeId, source: "manual" },
+      update: { shiftTypeId, source: "manual", autoShiftTypeId: resolveAutoOverride(existing, shiftTypeId) },
       create: {
         staffId,
         date: new Date(date + "T00:00:00Z"),
@@ -48,6 +49,9 @@ export async function PUT(req: NextRequest) {
       isLocked: a.isLocked,
       code: a.shiftType.code,
       color: a.shiftType.color ?? "#6b7280",
+      source: a.source,
+      autoMonth: a.autoMonth,
+      autoShiftTypeId: a.autoShiftTypeId,
     });
   }
 

@@ -75,7 +75,9 @@ export async function PUT(req: NextRequest) {
           date: new Date(s.date + "T00:00:00Z"),
         },
       },
-      update: { shiftTypeId: s.shiftTypeId, source: "auto", autoMonth },
+      // Reset autoShiftTypeId: this row IS the auto value now, so any earlier
+      // "was X" override capture from a prior manual edit must be cleared.
+      update: { shiftTypeId: s.shiftTypeId, source: "auto", autoMonth, autoShiftTypeId: null },
       create: {
         staffId: s.staffId,
         date: new Date(s.date + "T00:00:00Z"),
@@ -93,6 +95,11 @@ export async function PUT(req: NextRequest) {
       isLocked: result.isLocked,
       code: st?.code ?? "?",
       color: st?.color ?? "#6b7280",
+      // Carry provenance so the grid's post-Accept local state shows these as
+      // Source: Auto (not the AssignmentData default) without a reload.
+      source: result.source,
+      autoMonth: result.autoMonth,
+      autoShiftTypeId: result.autoShiftTypeId,
     });
   }
 

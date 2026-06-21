@@ -1,9 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
+import { resolveAutoOverride } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
 
-function formatAssignment(a: { id: string; staffId: string; shiftTypeId: string; isLocked: boolean; shiftType: { code: string; color: string | null } }, date: string) {
+function formatAssignment(a: { id: string; staffId: string; shiftTypeId: string; isLocked: boolean; source: string; autoMonth: string | null; autoShiftTypeId: string | null; shiftType: { code: string; color: string | null } }, date: string) {
   return {
     id: a.id,
     staffId: a.staffId,
@@ -12,6 +13,9 @@ function formatAssignment(a: { id: string; staffId: string; shiftTypeId: string;
     isLocked: a.isLocked,
     code: a.shiftType.code,
     color: a.shiftType.color ?? "#6b7280",
+    source: a.source,
+    autoMonth: a.autoMonth,
+    autoShiftTypeId: a.autoShiftTypeId,
   };
 }
 
@@ -31,11 +35,15 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Cannot modify locked assignment" }, { status: 400 });
   }
 
+  // Capture the value the Auto-schedule run placed here so the tooltip can show
+  // "Auto → Manual (was X)". See resolveAutoOverride for the rules.
+  const autoShiftTypeId = resolveAutoOverride(existing, shiftTypeId);
+
   const assignment = await prisma.assignment.upsert({
     where: {
       staffId_date: { staffId, date: new Date(date + "T00:00:00Z") },
     },
-    update: { shiftTypeId, source: "manual" },
+    update: { shiftTypeId, source: "manual", autoShiftTypeId },
     create: {
       staffId,
       date: new Date(date + "T00:00:00Z"),
@@ -82,6 +90,9 @@ export async function POST(req: NextRequest) {
       const [newFrom, newTo] = await prisma.$transaction(async (tx) => {
         await tx.assignment.delete({ where: { id: fromAssignment.id } });
         await tx.assignment.delete({ where: { id: toAssignment.id } });
+        // Each destination keeps the auto baseline of the occupant it displaces,
+        // so the tooltip still shows "was X" for the cell whose auto value was
+        // overwritten by the swap (delete+create can't "leave the column unchanged").
         return Promise.all([
           tx.assignment.create({
             data: {
@@ -89,6 +100,7 @@ export async function POST(req: NextRequest) {
               date: toDate,
               shiftTypeId: fromAssignment.shiftTypeId,
               source: "manual",
+              autoShiftTypeId: resolveAutoOverride(toAssignment, fromAssignment.shiftTypeId),
             },
             include: { shiftType: true },
           }),
@@ -98,6 +110,7 @@ export async function POST(req: NextRequest) {
               date: fromDate,
               shiftTypeId: toAssignment.shiftTypeId,
               source: "manual",
+              autoShiftTypeId: resolveAutoOverride(fromAssignment, toAssignment.shiftTypeId),
             },
             include: { shiftType: true },
           }),
@@ -114,6 +127,8 @@ export async function POST(req: NextRequest) {
             date: toDate,
             shiftTypeId: fromAssignment.shiftTypeId,
             source: "manual",
+            // Destination was empty here (toAssignment is null) → no baseline → null.
+            autoShiftTypeId: resolveAutoOverride(toAssignment, fromAssignment.shiftTypeId),
           },
           include: { shiftType: true },
         });

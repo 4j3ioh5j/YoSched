@@ -15,6 +15,7 @@ function serialize(r: ScheduleRequest) {
     leaveShiftTypeId: r.leaveShiftTypeId,
     strength: r.strength,
     status: r.status,
+    autoApproved: r.autoApproved,
     source: r.source,
     receivedAt: r.receivedAt.toISOString(),
     approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,

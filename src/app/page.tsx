@@ -159,6 +159,9 @@ export default async function Home() {
           isLocked: a.isLocked,
           code: shiftCodeMap[a.shiftTypeId] ?? "?",
           color: shiftColorMap[a.shiftTypeId] ?? "#6b7280",
+          source: a.source,
+          autoMonth: a.autoMonth,
+          autoShiftTypeId: a.autoShiftTypeId,
         }))}
         shiftTypes={shiftTypes.map((st) => ({
           id: st.id,
@@ -257,6 +260,7 @@ export default async function Home() {
           leaveShiftTypeId: r.leaveShiftTypeId,
           strength: r.strength as "hard" | "soft",
           status: r.status as "pending" | "approved" | "declined" | "withdrawn" | "fulfilled",
+          autoApproved: r.autoApproved,
           receivedAt: r.receivedAt.toISOString(),
           source: r.source,
           notes: r.notes,

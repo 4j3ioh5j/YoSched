@@ -395,6 +395,14 @@ model Assignment {
   // deleting a user never blocks assignment history. Resolved to a NAME only in
   // schedule:edit conflict payloads — never exposed in normal responses/props.
   updatedBy   String?
+  // The ShiftType.id the Auto-schedule run originally placed here, captured ONLY
+  // when a manual edit overwrites a source="auto" cell with a different value.
+  // Lets the cell tooltip render "Auto → Manual (was ORC)". Plain nullable column
+  // (NOT a FK), same rationale as updatedBy: deleting a ShiftType must never
+  // cascade-delete assignment history. Null for cells that were never auto, for
+  // unedited auto cells, and for auto rows a fresh run (re)writes (those ARE the
+  // auto value). Resolved to a code client-side via the grid's shiftType map.
+  autoShiftTypeId String?
 
   staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)

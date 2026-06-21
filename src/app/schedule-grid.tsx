@@ -106,6 +106,11 @@ type AssignmentData = {
   isLocked: boolean;
   code: string;
   color: string;
+  source?: string;
+  autoMonth?: string | null;
+  // ShiftType.id the auto run originally placed, when a manual edit later
+  // overwrote an auto cell — drives the "Auto → Manual (was X)" tooltip badge.
+  autoShiftTypeId?: string | null;
 };
 
 type ShiftType = {
@@ -918,10 +923,33 @@ export function ScheduleGrid({
       const lines = reqs.map((r) => {
         const desc = describeRequest(r, (id) => shiftTypeMap.get(id)?.code ?? id);
         const recv = formatDate(parseDate(r.receivedAt.split("T")[0]), dateFormat);
-        const status = r.status === "approved" ? "approved" : r.status === "declined" ? "denied" : "pending";
+        const status =
+          r.status === "approved" ? (r.autoApproved ? "auto-approved" : "approved")
+          : r.status === "declined" ? "denied"
+          : r.status === "fulfilled" ? "fulfilled"
+          : r.status === "withdrawn" ? "withdrawn"
+          : "pending";
         return `• ${desc} — ${status}, rec'd ${recv}`;
       });
       return [header, ...lines].join("\n");
+    },
+    [shiftTypeMap, dateFormat],
+  );
+
+  // Provenance line for the assignment cell tooltip: where this shift came from,
+  // and — when a manual edit overwrote an auto cell — what the auto run chose.
+  const assignmentTooltip = useCallback(
+    (initials: string, a: AssignmentData, date: string): string => {
+      const head = `${initials}: ${a.code} on ${formatDate(parseDate(date), dateFormat)}${a.isLocked ? " (locked)" : ""}`;
+      let src: string;
+      if (a.source === "auto") src = "Source: Auto";
+      else if (a.source === "imported") src = "Source: Imported";
+      else if (a.source === "request") src = "Source: Request-placed";
+      else if (a.source === "manual" && a.autoShiftTypeId) {
+        const was = shiftTypeMap.get(a.autoShiftTypeId)?.code ?? "?";
+        src = `Source: Auto → Manual (was ${was})`;
+      } else src = "Source: Manual";
+      return `${head}\n${src}`;
     },
     [shiftTypeMap, dateFormat],
   );
@@ -3848,8 +3876,8 @@ export function ScheduleGrid({
                             }}
                             onMouseEnter={(e) => showTip(setTooltip,
                               cw && cw.length > 0
-                                ? cw.map((w) => w.message).join("\n")
-                                : `${p.initials}: ${a.code} on ${formatDate(parseDate(date), dateFormat)}${a.isLocked ? " (locked)" : ""}`,
+                                ? [assignmentTooltip(p.initials, a, date), ...cw.map((w) => w.message)].join("\n")
+                                : assignmentTooltip(p.initials, a, date),
                               e)}
                             onMouseLeave={() => setTooltip(null)}
                           >

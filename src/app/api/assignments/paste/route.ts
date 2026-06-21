@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
+import { resolveAutoOverride } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
 
 // Paste write path for the schedule grid: a block of already-resolved cells, each with
@@ -51,11 +52,13 @@ export async function PUT(req: NextRequest) {
   // failure), so they never enter the transaction.
   const existing = await prisma.assignment.findMany({
     where: { OR: cells.map((c) => ({ staffId: c.staffId, date: asUtcDate(c.date) })) },
-    select: { staffId: true, date: true, isLocked: true },
+    select: { staffId: true, date: true, isLocked: true, source: true, shiftTypeId: true, autoShiftTypeId: true },
   });
   const lockedKeys = new Set(
     existing.filter((e) => e.isLocked).map((e) => `${e.staffId}:${e.date.toISOString().split("T")[0]}`)
   );
+  // Look up the prior row per cell to capture the auto-override value (was X).
+  const existingByKey = new Map(existing.map((e) => [`${e.staffId}:${e.date.toISOString().split("T")[0]}`, e]));
   const toApply = cells.filter((c) => !lockedKeys.has(`${c.staffId}:${c.date}`));
   const skippedLocked = cells.length - toApply.length;
 
@@ -64,7 +67,7 @@ export async function PUT(req: NextRequest) {
         toApply.map((c) =>
           prisma.assignment.upsert({
             where: { staffId_date: { staffId: c.staffId, date: asUtcDate(c.date) } },
-            update: { shiftTypeId: c.shiftTypeId, source: "manual" },
+            update: { shiftTypeId: c.shiftTypeId, source: "manual", autoShiftTypeId: resolveAutoOverride(existingByKey.get(`${c.staffId}:${c.date}`) ?? null, c.shiftTypeId) },
             create: { staffId: c.staffId, date: asUtcDate(c.date), shiftTypeId: c.shiftTypeId, source: "manual" },
             include: { shiftType: true },
           })
@@ -95,6 +98,9 @@ export async function PUT(req: NextRequest) {
     isLocked: a.isLocked,
     code: a.shiftType.code,
     color: a.shiftType.color ?? "#6b7280",
+    source: a.source,
+    autoMonth: a.autoMonth,
+    autoShiftTypeId: a.autoShiftTypeId,
   }));
 
   return NextResponse.json({ applied, skippedLocked, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
