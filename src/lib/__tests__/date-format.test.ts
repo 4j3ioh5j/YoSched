@@ -3,6 +3,7 @@ import {
   formatDate,
   formatDateCompact,
   isValidDateFormat,
+  calendarMonthBounds,
   DATE_FORMAT_OPTIONS,
   DEFAULT_DATE_FORMAT,
   type DateFormatKey,
@@ -118,5 +119,20 @@ describe("DATE_FORMAT_OPTIONS", () => {
     for (const opt of DATE_FORMAT_OPTIONS) {
       expect(formatDate(jan5, opt.key)).toBe(opt.label);
     }
+  });
+});
+
+describe("calendarMonthBounds", () => {
+  it("returns the first and last day of a 31-day month (August, 0-indexed 7)", () => {
+    expect(calendarMonthBounds(2026, 7)).toEqual({ start: "2026-08-01", end: "2026-08-31" });
+  });
+
+  it("returns Feb 28 in a non-leap year and Feb 29 in a leap year", () => {
+    expect(calendarMonthBounds(2026, 1)).toEqual({ start: "2026-02-01", end: "2026-02-28" });
+    expect(calendarMonthBounds(2028, 1)).toEqual({ start: "2028-02-01", end: "2028-02-29" });
+  });
+
+  it("handles December (month index 11) without rolling the year", () => {
+    expect(calendarMonthBounds(2026, 11)).toEqual({ start: "2026-12-01", end: "2026-12-31" });
   });
 });

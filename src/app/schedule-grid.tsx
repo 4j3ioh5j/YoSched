@@ -8,7 +8,7 @@ import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { applyScenario, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
-import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
+import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary } from "@/lib/grid-clipboard";
@@ -795,6 +795,15 @@ export function ScheduleGrid({
   const dates = useMemo(
     () => getMonthDateRange(viewYear, viewMonth, payPeriods),
     [viewYear, viewMonth, payPeriods],
+  );
+
+  // The actual calendar month (not the week-padded display range) — Auto-schedule
+  // and Clear Auto operate on this so the server expands to pay-period edges
+  // instead of swallowing a whole extra pay period when the week padding lands on
+  // the next period's first day. The grid still DISPLAYS the week-padded `dates`.
+  const monthBounds = useMemo(
+    () => calendarMonthBounds(viewYear, viewMonth),
+    [viewYear, viewMonth],
   );
 
   const firstOfMonth = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-01`;
@@ -2985,8 +2994,8 @@ export function ScheduleGrid({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          startDate: dates[0],
-          endDate: dates[dates.length - 1],
+          startDate: monthBounds.start,
+          endDate: monthBounds.end,
         }),
       });
       const data = await res.json();
@@ -3009,12 +3018,13 @@ export function ScheduleGrid({
       const res = await fetch("/api/auto-schedule", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        // Send the viewed range so the server can stamp each row's owning month
-        // (autoMonth) — that's what lets Clear Auto remove this month's overflow.
+        // Send the calendar month so the server stamps each row's owning month
+        // (autoMonth) — matching the range Auto-schedule ran on, and what lets
+        // Clear Auto remove this month's overflow.
         body: JSON.stringify({
           suggestions: autoSuggestions,
-          startDate: dates[0],
-          endDate: dates[dates.length - 1],
+          startDate: monthBounds.start,
+          endDate: monthBounds.end,
         }),
       });
       const data = await res.json();
@@ -3297,7 +3307,7 @@ export function ScheduleGrid({
       const res = await fetch("/api/auto-schedule", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startDate: dates[0], endDate: dates[dates.length - 1] }),
+        body: JSON.stringify({ startDate: monthBounds.start, endDate: monthBounds.end }),
       });
       const data = await res.json();
       const removed: AssignmentData[] = data.removed;

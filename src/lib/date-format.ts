@@ -92,3 +92,17 @@ export function formatDateCompact(date: Date, format: DateFormatKey): string {
 export function isValidDateFormat(value: string): value is DateFormatKey {
   return DATE_FORMAT_OPTIONS.some((o) => o.key === value);
 }
+
+/**
+ * Inclusive "YYYY-MM-DD" bounds of a calendar month (month is 0-indexed, as
+ * from Date.getMonth()). Used to scope Auto-schedule / Clear Auto to the actual
+ * month rather than the week-padded grid range — the server then expands the
+ * window out to the edges of the pay periods the month touches, instead of
+ * pulling in a whole extra pay period when the week padding spills onto the
+ * next period's first day.
+ */
+export function calendarMonthBounds(year: number, month: number): { start: string; end: string } {
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const mm = pad2(month + 1);
+  return { start: `${year}-${mm}-01`, end: `${year}-${mm}-${pad2(lastDay)}` };
+}
