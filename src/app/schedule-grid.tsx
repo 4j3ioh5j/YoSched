@@ -548,6 +548,13 @@ export function ScheduleGrid({
   // diff); and the sandbox undo/redo stacks (a SEPARATE stack from the persisted
   // grid undo — populated in S3 when edits exist).
   const liveInputRef = useRef<AutoScheduleInput | null>(null);
+  // The re-solve base for edits: the bundle, but with existingAssignments = the
+  // COMPLETE enter-time grid (incl. cells the engine filled into empty slots on
+  // enter), each carrying its true lock flag. Re-solving from this — rather than the
+  // bundle's possibly-partial existingAssignments — ensures every displayed cell is
+  // a baseline cell, so Day/PP scope containment holds even on incomplete grids
+  // (out-of-scope cells stay locked → preserved).
+  const liveBaseInputRef = useRef<AutoScheduleInput | null>(null);
   // The grid as it stood the instant Live was entered (key → shiftTypeId). Accept
   // persists only cells that differ from THIS — never the engine's enter-time
   // fills of empty cells (those are baked into the initial grid and the user never
@@ -3058,6 +3065,20 @@ export function ScheduleGrid({
       const initial = new Map<string, string>();
       for (const c of outcome.grid) initial.set(`${c.staffId}:${c.date}`, c.shiftTypeId);
       liveInitialGridRef.current = initial;
+      // Re-solve base = the complete enter-time grid, with true lock flags carried
+      // from the bundle (engine-filled cells are unlocked/discretionary).
+      const lockedKeys = new Set<string>();
+      for (const a of liveInput.existingAssignments) if (a.isLocked) lockedKeys.add(`${a.staffId}:${a.date}`);
+      liveBaseInputRef.current = {
+        ...liveInput,
+        existingAssignments: outcome.grid.map((c) => ({
+          staffId: c.staffId,
+          date: c.date,
+          shiftTypeId: c.shiftTypeId,
+          code: c.code,
+          isLocked: lockedKeys.has(`${c.staffId}:${c.date}`),
+        })),
+      };
       setLiveReject([]);
       setRequestMode(false); // Live is assign-only; requests aren't part of the sandbox
       setLiveOutcome(outcome);
@@ -3074,6 +3095,7 @@ export function ScheduleGrid({
     setLiveOutcome(null);
     setLiveReject([]);
     liveInputRef.current = null;
+    liveBaseInputRef.current = null;
     liveInitialGridRef.current = new Map();
     livePinsRef.current = new Map();
     liveTouchedRef.current = new Set();
@@ -3168,7 +3190,7 @@ export function ScheduleGrid({
   }
 
   function liveEdit(newPins: ScenarioPin[], newFrees: ScenarioFree[]) {
-    const base = liveInputRef.current;
+    const base = liveBaseInputRef.current;
     if (!base || !liveOutcome) return;
 
     // Fold this edit into the accumulated pin set (a free un-pins its cell) and the
@@ -3198,7 +3220,7 @@ export function ScheduleGrid({
   // it doesn't touch the undo stack — it just widens/narrows the displayed ripple).
   function changeLiveScope(scope: "day" | "pp" | "range") {
     setLiveScope(scope);
-    const base = liveInputRef.current;
+    const base = liveBaseInputRef.current;
     if (!base || !liveOutcome) return;
     const outcome = applyScenario(base, pinsArray(livePinsRef.current), liveFreesForScope(base, livePinsRef.current, liveTouchedRef.current, scope));
     if (outcome.applied) { setLiveReject([]); setLiveOutcome(outcome); }
