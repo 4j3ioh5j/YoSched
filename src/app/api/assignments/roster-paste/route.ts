@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
-import { resolveAutoOverride } from "@/lib/assignment-attribution";
+import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
 
 // Paste into a DEDICATED column (ICU/CARD): set each day's roster for one shift type.
@@ -90,8 +90,9 @@ export async function PUT(req: NextRequest) {
     survivors.push({ date: g.date, adds: g.addStaffIds, removes: g.removeStaffIds });
   }
 
-  const applied: { id: string; staffId: string; date: string; shiftTypeId: string; isLocked: boolean; code: string; color: string; source: string; autoMonth: string | null; autoShiftTypeId: string | null }[] = [];
+  const applied: { id: string; staffId: string; date: string; shiftTypeId: string; isLocked: boolean; code: string; color: string; source: string; autoMonth: string | null; autoShiftTypeId: string | null; updatedByName: string | null; updatedAt: string }[] = [];
   const cleared: { staffId: string; date: string }[] = [];
+  const actorName = userId ? (await resolveUpdaterNames([userId])).get(userId) ?? null : null;
 
   // All surviving groups apply together (atomic — one unexpected error rolls back every
   // accepted date, and the client treats route failure as "nothing persisted").
@@ -101,11 +102,11 @@ export async function PUT(req: NextRequest) {
         for (const staffId of s.adds) {
           const a = await tx.assignment.upsert({
             where: { staffId_date: { staffId, date: asUtcDate(s.date) } },
-            update: { shiftTypeId, source: "manual", autoShiftTypeId: resolveAutoOverride(stateByKey.get(`${staffId}:${s.date}`) ?? null, shiftTypeId) },
-            create: { staffId, date: asUtcDate(s.date), shiftTypeId, source: "manual" },
+            update: { shiftTypeId, source: "manual", autoShiftTypeId: resolveAutoOverride(stateByKey.get(`${staffId}:${s.date}`) ?? null, shiftTypeId), updatedBy: userId },
+            create: { staffId, date: asUtcDate(s.date), shiftTypeId, source: "manual", updatedBy: userId },
             include: { shiftType: true },
           });
-          applied.push({ id: a.id, staffId: a.staffId, date: s.date, shiftTypeId: a.shiftTypeId, isLocked: a.isLocked, code: a.shiftType.code, color: a.shiftType.color ?? "#6b7280", source: a.source, autoMonth: a.autoMonth, autoShiftTypeId: a.autoShiftTypeId });
+          applied.push({ id: a.id, staffId: a.staffId, date: s.date, shiftTypeId: a.shiftTypeId, isLocked: a.isLocked, code: a.shiftType.code, color: a.shiftType.color ?? "#6b7280", source: a.source, autoMonth: a.autoMonth, autoShiftTypeId: a.autoShiftTypeId, updatedByName: actorName, updatedAt: a.updatedAt.toISOString() });
         }
         for (const staffId of s.removes) {
           // Scope the delete to THIS shift (defense-in-depth; the conflict check already

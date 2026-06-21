@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
-import { resolveAutoOverride } from "@/lib/assignment-attribution";
+import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
 
 type BulkItem = { staffId: string; date: string };
@@ -18,6 +18,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
 
+  const actorName = userId ? (await resolveUpdaterNames([userId])).get(userId) ?? null : null;
   const results = [];
   const skipped = [];
   for (const { staffId, date } of cells) {
@@ -32,12 +33,13 @@ export async function PUT(req: NextRequest) {
       where: {
         staffId_date: { staffId, date: new Date(date + "T00:00:00Z") },
       },
-      update: { shiftTypeId, source: "manual", autoShiftTypeId: resolveAutoOverride(existing, shiftTypeId) },
+      update: { shiftTypeId, source: "manual", autoShiftTypeId: resolveAutoOverride(existing, shiftTypeId), updatedBy: userId },
       create: {
         staffId,
         date: new Date(date + "T00:00:00Z"),
         shiftTypeId,
         source: "manual",
+        updatedBy: userId,
       },
       include: { shiftType: true },
     });
@@ -52,6 +54,8 @@ export async function PUT(req: NextRequest) {
       source: a.source,
       autoMonth: a.autoMonth,
       autoShiftTypeId: a.autoShiftTypeId,
+      updatedByName: actorName,
+      updatedAt: a.updatedAt.toISOString(),
     });
   }
 

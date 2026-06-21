@@ -77,13 +77,16 @@ export async function PUT(req: NextRequest) {
       },
       // Reset autoShiftTypeId: this row IS the auto value now, so any earlier
       // "was X" override capture from a prior manual edit must be cleared.
-      update: { shiftTypeId: s.shiftTypeId, source: "auto", autoMonth, autoShiftTypeId: null },
+      // Record who accepted the run (updatedBy) — not shown for auto cells, but
+      // keeps the audit column populated like every other write path.
+      update: { shiftTypeId: s.shiftTypeId, source: "auto", autoMonth, autoShiftTypeId: null, updatedBy: userId },
       create: {
         staffId: s.staffId,
         date: new Date(s.date + "T00:00:00Z"),
         shiftTypeId: s.shiftTypeId,
         source: "auto",
         autoMonth,
+        updatedBy: userId,
       },
     });
     const st = stMap.get(result.shiftTypeId);

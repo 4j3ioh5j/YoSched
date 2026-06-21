@@ -76,6 +76,11 @@ export default async function Home() {
   const approverNames = canEdit
     ? await resolveUpdaterNames(scheduleRequests.map((r) => r.approvedBy))
     : new Map<string, string>();
+  // Editor names for assignment tooltips ("changed by X") — same schedule:edit
+  // gating, NAME only, only the editors actually referenced.
+  const updaterNames = canEdit
+    ? await resolveUpdaterNames(assignments.map((a) => a.updatedBy))
+    : new Map<string, string>();
 
   const fairness = computeFairness({
     assignments: assignments.map((a) => ({
@@ -169,6 +174,8 @@ export default async function Home() {
           source: a.source,
           autoMonth: a.autoMonth,
           autoShiftTypeId: a.autoShiftTypeId,
+          updatedByName: canEdit && a.updatedBy ? updaterNames.get(a.updatedBy) ?? "Unknown" : null,
+          updatedAt: a.updatedAt.toISOString(),
         }))}
         shiftTypes={shiftTypes.map((st) => ({
           id: st.id,

@@ -392,8 +392,9 @@ model Assignment {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   // Acting user's id on the last write. Plain nullable column (NOT a FK) so
-  // deleting a user never blocks assignment history. Resolved to a NAME only in
-  // schedule:edit conflict payloads — never exposed in normal responses/props.
+  // deleting a user never blocks assignment history. Resolved to a NAME (never
+  // the id/email) for schedule:edit viewers — surfaced in the cell tooltip
+  // ("changed by X") and in conflict payloads; plain viewers never receive it.
   updatedBy   String?
   // The ShiftType.id the Auto-schedule run originally placed here, captured ONLY
   // when a manual edit overwrites a source="auto" cell with a different value.

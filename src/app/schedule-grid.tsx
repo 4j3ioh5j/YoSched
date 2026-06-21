@@ -69,6 +69,10 @@ const REQUEST_FILTER_STATUSES: Record<RequestFilter, RequestStatus[]> = {
   pending: ["pending"],
   denied: ["declined"],
 };
+
+// EVERY request status — the cell tooltip surfaces all of them regardless of the
+// RQ visibility toggle or the status filter (which only shape the on-grid pills).
+const ALL_REQUEST_STATUSES: RequestStatus[] = ["pending", "approved", "declined", "withdrawn", "fulfilled"];
 import { useEscape } from "@/lib/use-escape";
 
 type AvailabilityRuleData = {
@@ -111,6 +115,10 @@ type AssignmentData = {
   // ShiftType.id the auto run originally placed, when a manual edit later
   // overwrote an auto cell — drives the "Auto → Manual (was X)" tooltip badge.
   autoShiftTypeId?: string | null;
+  // Resolved NAME of the last editor (schedule:edit viewers only) + when —
+  // drives the tooltip's "changed by X". Null for plain viewers / unattributed.
+  updatedByName?: string | null;
+  updatedAt?: string | null;
 };
 
 type ShiftType = {
@@ -859,6 +867,8 @@ export function ScheduleGrid({
         source: changed ? "auto" : (saved?.source ?? "auto"),
         autoMonth: changed ? null : (saved?.autoMonth ?? null),
         autoShiftTypeId: changed ? null : (saved?.autoShiftTypeId ?? null),
+        updatedByName: changed ? null : (saved?.updatedByName ?? null),
+        updatedAt: changed ? null : (saved?.updatedAt ?? null),
       });
     }
     return m;
@@ -905,18 +915,33 @@ export function ScheduleGrid({
   // auto-schedule instead of silently dropping its chrome. Hard-constraint
   // violations still raise the warning dot. Keyed `${staffId}:${date}`; empty
   // cells omitted.
-  const requestsByCell = useMemo(() => {
+  // EVERY request per cell (all statuses) — the canonical, toggle-independent
+  // source the hover tooltip reads, so request detail is always available even
+  // when the RQ pills are hidden or status-filtered.
+  const allRequestsByCell = useMemo(() => {
     const map = new Map<string, GridRequest[]>();
     if (localRequests.length === 0) return map;
-    const statuses = REQUEST_FILTER_STATUSES[requestFilter];
     for (const date of dates) {
       for (const p of visibleStaff) {
-        const rs = requestsForStaffDate(localRequests, p.id, date, { statuses });
+        const rs = requestsForStaffDate(localRequests, p.id, date, { statuses: ALL_REQUEST_STATUSES });
         if (rs.length > 0) map.set(`${p.id}:${date}`, rs);
       }
     }
     return map;
-  }, [localRequests, dates, visibleStaff, requestFilter]);
+  }, [localRequests, dates, visibleStaff]);
+
+  // Visual subset honoring the active status filter (the RQ on/off toggle is
+  // applied per-cell via showRequests). Derived from allRequestsByCell so the
+  // grid is scanned once, not twice.
+  const requestsByCell = useMemo(() => {
+    const allowed = new Set(REQUEST_FILTER_STATUSES[requestFilter]);
+    const map = new Map<string, GridRequest[]>();
+    for (const [key, rs] of allRequestsByCell) {
+      const f = rs.filter((r) => allowed.has(r.status));
+      if (f.length > 0) map.set(key, f);
+    }
+    return map;
+  }, [allRequestsByCell, requestFilter]);
 
   // Approved requests only — these are the ones that exert scheduling force, so
   // they're what the cell-warning checks consume (checkRequestConflict ignores
@@ -932,12 +957,17 @@ export function ScheduleGrid({
     if (a.source === "auto") return "Source: Auto";
     if (a.source === "imported") return "Source: Imported";
     if (a.source === "request") return "Source: Request-placed";
-    if (a.source === "manual" && a.autoShiftTypeId) {
-      const was = shiftTypeMap.get(a.autoShiftTypeId)?.code ?? "?";
-      return `Source: Auto → Manual (was ${was})`;
+    // manual (incl. auto→manual override), or legacy/local cells with no source.
+    const base = a.autoShiftTypeId
+      ? `Source: Auto → Manual (was ${shiftTypeMap.get(a.autoShiftTypeId)?.code ?? "?"})`
+      : "Source: Manual";
+    // "changed by X (date)" when the editor is known (schedule:edit viewers).
+    if (a.updatedByName) {
+      const on = a.updatedAt ? ` (${formatDate(parseDate(a.updatedAt.split("T")[0]), dateFormat)})` : "";
+      return `${base} by ${a.updatedByName}${on}`;
     }
-    return "Source: Manual"; // manual, or legacy/local cells with no source
-  }, [shiftTypeMap]);
+    return base;
+  }, [shiftTypeMap, dateFormat]);
 
   const requestLine = useCallback((r: GridRequest): string => {
     const desc = describeRequest(r, (id) => shiftTypeMap.get(id)?.code ?? id);
@@ -3845,6 +3875,9 @@ export function ScheduleGrid({
                     const isSelected = selection.has(cellKey);
                     const isActiveCell = activeCol === p.id && isActiveRow;
                     const reqs = showRequests ? requestsByCell.get(cellKey) : undefined;
+                    // Tooltip always sees EVERY request on the cell — independent of the
+                    // RQ toggle and the status filter (those only shape the visual pills).
+                    const reqsForTip = allRequestsByCell.get(cellKey);
                     const reqSummary = reqs ? summarizeCellRequests(reqs, (id) => shiftTypeMap.get(id)?.code ?? id) : null;
                     const reqCls = reqSummary ? REQ_CAT_CLASSES[reqSummary.category] : null;
                     // Approval-state treatment: approved/mixed = solid category ring,
@@ -3894,7 +3927,7 @@ export function ScheduleGrid({
                         onMouseEnter={(e) => {
                           handleCellMouseEnter(p.id, date);
                           setHoverCol(p.id);
-                          if (showEmptyTip) showTip(setTooltip, cellTooltip(p.initials, date, null, reqs), e);
+                          if (showEmptyTip) showTip(setTooltip, cellTooltip(p.initials, date, null, reqsForTip), e);
                         }}
                         onMouseLeave={() => { setHoverCol(null); if (showEmptyTip) setTooltip(null); }}
                         onClick={(e) => handleCellClick(p.id, date, e)}
@@ -3921,8 +3954,8 @@ export function ScheduleGrid({
                             }}
                             onMouseEnter={(e) => showTip(setTooltip,
                               cw && cw.length > 0
-                                ? [cellTooltip(p.initials, date, a, reqs), ...cw.map((w) => w.message)].join("\n")
-                                : cellTooltip(p.initials, date, a, reqs),
+                                ? [cellTooltip(p.initials, date, a, reqsForTip), ...cw.map((w) => w.message)].join("\n")
+                                : cellTooltip(p.initials, date, a, reqsForTip),
                               e)}
                             onMouseLeave={() => setTooltip(null)}
                           >
@@ -3934,7 +3967,7 @@ export function ScheduleGrid({
                           // Empty cell with request(s): show the letters in category color.
                           <div
                             className={`text-[10px] font-bold leading-tight ${reqTextCls} ${reqDim}`}
-                            onMouseEnter={(e) => showTip(setTooltip, cellTooltip(p.initials, date, null, reqs), e)}
+                            onMouseEnter={(e) => showTip(setTooltip, cellTooltip(p.initials, date, null, reqsForTip), e)}
                             onMouseLeave={() => setTooltip(null)}
                           >
                             {reqSummary.label}
@@ -3946,7 +3979,7 @@ export function ScheduleGrid({
                           // label is letters for a single request, the count for multiple.
                           <span
                             className={`absolute top-0 left-0 px-0.5 text-[8px] font-bold leading-none ${reqTextCls} ${reqDim}`}
-                            onMouseEnter={(e) => showTip(setTooltip, cellTooltip(p.initials, date, a, reqs), e)}
+                            onMouseEnter={(e) => showTip(setTooltip, cellTooltip(p.initials, date, a, reqsForTip), e)}
                             onMouseLeave={() => setTooltip(null)}
                           >
                             {reqSummary.label}

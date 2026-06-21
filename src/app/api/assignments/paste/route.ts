@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
-import { resolveAutoOverride } from "@/lib/assignment-attribution";
+import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
 
 // Paste write path for the schedule grid: a block of already-resolved cells, each with
@@ -67,8 +67,8 @@ export async function PUT(req: NextRequest) {
         toApply.map((c) =>
           prisma.assignment.upsert({
             where: { staffId_date: { staffId: c.staffId, date: asUtcDate(c.date) } },
-            update: { shiftTypeId: c.shiftTypeId, source: "manual", autoShiftTypeId: resolveAutoOverride(existingByKey.get(`${c.staffId}:${c.date}`) ?? null, c.shiftTypeId) },
-            create: { staffId: c.staffId, date: asUtcDate(c.date), shiftTypeId: c.shiftTypeId, source: "manual" },
+            update: { shiftTypeId: c.shiftTypeId, source: "manual", autoShiftTypeId: resolveAutoOverride(existingByKey.get(`${c.staffId}:${c.date}`) ?? null, c.shiftTypeId), updatedBy: userId },
+            create: { staffId: c.staffId, date: asUtcDate(c.date), shiftTypeId: c.shiftTypeId, source: "manual", updatedBy: userId },
             include: { shiftType: true },
           })
         )
@@ -90,6 +90,7 @@ export async function PUT(req: NextRequest) {
     console.error("paste: request-approval sync failed after commit (assignments persisted)", err);
   }
 
+  const actorName = userId ? (await resolveUpdaterNames([userId])).get(userId) ?? null : null;
   const applied = saved.map((a, i) => ({
     id: a.id,
     staffId: a.staffId,
@@ -101,6 +102,8 @@ export async function PUT(req: NextRequest) {
     source: a.source,
     autoMonth: a.autoMonth,
     autoShiftTypeId: a.autoShiftTypeId,
+    updatedByName: actorName,
+    updatedAt: a.updatedAt.toISOString(),
   }));
 
   return NextResponse.json({ applied, skippedLocked, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });

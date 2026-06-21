@@ -1,10 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
-import { resolveAutoOverride } from "@/lib/assignment-attribution";
+import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
 
-function formatAssignment(a: { id: string; staffId: string; shiftTypeId: string; isLocked: boolean; source: string; autoMonth: string | null; autoShiftTypeId: string | null; shiftType: { code: string; color: string | null } }, date: string) {
+// updatedByName is the resolved display NAME of the acting user (this route is
+// schedule:edit-only, so the caller may always see it); drives the tooltip's
+// "changed by X". Never the userId/email.
+function formatAssignment(a: { id: string; staffId: string; shiftTypeId: string; isLocked: boolean; source: string; autoMonth: string | null; autoShiftTypeId: string | null; updatedAt: Date; shiftType: { code: string; color: string | null } }, date: string, updatedByName: string | null = null) {
   return {
     id: a.id,
     staffId: a.staffId,
@@ -16,6 +19,8 @@ function formatAssignment(a: { id: string; staffId: string; shiftTypeId: string;
     source: a.source,
     autoMonth: a.autoMonth,
     autoShiftTypeId: a.autoShiftTypeId,
+    updatedByName,
+    updatedAt: a.updatedAt.toISOString(),
   };
 }
 
@@ -43,19 +48,21 @@ export async function PUT(req: NextRequest) {
     where: {
       staffId_date: { staffId, date: new Date(date + "T00:00:00Z") },
     },
-    update: { shiftTypeId, source: "manual", autoShiftTypeId },
+    update: { shiftTypeId, source: "manual", autoShiftTypeId, updatedBy: userId },
     create: {
       staffId,
       date: new Date(date + "T00:00:00Z"),
       shiftTypeId,
       source: "manual",
+      updatedBy: userId,
     },
     include: { shiftType: true },
   });
 
   const requestChanges = await syncRequestApprovals([{ staffId, date }], userId);
+  const actorName = userId ? (await resolveUpdaterNames([userId])).get(userId) ?? null : null;
 
-  return NextResponse.json({ ...formatAssignment(assignment, date), requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
+  return NextResponse.json({ ...formatAssignment(assignment, date, actorName), requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
 
 export async function POST(req: NextRequest) {
@@ -84,6 +91,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Cannot move locked assignments" }, { status: 400 });
     }
 
+    const actorName = userId ? (await resolveUpdaterNames([userId])).get(userId) ?? null : null;
     const results: Record<string, unknown> = {};
 
     if (toAssignment) {
@@ -101,6 +109,7 @@ export async function POST(req: NextRequest) {
               shiftTypeId: fromAssignment.shiftTypeId,
               source: "manual",
               autoShiftTypeId: resolveAutoOverride(toAssignment, fromAssignment.shiftTypeId),
+              updatedBy: userId,
             },
             include: { shiftType: true },
           }),
@@ -111,13 +120,14 @@ export async function POST(req: NextRequest) {
               shiftTypeId: toAssignment.shiftTypeId,
               source: "manual",
               autoShiftTypeId: resolveAutoOverride(fromAssignment, toAssignment.shiftTypeId),
+              updatedBy: userId,
             },
             include: { shiftType: true },
           }),
         ]);
       });
-      results.moved = formatAssignment(newFrom, to.date);
-      results.swapped = formatAssignment(newTo, from.date);
+      results.moved = formatAssignment(newFrom, to.date, actorName);
+      results.swapped = formatAssignment(newTo, from.date, actorName);
     } else {
       const newAssignment = await prisma.$transaction(async (tx) => {
         await tx.assignment.delete({ where: { id: fromAssignment.id } });
@@ -129,11 +139,12 @@ export async function POST(req: NextRequest) {
             source: "manual",
             // Destination was empty here (toAssignment is null) → no baseline → null.
             autoShiftTypeId: resolveAutoOverride(toAssignment, fromAssignment.shiftTypeId),
+            updatedBy: userId,
           },
           include: { shiftType: true },
         });
       });
-      results.moved = formatAssignment(newAssignment, to.date);
+      results.moved = formatAssignment(newAssignment, to.date, actorName);
       results.cleared = { staffId: from.staffId, date: from.date };
     }
 
