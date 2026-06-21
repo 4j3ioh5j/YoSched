@@ -153,6 +153,7 @@ model Staff {
   tempEndDate           DateTime?
   isActive              Boolean  @default(true)
   isAutoScheduled       Boolean  @default(true)
+  offStrategyOrder      String[] @default([]) // per-staff default day-off fulfillment order; empty = inherit SchedulingPreferences.defaultOffStrategyOrder. Tokens: ORC_ADJACENT | ORL_PAIR | LEAVE:<shiftTypeId>.
   sortOrder             Int      @default(0)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -327,6 +328,7 @@ model SchedulingPreferences {
   maxLeavePerDay        Int     @default(0) // soft cap on staff off per day; 0 = no cap
   pendingRequestMode    String  @default("full") // auto-scheduler handling of PENDING (unapproved) requests: "off" | "soft" | "full"
   requestConflictPolicy String  @default("reconcile") // forced-request contention: "reconcile" (tentative + first-come) | "honor-always"
+  defaultOffStrategyOrder String[] @default(["ORC_ADJACENT", "ORL_PAIR"]) // dept-wide default day-off fulfillment order; admin appends LEAVE:<shiftTypeId> tokens. Seeds the My Requests widget + per-staff override.
 
   @@map("scheduling_preferences")
 }
@@ -687,6 +689,7 @@ model ScheduleRequest {
   kind         String // OFF | LEAVE | NEGATE_SHIFT | REQUEST_SHIFT
   shiftTypeIds String[]  @default([]) // NEGATE_SHIFT: shifts to exclude; REQUEST_SHIFT: shifts wanted
   leaveShiftTypeId String? // LEAVE: the leave shift type to pre-place (AL/SL/ILD…)
+  offStrategyOrder String[] @default([]) // day-off requests: ordered fulfillment strategies the engine tries top-down (soft, lowest priority). Tokens: ORC_ADJACENT | ORL_PAIR | LEAVE:<shiftTypeId>. Empty = no preference.
   strength     String    @default("hard") // hard (forbid/force) | soft (avoid/prefer)
   status       String    @default("pending") // pending | approved | declined | fulfilled | withdrawn
   autoApproved Boolean   @default(false) // approval derived from a satisfying assignment (auto-revertible); false = sticky human decision

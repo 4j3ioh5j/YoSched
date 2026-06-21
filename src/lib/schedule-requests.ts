@@ -75,6 +75,115 @@ export function parseRequestConflictPolicy(v: unknown): RequestConflictPolicy {
   return isRequestConflictPolicy(v) ? v : DEFAULT_REQUEST_CONFLICT_POLICY;
 }
 
+// ---- Day-off fulfillment strategies --------------------------------------
+// A requested day off is an OUTCOME that can be manufactured several ways at
+// different cost to the staff's leave pool. `offStrategyOrder` is an ORDERED
+// list of how to produce it; the engine (slices 2–3) tries the order top-down,
+// first feasible wins, ALL soft and at the LOWEST objective priority (it never
+// disrupts coverage; the scheduler can override). Tokens:
+//   ORC_ADJACENT       — place an ORC the day before; the existing post-call-off
+//                        rule then frees the requested day. No leave-pool cost.
+//   ORL_PAIR           — place 2 ORLs anywhere in the pay period; the freed 8h
+//                        day lands on the requested date. No leave-pool cost.
+//   LEAVE:<shiftTypeId> — pre-place that specific leave shift. Burns the pool.
+//                        Staff may rank one-to-many distinct leave types.
+// Order resolution: a request stores its OWN resolved order at submit time (so
+// later default changes never reinterpret it); the My Requests widget is seeded
+// from the staff override → department default.
+export const OFF_STRATEGY_FIXED = ["ORC_ADJACENT", "ORL_PAIR"] as const;
+export type OffStrategyFixed = (typeof OFF_STRATEGY_FIXED)[number];
+export const LEAVE_STRATEGY_PREFIX = "LEAVE:";
+/** Department fallback when neither the request nor the staff names an order. */
+export const DEFAULT_OFF_STRATEGY_ORDER: readonly string[] = ["ORC_ADJACENT", "ORL_PAIR"];
+
+/** The shiftTypeId carried by a `LEAVE:<id>` token, or null for anything else. */
+export function leaveShiftIdOfStrategy(token: unknown): string | null {
+  if (typeof token !== "string" || !token.startsWith(LEAVE_STRATEGY_PREFIX)) return null;
+  const id = token.slice(LEAVE_STRATEGY_PREFIX.length);
+  return id ? id : null;
+}
+
+/** STRICT single-token check for a user write. A `LEAVE:` token is only valid
+ *  when its shift id is in `validLeaveShiftIds` (Codex #1180: validate against
+ *  real eligible leave/off shifts, not just shape). Pass the set on every write. */
+export function isOffStrategyToken(v: unknown, validLeaveShiftIds: ReadonlySet<string>): boolean {
+  if (typeof v !== "string") return false;
+  if ((OFF_STRATEGY_FIXED as readonly string[]).includes(v)) return true;
+  const leaveId = leaveShiftIdOfStrategy(v);
+  return leaveId !== null && validLeaveShiftIds.has(leaveId);
+}
+
+/** STRICT validation for a write: must be an array of known tokens, no duplicates,
+ *  and every LEAVE token must reference a currently-eligible leave/off shift.
+ *  Returns the normalized array (order preserved) or an error message. */
+export function validateOffStrategyOrder(
+  v: unknown,
+  validLeaveShiftIds: ReadonlySet<string>
+): { error: string } | { value: string[] } {
+  if (v === undefined || v === null) return { value: [] };
+  if (!Array.isArray(v)) return { error: "offStrategyOrder must be an array of strategy tokens" };
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const token of v) {
+    if (!isOffStrategyToken(token, validLeaveShiftIds)) {
+      return { error: `unknown or ineligible day-off strategy token: ${JSON.stringify(token)}` };
+    }
+    if (seen.has(token as string)) return { error: `duplicate day-off strategy token: ${token}` };
+    seen.add(token as string);
+    out.push(token as string);
+  }
+  return { value: out };
+}
+
+/** LENIENT parse for PERSISTED reads — drops unknown/duplicate tokens, and (when
+ *  `validLeaveShiftIds` is supplied) drops LEAVE tokens whose shift was since
+ *  deleted, so a stale stored order never breaks the UI. When the set is omitted,
+ *  any well-formed LEAVE token is kept (used where eligibility isn't loaded). */
+export function parseOffStrategyOrder(
+  v: unknown,
+  validLeaveShiftIds?: ReadonlySet<string>
+): string[] {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const token of v) {
+    if (typeof token !== "string" || seen.has(token)) continue;
+    if ((OFF_STRATEGY_FIXED as readonly string[]).includes(token)) {
+      seen.add(token);
+      out.push(token);
+      continue;
+    }
+    const leaveId = leaveShiftIdOfStrategy(token);
+    if (leaveId === null) continue;
+    if (validLeaveShiftIds && !validLeaveShiftIds.has(leaveId)) continue; // stale shift → drop
+    seen.add(token);
+    out.push(token);
+  }
+  return out;
+}
+
+/** The order to seed/apply: the staff override if it has any tokens, else the
+ *  department default. Both are parsed leniently against `validLeaveShiftIds`. */
+export function resolveOffStrategyOrder(
+  staffOrder: unknown,
+  departmentDefault: unknown,
+  validLeaveShiftIds?: ReadonlySet<string>
+): string[] {
+  const staff = parseOffStrategyOrder(staffOrder, validLeaveShiftIds);
+  if (staff.length > 0) return staff;
+  return parseOffStrategyOrder(departmentDefault, validLeaveShiftIds);
+}
+
+/** Human label for one strategy token. `codeOf` resolves a leave shift id to its
+ *  display code (e.g. "AL"). Used by the My Requests widget, settings, /requests. */
+export function describeOffStrategy(token: string, codeOf: (shiftTypeId: string) => string): string {
+  if (token === "ORC_ADJACENT") return "ORC the day before";
+  if (token === "ORL_PAIR") return "2 ORLs this pay period";
+  const leaveId = leaveShiftIdOfStrategy(token);
+  if (leaveId) return `${codeOf(leaveId)} leave`;
+  return token;
+}
+
 export type ScheduleRequestData = {
   id: string;
   staffId: string;
@@ -872,6 +981,7 @@ export type RestoreRequestInput = RequestInput & {
   approvedAt: string | null;
   approvedBy: string | null;
   receivedAt: string | null;
+  offStrategyOrder: string[]; // recreated verbatim (was validated at original create)
 };
 
 /** Pure validation for the restore endpoint. `id` is required (the original,
@@ -906,6 +1016,10 @@ export function validateRestoreInput(
       approvedAt: isoOrNull(b.approvedAt),
       approvedBy: typeof b.approvedBy === "string" ? b.approvedBy : null,
       receivedAt: isoOrNull(b.receivedAt),
+      // Restore of an already-validated order. Lenient parse (drops unknown/dup
+      // tokens) so a crafted schedule:edit restore can't smuggle junk past the
+      // strict-write invariant; a stored bad value still never blocks the undo.
+      offStrategyOrder: parseOffStrategyOrder(b.offStrategyOrder),
     },
   };
 }

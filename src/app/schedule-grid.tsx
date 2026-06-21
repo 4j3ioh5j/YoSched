@@ -22,7 +22,7 @@ import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } fr
 // A schedule request as delivered to the grid (pure-module shape + display stamp).
 // source/notes are carried (beyond ScheduleRequestData) so a deleted request can
 // be restored verbatim on undo; autoApproved/approvedBy are re-derived by /restore.
-type GridRequest = ScheduleRequestData & { receivedAt: string; source: string; notes: string | null; approvedAt?: string | null; approvedByName?: string | null };
+type GridRequest = ScheduleRequestData & { receivedAt: string; source: string; notes: string | null; offStrategyOrder: string[]; approvedAt?: string | null; approvedByName?: string | null };
 
 // Everything /api/requests/[id]/restore needs to recreate a request verbatim
 // under its original id — captured when a request is created/deleted so undo &
@@ -39,6 +39,7 @@ type RequestSnapshot = {
   status: RequestStatus;
   source: string;
   notes: string | null;
+  offStrategyOrder: string[];
   receivedAt: string;
   autoApproved?: boolean;
   approvedAt?: string | null;
@@ -1786,7 +1787,7 @@ export function ScheduleGrid({
         id: s.id, staffId: s.staffId, startDate: s.startDate, endDate: s.endDate,
         kind: s.kind, shiftTypeIds: s.shiftTypeIds, leaveShiftTypeId: s.leaveShiftTypeId,
         strength: s.strength, status: s.status, receivedAt: s.receivedAt,
-        source: s.source, notes: s.notes,
+        source: s.source, notes: s.notes, offStrategyOrder: s.offStrategyOrder,
       })),
       ...prev,
     ]);
@@ -2796,6 +2797,7 @@ export function ScheduleGrid({
         id: r.id, staffId: r.staffId, startDate: r.startDate, endDate: r.endDate,
         kind: r.kind, shiftTypeIds: r.shiftTypeIds, leaveShiftTypeId: r.leaveShiftTypeId,
         strength: r.strength, status: r.status, source: r.source, notes: r.notes, receivedAt: r.receivedAt,
+        offStrategyOrder: r.offStrategyOrder,
       }));
     if (snapshots.length === 0) return;
     pushUndoEntry({ kind: "request-delete", snapshots });

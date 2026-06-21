@@ -56,6 +56,7 @@ export default async function Requests() {
           strength: r.strength as "hard" | "soft",
           status: r.status as "pending" | "approved" | "declined" | "withdrawn" | "fulfilled",
           source: r.source,
+          offStrategyOrder: r.offStrategyOrder,
           receivedAt: r.receivedAt.toISOString(),
           approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
           // Resolve to a display name server-side; never serialize the raw user id.

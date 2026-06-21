@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { SettingsPage } from "./settings-page";
 import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
-import { parsePendingRequestMode, parseRequestConflictPolicy } from "@/lib/schedule-requests";
+import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, DEFAULT_OFF_STRATEGY_ORDER } from "@/lib/schedule-requests";
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
 import { redirect } from "next/navigation";
 
@@ -32,6 +32,10 @@ export default async function Settings() {
     prisma.printAggregateColumn.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
 
+  // Lenient read of the dept-default day-off order: drop tokens for since-deleted
+  // leave shifts. Seed the canonical default only when no prefs row exists yet (an
+  // existing row's explicit empty order is respected — "no preference").
+  const leaveShiftIds = new Set(shiftTypes.filter((s) => s.isLeave && !s.isOffShift).map((s) => s.id));
   const schedulingPrefs = {
     prefer3DayWeekends: schedulingPrefsRow?.prefer3DayWeekends ?? true,
     prefer4DayWeekends: schedulingPrefsRow?.prefer4DayWeekends ?? true,
@@ -40,6 +44,9 @@ export default async function Settings() {
     maxLeavePerDay: schedulingPrefsRow?.maxLeavePerDay ?? 0,
     pendingRequestMode: parsePendingRequestMode(schedulingPrefsRow?.pendingRequestMode),
     requestConflictPolicy: parseRequestConflictPolicy(schedulingPrefsRow?.requestConflictPolicy),
+    defaultOffStrategyOrder: schedulingPrefsRow
+      ? parseOffStrategyOrder(schedulingPrefsRow.defaultOffStrategyOrder, leaveShiftIds)
+      : [...DEFAULT_OFF_STRATEGY_ORDER],
   };
 
   return (

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { describeRequest, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
+import { describeRequest, describeOffStrategy, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
 import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { filterAndSortRequests, type RequestSort, type RequestSortKey } from "@/lib/request-list";
 
@@ -19,6 +19,7 @@ type RequestRow = {
   strength: RequestStrength;
   status: RequestStatus;
   source: string;
+  offStrategyOrder: string[];
   receivedAt: string;
   approvedAt: string | null;
   approverLabel: string | null; // resolved server-side; never a raw user id
@@ -141,6 +142,7 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
           prov?.initials,
           dateRange(r),
           describeRequest(r, codeOf),
+          r.offStrategyOrder.map((t) => describeOffStrategy(t, codeOf)).join(" "),
           r.strength === "soft" ? "soft" : "",
           r.notes,
           r.status,
@@ -306,6 +308,11 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
                 <td className="px-3 py-2 text-slate-200">
                   {describeRequest(r, codeOf)}
                   {r.strength === "soft" && <span className="ml-1 text-xs text-slate-500">(soft)</span>}
+                  {r.offStrategyOrder.length > 0 && (
+                    <span className="block text-xs text-slate-400">
+                      via {r.offStrategyOrder.map((t) => describeOffStrategy(t, codeOf)).join(" → ")}
+                    </span>
+                  )}
                   {r.notes && <span className="block text-xs text-slate-500 italic">{r.notes}</span>}
                 </td>
                 <td className="px-3 py-2">

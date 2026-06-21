@@ -70,6 +70,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
       strength: v.strength,
       source: v.source,
       notes: v.notes,
+      offStrategyOrder: v.offStrategyOrder,
       status: finalStatus,
       // Mirror PATCH's invariant: an approved single-shift request is auto
       // (revertible when the shift is removed); approved-with-no-placement is sticky.

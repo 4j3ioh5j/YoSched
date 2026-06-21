@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { describeRequest, type LeaveQueueSummary } from "@/lib/schedule-requests";
+import { describeRequest, describeOffStrategy, type LeaveQueueSummary } from "@/lib/schedule-requests";
 import { formatDate, type DateFormatKey } from "@/lib/date-format";
 import { awayShiftChoices } from "@/lib/request-away-choices";
+import { OffStrategyEditor } from "@/components/off-strategy-editor";
 
 type Kind = "OFF" | "LEAVE" | "NEGATE_SHIFT" | "REQUEST_SHIFT";
 type Status = "pending" | "approved" | "declined" | "withdrawn" | "fulfilled";
@@ -19,6 +20,7 @@ type RequestRow = {
   strength: "hard" | "soft";
   status: Status;
   source: string;
+  offStrategyOrder: string[];
   receivedAt: string;
   approvedAt: string | null;
   notes: string | null;
@@ -52,12 +54,14 @@ export function MyRequestsPage({
   dateFormat,
   maxLeavePerDay,
   shiftTypes,
+  offStrategyDefault,
   initialRequests,
 }: {
   staffName: string;
   dateFormat: string;
   maxLeavePerDay: number;
   shiftTypes: ShiftType[];
+  offStrategyDefault: string[];
   initialRequests: RequestRow[];
 }) {
   const fmt = dateFormat as DateFormatKey;
@@ -67,6 +71,9 @@ export function MyRequestsPage({
   }, [shiftTypes]);
 
   const workShifts = useMemo(() => shiftTypes.filter((s) => !s.isLeave && !s.isOffShift), [shiftTypes]);
+  // The "day off" shift and the leave types offered as LEAVE:<id> ranking rows.
+  const offShiftId = useMemo(() => shiftTypes.find((s) => s.isOffShift)?.id ?? null, [shiftTypes]);
+  const leaveTypes = useMemo(() => shiftTypes.filter((s) => s.isLeave && !s.isOffShift), [shiftTypes]);
   const isAwayId = useMemo(() => {
     const away = new Set(shiftTypes.filter((s) => s.isLeave || s.isOffShift).map((s) => s.id));
     return (id: string) => away.has(id);
@@ -78,6 +85,7 @@ export function MyRequestsPage({
   const [endDate, setEndDate] = useState("");
   const [shiftTypeIds, setShiftTypeIds] = useState<string[]>([]);
   const [flexible, setFlexible] = useState(false);
+  const [offStrategyOrder, setOffStrategyOrder] = useState<string[]>(offStrategyDefault);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -90,6 +98,10 @@ export function MyRequestsPage({
   const awayChoices = useMemo(() => awayShiftChoices(shiftTypes, isRequest), [shiftTypes, isRequest]);
   // The queue feedback only makes sense when this is an "away" ask (off/leave picked).
   const requestingAway = isRequest && shiftTypeIds.some(isAwayId);
+  // The day-off fulfillment-order widget shows only when the staff is asking for
+  // the day off itself (selecting the Off shift in a Request) — it's about HOW to
+  // free that day. Picking a specific leave type directly is a plain leave request.
+  const requestingDayOff = isRequest && offShiftId !== null && shiftTypeIds.includes(offShiftId);
 
   // Live leave-queue feedback: how many others are already away over the chosen
   // range, and where this staff would stand. Debounced; counts only (the API
@@ -119,6 +131,7 @@ export function MyRequestsPage({
     setEndDate("");
     setShiftTypeIds([]);
     setFlexible(false);
+    setOffStrategyOrder(offStrategyDefault);
     setNotes("");
     setError("");
   }
@@ -126,6 +139,7 @@ export function MyRequestsPage({
   function pickKind(k: FormCategory) {
     setKind(k);
     setShiftTypeIds([]); // selections don't carry across categories
+    setOffStrategyOrder(offStrategyDefault);
     setError("");
   }
 
@@ -147,6 +161,8 @@ export function MyRequestsPage({
       leaveShiftTypeId: null,
       shiftTypeIds,
       strength: flexible ? "soft" : "hard",
+      // Only a day-off ask carries a fulfillment order; other requests send none.
+      offStrategyOrder: requestingDayOff ? offStrategyOrder : [],
       notes: notes.trim() || null,
     };
     const res = await fetch("/api/my-requests", {
@@ -308,6 +324,18 @@ export function MyRequestsPage({
             );
           })()}
 
+          {requestingDayOff && (
+            <div className="p-3 rounded border border-slate-700 bg-slate-900/40 space-y-2">
+              <div>
+                <div className="text-sm font-medium text-slate-200">How should we give you this day off?</div>
+                <p className="text-xs text-slate-500">
+                  Highest priority first — the scheduler tries each method in order to free the day (e.g. to spare your leave balance). It&apos;s a best-effort preference, never guaranteed.
+                </p>
+              </div>
+              <OffStrategyEditor order={offStrategyOrder} onChange={setOffStrategyOrder} leaveTypes={leaveTypes} />
+            </div>
+          )}
+
           <label className="flex items-center gap-2 text-sm text-slate-300">
             <input type="checkbox" checked={flexible} onChange={(e) => setFlexible(e.target.checked)} className="accent-blue-500" />
             I&apos;m flexible — treat this as a preference, not a firm request.
@@ -380,6 +408,7 @@ export function MyRequestsPage({
           request={receiptFor}
           staffName={staffName}
           describe={describe}
+          codeOf={codeOf}
           dateRangeLabel={dateRangeLabel}
           submittedLabel={submittedLabel}
           onClose={() => setReceiptFor(null)}
@@ -395,6 +424,7 @@ function Receipt({
   request,
   staffName,
   describe,
+  codeOf,
   dateRangeLabel,
   submittedLabel,
   onClose,
@@ -402,6 +432,7 @@ function Receipt({
   request: RequestRow;
   staffName: string;
   describe: (r: RequestRow) => string;
+  codeOf: (shiftTypeId: string) => string;
   dateRangeLabel: (r: { startDate: string; endDate: string }) => string;
   submittedLabel: (iso: string) => string;
   onClose: () => void;
@@ -429,6 +460,14 @@ function Receipt({
             <dt className="text-slate-500">Date(s)</dt>
             <dd className="font-medium text-right">{dateRangeLabel(request)}</dd>
           </div>
+          {request.offStrategyOrder.length > 0 && (
+            <div className="flex justify-between gap-4">
+              <dt className="text-slate-500">Day off via</dt>
+              <dd className="text-right">
+                {request.offStrategyOrder.map((t) => describeOffStrategy(t, codeOf)).join(" → ")}
+              </dd>
+            </div>
+          )}
           {request.notes && (
             <div className="flex justify-between gap-4">
               <dt className="text-slate-500">Note</dt>

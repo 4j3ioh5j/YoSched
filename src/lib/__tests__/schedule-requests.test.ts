@@ -30,6 +30,12 @@ import {
   validateRestoreInput,
   PENDING_REQUEST_MODES,
   DEFAULT_PENDING_REQUEST_MODE,
+  isOffStrategyToken,
+  validateOffStrategyOrder,
+  parseOffStrategyOrder,
+  resolveOffStrategyOrder,
+  leaveShiftIdOfStrategy,
+  describeOffStrategy,
   type LeaveQueueRequest,
   type ScheduleRequestData,
   type RequestKeyShift,
@@ -1363,6 +1369,19 @@ describe("validateRestoreInput", () => {
     receivedAt: "2026-06-30T08:00:00.000Z",
   };
 
+  it("carries offStrategyOrder through (undo must not drop the day-off order) and drops junk", () => {
+    // Lenient parse: keeps valid tokens in order, drops non-strings, unknown tokens,
+    // and duplicates — so a crafted restore can't smuggle junk past strict writes.
+    const r = validateRestoreInput({ ...full, offStrategyOrder: ["ORC_ADJACENT", "LEAVE:al", 7, null, "NOPE", "ORC_ADJACENT"] });
+    expect("value" in r).toBe(true);
+    if ("value" in r) expect(r.value.offStrategyOrder).toEqual(["ORC_ADJACENT", "LEAVE:al"]);
+  });
+
+  it("defaults offStrategyOrder to [] when the snapshot omits it", () => {
+    const r = validateRestoreInput(full);
+    if ("value" in r) expect(r.value.offStrategyOrder).toEqual([]);
+  });
+
   it("accepts a full approved snapshot verbatim", () => {
     const r = validateRestoreInput(full);
     expect("value" in r).toBe(true);
@@ -1412,5 +1431,107 @@ describe("validateRestoreInput", () => {
   it("inherits validateRequestInput field rules (e.g. REQUEST_SHIFT needs a shift)", () => {
     const r = validateRestoreInput({ ...full, shiftTypeIds: [] });
     expect("error" in r && r.error).toMatch(/REQUEST_SHIFT requires/);
+  });
+});
+
+describe("day-off fulfillment strategies (offStrategyOrder)", () => {
+  // Eligible leave/off shift ids the validator checks LEAVE:<id> against.
+  const valid = new Set(["al", "sl", "ild"]);
+
+  describe("leaveShiftIdOfStrategy", () => {
+    it("extracts the shift id from a LEAVE token", () => {
+      expect(leaveShiftIdOfStrategy("LEAVE:al")).toBe("al");
+    });
+    it("returns null for fixed tokens and a bare prefix", () => {
+      expect(leaveShiftIdOfStrategy("ORC_ADJACENT")).toBeNull();
+      expect(leaveShiftIdOfStrategy("ORL_PAIR")).toBeNull();
+      expect(leaveShiftIdOfStrategy("LEAVE:")).toBeNull();
+      expect(leaveShiftIdOfStrategy(42)).toBeNull();
+    });
+  });
+
+  describe("isOffStrategyToken (strict, write)", () => {
+    it("accepts the fixed tokens", () => {
+      expect(isOffStrategyToken("ORC_ADJACENT", valid)).toBe(true);
+      expect(isOffStrategyToken("ORL_PAIR", valid)).toBe(true);
+    });
+    it("accepts a LEAVE token only for an eligible shift", () => {
+      expect(isOffStrategyToken("LEAVE:al", valid)).toBe(true);
+      expect(isOffStrategyToken("LEAVE:nope", valid)).toBe(false);
+    });
+    it("rejects junk", () => {
+      expect(isOffStrategyToken("ORC", valid)).toBe(false);
+      expect(isOffStrategyToken("", valid)).toBe(false);
+      expect(isOffStrategyToken(null, valid)).toBe(false);
+    });
+  });
+
+  describe("validateOffStrategyOrder (strict, write)", () => {
+    it("normalizes a valid order and preserves sequence", () => {
+      const r = validateOffStrategyOrder(["ORC_ADJACENT", "ORL_PAIR", "LEAVE:sl", "LEAVE:al"], valid);
+      expect("value" in r && r.value).toEqual(["ORC_ADJACENT", "ORL_PAIR", "LEAVE:sl", "LEAVE:al"]);
+    });
+    it("treats null/undefined as an empty order", () => {
+      expect(validateOffStrategyOrder(undefined, valid)).toEqual({ value: [] });
+      expect(validateOffStrategyOrder(null, valid)).toEqual({ value: [] });
+    });
+    it("rejects a non-array", () => {
+      expect("error" in validateOffStrategyOrder("ORC_ADJACENT", valid)).toBe(true);
+    });
+    it("rejects an unknown or ineligible token", () => {
+      expect("error" in validateOffStrategyOrder(["NOPE"], valid)).toBe(true);
+      expect("error" in validateOffStrategyOrder(["LEAVE:ghost"], valid)).toBe(true);
+    });
+    it("rejects duplicates", () => {
+      const r = validateOffStrategyOrder(["ORC_ADJACENT", "ORC_ADJACENT"], valid);
+      expect("error" in r && r.error).toMatch(/duplicate/);
+    });
+  });
+
+  describe("parseOffStrategyOrder (lenient, read)", () => {
+    it("drops unknown tokens and de-dupes, preserving order", () => {
+      expect(parseOffStrategyOrder(["ORC_ADJACENT", "NOPE", "ORC_ADJACENT", "ORL_PAIR"])).toEqual([
+        "ORC_ADJACENT",
+        "ORL_PAIR",
+      ]);
+    });
+    it("keeps well-formed LEAVE tokens when no eligibility set is given", () => {
+      expect(parseOffStrategyOrder(["LEAVE:al", "LEAVE:"])).toEqual(["LEAVE:al"]);
+    });
+    it("drops LEAVE tokens for since-deleted shifts when a set is given", () => {
+      expect(parseOffStrategyOrder(["ORC_ADJACENT", "LEAVE:al", "LEAVE:ghost"], valid)).toEqual([
+        "ORC_ADJACENT",
+        "LEAVE:al",
+      ]);
+    });
+    it("returns [] for a non-array", () => {
+      expect(parseOffStrategyOrder("ORC_ADJACENT")).toEqual([]);
+    });
+  });
+
+  describe("resolveOffStrategyOrder (staff override → dept default)", () => {
+    it("uses the staff order when it has tokens", () => {
+      expect(resolveOffStrategyOrder(["LEAVE:al"], ["ORC_ADJACENT"], valid)).toEqual(["LEAVE:al"]);
+    });
+    it("falls back to the department default when the staff order is empty", () => {
+      expect(resolveOffStrategyOrder([], ["ORC_ADJACENT", "ORL_PAIR"], valid)).toEqual([
+        "ORC_ADJACENT",
+        "ORL_PAIR",
+      ]);
+    });
+    it("falls back when the staff order is all-stale (parses to empty)", () => {
+      expect(resolveOffStrategyOrder(["LEAVE:ghost"], ["ORL_PAIR"], valid)).toEqual(["ORL_PAIR"]);
+    });
+  });
+
+  describe("describeOffStrategy", () => {
+    const codeOf = (id: string) => ({ al: "AL", sl: "SL" }[id] ?? id);
+    it("labels fixed tokens", () => {
+      expect(describeOffStrategy("ORC_ADJACENT", codeOf)).toBe("ORC the day before");
+      expect(describeOffStrategy("ORL_PAIR", codeOf)).toBe("2 ORLs this pay period");
+    });
+    it("labels a LEAVE token by its shift code", () => {
+      expect(describeOffStrategy("LEAVE:al", codeOf)).toBe("AL leave");
+    });
   });
 });

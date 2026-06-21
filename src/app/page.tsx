@@ -280,6 +280,7 @@ export default async function Home() {
           approvedByName: canEdit && r.approvedBy ? approverNames.get(r.approvedBy) ?? "Unknown" : null,
           source: r.source,
           notes: r.notes,
+          offStrategyOrder: r.offStrategyOrder,
         }))}
         mutedAlertKeys={mutedAlerts.map((m) => m.alertKey)}
       />

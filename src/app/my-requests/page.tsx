@@ -3,6 +3,7 @@ import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { MyRequestsPage } from "./my-requests-page";
+import { resolveOffStrategyOrder } from "@/lib/schedule-requests";
 
 export const dynamic = "force-dynamic";
 
@@ -29,11 +30,20 @@ export default async function MyRequests() {
   }
 
   const [staff, requests, shiftTypes, schedPrefs] = await Promise.all([
-    prisma.staff.findUnique({ where: { id: result.staffId }, select: { name: true, initials: true } }),
+    prisma.staff.findUnique({ where: { id: result.staffId }, select: { name: true, initials: true, offStrategyOrder: true } }),
     prisma.scheduleRequest.findMany({ where: { staffId: result.staffId }, orderBy: { receivedAt: "desc" } }),
     prisma.shiftType.findMany({ select: { id: true, code: true, name: true, isLeave: true, isOffShift: true }, orderBy: { code: "asc" } }),
     prisma.schedulingPreferences.findFirst(),
   ]);
+
+  // The order to seed the day-off widget: this staff's saved override → dept default,
+  // read leniently against the current leave shifts (drops since-deleted ones).
+  const leaveShiftIds = new Set(shiftTypes.filter((s) => s.isLeave && !s.isOffShift).map((s) => s.id));
+  const offStrategyDefault = resolveOffStrategyOrder(
+    staff?.offStrategyOrder,
+    schedPrefs?.defaultOffStrategyOrder,
+    leaveShiftIds,
+  );
 
   return (
     <main className="flex flex-col h-dvh">
@@ -43,6 +53,7 @@ export default async function MyRequests() {
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
         maxLeavePerDay={schedPrefs?.maxLeavePerDay ?? 0}
         shiftTypes={shiftTypes}
+        offStrategyDefault={offStrategyDefault}
         initialRequests={requests.map((r) => ({
           id: r.id,
           staffId: r.staffId,
@@ -54,6 +65,7 @@ export default async function MyRequests() {
           strength: r.strength as "hard" | "soft",
           status: r.status as "pending" | "approved" | "declined" | "withdrawn" | "fulfilled",
           source: r.source,
+          offStrategyOrder: r.offStrategyOrder,
           receivedAt: r.receivedAt.toISOString(),
           approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
           notes: r.notes,

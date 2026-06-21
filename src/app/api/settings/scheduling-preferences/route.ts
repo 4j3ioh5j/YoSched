@@ -2,7 +2,7 @@ import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { isValidDateFormat } from "@/lib/date-format";
-import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES } from "@/lib/schedule-requests";
+import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES, validateOffStrategyOrder } from "@/lib/schedule-requests";
 
 export async function GET() {
   const { error } = await getSession("settings:view");
@@ -20,7 +20,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, defaultOffStrategyOrder } = body;
 
   // Mode is STRICTLY validated on write — a bad value is rejected, never coerced to
   // the default (which would silently turn a typo into "full"). Reads stay lenient.
@@ -29,6 +29,20 @@ export async function PUT(req: NextRequest) {
   }
   if (requestConflictPolicy !== undefined && !isRequestConflictPolicy(requestConflictPolicy)) {
     return NextResponse.json({ error: `requestConflictPolicy must be one of ${REQUEST_CONFLICT_POLICIES.join(", ")}` }, { status: 400 });
+  }
+
+  // Department-default day-off fulfillment order: validate LEAVE:<id> tokens against
+  // the currently eligible leave shift types (strict on write). Only touched when sent.
+  let offOrder: string[] | undefined;
+  if (defaultOffStrategyOrder !== undefined) {
+    const leaveShiftIds = new Set(
+      (await prisma.shiftType.findMany({ where: { isLeave: true, isOffShift: false }, select: { id: true } })).map((s) => s.id)
+    );
+    const validated = validateOffStrategyOrder(defaultOffStrategyOrder, leaveShiftIds);
+    if ("error" in validated) {
+      return NextResponse.json({ error: validated.error }, { status: 400 });
+    }
+    offOrder = validated.value;
   }
 
   const prefs = await prisma.schedulingPreferences.upsert({
@@ -42,6 +56,7 @@ export async function PUT(req: NextRequest) {
       ...(typeof maxLeavePerDay === "number" && maxLeavePerDay >= 0 && maxLeavePerDay <= 999 && { maxLeavePerDay: Math.floor(maxLeavePerDay) }),
       ...(isPendingRequestMode(pendingRequestMode) && { pendingRequestMode }),
       ...(isRequestConflictPolicy(requestConflictPolicy) && { requestConflictPolicy }),
+      ...(offOrder !== undefined && { defaultOffStrategyOrder: offOrder }),
     },
     create: {
       id: "default",
@@ -51,6 +66,7 @@ export async function PUT(req: NextRequest) {
       ...(typeof dateFormat === "string" && isValidDateFormat(dateFormat) && { dateFormat }),
       ...(isPendingRequestMode(pendingRequestMode) && { pendingRequestMode }),
       ...(isRequestConflictPolicy(requestConflictPolicy) && { requestConflictPolicy }),
+      ...(offOrder !== undefined && { defaultOffStrategyOrder: offOrder }),
     },
   });
 

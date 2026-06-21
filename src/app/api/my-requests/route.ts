@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { buildSelfRequestInput, canWithdrawOwnRequest, describeRequest } from "@/lib/schedule-requests";
+import { buildSelfRequestInput, canWithdrawOwnRequest, describeRequest, validateOffStrategyOrder } from "@/lib/schedule-requests";
 import { isEmailConfigured, buildConfirmationEmail, sendSmtpMail, type EmailConfig } from "@/lib/email";
 import { formatDate, type DateFormatKey } from "@/lib/date-format";
 import { NextRequest, NextResponse } from "next/server";
@@ -67,6 +67,7 @@ function serialize(r: ScheduleRequest) {
     strength: r.strength,
     status: r.status,
     source: r.source,
+    offStrategyOrder: r.offStrategyOrder,
     receivedAt: r.receivedAt.toISOString(),
     approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
     notes: r.notes,
@@ -101,11 +102,23 @@ export async function POST(req: NextRequest) {
   if (result.error) return result.error;
   if (!result.staffId) return notLinked();
 
-  const parsed = buildSelfRequestInput(await req.json(), result.staffId);
+  const body = await req.json();
+  const parsed = buildSelfRequestInput(body, result.staffId);
   if ("error" in parsed) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
   const v = parsed.value;
+
+  // Day-off fulfillment order: validate LEAVE:<id> tokens against the currently
+  // eligible leave shift types (Codex #1180), then snapshot the resolved order on
+  // the request so later default changes never reinterpret it.
+  const leaveShiftIds = new Set(
+    (await prisma.shiftType.findMany({ where: { isLeave: true, isOffShift: false }, select: { id: true } })).map((s) => s.id)
+  );
+  const order = validateOffStrategyOrder((body as { offStrategyOrder?: unknown })?.offStrategyOrder, leaveShiftIds);
+  if ("error" in order) {
+    return NextResponse.json({ error: order.error }, { status: 400 });
+  }
 
   const created = await prisma.scheduleRequest.create({
     data: {
@@ -118,6 +131,7 @@ export async function POST(req: NextRequest) {
       strength: v.strength,
       source: v.source,
       notes: v.notes,
+      offStrategyOrder: order.value,
     },
   });
 

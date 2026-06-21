@@ -21,6 +21,7 @@ function serialize(r: ScheduleRequest, approverName: string | null = null) {
     status: r.status,
     autoApproved: r.autoApproved,
     source: r.source,
+    offStrategyOrder: r.offStrategyOrder,
     receivedAt: r.receivedAt.toISOString(),
     approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
     approvedByName: approverName,

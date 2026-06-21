@@ -4,6 +4,7 @@ import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, u
 import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
+import { OffStrategyEditor } from "@/components/off-strategy-editor";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
 import { RecurrencePicker } from "../staff/recurrence-picker";
 import { FrequencyPicker } from "../staff/frequency-picker";
@@ -76,6 +77,7 @@ type SchedulingPrefs = {
   maxLeavePerDay: number;
   pendingRequestMode: PendingRequestMode;
   requestConflictPolicy: RequestConflictPolicy;
+  defaultOffStrategyOrder: string[];
 };
 
 type DefaultAvailabilityRule = {
@@ -2036,11 +2038,34 @@ function DateFormatSection({ selected, onChange }: { selected: string; onChange:
   );
 }
 
-function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
+function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPrefs; shiftTypes: ShiftType[] }) {
   const canEdit = useCanEdit();
   const [prefs, setPrefs] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
+
+  // Leave types offered as LEAVE:<id> rows in the day-off order editor.
+  const leaveTypes = useMemo(() => shiftTypes.filter((s) => s.isLeave && !s.isOffShift), [shiftTypes]);
+
+  const [offStatus, setOffStatus] = useState<SaveStatus>("idle");
+  async function saveOffOrder(next: string[]) {
+    const prev = prefs.defaultOffStrategyOrder;
+    setPrefs((p) => ({ ...p, defaultOffStrategyOrder: next }));
+    setOffStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ defaultOffStrategyOrder: next }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setOffStatus("saved");
+      setTimeout(() => setOffStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, defaultOffStrategyOrder: prev }));
+      setOffStatus("error");
+    }
+  }
 
   async function toggle(key: keyof SchedulingPrefs) {
     const newValue = !prefs[key];
@@ -2252,6 +2277,24 @@ function SchedulingPrefsSection({ initial }: { initial: SchedulingPrefs }) {
                 <span className="text-[11px] text-slate-500 mt-0.5">{POLICY_LABELS[policy].hint}</span>
               </button>
             ))}
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-slate-700/50">
+          <div className="text-sm font-medium text-slate-200">Default day-off fulfillment order</div>
+          <div className="text-xs text-slate-400">
+            When staff request the day off, the order the auto-scheduler tries to free it — earlier methods first. Staff can override this per request. Always a best-effort preference: it never overrides staffing coverage.
+            {offStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
+            {offStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
+            {offStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
+          </div>
+          <div className="mt-3 max-w-md">
+            <OffStrategyEditor
+              order={prefs.defaultOffStrategyOrder}
+              onChange={(next) => canEdit && saveOffOrder(next)}
+              leaveTypes={leaveTypes}
+              disabled={!canEdit}
+            />
           </div>
         </div>
       </div>
@@ -3532,7 +3575,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
-        <SchedulingPrefsSection initial={schedulingPrefs} />
+        <SchedulingPrefsSection initial={schedulingPrefs} shiftTypes={shiftTypes} />
         <PayPeriodPrefsSection initial={departmentTargets} shiftTypes={shiftTypes} />
         <EmailSettingsSection />
         <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />

@@ -9,6 +9,18 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Other open items
 
+- [ ] **Day-off fulfillment-strategy ordering (My Requests)** — let staff rank *how* a requested day
+  off is produced, to conserve their leave pool. A day off is an outcome manufacturable several ways:
+  `ORC_ADJACENT` (ORC the day before → post-call off, free), `ORL_PAIR` (2 ORLs anywhere in the PP →
+  frees one 8h day, placeable on the requested date, free), and one-to-many ranked specific leave
+  types (`LEAVE:<shiftTypeId>`, burns the pool). Engine-aware (it tries the order top-down, stops at
+  first feasible) but every strategy is a **soft hint at the lowest objective priority** — never
+  disrupts coverage, scheduler can override. Order = department default + per-user override (settings);
+  default ships `ORC_ADJACENT → ORL_PAIR → leave types`. 3 slices: (1) schema `offStrategyOrder
+  String[]` + settings + `/my-requests` reorder UI + scheduler-facing display; (2) engine LEAVE +
+  ORC_ADJACENT; (3) engine ORL_PAIR (hours-math, touches the 3 hour-computation sites). Separate cheap
+  win surfaced same convo: receipt "Reference" = request cuid PK, persisted but not lookup-able — add
+  `r.id` to the admin `/requests` search haystack.
 - [ ] **Multi-cell drag / batch in all modes** — dragging a *selection* of cells as a group does not
   exist in either normal or Live mode (base drag is single-cell). Batch via picker/keyboard already
   works in both modes; this adds group DRAG. Open design questions first: offset axis (shift dates vs
