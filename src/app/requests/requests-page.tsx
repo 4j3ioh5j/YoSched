@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { describeRequest, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
 import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
+import { filterAndSortRequests, type RequestSort, type RequestSortKey } from "@/lib/request-list";
 
 type RequestStatus = "pending" | "approved" | "declined" | "withdrawn" | "fulfilled";
 
@@ -34,6 +35,17 @@ type Props = {
 
 const STATUS_FILTERS: (RequestStatus | "all")[] = ["all", "pending", "approved", "declined", "withdrawn", "fulfilled"];
 
+// Sortable header columns in render order (matches the table body cells).
+const SORTABLE_COLUMNS: { key: RequestSortKey; label: string }[] = [
+  { key: "staff", label: "Staff" },
+  { key: "dates", label: "Dates" },
+  { key: "request", label: "Request" },
+  { key: "status", label: "Status" },
+  { key: "source", label: "Source" },
+  { key: "received", label: "Received" },
+  { key: "approved", label: "Approved" },
+];
+
 const STATUS_BADGE: Record<RequestStatus, string> = {
   pending: "bg-amber-900/40 text-amber-300 border-amber-700/50",
   approved: "bg-emerald-900/40 text-emerald-300 border-emerald-700/50",
@@ -47,6 +59,9 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
   const [filter, setFilter] = useState<RequestStatus | "all">("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Client-side, session-only (no persistence, no server round-trip).
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<RequestSort | null>(null);
   const df = (dfProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
   const router = useRouter();
 
@@ -106,10 +121,53 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
     return c;
   }, [requests]);
 
-  const rows = useMemo(
-    () => (filter === "all" ? requests : requests.filter((r) => r.status === filter)),
-    [requests, filter],
-  );
+  // Click a header to sort by it (ascending); click the same header again to
+  // reverse the direction. A different header always starts ascending.
+  function toggleSort(key: RequestSortKey) {
+    setSort((prev) => (prev?.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
+  }
+
+  // Status tab (raw equality) → pure search + sort (lib/request-list). Each row
+  // is projected into its comparable fields here, using the same display helpers
+  // that render the cells so search/sort match exactly what the user sees.
+  const rows = useMemo(() => {
+    const statusFiltered = filter === "all" ? requests : requests.filter((r) => r.status === filter);
+    return filterAndSortRequests(
+      statusFiltered,
+      (r) => {
+        const prov = staffName[r.staffId];
+        const haystack = [
+          prov?.name,
+          prov?.initials,
+          dateRange(r),
+          describeRequest(r, codeOf),
+          r.strength === "soft" ? "soft" : "",
+          r.notes,
+          r.status,
+          r.source,
+          fmtDateTime(r.receivedAt),
+          r.approvedAt ? fmtDateTime(r.approvedAt) : "",
+          r.approverLabel ? `by ${r.approverLabel}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return {
+          staff: prov?.name ?? "",
+          startDate: r.startDate,
+          endDate: r.endDate,
+          request: describeRequest(r, codeOf),
+          // Rank by the status-tab order (pending → … → fulfilled), not alphabetical.
+          statusRank: STATUS_FILTERS.indexOf(r.status),
+          source: r.source,
+          receivedAt: r.receivedAt,
+          approvedAt: r.approvedAt,
+          haystack,
+        };
+      },
+      { query: search, sort },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requests, filter, search, sort, staffName, shiftCode, df]);
 
   async function patchStatus(id: string, status: RequestStatus) {
     setBusyId(id);
@@ -173,20 +231,30 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
         <h1 className="text-xl font-bold text-slate-100">Schedule Requests</h1>
       </div>
 
-      {/* Status filter tabs */}
-      <div className="flex items-center gap-1 mb-3">
-        {STATUS_FILTERS.map((s) => (
-          <button
-            key={s}
-            onClick={() => setFilter(s)}
-            className={[
-              "px-3 py-1 text-sm rounded transition-colors capitalize",
-              filter === s ? "bg-slate-700 text-slate-100 font-medium" : "text-slate-400 hover:text-slate-200",
-            ].join(" ")}
-          >
-            {s} <span className="text-xs text-slate-500">{counts[s] ?? 0}</span>
-          </button>
-        ))}
+      {/* Status filter tabs + free-text search */}
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-1">
+          {STATUS_FILTERS.map((s) => (
+            <button
+              key={s}
+              onClick={() => setFilter(s)}
+              className={[
+                "px-3 py-1 text-sm rounded transition-colors capitalize",
+                filter === s ? "bg-slate-700 text-slate-100 font-medium" : "text-slate-400 hover:text-slate-200",
+              ].join(" ")}
+            >
+              {s} <span className="text-xs text-slate-500">{counts[s] ?? 0}</span>
+            </button>
+          ))}
+        </div>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search requests…"
+          aria-label="Search requests"
+          className="w-56 shrink-0 bg-slate-800 border border-slate-700 rounded px-3 py-1 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500"
+        />
       </div>
 
       {error && (
@@ -198,13 +266,23 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
       <table className="w-full text-sm border-collapse">
         <thead>
           <tr className="text-left text-xs uppercase tracking-wider text-slate-500 border-b border-slate-700">
-            <th className="px-3 py-2">Staff</th>
-            <th className="px-3 py-2">Dates</th>
-            <th className="px-3 py-2">Request</th>
-            <th className="px-3 py-2">Status</th>
-            <th className="px-3 py-2">Source</th>
-            <th className="px-3 py-2">Received</th>
-            <th className="px-3 py-2">Approved</th>
+            {SORTABLE_COLUMNS.map(({ key, label }) => {
+              const active = sort?.key === key;
+              return (
+                <th key={key} className="px-3 py-2">
+                  <button
+                    onClick={() => toggleSort(key)}
+                    className={`inline-flex items-center gap-1 hover:text-slate-300 ${active ? "text-slate-200" : ""}`}
+                    title={`Sort by ${label}${active ? " (click to reverse)" : ""}`}
+                  >
+                    {label}
+                    <span className={`text-[9px] ${active ? "text-slate-300" : "text-slate-600"}`}>
+                      {active ? (sort!.dir === "asc" ? "▲" : "▼") : "↕"}
+                    </span>
+                  </button>
+                </th>
+              );
+            })}
             {canEdit && <th className="px-3 py-2 text-right">Actions</th>}
           </tr>
         </thead>
@@ -212,7 +290,7 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
           {rows.length === 0 && (
             <tr>
               <td colSpan={canEdit ? 8 : 7} className="px-3 py-8 text-center text-slate-500">
-                No {filter === "all" ? "" : filter} requests.
+                {search.trim() ? "No requests match your search." : `No ${filter === "all" ? "" : filter} requests.`}
               </td>
             </tr>
           )}
