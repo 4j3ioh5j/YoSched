@@ -840,8 +840,14 @@ export function ScheduleGrid({
     for (const a of liveInputRef.current?.existingAssignments ?? []) {
       if (a.isLocked) locked.add(`${a.staffId}:${a.date}`);
     }
+    const initial = liveInitialGridRef.current;
     for (const c of liveOutcome.grid) {
       const key = `${c.staffId}:${c.date}`;
+      // Preview provenance: a cell the engine changed will be written source="auto"
+      // on Accept, so show Auto now (its saved "manual"/empty source is stale in the
+      // what-if). Unchanged cells keep whatever provenance the saved grid has.
+      const changed = initial.get(key) !== c.shiftTypeId;
+      const saved = assignmentMap.get(key);
       m.set(key, {
         id: `live-${key}`,
         staffId: c.staffId,
@@ -850,10 +856,13 @@ export function ScheduleGrid({
         isLocked: locked.has(key),
         code: c.code,
         color: shiftTypeMap.get(c.shiftTypeId)?.color ?? "#6b7280",
+        source: changed ? "auto" : (saved?.source ?? "auto"),
+        autoMonth: changed ? null : (saved?.autoMonth ?? null),
+        autoShiftTypeId: changed ? null : (saved?.autoShiftTypeId ?? null),
       });
     }
     return m;
-  }, [liveMode, liveOutcome, shiftTypeMap]);
+  }, [liveMode, liveOutcome, shiftTypeMap, assignmentMap]);
 
   const liveRippleSet = useMemo(() => {
     const s = new Set<string>();
@@ -917,41 +926,51 @@ export function ScheduleGrid({
     [localRequests]
   );
 
-  const requestTooltip = useCallback(
-    (reqs: GridRequest[], date: string): string => {
-      const header = `Requests · ${formatDate(parseDate(date), dateFormat)}`;
-      const lines = reqs.map((r) => {
-        const desc = describeRequest(r, (id) => shiftTypeMap.get(id)?.code ?? id);
-        const recv = formatDate(parseDate(r.receivedAt.split("T")[0]), dateFormat);
-        const status =
-          r.status === "approved" ? (r.autoApproved ? "auto-approved" : "approved")
-          : r.status === "declined" ? "denied"
-          : r.status === "fulfilled" ? "fulfilled"
-          : r.status === "withdrawn" ? "withdrawn"
-          : "pending";
-        return `• ${desc} — ${status}, rec'd ${recv}`;
-      });
-      return [header, ...lines].join("\n");
-    },
-    [shiftTypeMap, dateFormat],
-  );
+  // Provenance line: where this shift came from, and — when a manual edit
+  // overwrote an auto cell — what the auto run had chosen.
+  const sourceLine = useCallback((a: AssignmentData): string => {
+    if (a.source === "auto") return "Source: Auto";
+    if (a.source === "imported") return "Source: Imported";
+    if (a.source === "request") return "Source: Request-placed";
+    if (a.source === "manual" && a.autoShiftTypeId) {
+      const was = shiftTypeMap.get(a.autoShiftTypeId)?.code ?? "?";
+      return `Source: Auto → Manual (was ${was})`;
+    }
+    return "Source: Manual"; // manual, or legacy/local cells with no source
+  }, [shiftTypeMap]);
 
-  // Provenance line for the assignment cell tooltip: where this shift came from,
-  // and — when a manual edit overwrote an auto cell — what the auto run chose.
-  const assignmentTooltip = useCallback(
-    (initials: string, a: AssignmentData, date: string): string => {
-      const head = `${initials}: ${a.code} on ${formatDate(parseDate(date), dateFormat)}${a.isLocked ? " (locked)" : ""}`;
-      let src: string;
-      if (a.source === "auto") src = "Source: Auto";
-      else if (a.source === "imported") src = "Source: Imported";
-      else if (a.source === "request") src = "Source: Request-placed";
-      else if (a.source === "manual" && a.autoShiftTypeId) {
-        const was = shiftTypeMap.get(a.autoShiftTypeId)?.code ?? "?";
-        src = `Source: Auto → Manual (was ${was})`;
-      } else src = "Source: Manual";
-      return `${head}\n${src}`;
+  const requestLine = useCallback((r: GridRequest): string => {
+    const desc = describeRequest(r, (id) => shiftTypeMap.get(id)?.code ?? id);
+    const recv = formatDate(parseDate(r.receivedAt.split("T")[0]), dateFormat);
+    const status =
+      r.status === "approved" ? (r.autoApproved ? "Auto-approved" : "Manually-approved")
+      : r.status === "declined" ? "Manually-denied"
+      : r.status === "fulfilled" ? "Fulfilled"
+      : r.status === "withdrawn" ? "Withdrawn"
+      : "Pending";
+    return `  • ${desc} — ${status}, rec'd ${recv}`;
+  }, [shiftTypeMap, dateFormat]);
+
+  // ONE tooltip for every grid cell, parallel construction in all modes:
+  //   <initials> · <date>
+  //   Assignment: <code | None>[ (locked)]
+  //   Source: <…>                 (only when assigned)
+  //   Requests:                   (only when present)
+  //     • <desc> — <status>, rec'd <date>
+  const cellTooltip = useCallback(
+    (initials: string, date: string, a: AssignmentData | null | undefined, reqs: GridRequest[] | null | undefined): string => {
+      const lines: string[] = [
+        `${initials} · ${formatDate(parseDate(date), dateFormat)}`,
+        `Assignment: ${a ? a.code : "None"}${a?.isLocked ? " (locked)" : ""}`,
+      ];
+      if (a) lines.push(sourceLine(a));
+      if (reqs && reqs.length) {
+        lines.push("Requests:");
+        for (const r of reqs) lines.push(requestLine(r));
+      }
+      return lines.join("\n");
     },
-    [shiftTypeMap, dateFormat],
+    [dateFormat, sourceLine, requestLine],
   );
 
   const staffInitialsMap = useMemo(() => {
@@ -3849,7 +3868,7 @@ export function ScheduleGrid({
                         onMouseEnter={(e) => {
                           handleCellMouseEnter(p.id, date);
                           setHoverCol(p.id);
-                          if (showEmptyTip) showTip(setTooltip, `${p.initials} on ${formatDate(parseDate(date), dateFormat)}`, e);
+                          if (showEmptyTip) showTip(setTooltip, cellTooltip(p.initials, date, null, reqs), e);
                         }}
                         onMouseLeave={() => { setHoverCol(null); if (showEmptyTip) setTooltip(null); }}
                         onClick={(e) => handleCellClick(p.id, date, e)}
@@ -3876,8 +3895,8 @@ export function ScheduleGrid({
                             }}
                             onMouseEnter={(e) => showTip(setTooltip,
                               cw && cw.length > 0
-                                ? [assignmentTooltip(p.initials, a, date), ...cw.map((w) => w.message)].join("\n")
-                                : assignmentTooltip(p.initials, a, date),
+                                ? [cellTooltip(p.initials, date, a, reqs), ...cw.map((w) => w.message)].join("\n")
+                                : cellTooltip(p.initials, date, a, reqs),
                               e)}
                             onMouseLeave={() => setTooltip(null)}
                           >
@@ -3889,7 +3908,7 @@ export function ScheduleGrid({
                           // Empty cell with request(s): show the letters in category color.
                           <div
                             className={`text-[10px] font-bold leading-tight ${reqTextCls} ${reqDim}`}
-                            onMouseEnter={(e) => showTip(setTooltip, requestTooltip(reqs!, date), e)}
+                            onMouseEnter={(e) => showTip(setTooltip, cellTooltip(p.initials, date, null, reqs), e)}
                             onMouseLeave={() => setTooltip(null)}
                           >
                             {reqSummary.label}
@@ -3901,7 +3920,7 @@ export function ScheduleGrid({
                           // label is letters for a single request, the count for multiple.
                           <span
                             className={`absolute top-0 left-0 px-0.5 text-[8px] font-bold leading-none ${reqTextCls} ${reqDim}`}
-                            onMouseEnter={(e) => showTip(setTooltip, requestTooltip(reqs!, date), e)}
+                            onMouseEnter={(e) => showTip(setTooltip, cellTooltip(p.initials, date, a, reqs), e)}
                             onMouseLeave={() => setTooltip(null)}
                           >
                             {reqSummary.label}
