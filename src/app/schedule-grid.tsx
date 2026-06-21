@@ -847,13 +847,21 @@ export function ScheduleGrid({
   const liveDisplayMap = useMemo(() => {
     const m = new Map<string, AssignmentData>();
     if (!liveMode || !liveOutcome) return m;
+    // Carry the real lock flags from the enter-time bundle so locked cells stay
+    // locked in Live (not draggable/editable) — the engine and the re-solve hold
+    // them fixed, and the UI must agree.
+    const locked = new Set<string>();
+    for (const a of liveInputRef.current?.existingAssignments ?? []) {
+      if (a.isLocked) locked.add(`${a.staffId}:${a.date}`);
+    }
     for (const c of liveOutcome.grid) {
-      m.set(`${c.staffId}:${c.date}`, {
-        id: `live-${c.staffId}:${c.date}`,
+      const key = `${c.staffId}:${c.date}`;
+      m.set(key, {
+        id: `live-${key}`,
         staffId: c.staffId,
         date: c.date,
         shiftTypeId: c.shiftTypeId,
-        isLocked: false,
+        isLocked: locked.has(key),
         code: c.code,
         color: shiftTypeMap.get(c.shiftTypeId)?.color ?? "#6b7280",
       });
