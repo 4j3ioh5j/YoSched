@@ -6,7 +6,7 @@ import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } 
 import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
-import { applyScenario, cellsToCommitOnAccept, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
+import { applyScenario, cellsToCommitOnAccept, freesForScope, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
@@ -3042,28 +3042,6 @@ export function ScheduleGrid({
 
   // Which non-locked, non-pinned existing cells the engine may re-solve, per the
   // chosen scope — anchored on the dates the user has touched this session.
-  function liveFreesForScope(
-    base: AutoScheduleInput,
-    pinsMap: Map<string, string>,
-    touched: Set<string>,
-    scope: "day" | "pp" | "range",
-  ): ScenarioFree[] {
-    const ppRanges = scope === "pp"
-      ? base.payPeriods.filter((pp) => [...touched].some((t) => pp.startDate <= t && t <= pp.endDate))
-      : [];
-    const inScope = (date: string): boolean => {
-      if (scope === "range") return true;
-      if (scope === "day") return touched.has(date);
-      return ppRanges.some((pp) => pp.startDate <= date && date <= pp.endDate);
-    };
-    const frees: ScenarioFree[] = [];
-    for (const a of base.existingAssignments) {
-      const k = `${a.staffId}:${a.date}`;
-      if (!a.isLocked && !pinsMap.has(k) && inScope(a.date)) frees.push({ staffId: a.staffId, date: a.date });
-    }
-    return frees;
-  }
-
   function pinsArray(pinsMap: Map<string, string>): ScenarioPin[] {
     return [...pinsMap].map(([k, shiftTypeId]) => ({ ...pinKeyParts(k), shiftTypeId }));
   }
@@ -3083,7 +3061,7 @@ export function ScheduleGrid({
     for (const p of newPins) nextTouched.add(p.date);
     for (const f of newFrees) nextTouched.add(f.date);
 
-    const outcome = applyScenario(base, pinsArray(nextPins), liveFreesForScope(base, nextPins, nextTouched, liveScope));
+    const outcome = applyScenario(base, pinsArray(nextPins), freesForScope(base, nextPins, nextTouched, liveScope));
     if (!outcome.applied) {
       // Hard-illegal pin: snap back (keep current grid + pins) and explain.
       setLiveReject(outcome.rejected);
@@ -3104,7 +3082,7 @@ export function ScheduleGrid({
     setLiveScope(scope);
     const base = liveBaseInputRef.current;
     if (!base || !liveOutcome) return;
-    const outcome = applyScenario(base, pinsArray(livePinsRef.current), liveFreesForScope(base, livePinsRef.current, liveTouchedRef.current, scope));
+    const outcome = applyScenario(base, pinsArray(livePinsRef.current), freesForScope(base, livePinsRef.current, liveTouchedRef.current, scope));
     if (outcome.applied) { setLiveReject([]); setLiveOutcome(outcome); }
   }
 

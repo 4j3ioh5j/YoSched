@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyScenario, cellsToCommitOnAccept, type ScenarioPin, type ScenarioFree } from "../scenario";
+import { applyScenario, cellsToCommitOnAccept, freesForScope, type ScenarioPin, type ScenarioFree } from "../scenario";
 import { type AutoScheduleInput, type ScheduleStaff, type ScheduleShiftType } from "../auto-scheduler";
 import { whenToColumns, legacyPatternToWhen } from "../recurrence";
 
@@ -379,5 +379,46 @@ describe("cellsToCommitOnAccept — WYSIWYG Accept (Auto-generate)", () => {
     const out = applyScenario(input, [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or" }], []);
     const pinned = cellsToCommitOnAccept(out.grid, saved).find((c) => c.staffId === "p1" && c.date === "2025-05-12");
     expect(pinned?.shiftTypeId).toBe("st-or");
+  });
+});
+
+describe("freesForScope — ripple scope → freed cells (Auto-generate)", () => {
+  const keysOf = (frees: ScenarioFree[]) => new Set(frees.map((f) => `${f.staffId}:${f.date}`));
+  const filled = (locked = false) =>
+    DATES.flatMap((d) => [
+      { staffId: "p1", date: d, shiftTypeId: "st-or", code: "OR", isLocked: locked },
+      { staffId: "p2", date: d, shiftTypeId: "st-or", code: "OR", isLocked: locked },
+    ]);
+
+  it("frees NOTHING when no date is touched — even at range scope (the phantom-ripple bug)", () => {
+    const input = makeInput({ existingAssignments: filled() });
+    // This is the bare scope-switch case: no pins, no touched dates.
+    expect(freesForScope(input, new Set<string>(), new Set<string>(), "range")).toEqual([]);
+    expect(freesForScope(input, new Set<string>(), new Set<string>(), "pp")).toEqual([]);
+    expect(freesForScope(input, new Set<string>(), new Set<string>(), "day")).toEqual([]);
+  });
+
+  it("range scope frees every unlocked, un-pinned cell once a date is touched", () => {
+    // p2's cells are locked → never freed; p1's are unlocked.
+    const existing = DATES.flatMap((d) => [
+      { staffId: "p1", date: d, shiftTypeId: "st-or", code: "OR", isLocked: false },
+      { staffId: "p2", date: d, shiftTypeId: "st-or", code: "OR", isLocked: true },
+    ]);
+    const input = makeInput({ existingAssignments: existing });
+    const frees = keysOf(freesForScope(input, new Set(["p1:2025-05-12"]), new Set(["2025-05-12"]), "range"));
+    expect(frees.has("p1:2025-05-12")).toBe(false); // pinned by the edit
+    expect(frees.has("p1:2025-05-13")).toBe(true);  // unlocked, not pinned, in range
+    expect(frees.has("p2:2025-05-12")).toBe(false); // locked
+  });
+
+  it("day scope frees only the touched date; pp scope frees the touched pay period", () => {
+    const input = makeInput({ existingAssignments: filled() });
+    const touched = new Set(["2025-05-12"]);
+    const day = keysOf(freesForScope(input, new Set<string>(), touched, "day"));
+    expect(day.has("p1:2025-05-12")).toBe(true);
+    expect(day.has("p1:2025-05-13")).toBe(false);
+    // All DATES fall in PP 2025-05-11..2025-05-24, so pp scope frees them all.
+    const pp = keysOf(freesForScope(input, new Set<string>(), touched, "pp"));
+    for (const d of DATES) expect(pp.has(`p1:${d}`)).toBe(true);
   });
 });

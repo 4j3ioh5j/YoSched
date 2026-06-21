@@ -279,3 +279,35 @@ export function cellsToCommitOnAccept(
     .filter((c) => savedGrid.get(keyOf(c.staffId, c.date)) !== c.shiftTypeId)
     .map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId: c.shiftTypeId }));
 }
+
+// Which baseline cells an Auto-generate edit FREES for the engine to re-solve,
+// given the chosen ripple `scope`. `pinned`/`touchedDates` are keyed/dated by the
+// user's accumulated edits this session.
+//
+// CRITICAL guard: with NO touched dates there is no edit to compensate for, so we
+// free NOTHING regardless of scope. Without this, the "range" scope (inScope ≡ true)
+// would free + re-solve the WHOLE grid on a bare scope switch — and the seed-0
+// re-solve diverges from the enter-time fill, lighting up phantom ripple on cells
+// the user never touched. (Day/PP already free nothing when no date is touched.)
+export function freesForScope(
+  input: AutoScheduleInput,
+  pinned: { has(key: string): boolean },
+  touchedDates: ReadonlySet<string>,
+  scope: "day" | "pp" | "range",
+): ScenarioFree[] {
+  if (touchedDates.size === 0) return [];
+  const ppRanges = scope === "pp"
+    ? input.payPeriods.filter((pp) => [...touchedDates].some((t) => pp.startDate <= t && t <= pp.endDate))
+    : [];
+  const inScope = (date: string): boolean => {
+    if (scope === "range") return true;
+    if (scope === "day") return touchedDates.has(date);
+    return ppRanges.some((pp) => pp.startDate <= date && date <= pp.endDate);
+  };
+  const frees: ScenarioFree[] = [];
+  for (const a of input.existingAssignments) {
+    const k = keyOf(a.staffId, a.date);
+    if (!a.isLocked && !pinned.has(k) && inScope(a.date)) frees.push({ staffId: a.staffId, date: a.date });
+  }
+  return frees;
+}
