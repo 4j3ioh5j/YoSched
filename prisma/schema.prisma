@@ -380,6 +380,14 @@ model Assignment {
   shiftTypeId String
   isLocked    Boolean  @default(false)
   source      String   @default("manual") // manual, auto, imported, request (placed by an approved schedule request)
+  // For source="auto" rows: the "YYYY-MM" calendar month the Auto-schedule run
+  // targeted (the run's view, even when its window expands to pay-period edges
+  // that spill into adjacent months). Lets "Clear Auto" of a month remove that
+  // month's auto cells AND its overflow into neighbouring months, by origin
+  // rather than by date — and leave another month's run untouched. Null for
+  // manual/imported rows and for auto rows written before this column existed
+  // (those fall back to the month-range clear).
+  autoMonth   String?
   notes       String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -392,6 +400,7 @@ model Assignment {
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
 
   @@unique([staffId, date])
+  @@index([autoMonth])
   @@map("assignments")
 }
 

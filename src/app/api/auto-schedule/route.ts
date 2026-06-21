@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth-guard";
 import { autoSchedule } from "@/lib/auto-scheduler";
 import { buildAutoScheduleInput } from "@/lib/build-auto-schedule-input";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
+import { owningMonthKey, isValidDateRange } from "@/lib/auto-clear";
 
 export async function POST(req: NextRequest) {
   const { error } = await getSession("schedule:auto");
@@ -26,12 +27,14 @@ export async function PUT(req: NextRequest) {
   const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:auto");
   if (error) return error;
   const body = await req.json();
-  const { suggestions } = body as {
+  const { suggestions, startDate, endDate } = body as {
     suggestions: Array<{
       staffId: string;
       date: string;
       shiftTypeId: string;
     }>;
+    startDate?: string;
+    endDate?: string;
   };
 
   if (!suggestions?.length) {
@@ -40,6 +43,15 @@ export async function PUT(req: NextRequest) {
 
   const shiftTypes = await prisma.shiftType.findMany();
   const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
+
+  // The calendar month this run targets (the applied view), stamped on every
+  // row written below so "Clear Auto" of that month can remove its overflow
+  // into adjacent months by origin — see auto-clear.ts and the DELETE handler.
+  // Falls back to null (legacy month-range clear) if the range is absent/invalid.
+  const autoMonth =
+    startDate && endDate && isValidDateRange(startDate, endDate)
+      ? owningMonthKey(startDate, endDate)
+      : null;
 
   const applied = [];
   const skipped = [];
@@ -63,12 +75,13 @@ export async function PUT(req: NextRequest) {
           date: new Date(s.date + "T00:00:00Z"),
         },
       },
-      update: { shiftTypeId: s.shiftTypeId, source: "auto" },
+      update: { shiftTypeId: s.shiftTypeId, source: "auto", autoMonth },
       create: {
         staffId: s.staffId,
         date: new Date(s.date + "T00:00:00Z"),
         shiftTypeId: s.shiftTypeId,
         source: "auto",
+        autoMonth,
       },
     });
     const st = stMap.get(result.shiftTypeId);
@@ -100,18 +113,38 @@ export async function DELETE(req: NextRequest) {
   if (!startDate || !endDate) {
     return NextResponse.json({ error: "startDate and endDate required" }, { status: 400 });
   }
+  // Reject malformed/reversed ranges: Clear Auto deletes a whole origin month by
+  // autoMonth with no date bound, so a bogus range must never reach owningMonthKey.
+  if (!isValidDateRange(startDate, endDate)) {
+    return NextResponse.json({ error: "Invalid date range" }, { status: 400 });
+  }
 
   const shiftTypes = await prisma.shiftType.findMany();
   const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
 
+  // The calendar month this clear targets, derived from the viewed range the
+  // same way the apply (PUT) stamped autoMonth — so they always agree.
+  const autoMonth = owningMonthKey(startDate, endDate);
+
+  // Delete auto, unlocked rows that ORIGINATED from this month's run — wherever
+  // they landed, so the run's overflow into adjacent months goes too, while a
+  // different month's run (stamped a different autoMonth) is left intact. Legacy
+  // rows predate autoMonth (null), so they fall back to the original
+  // month-range clear by date.
   const toDelete = await prisma.assignment.findMany({
     where: {
       source: "auto",
       isLocked: false,
-      date: {
-        gte: new Date(startDate + "T00:00:00Z"),
-        lte: new Date(endDate + "T00:00:00Z"),
-      },
+      OR: [
+        { autoMonth },
+        {
+          autoMonth: null,
+          date: {
+            gte: new Date(startDate + "T00:00:00Z"),
+            lte: new Date(endDate + "T00:00:00Z"),
+          },
+        },
+      ],
     },
   });
 

@@ -3009,7 +3009,13 @@ export function ScheduleGrid({
       const res = await fetch("/api/auto-schedule", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ suggestions: autoSuggestions }),
+        // Send the viewed range so the server can stamp each row's owning month
+        // (autoMonth) — that's what lets Clear Auto remove this month's overflow.
+        body: JSON.stringify({
+          suggestions: autoSuggestions,
+          startDate: dates[0],
+          endDate: dates[dates.length - 1],
+        }),
       });
       const data = await res.json();
       const applied: AssignmentData[] = data.applied;
@@ -3141,7 +3147,14 @@ export function ScheduleGrid({
       const res = await fetch("/api/auto-schedule", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ suggestions: toApply }),
+        // Send the viewed range so Live-accepted auto cells get their origin
+        // month stamped too (parity with applyAutoSuggestions) — Clear Auto then
+        // treats them like any other auto cell.
+        body: JSON.stringify({
+          suggestions: toApply,
+          startDate: dates[0],
+          endDate: dates[dates.length - 1],
+        }),
       });
       const data = await res.json();
       const applied: AssignmentData[] = data.applied;
