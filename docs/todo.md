@@ -9,42 +9,6 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Other open items
 
-- [ ] **Re-enter auto-arrange (Live) on an already-Accepted auto run** — after you Accept an
-  auto-generated schedule, you can't get the engine's interactive rearrange behavior back: clicking
-  Auto-generate starts a *fresh* run instead of resuming the accepted run as an editable scenario.
-  The desire: pick up the accepted schedule in Live mode and keep rearranging cells with engine
-  assistance (instant re-solve / amber ripple, breach flags, scoped Day/PP/range, Ctrl-Z sandbox,
-  Accept/Cancel) — exactly the pre-Accept experience — rather than being stuck with plain
-  single-cell edits.
-  **Why it's feasible (the info is all there):** the scheduler already tracks exactly which cells
-  belong to the run — `Assignment.source="auto"` + the `autoMonth` stamp — which is how *Clear Auto*
-  wipes a run cleanly even after edits. The Live engine (`scenario.ts applyScenario` +
-  `build-auto-schedule-input.ts` + `GET /api/auto-schedule/inputs`) already re-solves from arbitrary
-  current DB state. So "resume" = seed a Live/sandbox session from the current saved schedule with the
-  accepted-auto cells treated as engine-managed (movable) rather than frozen manual cells.
-  **Design questions to settle first:** (1) what's the entry point — a "Rearrange / Resume auto" button
-  that's enabled when the visible range contains `source="auto"` cells, vs. just making Live mode treat
-  accepted-auto cells as engine-managed? (2) baseline semantics — does resuming diff against the saved
-  DB (WYSIWYG, like Accept does today) so Cancel restores the accepted state? (3) which cells are
-  movable vs. held — accepted-auto cells movable, manual/locked/imported held, same as a fresh run?
-  (4) does Clear-Auto still wipe the whole run after a resume+rearrange (origin stamp preserved)?
-  Likely a multi-slice feature reusing the existing Live plumbing, not a fresh engine.
-
-- [ ] **Richer scheduler-cell hover tooltip (option 2 — store the pre-edit auto value)** — show per-cell
-  provenance + request detail on hover. Most fields already exist in the DB and only need serializing to
-  the grid: assignment `source`/`autoMonth`/`updatedBy`/`updatedAt`, and request `approvedBy` +
-  `autoApproved` (resolve the two userIds to names server-side, as `/requests` already does). Render
-  requests as a per-request list (kind+strength = want/avoid · hard/soft, status incl. fulfilled/
-  withdrawn, receivedAt, approver+date, auto vs human approval). **Data change (chosen):** add a nullable
-  `Assignment.autoShiftTypeId` (or similar) set only when a manual edit lands on a `source="auto"` cell,
-  so the tooltip can render `Source: Auto → Manual (was ORC; DH, 06-18 14:30)` exactly — inference via
-  `updatedAt > createdAt` was rejected because any write (even a lock toggle) bumps `updatedAt` and it
-  can't recover the original value. Touches `api/assignments/route.ts` (`formatAssignment`),
-  `api/requests/route.ts` (`serialize`), grid types + tooltip render in `schedule-grid.tsx`. Note:
-  exposing a last-editor name in a hover tooltip is a deliberate visibility change (today `updatedBy` is
-  only surfaced in conflict payloads) — intended, but flag it. Trigger could move to a focus/click popover
-  for keyboard/touch reachability.
-
 - [ ] **Multi-cell drag / batch in all modes** — dragging a *selection* of cells as a group does not
   exist in either normal or Live mode (base drag is single-cell). Batch via picker/keyboard already
   works in both modes; this adds group DRAG. Open design questions first: offset axis (shift dates vs
@@ -65,6 +29,8 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 > weekday/weekend hours #225, the multi-option 4a/4b engine, and the 4c "Options" UI that was added
 > then rolled back), see handoffs **#190–#230** and `HANDOFFS.md`.
 
+- [x] **Re-enter auto-arrange (Live) on an already-Accepted auto run** — RESOLVED by design, no new code needed: the Auto-generate button IS the Live entry point (merged #241), and `enterLive()` seeds the sandbox from the current saved DB grid (which contains the accepted auto cells) + a no-op re-solve → re-clicking Auto-generate on an accepted run resumes the interactive rearrange (edit → engine compensates → Accept), exactly the pre-Accept experience. Re-Accept re-stamps `source=auto`+`autoMonth` so Clear Auto still wipes the run. (Not a literal restore of the pre-Accept undo history — a fresh Live session seeded from the saved grid — but functionally identical.) #242.
+- [x] **Richer scheduler-cell hover tooltip (provenance + request approval detail)** — parallel cell tooltip (initials always; Assignment/Source/Requests) showing provenance (Auto / Manual / "Auto → Manual (was X)" via new nullable `Assignment.autoShiftTypeId` / Imported / Request-placed), request status (Auto-/Manually-approved/-denied, Pending, Fulfilled, Withdrawn) + approver name (2b-1) + editor "changed by X" (2b-2, wired `Assignment.updatedBy` across all write paths); names schedule:edit-gated. Preview cells show Source:Auto; tooltip shows ALL requests regardless of RQ toggle/status filter. 4 commits `3ef6e2c`/`340dac1`/`3da6ed2`/`a575cce`, #242.
 - [x] **"Live" mode — interactive what-if scheduling** — toggle Live, edit any cell (picker / keyboard / drag-displace / paste, single or selection-batch) and the engine instantly re-solves the rest to compensate (amber ripple), scoped Day / Pay period (default) / Whole range; live breach flags; Ctrl-Z + ↩/↪ sandbox; Accept saves the diff / Cancel discards; locked cells held fixed. New `scenario.ts` (`applyScenario`) + `build-auto-schedule-input.ts` + `GET /api/auto-schedule/inputs` + grid wiring. ~12 slices, `961992c`, handoffs #231/#235–#239. (Outstanding: multi-cell *drag* — see open items.)
 - [x] **Staff modal: "Override shift hours" toggle → per-staff, per-shift hours by day type** — master toggle reveals a per-eligible-shift weekday/weekend/holiday editor; new `StaffShiftOverride.durationHrsHoliday` (nullable, mirrors weekend when unset); all 3 hour-math sites read the holiday column. `208ca9d`, #234.
 - [x] **Shift types: split "Hours per shift" into weekday / weekend / holiday** — three per-day-type hour fields per shift type (`defaultHours` = weekday + new `defaultHoursWeekend`/`defaultHoursHoliday`); dropped the "Count hours on weekends" flag (0 vs non-zero now encodes it). All 3 hour-math sites holiday-aware (holiday wins over weekend). `28c738c`, #232.
