@@ -24,6 +24,11 @@ export default async function Home() {
   // AND requests:view (it serves raw request/availability data) — gate the button
   // on the real permission so it never shows a 403-only control.
   const canLive = permissions!.includes("schedule:auto") && canViewAllRequests;
+  // Clear Auto removes auto-scheduled cells — a pure schedule:auto operation (DELETE
+  // /api/auto-schedule requires only schedule:auto, no requests:view). Gate it on
+  // schedule:auto directly so it matches the server and never shows a 403-only
+  // control (an edit-only user must NOT see it; an auto-only user MUST).
+  const canAuto = permissions!.includes("schedule:auto");
   const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, printColumnRules, printAggregateColumns, currentVersions, scheduleRequests, mutedAlerts] =
     await Promise.all([
       prisma.staff.findMany({
@@ -123,6 +128,7 @@ export default async function Home() {
       <ScheduleGrid
         canEdit={canEdit}
         canLive={canLive}
+        canAuto={canAuto}
         staff={staff.map((p) => ({
           id: p.id,
           initials: p.initials,

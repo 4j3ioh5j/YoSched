@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyScenario, type ScenarioPin, type ScenarioFree } from "../scenario";
+import { applyScenario, cellsToCommitOnAccept, type ScenarioPin, type ScenarioFree } from "../scenario";
 import { type AutoScheduleInput, type ScheduleStaff, type ScheduleShiftType } from "../auto-scheduler";
 import { whenToColumns, legacyPatternToWhen } from "../recurrence";
 
@@ -333,5 +333,51 @@ describe("applyScenario — quality delta & purity", () => {
     const before = JSON.stringify(input);
     applyScenario(input, [{ staffId: "p2", date: "2025-05-13", shiftTypeId: "st-or" }], [{ staffId: "p1", date: "2025-05-12" }]);
     expect(JSON.stringify(input)).toBe(before);
+  });
+});
+
+describe("cellsToCommitOnAccept — WYSIWYG Accept (Auto-generate)", () => {
+  const savedGridOf = (input: AutoScheduleInput) => {
+    const m = new Map<string, string>();
+    for (const a of input.existingAssignments) m.set(`${a.staffId}:${a.date}`, a.shiftTypeId);
+    return m;
+  };
+  const k = (s: string, d: string) => `${s}:${d}`;
+
+  it("commits every enter-time fill of an empty slot (the auto-fill-disappears fix)", () => {
+    // Saved grid is PARTIAL: only p1/Mon is stored; force OR coverage so the engine
+    // fills the empty slots on enter (the no-pin/no-free re-solve = Auto-generate).
+    const input = makeInput({
+      existingAssignments: [lockedOR("p1", "2025-05-12")],
+      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 2 }],
+    });
+    const saved = savedGridOf(input);
+    const out = applyScenario(input, [], []);
+    const committed = new Set(cellsToCommitOnAccept(out.grid, saved).map((c) => k(c.staffId, c.date)));
+
+    // Cells the engine filled into un-saved slots are EXACTLY what the old
+    // enter-time-snapshot diff silently dropped. Every one must be committed.
+    const fills = out.grid.filter((c) => !saved.has(k(c.staffId, c.date)));
+    expect(fills.length).toBeGreaterThan(0);
+    expect(committed.has(k("p2", "2025-05-12"))).toBe(true); // p2/Mon was forced-filled
+    for (const f of fills) expect(committed.has(k(f.staffId, f.date))).toBe(true);
+  });
+
+  it("omits cells unchanged from the saved grid (they keep their stored source)", () => {
+    const input = makeInput({ existingAssignments: [lockedOR("p1", "2025-05-12")] });
+    const saved = savedGridOf(input);
+    const out = applyScenario(input, [], []);
+    const commit = cellsToCommitOnAccept(out.grid, saved);
+    // p1/Mon is locked OR in the saved grid and the engine can't move a locked cell,
+    // so it is unchanged ⇒ NOT re-committed (would otherwise re-stamp its source).
+    expect(commit.find((c) => c.staffId === "p1" && c.date === "2025-05-12")).toBeUndefined();
+  });
+
+  it("commits a user edit that diverges from the saved grid", () => {
+    const input = makeInput({ existingAssignments: [] });
+    const saved = savedGridOf(input); // empty
+    const out = applyScenario(input, [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or" }], []);
+    const pinned = cellsToCommitOnAccept(out.grid, saved).find((c) => c.staffId === "p1" && c.date === "2025-05-12");
+    expect(pinned?.shiftTypeId).toBe("st-or");
   });
 });

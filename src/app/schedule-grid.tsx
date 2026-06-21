@@ -6,7 +6,7 @@ import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } 
 import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
-import { applyScenario, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
+import { applyScenario, cellsToCommitOnAccept, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
@@ -191,6 +191,10 @@ type Props = {
   // on the real permission so a schedule:edit-only group never sees a button that
   // only 403s.
   canLive?: boolean;
+  // Clear Auto is a pure schedule:auto operation (DELETE only needs schedule:auto),
+  // so it's gated on this — independent of canEdit (schedule:edit) and canLive
+  // (which also needs requests:view). Matches the server permission exactly.
+  canAuto?: boolean;
   staff: Staff[];
   assignments: AssignmentData[];
   shiftTypes: ShiftType[];
@@ -363,6 +367,7 @@ function ShiftChip({ st }: { st?: { code: string; color: string } }) {
 export function ScheduleGrid({
   canEdit = true,
   canLive = false,
+  canAuto = false,
   staff,
   assignments: initialAssignments,
   shiftTypes,
@@ -484,6 +489,10 @@ export function ScheduleGrid({
   const [activeDedCol, setActiveDedCol] = useState<string | null>(null);
   const [hoverCol, setHoverCol] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
+  // Auto-suggestion preview overlay (translucent dashed cells). Retained but now
+  // DORMANT: the unified "Auto-generate" flow (formerly "Live") folds the engine's
+  // fills into its own sandbox grid, so nothing populates this anymore. Tearing the
+  // overlay render path out of the cell renderer is a separate cleanup slice.
   const [autoSuggestions, setAutoSuggestions] = useState<Array<{
     staffId: string;
     date: string;
@@ -493,9 +502,6 @@ export function ScheduleGrid({
     step: string;
     confidence: number;
   }> | null>(null);
-  const [autoWarnings, setAutoWarnings] = useState<string[]>([]);
-  const [autoStats, setAutoStats] = useState<{ totalSlotsFilled: number; byStep: Record<string, number> } | null>(null);
-  const [autoQuality, setAutoQuality] = useState<{ breakdown: { hardBreaches: number; ppHoursDeviation: number; requestsDenied: number; fairnessSpread: number } } | null>(null);
   const [autoLoading, setAutoLoading] = useState(false);
 
   // ── "Live" mode (#231): interactive what-if scheduling ──
@@ -529,11 +535,14 @@ export function ScheduleGrid({
   // a baseline cell, so Day/PP scope containment holds even on incomplete grids
   // (out-of-scope cells stay locked → preserved).
   const liveBaseInputRef = useRef<AutoScheduleInput | null>(null);
-  // The grid as it stood the instant Live was entered (key → shiftTypeId). Accept
-  // persists only cells that differ from THIS — never the engine's enter-time
-  // fills of empty cells (those are baked into the initial grid and the user never
-  // saw them), so Accept can't silently commit changes that weren't displayed.
+  // The grid as it stood the instant Live was entered (key → shiftTypeId) — the
+  // reference for the RIPPLE highlight (which cells changed since you entered).
   const liveInitialGridRef = useRef<Map<string, string>>(new Map());
+  // The SAVED DB grid at enter time (key → shiftTypeId), captured BEFORE any
+  // overlay. Accept persists every outcome cell that differs from THIS, so the
+  // engine's enter-time fills of empty slots get committed too (WYSIWYG) — not
+  // just the user's later edits.
+  const liveSavedGridRef = useRef<Map<string, string>>(new Map());
   // The user's accumulated explicit edits this session (key → shiftTypeId). These
   // PIN (lock) on every re-solve so the engine never overrides a deliberate edit;
   // everything not locked/pinned is freed so the engine re-solves it to compensate
@@ -2960,79 +2969,6 @@ export function ScheduleGrid({
   // Selection count for picker header
   const selectionCount = selection.size;
 
-  async function runAutoSchedule() {
-    if (liveMode) return;
-    setAutoLoading(true);
-    try {
-      const res = await fetch("/api/auto-schedule", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          startDate: monthBounds.start,
-          endDate: monthBounds.end,
-        }),
-      });
-      const data = await res.json();
-      setAutoSuggestions(data.suggestions);
-      setAutoWarnings(data.warnings || []);
-      setAutoStats(data.stats || null);
-      setAutoQuality(data.quality || null);
-    } catch (e) {
-      console.error("Auto-schedule failed:", e);
-    } finally {
-      setAutoLoading(false);
-    }
-  }
-
-  async function applyAutoSuggestions() {
-    if (liveMode) return;
-    if (!autoSuggestions?.length) return;
-    setAutoLoading(true);
-    try {
-      const res = await fetch("/api/auto-schedule", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        // Send the calendar month so the server stamps each row's owning month
-        // (autoMonth) — matching the range Auto-schedule ran on, and what lets
-        // Clear Auto remove this month's overflow.
-        body: JSON.stringify({
-          suggestions: autoSuggestions,
-          startDate: monthBounds.start,
-          endDate: monthBounds.end,
-        }),
-      });
-      const data = await res.json();
-      const applied: AssignmentData[] = data.applied;
-
-      const undoOps: UndoOp[] = applied.map((a) => ({
-        staffId: a.staffId,
-        date: a.date,
-        prev: assignmentMap.get(`${a.staffId}:${a.date}`) ?? null,
-        next: a,
-      }));
-
-      setLocalAssignments((prev) => {
-        const keys = new Set(applied.map((a) => `${a.staffId}:${a.date}`));
-        const filtered = prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`));
-        return [...filtered, ...applied];
-      });
-      // Mirror server-side auto-approvals so the RQ overlay reflects the new
-      // statuses immediately (a satisfied pending request becomes approved). Without
-      // this, local request state drifts until the page remounts.
-      applyRequestDelta({ requests: data.requestChanges });
-
-      pushUndo(undoOps);
-      setAutoSuggestions(null);
-      setAutoWarnings([]);
-      setAutoStats(null);
-      setAutoQuality(null);
-    } catch (e) {
-      console.error("Apply failed:", e);
-    } finally {
-      setAutoLoading(false);
-    }
-  }
-
   // Build the Live baseline engine input: the fetched bundle's saved DB
   // assignments, overlaid with any currently-previewed (not-yet-applied) auto
   // suggestions so Live operates on exactly what the scheduler sees.
@@ -3061,6 +2997,11 @@ export function ScheduleGrid({
         return;
       }
       const bundle: AutoScheduleInput = await res.json();
+      // Snapshot the SAVED DB grid (pre-overlay) — the Accept diff baseline, so the
+      // engine's enter-time fills of empty slots are committed on Accept (WYSIWYG).
+      const saved = new Map<string, string>();
+      for (const a of bundle.existingAssignments) saved.set(`${a.staffId}:${a.date}`, a.shiftTypeId);
+      liveSavedGridRef.current = saved;
       const liveInput = buildLiveInput(bundle);
       liveInputRef.current = liveInput;
       livePinsRef.current = new Map();
@@ -3108,6 +3049,7 @@ export function ScheduleGrid({
     liveInputRef.current = null;
     liveBaseInputRef.current = null;
     liveInitialGridRef.current = new Map();
+    liveSavedGridRef.current = new Map();
     livePinsRef.current = new Map();
     liveTouchedRef.current = new Set();
     liveUndoStack.current = [];
@@ -3117,23 +3059,22 @@ export function ScheduleGrid({
   async function acceptLive() {
     const outcome = liveOutcome;
     if (!outcome) { cancelLive(); return; }
-    // Persist ONLY cells that diverge from the enter-time grid — i.e. changes the
-    // user actually drove (and, in S3, saw). The engine's enter-time fills are in
-    // the initial snapshot, so they are NEVER committed here. (work→off is an OFF
-    // upsert, so no deletion path is needed.) In S2 (no edits) this is a no-op.
-    const initial = liveInitialGridRef.current;
-    const toApply = outcome.grid
-      .filter((c) => initial.get(`${c.staffId}:${c.date}`) !== c.shiftTypeId)
-      .map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId: c.shiftTypeId }));
+    // WYSIWYG persist: commit every cell that differs from the SAVED DB grid — the
+    // engine's enter-time fills of empty slots, the user's edits, and the ripple
+    // alike (all of it is on screen). Diffing against the saved grid (NOT the
+    // enter-time snapshot) is what stops the auto-fills from being silently dropped.
+    // Every committed cell is tagged source:"auto" + autoMonth server-side, so Clear
+    // Auto wipes the whole generated schedule back to its pre-generate state.
+    const toApply = cellsToCommitOnAccept(outcome.grid, liveSavedGridRef.current);
     if (toApply.length === 0) { cancelLive(); return; }
     setLiveLoading(true);
     try {
       const res = await fetch("/api/auto-schedule", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        // Send the viewed range so Live-accepted auto cells get their origin
-        // month stamped too (parity with applyAutoSuggestions) — Clear Auto then
-        // treats them like any other auto cell.
+        // Send the viewed range so the server stamps each accepted cell's owning
+        // month (autoMonth) — so Clear Auto removes the whole generated schedule
+        // (including any spill into adjacent months) back to its pre-generate state.
         body: JSON.stringify({
           suggestions: toApply,
           startDate: dates[0],
@@ -3154,11 +3095,8 @@ export function ScheduleGrid({
       });
       applyRequestDelta({ requests: data.requestChanges });
       pushUndo(undoOps);
-      // Clearing any previewed suggestions: they've been folded into the saved grid.
+      // Clear any (dormant) previewed suggestions — folded into the saved grid.
       setAutoSuggestions(null);
-      setAutoWarnings([]);
-      setAutoStats(null);
-      setAutoQuality(null);
     } catch (e) {
       console.error("Live: accept failed", e);
     } finally {
@@ -3566,32 +3504,6 @@ export function ScheduleGrid({
                 </span>
               )}
               <button
-                onClick={clearAutoScheduled}
-                disabled={autoLoading || liveMode}
-                className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded transition-colors text-red-400 font-medium"
-                title="Remove all auto-scheduled assignments (keeps manual entries)"
-              >
-                Clear Auto
-              </button>
-              <button
-                onClick={runAutoSchedule}
-                disabled={autoLoading || liveMode}
-                className="px-3 py-1 text-sm bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 rounded transition-colors text-emerald-100 font-medium"
-                title="Auto-fill empty slots using fairness-weighted scheduling"
-              >
-                {autoLoading ? "Working..." : "Auto-Schedule"}
-              </button>
-              {canLive && (
-                <button
-                  onClick={enterLive}
-                  disabled={liveLoading || liveMode}
-                  className="px-3 py-1 text-sm bg-violet-700 hover:bg-violet-600 disabled:opacity-50 rounded transition-colors text-violet-100 font-medium"
-                  title="Live what-if: edit any cell and the engine instantly re-solves the rest"
-                >
-                  {liveLoading ? "Loading…" : "Live"}
-                </button>
-              )}
-              <button
                 onClick={handleUndo}
                 className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-400"
                 title="Undo (Ctrl+Z)"
@@ -3606,6 +3518,32 @@ export function ScheduleGrid({
                 ↪
               </button>
             </>
+          )}
+          {/* Clear Auto — pure schedule:auto op (DELETE needs only schedule:auto),
+              gated on canAuto independently of canEdit so it matches the server. */}
+          {canAuto && (
+            <button
+              onClick={clearAutoScheduled}
+              disabled={autoLoading || liveMode}
+              className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded transition-colors text-red-400 font-medium"
+              title="Remove all auto-scheduled assignments (keeps manual entries)"
+            >
+              Clear Auto
+            </button>
+          )}
+          {/* Auto-generate (the interactive scheduling sandbox). Gated on canLive
+              (schedule:auto + requests:view) INDEPENDENTLY of canEdit — the engine
+              flow doesn't need schedule:edit, and this is the only scheduling entry
+              point, so a schedule:auto user must reach it without schedule:edit. */}
+          {canLive && (
+            <button
+              onClick={enterLive}
+              disabled={liveLoading || liveMode}
+              className="px-3 py-1 text-sm bg-violet-700 hover:bg-violet-600 disabled:opacity-50 rounded transition-colors text-violet-100 font-medium"
+              title="Auto-generate: fill the schedule, then edit any cell and the engine instantly re-solves the rest. Accept to save, Cancel to discard."
+            >
+              {liveLoading ? "Loading…" : "Auto-generate"}
+            </button>
           )}
           {/* Alerts — color reflects severity; opens the alerts modal. */}
           {/* Enabled whenever ANY alert exists (even if all are muted), so muted
@@ -3653,7 +3591,7 @@ export function ScheduleGrid({
         <div data-print-hide className="px-6 py-3 bg-violet-950/50 border-b border-violet-800 shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <span className="text-sm font-semibold text-violet-200">Live what-if</span>
+              <span className="text-sm font-semibold text-violet-200">Auto-generate</span>
               <span className="text-xs text-violet-300/80">
                 {liveRippleSet.size === 0
                   ? "matches the current grid (no changes yet)"
@@ -3713,52 +3651,6 @@ export function ScheduleGrid({
                 className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded transition-colors text-slate-300"
               >
                 Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Auto-schedule review panel (hidden in Live — suggestions are folded in) */}
-      {autoSuggestions && !liveMode && (
-        <div data-print-hide className="px-6 py-3 bg-emerald-950/50 border-b border-emerald-800 shrink-0">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <span className="text-sm font-semibold text-emerald-300">
-                Auto-Schedule: {autoSuggestions.length} suggestions
-              </span>
-              {autoStats && (
-                <span className="text-xs text-emerald-400/70">
-                  {Object.entries(autoStats.byStep).map(([k, v]) => `${k}: ${v}`).join(" | ")}
-                </span>
-              )}
-              {autoQuality && (
-                <span
-                  className="text-xs text-sky-300/80"
-                  title={`Schedule quality (lower is better, by priority):\nhard breaches: ${autoQuality.breakdown.hardBreaches}\nPP-hours deviation: ${autoQuality.breakdown.ppHoursDeviation}h\nrequests denied: ${autoQuality.breakdown.requestsDenied}\nfairness spread: ${autoQuality.breakdown.fairnessSpread}`}
-                >
-                  quality: {autoQuality.breakdown.hardBreaches}b · {autoQuality.breakdown.ppHoursDeviation}h · {autoQuality.breakdown.requestsDenied}d · {autoQuality.breakdown.fairnessSpread}f
-                </span>
-              )}
-              {autoWarnings.length > 0 && (
-                <span className="text-xs text-amber-400" title={autoWarnings.join("\n")}>
-                  {autoWarnings.length} warning{autoWarnings.length !== 1 ? "s" : ""}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={applyAutoSuggestions}
-                disabled={autoLoading}
-                className="px-3 py-1 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded transition-colors text-white font-medium"
-              >
-                Accept All
-              </button>
-              <button
-                onClick={() => { setAutoSuggestions(null); setAutoWarnings([]); setAutoStats(null); setAutoQuality(null); }}
-                className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
-              >
-                Dismiss
               </button>
             </div>
           </div>

@@ -256,3 +256,26 @@ export function applyScenario(
 function gridFromAssignments(assignments: ScheduleAssignment[]): ScenarioGridCell[] {
   return assignments.map((a) => ({ staffId: a.staffId, date: a.date, shiftTypeId: a.shiftTypeId, code: a.code }));
 }
+
+export type CommitCell = { staffId: string; date: string; shiftTypeId: string };
+
+// WYSIWYG Accept: the cells to persist when accepting an Auto-generate result.
+// `savedGrid` is the SAVED DB grid captured at enter time (key `${staffId}:${date}`
+// → shiftTypeId). Returns every outcome cell whose shift differs from what was
+// saved — the engine's enter-time fills of empty slots, the user's edits, and the
+// ripple alike (all of it is on screen). Cells unchanged from the saved grid are
+// omitted, so they keep their stored `source`.
+//
+// Diffing against the SAVED grid (not an enter-time snapshot that already contains
+// the fills) is the whole point: it stops the auto-fills from being silently
+// dropped on Accept. A saved cell the user emptied (absent from `outcomeGrid`) is
+// intentionally NOT cleared here — that matches the existing free-and-not-refilled
+// behavior and would need a delete path.
+export function cellsToCommitOnAccept(
+  outcomeGrid: ScenarioGridCell[],
+  savedGrid: Map<string, string>,
+): CommitCell[] {
+  return outcomeGrid
+    .filter((c) => savedGrid.get(keyOf(c.staffId, c.date)) !== c.shiftTypeId)
+    .map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId: c.shiftTypeId }));
+}
