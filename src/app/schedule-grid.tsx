@@ -1147,12 +1147,12 @@ export function ScheduleGrid({
     return dedicatedColumns.map((st) =>
       dedicatedColumnInitials(staff, dates, st.code, (pid, date) => {
         const key = `${pid}:${date}`;
-        const a = assignmentMap.get(key);
-        const sug = !a ? suggestionMap.get(key) : null;
+        const a = effectiveAssignmentMap.get(key);
+        const sug = !a ? effectiveSuggestionMap.get(key) : null;
         return a?.code ?? sug?.code;
       }),
     );
-  }, [dedicatedColumns, dates, staff, assignmentMap, suggestionMap]);
+  }, [dedicatedColumns, dates, staff, effectiveAssignmentMap, effectiveSuggestionMap]);
 
   // Print-only column model. Computes, for the printed schedule:
   //   - hiddenIds: staff whose individual column is hidden — they match no enabled
@@ -2192,7 +2192,6 @@ export function ScheduleGrid({
     }
 
     async function onPaste(e: ClipboardEvent) {
-      if (liveModeRef.current) return; // paste in Live is a later sub-slice
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
       if (showMonthPicker || showVersions || showAlerts || showHelp || picker) return;
@@ -2211,6 +2210,11 @@ export function ScheduleGrid({
         : (activeDedCol && activeRow ? { shiftTypeId: activeDedCol, dates: [activeRow] } : null);
       if (dedPasteSel) {
         e.preventDefault();
+        if (liveModeRef.current) {
+          // Dedicated-column (ICU/CARD) what-if is out of scope for Live.
+          setPasteToast("Dedicated-column paste isn't available in Live.");
+          return;
+        }
         if (requestMode) {
           setPasteToast("Paste sets assignments — exit request mode (press /) first.");
           return;
@@ -2247,6 +2251,14 @@ export function ScheduleGrid({
       const { sets } = resolution;
       if (sets.length === 0) {
         setPasteToast(pasteSummary(0, resolution));
+        return;
+      }
+
+      // Live mode: route the pasted block through the what-if engine as batch pins
+      // (it ripples like any other edit) instead of persisting.
+      if (liveModeRef.current) {
+        liveEditRef.current(sets.map((s) => ({ staffId: s.staffId, date: s.date, shiftTypeId: s.shiftTypeId })), []);
+        setPasteToast(pasteSummary(sets.length, resolution));
         return;
       }
 
@@ -3256,8 +3268,10 @@ export function ScheduleGrid({
   }
   const liveUndoFnRef = useRef(liveSandboxUndo);
   const liveRedoFnRef = useRef(liveSandboxRedo);
+  const liveEditRef = useRef(liveEdit);
   useEffect(() => { liveUndoFnRef.current = liveSandboxUndo; });
   useEffect(() => { liveRedoFnRef.current = liveSandboxRedo; });
+  useEffect(() => { liveEditRef.current = liveEdit; });
 
   async function clearAutoScheduled() {
     if (liveMode) return;
