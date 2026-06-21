@@ -10,6 +10,7 @@ import { applyScenario, type ScenarioOutcome, type ScenarioPin, type ScenarioFre
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
+import { monthGridDates } from "@/lib/grid-dates";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary } from "@/lib/grid-clipboard";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
@@ -269,33 +270,6 @@ function parseDate(s: string): Date {
   return new Date(s + "T12:00:00");
 }
 
-function getMonthDateRange(year: number, month: number, _payPeriods: PayPeriod[]) {
-  const firstOfMonth = new Date(year, month, 1);
-  const lastOfMonth = new Date(year, month + 1, 0);
-
-  let start = new Date(firstOfMonth);
-  let end = new Date(lastOfMonth);
-
-  const startDow = start.getDay();
-  if (startDow !== 6) {
-    start = new Date(start);
-    start.setDate(start.getDate() - ((startDow + 1) % 7));
-  }
-
-  const endDow = end.getDay();
-  if (endDow !== 0) {
-    end = new Date(end);
-    end.setDate(end.getDate() + (7 - endDow));
-  }
-
-  const dates: string[] = [];
-  const cursor = new Date(start);
-  while (cursor <= end) {
-    dates.push(toDateStr(cursor));
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return dates;
-}
 
 function formatDateLabel(dateStr: string, dateFormat: DateFormatKey = DEFAULT_DATE_FORMAT): { day: string; date: string; dow: number; dayNum: number; month: number } {
   const d = parseDate(dateStr);
@@ -793,7 +767,7 @@ export function ScheduleGrid({
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const dates = useMemo(
-    () => getMonthDateRange(viewYear, viewMonth, payPeriods),
+    () => monthGridDates(viewYear, viewMonth, payPeriods),
     [viewYear, viewMonth, payPeriods],
   );
 
