@@ -9,8 +9,6 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Other open items
 
-- [ ] **Alerts collapsed by default, grouped by category** — alerts should render collapsed into their
-  categories on load; the user expands a category to see its alerts.
 - [ ] **Requests page: sortable headers + search field** — click column headers to sort the requests
   list, and add a search field to filter requests.
 - [ ] **Multi-cell drag / batch in all modes** — dragging a *selection* of cells as a group does not
@@ -24,6 +22,8 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 ---
 
 ## Shipped (archive)
+
+- [x] **Alerts collapsed by default, grouped by category** — the Alerts modal now opens fully collapsed (compact category overview: Pending requests / Pay period hours / Daily staffing); the user expands the category they want. New `ALERT_CATEGORIES` single-source constant; `useLayoutEffect` resets to all-collapsed on every open (no pre-paint flash). `55f15f6`, #244.
 
 > One-liners for quick scanning — full detail is in the linked handoffs. This archive starts at
 > 2026-06-09; for everything shipped since (recurrence rework, request reconciliation, per-staff
