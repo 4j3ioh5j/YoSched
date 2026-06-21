@@ -533,6 +533,11 @@ export function ScheduleGrid({
   const [liveMode, setLiveMode] = useState(false);
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveOutcome, setLiveOutcome] = useState<ScenarioOutcome | null>(null);
+  // How wide the engine may re-solve to compensate for an edit (user-selectable in
+  // the Live banner). "pp" (default) re-solves only the pay period(s) you touched —
+  // enough to rebalance PP hours without churning the whole month; "day" is tightest
+  // (same-day coverage only); "range" re-solves everything (most compensation).
+  const [liveScope, setLiveScope] = useState<"day" | "pp" | "range">("pp");
   // Hard-rejected pins from the most recent edit (snap-back reasons for the banner).
   const [liveReject, setLiveReject] = useState<ScenarioPinRejection[]>([]);
   // Mirror of liveMode for the document-level keyboard/paste listeners, which close
@@ -553,9 +558,12 @@ export function ScheduleGrid({
   // everything not locked/pinned is freed so the engine re-solves it to compensate
   // (the "ripple"). A clear/free removes the cell's pin.
   const livePinsRef = useRef<Map<string, string>>(new Map());
-  // Sandbox undo/redo: each entry snapshots the accumulated pins AND the resulting
-  // outcome, so reverting restores both (and editing can continue from there).
-  type LiveSnap = { pins: Map<string, string>; outcome: ScenarioOutcome };
+  // Dates the user has touched this session — the anchor for the "day"/"pp" scope
+  // (only periods/days containing a touched date are re-solved).
+  const liveTouchedRef = useRef<Set<string>>(new Set());
+  // Sandbox undo/redo: each entry snapshots the accumulated pins, touched-dates, AND
+  // the resulting outcome, so reverting restores all three (editing can continue).
+  type LiveSnap = { pins: Map<string, string>; touched: Set<string>; outcome: ScenarioOutcome };
   const liveUndoStack = useRef<LiveSnap[]>([]);
   const liveRedoStack = useRef<LiveSnap[]>([]);
   useEffect(() => { liveModeRef.current = liveMode; }, [liveMode]);
@@ -3038,6 +3046,7 @@ export function ScheduleGrid({
       const liveInput = buildLiveInput(bundle);
       liveInputRef.current = liveInput;
       livePinsRef.current = new Map();
+      liveTouchedRef.current = new Set();
       liveUndoStack.current = [];
       liveRedoStack.current = [];
 
@@ -3067,6 +3076,7 @@ export function ScheduleGrid({
     liveInputRef.current = null;
     liveInitialGridRef.current = new Map();
     livePinsRef.current = new Map();
+    liveTouchedRef.current = new Set();
     liveUndoStack.current = [];
     liveRedoStack.current = [];
   }
@@ -3124,48 +3134,82 @@ export function ScheduleGrid({
   // is freed, and the engine re-solves the rest to stay feasible — that re-solve IS
   // the ripple/compensation (rebalanced hours, backfilled coverage, etc.). We always
   // re-solve from the enter-time input so the result is deterministic per pin-set.
+  const pinKeyParts = (k: string): { staffId: string; date: string } => {
+    const i = k.indexOf(":");
+    return { staffId: k.slice(0, i), date: k.slice(i + 1) };
+  };
+
+  // Which non-locked, non-pinned existing cells the engine may re-solve, per the
+  // chosen scope — anchored on the dates the user has touched this session.
+  function liveFreesForScope(
+    base: AutoScheduleInput,
+    pinsMap: Map<string, string>,
+    touched: Set<string>,
+    scope: "day" | "pp" | "range",
+  ): ScenarioFree[] {
+    const ppRanges = scope === "pp"
+      ? base.payPeriods.filter((pp) => [...touched].some((t) => pp.startDate <= t && t <= pp.endDate))
+      : [];
+    const inScope = (date: string): boolean => {
+      if (scope === "range") return true;
+      if (scope === "day") return touched.has(date);
+      return ppRanges.some((pp) => pp.startDate <= date && date <= pp.endDate);
+    };
+    const frees: ScenarioFree[] = [];
+    for (const a of base.existingAssignments) {
+      const k = `${a.staffId}:${a.date}`;
+      if (!a.isLocked && !pinsMap.has(k) && inScope(a.date)) frees.push({ staffId: a.staffId, date: a.date });
+    }
+    return frees;
+  }
+
+  function pinsArray(pinsMap: Map<string, string>): ScenarioPin[] {
+    return [...pinsMap].map(([k, shiftTypeId]) => ({ ...pinKeyParts(k), shiftTypeId }));
+  }
+
   function liveEdit(newPins: ScenarioPin[], newFrees: ScenarioFree[]) {
     const base = liveInputRef.current;
     if (!base || !liveOutcome) return;
 
-    // Fold this edit into the accumulated pin set (a free un-pins its cell).
+    // Fold this edit into the accumulated pin set (a free un-pins its cell) and the
+    // touched-date anchor.
     const nextPins = new Map(livePinsRef.current);
     for (const f of newFrees) nextPins.delete(`${f.staffId}:${f.date}`);
     for (const p of newPins) nextPins.set(`${p.staffId}:${p.date}`, p.shiftTypeId);
+    const nextTouched = new Set(liveTouchedRef.current);
+    for (const p of newPins) nextTouched.add(p.date);
+    for (const f of newFrees) nextTouched.add(f.date);
 
-    const pins: ScenarioPin[] = [];
-    for (const [k, shiftTypeId] of nextPins) {
-      const i = k.indexOf(":");
-      pins.push({ staffId: k.slice(0, i), date: k.slice(i + 1), shiftTypeId });
-    }
-
-    // Free every non-locked, non-pinned existing cell so the engine re-solves it
-    // around the locked cells + pins. (Empty cells are absent from the input and
-    // get filled anyway, so they need no explicit free.)
-    const frees: ScenarioFree[] = [];
-    for (const a of base.existingAssignments) {
-      const k = `${a.staffId}:${a.date}`;
-      if (!a.isLocked && !nextPins.has(k)) frees.push({ staffId: a.staffId, date: a.date });
-    }
-
-    const outcome = applyScenario(base, pins, frees);
+    const outcome = applyScenario(base, pinsArray(nextPins), liveFreesForScope(base, nextPins, nextTouched, liveScope));
     if (!outcome.applied) {
       // Hard-illegal pin: snap back (keep current grid + pins) and explain.
       setLiveReject(outcome.rejected);
       return;
     }
-    liveUndoStack.current.push({ pins: livePinsRef.current, outcome: liveOutcome });
+    liveUndoStack.current.push({ pins: livePinsRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
     liveRedoStack.current = [];
     livePinsRef.current = nextPins;
+    liveTouchedRef.current = nextTouched;
     setLiveReject([]);
     setLiveOutcome(outcome);
+  }
+
+  // Re-solve the current pin-set at a new scope (a scope change is not an edit, so
+  // it doesn't touch the undo stack — it just widens/narrows the displayed ripple).
+  function changeLiveScope(scope: "day" | "pp" | "range") {
+    setLiveScope(scope);
+    const base = liveInputRef.current;
+    if (!base || !liveOutcome) return;
+    const outcome = applyScenario(base, pinsArray(livePinsRef.current), liveFreesForScope(base, livePinsRef.current, liveTouchedRef.current, scope));
+    if (outcome.applied) { setLiveReject([]); setLiveOutcome(outcome); }
   }
 
   function liveSandboxUndo() {
     const snap = liveUndoStack.current.pop();
     if (!snap || !liveOutcome) return;
-    liveRedoStack.current.push({ pins: livePinsRef.current, outcome: liveOutcome });
+    liveRedoStack.current.push({ pins: livePinsRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
     livePinsRef.current = snap.pins;
+    liveTouchedRef.current = snap.touched;
     setLiveReject([]);
     setLiveOutcome(snap.outcome);
   }
@@ -3173,8 +3217,9 @@ export function ScheduleGrid({
   function liveSandboxRedo() {
     const snap = liveRedoStack.current.pop();
     if (!snap || !liveOutcome) return;
-    liveUndoStack.current.push({ pins: livePinsRef.current, outcome: liveOutcome });
+    liveUndoStack.current.push({ pins: livePinsRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
     livePinsRef.current = snap.pins;
+    liveTouchedRef.current = snap.touched;
     setLiveReject([]);
     setLiveOutcome(snap.outcome);
   }
@@ -3579,6 +3624,19 @@ export function ScheduleGrid({
                   ✕ edit not allowed ({liveReject.map((r) => r.reason).join(", ")})
                 </span>
               )}
+              {/* Ripple scope: how wide the engine may re-solve to compensate. */}
+              <div className="flex items-center gap-1 text-xs" title="How much of the schedule the engine may change to compensate for an edit">
+                <span className="text-violet-300/60">re-solve:</span>
+                {([["day", "Day"], ["pp", "Pay period"], ["range", "Whole range"]] as const).map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => changeLiveScope(val)}
+                    className={`px-1.5 py-0.5 rounded transition-colors ${liveScope === val ? "bg-violet-600 text-white" : "bg-slate-700/60 text-slate-300 hover:bg-slate-600"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <button
