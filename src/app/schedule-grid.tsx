@@ -1808,7 +1808,10 @@ export function ScheduleGrid({
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (liveModeRef.current) return; // keyboard entry/nav in Live is a later sub-slice
+      // Keyboard editing IS the primary single-cell path (type a shift code on the
+      // active cell, Tab→picker, Delete→clear), so it must work in Live. The edit
+      // actions route through the Live-aware funnels (hotkeyAssign/handleClear/the
+      // picker); request-mutating keys are blocked separately below.
       // Ignore grid shortcuts while typing in a field (e.g. the dedicated-column
       // initials input, version comment) — otherwise letters/Delete/arrows would
       // hit the active cell instead of the input the user is focused on.
@@ -1835,7 +1838,7 @@ export function ScheduleGrid({
       // (when open, it flips the picker's Assign/Request tab via the shared
       // requestMode state). Input/SELECT/month-picker targets already returned
       // above, so this never fires while typing or in the month menu.
-      if (e.key === "/" && canEdit) {
+      if (e.key === "/" && canEdit && !liveModeRef.current) {
         e.preventDefault();
         // Entering request mode forces the request overlay on; exiting leaves it
         // as-is (it stays visible until the user hides it via RQ / "?").
@@ -1855,7 +1858,7 @@ export function ScheduleGrid({
       // the active cell / selection. Both already require Shift on the key
       // (Shift+= / Shift+1) — match the produced char. Never fires in normal
       // mode, so a stray + can't approve.
-      if (requestMode && !picker && canEdit && !activeDedCol && (activeRow || selection.size > 0) && !e.metaKey && !e.ctrlKey && (e.key === "+" || e.key === "!")) {
+      if (requestMode && !liveModeRef.current && !picker && canEdit && !activeDedCol && (activeRow || selection.size > 0) && !e.metaKey && !e.ctrlKey && (e.key === "+" || e.key === "!")) {
         e.preventDefault();
         requestApproveRef.current(e.key === "+" ? "approved" : "declined");
         return;
@@ -1903,7 +1906,10 @@ export function ScheduleGrid({
       // Dedicated cell (ICU/CARD) active: Delete clears its roster; Enter/F2 opens the
       // inline editor (keyboard parity — dedicated columns have no picker). Both are
       // request-mode gated inside the helpers (never mutate assignments in request mode).
-      if (!picker && canEdit && activeDedCol && activeRow) {
+      if (!picker && canEdit && !liveModeRef.current && activeDedCol && activeRow) {
+        // Dedicated-column (ICU/CARD) what-if is out of scope for Live; its writes
+        // go through the gated handleDedicatedEntry anyway, but skip the keyboard
+        // affordances so Live doesn't open a no-op editor.
         if (e.key === "Delete" || e.key === "Backspace") {
           e.preventDefault();
           clearDedRoster(activeDedCol, activeRow);
@@ -2290,6 +2296,15 @@ export function ScheduleGrid({
     }
     if (cells.length === 0) return;
 
+    // Live mode: route the keyboard shift-code entry through the what-if engine.
+    if (liveMode) {
+      setPicker(null);
+      setSelection(new Set());
+      setSelectionAnchor(null);
+      liveEdit(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId: st.id })), []);
+      return;
+    }
+
     const undoOps: UndoOp[] = cells.map(({ staffId, date }) => {
       const prev = assignmentMap.get(`${staffId}:${date}`) ?? null;
       const next: AssignmentData = {
@@ -2341,7 +2356,7 @@ export function ScheduleGrid({
       }
     } catch { /* optimistic stays */ }
     setSaving(null);
-  }, [selection, activeCol, activeRow, assignmentMap]);
+  }, [selection, activeCol, activeRow, assignmentMap, liveMode, liveEdit]);
 
   const hotkeyAssignRef = useRef(hotkeyAssign);
   useEffect(() => { hotkeyAssignRef.current = hotkeyAssign; }, [hotkeyAssign]);
@@ -3001,6 +3016,7 @@ export function ScheduleGrid({
       for (const c of outcome.grid) initial.set(`${c.staffId}:${c.date}`, c.shiftTypeId);
       liveInitialGridRef.current = initial;
       setLiveReject([]);
+      setRequestMode(false); // Live is assign-only; requests aren't part of the sandbox
       setLiveOutcome(outcome);
       setLiveMode(true);
     } catch (e) {
