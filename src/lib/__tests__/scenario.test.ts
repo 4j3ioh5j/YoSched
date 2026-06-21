@@ -298,6 +298,35 @@ describe("applyScenario — quality delta & purity", () => {
     for (const d of DATES) expect(cellAt(out2.grid, "p1", d)).toBe("st-or");
   });
 
+  it("compensation: freeing non-pinned cells lets the engine backfill what a pin broke", () => {
+    // The Live ripple: pin one cell, free the rest, the engine re-solves to stay
+    // feasible. Here pinning p1 off OR (→ ORL) drops OR coverage below its min; with
+    // p2's day freed the engine moves p2 onto OR to compensate.
+    const ORL = makeShift("st-orl", "ORL");
+    const elig = ["st-or", "st-orl", "st-off"];
+    const input = makeInput({
+      staff: [makeStaff("p1", "AB", { eligibleShiftTypeIds: elig }), makeStaff("p2", "CD", { eligibleShiftTypeIds: elig })],
+      shiftTypes: [OR, ORL, OFF],
+      existingAssignments: [
+        { staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or", code: "OR", isLocked: false },
+        { staffId: "p2", date: "2025-05-12", shiftTypeId: "st-off", code: "X", isLocked: false },
+      ],
+      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }],
+    });
+    const pin = [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-orl" }];
+
+    // With the rest LOCKED (no free) → no room to compensate: p2 stays off, OR uncovered.
+    const noComp = applyScenario(input, pin, []);
+    expect(cellAt(noComp.grid, "p1", "2025-05-12")).toBe("st-orl");
+    expect(cellAt(noComp.grid, "p2", "2025-05-12")).toBe("st-off");
+
+    // Freeing p2's (non-pinned) cell → engine backfills OR onto p2 (the ripple).
+    const comp = applyScenario(input, pin, [{ staffId: "p2", date: "2025-05-12" }]);
+    expect(comp.applied).toBe(true);
+    expect(cellAt(comp.grid, "p1", "2025-05-12")).toBe("st-orl");
+    expect(cellAt(comp.grid, "p2", "2025-05-12")).toBe("st-or");
+  });
+
   it("does not mutate the caller's input", () => {
     const baseline = [lockedOR("p1", "2025-05-12")];
     const input = makeInput({ existingAssignments: baseline });

@@ -548,8 +548,16 @@ export function ScheduleGrid({
   // fills of empty cells (those are baked into the initial grid and the user never
   // saw them), so Accept can't silently commit changes that weren't displayed.
   const liveInitialGridRef = useRef<Map<string, string>>(new Map());
-  const liveUndoStack = useRef<ScenarioOutcome[]>([]);
-  const liveRedoStack = useRef<ScenarioOutcome[]>([]);
+  // The user's accumulated explicit edits this session (key → shiftTypeId). These
+  // PIN (lock) on every re-solve so the engine never overrides a deliberate edit;
+  // everything not locked/pinned is freed so the engine re-solves it to compensate
+  // (the "ripple"). A clear/free removes the cell's pin.
+  const livePinsRef = useRef<Map<string, string>>(new Map());
+  // Sandbox undo/redo: each entry snapshots the accumulated pins AND the resulting
+  // outcome, so reverting restores both (and editing can continue from there).
+  type LiveSnap = { pins: Map<string, string>; outcome: ScenarioOutcome };
+  const liveUndoStack = useRef<LiveSnap[]>([]);
+  const liveRedoStack = useRef<LiveSnap[]>([]);
   useEffect(() => { liveModeRef.current = liveMode; }, [liveMode]);
 
   type SuggestionEntry = NonNullable<typeof autoSuggestions>[0];
@@ -1828,11 +1836,11 @@ export function ScheduleGrid({
       if (showVersions || showAlerts || showHelp) return;
       if (canEdit && (e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
-        undoRef.current();
+        if (liveModeRef.current) liveUndoFnRef.current(); else undoRef.current();
       }
       if (canEdit && (e.metaKey || e.ctrlKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
         e.preventDefault();
-        redoRef.current();
+        if (liveModeRef.current) liveRedoFnRef.current(); else redoRef.current();
       }
       // "/" toggles request mode. Works whether or not the picker is open
       // (when open, it flips the picker's Assign/Request tab via the shared
@@ -3021,6 +3029,7 @@ export function ScheduleGrid({
       const bundle: AutoScheduleInput = await res.json();
       const liveInput = buildLiveInput(bundle);
       liveInputRef.current = liveInput;
+      livePinsRef.current = new Map();
       liveUndoStack.current = [];
       liveRedoStack.current = [];
 
@@ -3049,6 +3058,7 @@ export function ScheduleGrid({
     setLiveReject([]);
     liveInputRef.current = null;
     liveInitialGridRef.current = new Map();
+    livePinsRef.current = new Map();
     liveUndoStack.current = [];
     liveRedoStack.current = [];
   }
@@ -3100,35 +3110,70 @@ export function ScheduleGrid({
   }
 
   // The unified Live edit (#231 core principle): every legal cell change — picker
-  // pick, clear, (later) drag/keyboard/paste — funnels here as pins (new content,
-  // locked) + frees (cells the edit emptied). Re-solve from the CURRENT live grid
-  // so edits chain, then either snap back (hard-illegal pin) or show the new ripple.
-  function liveEdit(pins: ScenarioPin[], frees: ScenarioFree[]) {
+  // pick, clear, drag, keyboard — funnels here as pins (new content) + frees (cells
+  // the edit emptied). The model is a CONSTRAINED RE-OPTIMIZATION: the user's
+  // accumulated pins and the originally-locked cells are held fixed, EVERYTHING ELSE
+  // is freed, and the engine re-solves the rest to stay feasible — that re-solve IS
+  // the ripple/compensation (rebalanced hours, backfilled coverage, etc.). We always
+  // re-solve from the enter-time input so the result is deterministic per pin-set.
+  function liveEdit(newPins: ScenarioPin[], newFrees: ScenarioFree[]) {
     const base = liveInputRef.current;
-    const prev = liveOutcome;
-    if (!base || !prev) return;
-    const input: AutoScheduleInput = {
-      ...base,
-      existingAssignments: prev.grid.map((c) => ({
-        staffId: c.staffId,
-        date: c.date,
-        shiftTypeId: c.shiftTypeId,
-        code: c.code,
-        isLocked: false,
-      })),
-    };
-    const outcome = applyScenario(input, pins, frees);
+    if (!base || !liveOutcome) return;
+
+    // Fold this edit into the accumulated pin set (a free un-pins its cell).
+    const nextPins = new Map(livePinsRef.current);
+    for (const f of newFrees) nextPins.delete(`${f.staffId}:${f.date}`);
+    for (const p of newPins) nextPins.set(`${p.staffId}:${p.date}`, p.shiftTypeId);
+
+    const pins: ScenarioPin[] = [];
+    for (const [k, shiftTypeId] of nextPins) {
+      const i = k.indexOf(":");
+      pins.push({ staffId: k.slice(0, i), date: k.slice(i + 1), shiftTypeId });
+    }
+
+    // Free every non-locked, non-pinned existing cell so the engine re-solves it
+    // around the locked cells + pins. (Empty cells are absent from the input and
+    // get filled anyway, so they need no explicit free.)
+    const frees: ScenarioFree[] = [];
+    for (const a of base.existingAssignments) {
+      const k = `${a.staffId}:${a.date}`;
+      if (!a.isLocked && !nextPins.has(k)) frees.push({ staffId: a.staffId, date: a.date });
+    }
+
+    const outcome = applyScenario(base, pins, frees);
     if (!outcome.applied) {
-      // Hard-illegal: the edit snaps back (we keep the prior grid) and the banner
-      // explains why.
+      // Hard-illegal pin: snap back (keep current grid + pins) and explain.
       setLiveReject(outcome.rejected);
       return;
     }
-    setLiveReject([]);
-    liveUndoStack.current.push(prev);
+    liveUndoStack.current.push({ pins: livePinsRef.current, outcome: liveOutcome });
     liveRedoStack.current = [];
+    livePinsRef.current = nextPins;
+    setLiveReject([]);
     setLiveOutcome(outcome);
   }
+
+  function liveSandboxUndo() {
+    const snap = liveUndoStack.current.pop();
+    if (!snap || !liveOutcome) return;
+    liveRedoStack.current.push({ pins: livePinsRef.current, outcome: liveOutcome });
+    livePinsRef.current = snap.pins;
+    setLiveReject([]);
+    setLiveOutcome(snap.outcome);
+  }
+
+  function liveSandboxRedo() {
+    const snap = liveRedoStack.current.pop();
+    if (!snap || !liveOutcome) return;
+    liveUndoStack.current.push({ pins: livePinsRef.current, outcome: liveOutcome });
+    livePinsRef.current = snap.pins;
+    setLiveReject([]);
+    setLiveOutcome(snap.outcome);
+  }
+  const liveUndoFnRef = useRef(liveSandboxUndo);
+  const liveRedoFnRef = useRef(liveSandboxRedo);
+  useEffect(() => { liveUndoFnRef.current = liveSandboxUndo; });
+  useEffect(() => { liveRedoFnRef.current = liveSandboxRedo; });
 
   async function clearAutoScheduled() {
     if (liveMode) return;
@@ -3529,18 +3574,18 @@ export function ScheduleGrid({
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => { const o = liveUndoStack.current.pop(); if (o) { liveRedoStack.current.push(liveOutcome); setLiveOutcome(o); } }}
+                onClick={liveSandboxUndo}
                 disabled={liveUndoStack.current.length === 0}
                 className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded transition-colors text-slate-300"
-                title="Revert (undo within this Live session)"
+                title="Revert (undo within this Live session) — also Ctrl+Z"
               >
                 ↩
               </button>
               <button
-                onClick={() => { const o = liveRedoStack.current.pop(); if (o) { liveUndoStack.current.push(liveOutcome); setLiveOutcome(o); } }}
+                onClick={liveSandboxRedo}
                 disabled={liveRedoStack.current.length === 0}
                 className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded transition-colors text-slate-300"
-                title="Advance (redo within this Live session)"
+                title="Advance (redo within this Live session) — also Ctrl+Shift+Z"
               >
                 ↪
               </button>
