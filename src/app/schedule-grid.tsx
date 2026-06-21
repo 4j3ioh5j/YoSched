@@ -2755,7 +2755,8 @@ export function ScheduleGrid({
 
   function handleDragStart(staffId: string, date: string, e: React.DragEvent) {
     if (!canEdit) { e.preventDefault(); return; }
-    const a = assignmentMap.get(`${staffId}:${date}`);
+    // In Live the draggable content is the live-grid cell, not the saved one.
+    const a = liveMode ? liveDisplayMap.get(`${staffId}:${date}`) : assignmentMap.get(`${staffId}:${date}`);
     if (!a || a.isLocked) { e.preventDefault(); return; }
     setDragSource({ staffId, date });
     e.dataTransfer.effectAllowed = "move";
@@ -2781,7 +2782,23 @@ export function ScheduleGrid({
   const handleDrop = useCallback(async (toStaffId: string, toDate: string, e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(null);
-    if (liveMode) return; // drag-to-displace in Live is the next sub-slice (S3b)
+
+    // Live mode: drag DISPLACES (it doesn't swap). Pin the dragged cell's shift at
+    // the target and FREE the source; the engine re-solves — bumping any occupant
+    // of the target and backfilling the freed source as coverage requires (#231).
+    if (liveMode) {
+      const from = dragSource;
+      setDragSource(null);
+      if (!from) return;
+      if (from.staffId === toStaffId && from.date === toDate) return;
+      const fromCell = liveDisplayMap.get(`${from.staffId}:${from.date}`);
+      if (!fromCell) return;
+      liveEdit(
+        [{ staffId: toStaffId, date: toDate, shiftTypeId: fromCell.shiftTypeId }],
+        [{ staffId: from.staffId, date: from.date }],
+      );
+      return;
+    }
 
     if (!dragSource) return;
     const { staffId: fromStaffId, date: fromDate } = dragSource;
@@ -2848,7 +2865,7 @@ export function ScheduleGrid({
     } finally {
       setSaving(null);
     }
-  }, [dragSource, assignmentMap, liveMode]);
+  }, [dragSource, assignmentMap, liveMode, liveDisplayMap, liveEdit]);
 
   // Compute warnings for picker preview (uses picker cell for single, first selected cell for bulk)
   const pickerWarnings = useMemo(() => {
@@ -3217,6 +3234,7 @@ export function ScheduleGrid({
   // Mute/unmute an alert: optimistic, reverts on failure. Persisted shared via
   // /api/alerts/mutes (requires schedule:edit) — only offered when canEdit.
   const toggleMute = useCallback(async (key: string) => {
+    if (liveMode) return; // no persisted writes (even alert mutes) during a Live sandbox
     const wasMuted = mutedKeys.has(key);
     setMutedKeys((prev) => {
       const next = new Set(prev);
@@ -3238,7 +3256,7 @@ export function ScheduleGrid({
         return next;
       });
     }
-  }, [mutedKeys]);
+  }, [mutedKeys, liveMode]);
 
   // Alerts that still "count" — muted ones are silenced.
   const visibleAlerts = useMemo(() => allAlerts.filter((a) => !mutedKeys.has(a.key)), [allAlerts, mutedKeys]);
@@ -3870,7 +3888,7 @@ export function ScheduleGrid({
                       >
                         {a && !(isSuggested && shiftTypeMap.get(a.shiftTypeId)?.isOffShift && !a.isLocked) ? (
                           <div
-                            draggable={canEdit && !a.isLocked && !liveMode}
+                            draggable={canEdit && !a.isLocked}
                             onDragStart={(e) => handleDragStart(p.id, date, e)}
                             onDragEnd={handleDragEnd}
                             data-shift-code
