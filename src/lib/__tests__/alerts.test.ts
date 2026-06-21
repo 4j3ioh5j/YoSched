@@ -6,6 +6,7 @@ import {
   buildAlertSections,
   groupAlertsByDate,
   parseAlertKey,
+  ALERT_CATEGORIES,
   MAX_ALERT_KEY_LENGTH,
   type Alert,
   type PPHoursEntry,
@@ -155,6 +156,11 @@ describe("buildAlertSections", () => {
     const sections = buildAlertSections([], []);
     expect(sections.map((s) => s.category)).toEqual(["requests", "pp-hours", "staffing"]);
     expect(sections[0].alerts).toEqual([]);
+  });
+
+  it("orders sections by the canonical ALERT_CATEGORIES list (single source)", () => {
+    const sections = buildAlertSections([], [], []);
+    expect(sections.map((s) => s.category)).toEqual(ALERT_CATEGORIES);
   });
 });
 

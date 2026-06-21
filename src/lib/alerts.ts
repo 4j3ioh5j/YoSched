@@ -5,6 +5,10 @@ import { roundPPHours } from "./constraints";
 // modal. Every alert carries a stable, value-bearing `key` used to mute it.
 export type AlertCategory = "staffing" | "pp-hours" | "requests";
 
+// Canonical category order — the single source for "all categories", used both
+// to order the modal's sections and to collapse every section on open.
+export const ALERT_CATEGORIES: AlertCategory[] = ["requests", "pp-hours", "staffing"];
+
 export type Alert = {
   category: AlertCategory;
   // Stable mute identity. Embeds the alert's value(s) so that when the
@@ -163,11 +167,12 @@ export function buildAlertSections(
   ppHoursAlerts: Alert[],
   requestAlerts: Alert[] = [],
 ): AlertSection[] {
-  return [
-    { category: "requests", title: "Pending requests", alerts: requestAlerts },
-    { category: "pp-hours", title: "Pay period hours", alerts: ppHoursAlerts },
-    { category: "staffing", title: "Daily staffing", alerts: staffingAlerts },
-  ];
+  const byCategory: Record<AlertCategory, { title: string; alerts: Alert[] }> = {
+    requests: { title: "Pending requests", alerts: requestAlerts },
+    "pp-hours": { title: "Pay period hours", alerts: ppHoursAlerts },
+    staffing: { title: "Daily staffing", alerts: staffingAlerts },
+  };
+  return ALERT_CATEGORIES.map((category) => ({ category, ...byCategory[category] }));
 }
 
 /**

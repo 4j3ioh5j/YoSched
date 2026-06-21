@@ -9,6 +9,10 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Other open items
 
+- [ ] **Alerts collapsed by default, grouped by category** — alerts should render collapsed into their
+  categories on load; the user expands a category to see its alerts.
+- [ ] **Requests page: sortable headers + search field** — click column headers to sort the requests
+  list, and add a search field to filter requests.
 - [ ] **Multi-cell drag / batch in all modes** — dragging a *selection* of cells as a group does not
   exist in either normal or Live mode (base drag is single-cell). Batch via picker/keyboard already
   works in both modes; this adds group DRAG. Open design questions first: offset axis (shift dates vs

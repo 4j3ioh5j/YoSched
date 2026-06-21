@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } from "@/lib/constraints";
-import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
+import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, ALERT_CATEGORIES, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { applyScenario, cellsToCommitOnAccept, freesForScope, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
@@ -716,7 +716,16 @@ export function ScheduleGrid({
   // Alerts + Help modals (the alerts sidebar was replaced by an Alerts button).
   const [showAlerts, setShowAlerts] = useState(false);
   // Alert-modal sections that are collapsed (by category). Empty = all expanded.
-  const [collapsedAlertSections, setCollapsedAlertSections] = useState<Set<string>>(new Set());
+  // Seeded with every category so the modal opens fully collapsed (category
+  // overview); the user expands the one they want.
+  const [collapsedAlertSections, setCollapsedAlertSections] = useState<Set<string>>(() => new Set(ALERT_CATEGORIES));
+  // Every time the Alerts modal opens, reset to all-collapsed so it always opens
+  // to the compact category overview regardless of last session's expansions.
+  // useLayoutEffect (not useEffect) so the reset lands before paint — no flash of
+  // a previously-expanded section.
+  useLayoutEffect(() => {
+    if (showAlerts) setCollapsedAlertSections(new Set(ALERT_CATEGORIES));
+  }, [showAlerts]);
   const [showHelp, setShowHelp] = useState(false);
   // Transient highlight on the day-row a user jumps to from the Alerts modal.
   const [flashDate, setFlashDate] = useState<string | null>(null);
