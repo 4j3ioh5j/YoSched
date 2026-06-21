@@ -2257,8 +2257,8 @@ export function ScheduleGrid({
       // Live mode: route the pasted block through the what-if engine as batch pins
       // (it ripples like any other edit) instead of persisting.
       if (liveModeRef.current) {
-        liveEditRef.current(sets.map((s) => ({ staffId: s.staffId, date: s.date, shiftTypeId: s.shiftTypeId })), []);
-        setPasteToast(pasteSummary(sets.length, resolution));
+        const ok = liveEditRef.current(sets.map((s) => ({ staffId: s.staffId, date: s.date, shiftTypeId: s.shiftTypeId })), []);
+        setPasteToast(ok ? pasteSummary(sets.length, resolution) : "Paste not applied — see the Live banner.");
         return;
       }
 
@@ -3210,9 +3210,11 @@ export function ScheduleGrid({
     return [...pinsMap].map(([k, shiftTypeId]) => ({ ...pinKeyParts(k), shiftTypeId }));
   }
 
-  function liveEdit(newPins: ScenarioPin[], newFrees: ScenarioFree[]) {
+  // Returns true if the edit was applied, false if a hard-illegal pin snapped it back
+  // (callers like paste use this to avoid a misleading "applied" toast).
+  function liveEdit(newPins: ScenarioPin[], newFrees: ScenarioFree[]): boolean {
     const base = liveBaseInputRef.current;
-    if (!base || !liveOutcome) return;
+    if (!base || !liveOutcome) return false;
 
     // Fold this edit into the accumulated pin set (a free un-pins its cell) and the
     // touched-date anchor.
@@ -3227,7 +3229,7 @@ export function ScheduleGrid({
     if (!outcome.applied) {
       // Hard-illegal pin: snap back (keep current grid + pins) and explain.
       setLiveReject(outcome.rejected);
-      return;
+      return false;
     }
     liveUndoStack.current.push({ pins: livePinsRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
     liveRedoStack.current = [];
@@ -3235,6 +3237,7 @@ export function ScheduleGrid({
     liveTouchedRef.current = nextTouched;
     setLiveReject([]);
     setLiveOutcome(outcome);
+    return true;
   }
 
   // Re-solve the current pin-set at a new scope (a scope change is not an edit, so
