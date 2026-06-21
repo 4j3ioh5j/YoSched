@@ -1893,7 +1893,7 @@ export function ScheduleGrid({
       }
       if ((e.key === "Delete" || e.key === "Backspace") && !picker && canEdit && activeRow && activeCol) {
         e.preventDefault();
-        if (requestMode) {
+        if (requestMode && !liveModeRef.current) {
           // Request mode: delete requests on the active cell / selection
           // (assignments are left untouched).
           requestDeleteRef.current();
@@ -1970,7 +1970,7 @@ export function ScheduleGrid({
         else if (e.key.length === 1 && /^[a-zA-Z]$/.test(e.key)) letter = e.key.toUpperCase();
         const st = letter ? hotkeyMap.get(letter) : undefined;
         if (st) {
-          if (requestMode) {
+          if (requestMode && !liveModeRef.current) {
             e.preventDefault();
             requestKeyRef.current(st, { avoid: e.shiftKey, soft: e.altKey });
           } else if (!e.altKey) {
