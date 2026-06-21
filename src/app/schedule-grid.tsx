@@ -6,7 +6,7 @@ import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } 
 import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
-import { applyScenario, type ScenarioOutcome } from "@/lib/scenario";
+import { applyScenario, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
@@ -533,6 +533,11 @@ export function ScheduleGrid({
   const [liveMode, setLiveMode] = useState(false);
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveOutcome, setLiveOutcome] = useState<ScenarioOutcome | null>(null);
+  // Hard-rejected pins from the most recent edit (snap-back reasons for the banner).
+  const [liveReject, setLiveReject] = useState<ScenarioPinRejection[]>([]);
+  // Mirror of liveMode for the document-level keyboard/paste listeners, which close
+  // over their effect's scope and would otherwise read a stale value.
+  const liveModeRef = useRef(false);
   // The fetched engine input with the current grid (saved DB ∪ previewed
   // suggestions) as its baseline; the un-overlaid saved DB cells (for the Accept
   // diff); and the sandbox undo/redo stacks (a SEPARATE stack from the persisted
@@ -545,6 +550,7 @@ export function ScheduleGrid({
   const liveInitialGridRef = useRef<Map<string, string>>(new Map());
   const liveUndoStack = useRef<ScenarioOutcome[]>([]);
   const liveRedoStack = useRef<ScenarioOutcome[]>([]);
+  useEffect(() => { liveModeRef.current = liveMode; }, [liveMode]);
 
   type SuggestionEntry = NonNullable<typeof autoSuggestions>[0];
   const suggestionSet = useMemo(() => {
@@ -640,6 +646,7 @@ export function ScheduleGrid({
   }, [showVersions, viewYear, viewMonth]);
 
   const saveVersion = useCallback(async () => {
+    if (liveMode) return; // no version writes while a Live sandbox is active
     // Nothing new since the current version — confirm before saving a duplicate.
     if (focalVersion && !monthModified) {
       if (!window.confirm(`No changes since version ${focalVersion.versionNumber}. Save an identical version anyway?`)) return;
@@ -670,9 +677,10 @@ export function ScheduleGrid({
     } finally {
       setVersionBusy(false);
     }
-  }, [viewYear, viewMonth, versionComment, focalVersion, monthModified]);
+  }, [viewYear, viewMonth, versionComment, focalVersion, monthModified, liveMode]);
 
   const restoreVersion = useCallback(async (v: VersionRow) => {
+    if (liveMode) return; // no version restore while a Live sandbox is active
     const label = v.comment ? `v${v.versionNumber} — “${v.comment}”` : `v${v.versionNumber}`;
     if (!window.confirm(
       `Restore ${MONTH_NAMES[viewMonth]} ${viewYear} to ${label}?\n\n` +
@@ -693,7 +701,7 @@ export function ScheduleGrid({
     } finally {
       setVersionBusy(false);
     }
-  }, [viewYear, viewMonth]);
+  }, [viewYear, viewMonth, liveMode]);
 
   const openChanges = useCallback(async (v: VersionRow) => {
     setChangesView({ version: v, loading: true, data: null });
@@ -823,6 +831,38 @@ export function ScheduleGrid({
     for (const st of shiftTypes) map.set(st.id, st);
     return map;
   }, [shiftTypes]);
+
+  // In Live mode the grid renders from the in-browser re-solve, not the saved
+  // assignments: liveDisplayMap is the result grid as renderable cells, and
+  // liveRippleSet flags every cell whose shift differs from the enter-time grid
+  // (the cells the engine had to change — the "ripple").
+  const liveDisplayMap = useMemo(() => {
+    const m = new Map<string, AssignmentData>();
+    if (!liveMode || !liveOutcome) return m;
+    for (const c of liveOutcome.grid) {
+      m.set(`${c.staffId}:${c.date}`, {
+        id: `live-${c.staffId}:${c.date}`,
+        staffId: c.staffId,
+        date: c.date,
+        shiftTypeId: c.shiftTypeId,
+        isLocked: false,
+        code: c.code,
+        color: shiftTypeMap.get(c.shiftTypeId)?.color ?? "#6b7280",
+      });
+    }
+    return m;
+  }, [liveMode, liveOutcome, shiftTypeMap]);
+
+  const liveRippleSet = useMemo(() => {
+    const s = new Set<string>();
+    if (!liveMode || !liveOutcome) return s;
+    const initial = liveInitialGridRef.current;
+    for (const c of liveOutcome.grid) {
+      const k = `${c.staffId}:${c.date}`;
+      if (initial.get(k) !== c.shiftTypeId) s.add(k);
+    }
+    return s;
+  }, [liveMode, liveOutcome]);
 
   // Reverse map for paste: UPPERCASE shift code → id (codes are unique). Lets a pasted
   // "ORC"/"x" resolve to a shift type without a server round-trip.
@@ -1477,6 +1517,7 @@ export function ScheduleGrid({
   }
 
   async function applyAssignment(staffId: string, date: string, assignment: AssignmentData | null) {
+    if (liveMode) return; // hard guard: no persisted assignment writes during a Live sandbox
     setSaving(`${staffId}:${date}`);
     if (assignment) {
       setLocalAssignments((prev) => {
@@ -1523,6 +1564,7 @@ export function ScheduleGrid({
     next: AssignmentData | null,
     prev: AssignmentData | null,
   ): Promise<boolean> {
+    if (liveMode) return false; // hard guard: no persisted assignment writes during a Live sandbox
     setLocalAssignments((cur) => {
       const filtered = cur.filter((a) => !(a.staffId === staffId && a.date === date));
       return next ? [...filtered, next] : filtered;
@@ -1571,6 +1613,7 @@ export function ScheduleGrid({
   // when it is this dedicated shift. Conflicts (a different, unlocked real shift)
   // ask Replace/Skip per cell; locked cells are never touched.
   async function handleDedicatedEntry(shiftTypeId: string, date: string, raw: string) {
+    if (liveMode) return; // dedicated-column entry in Live is a later sub-slice
     const st = shiftTypeMap.get(shiftTypeId);
     if (!st) return;
 
@@ -1715,6 +1758,7 @@ export function ScheduleGrid({
   }
 
   async function handleUndo() {
+    if (liveMode) return; // Live has its own sandbox revert/advance in the banner
     const entry = undoStack.current.pop();
     if (!entry) return;
     if (entry.kind === "request-status-blocked") {
@@ -1739,6 +1783,7 @@ export function ScheduleGrid({
   }
 
   async function handleRedo() {
+    if (liveMode) return; // Live has its own sandbox revert/advance in the banner
     const entry = redoStack.current.pop();
     if (!entry) return;
     undoStack.current.push(entry);
@@ -1763,6 +1808,7 @@ export function ScheduleGrid({
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      if (liveModeRef.current) return; // keyboard entry/nav in Live is a later sub-slice
       // Ignore grid shortcuts while typing in a field (e.g. the dedicated-column
       // initials input, version comment) — otherwise letters/Delete/arrows would
       // hit the active cell instead of the input the user is focused on.
@@ -2100,6 +2146,7 @@ export function ScheduleGrid({
     }
 
     async function onPaste(e: ClipboardEvent) {
+      if (liveModeRef.current) return; // paste in Live is a later sub-slice
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
       if (showMonthPicker || showVersions || showAlerts || showHelp || picker) return;
@@ -2317,6 +2364,15 @@ export function ScheduleGrid({
     }
     if (cells.length === 0) { setPicker(null); return; }
 
+    // Live mode: route the pick through the what-if engine instead of persisting.
+    if (liveMode) {
+      setPicker(null);
+      setSelection(new Set());
+      setSelectionAnchor(null);
+      liveEdit(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId })), []);
+      return;
+    }
+
     // Build undo group
     const undoOps: UndoOp[] = cells.map(({ staffId, date }) => {
       const key = `${staffId}:${date}`;
@@ -2388,11 +2444,27 @@ export function ScheduleGrid({
     } finally {
       setSaving(null);
     }
-  }, [picker, shiftTypeMap, assignmentMap, selection]);
+  }, [picker, shiftTypeMap, assignmentMap, selection, liveMode, liveEdit]);
 
   const handleClear = useCallback(async (target?: { staffId: string; date: string }) => {
     const anchor = target ?? (picker ? { staffId: picker.staffId, date: picker.date } : null);
     if (!anchor && selection.size === 0) return;
+
+    // Live mode: clearing a cell FREES it (the engine re-solves the hole) — never
+    // a DB delete. Frees route through the what-if engine like every other edit.
+    if (liveMode) {
+      const frees: ScenarioFree[] = [];
+      if (!target && selection.size > 0) {
+        for (const key of selection) { const [pid, d] = key.split(":"); frees.push({ staffId: pid, date: d }); }
+      } else if (anchor) {
+        frees.push(anchor);
+      }
+      setPicker(null);
+      setSelection(new Set());
+      setSelectionAnchor(null);
+      if (frees.length > 0) liveEdit([], frees);
+      return;
+    }
 
     // Explicit target (Delete key) always clears just that cell;
     // selection path only used from picker (no target)
@@ -2458,7 +2530,7 @@ export function ScheduleGrid({
     } finally {
       setSaving(null);
     }
-  }, [picker, assignmentMap, selection]);
+  }, [picker, assignmentMap, selection, liveMode, liveEdit]);
   useEffect(() => { clearRef.current = handleClear; }, [handleClear]);
 
   const closePicker = useCallback(() => {
@@ -2515,6 +2587,7 @@ export function ScheduleGrid({
 
   const handleSaveRequests = useCallback(
     async (marks: PickerMarks) => {
+      if (liveMode) return; // requests are not part of the Live what-if sandbox
       if (!picker) return;
       const cells: { staffId: string; date: string }[] = [];
       if (selection.size > 0) {
@@ -2589,7 +2662,7 @@ export function ScheduleGrid({
     if (snapshots.length === 0) return;
     pushUndoEntry({ kind: "request-delete", snapshots });
     void deleteRequestsForUndo(snapshots); // optimistic remove + DELETE
-  }, [selection, activeCol, activeRow, localRequests, requestFilter]);
+  }, [selection, activeCol, activeRow, localRequests, requestFilter, liveMode]);
   const requestDeleteRef = useRef(handleRequestDelete);
   useEffect(() => { requestDeleteRef.current = handleRequestDelete; }, [handleRequestDelete]);
 
@@ -2655,6 +2728,7 @@ export function ScheduleGrid({
 
   // Delete an existing request (the × in the picker's request list).
   const handleDeleteRequest = useCallback(async (id: string) => {
+    if (liveMode) return; // requests are not part of the Live what-if sandbox
     setLocalRequests((prev) => prev.filter((r) => r.id !== id)); // optimistic
     try {
       const res = await fetch(`/api/requests/${id}`, { method: "DELETE" });
@@ -2662,7 +2736,7 @@ export function ScheduleGrid({
     } catch {
       setRequestError("Failed to delete request.");
     }
-  }, []);
+  }, [liveMode]);
 
   function handleDragStart(staffId: string, date: string, e: React.DragEvent) {
     if (!canEdit) { e.preventDefault(); return; }
@@ -2692,6 +2766,7 @@ export function ScheduleGrid({
   const handleDrop = useCallback(async (toStaffId: string, toDate: string, e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(null);
+    if (liveMode) return; // drag-to-displace in Live is the next sub-slice (S3b)
 
     if (!dragSource) return;
     const { staffId: fromStaffId, date: fromDate } = dragSource;
@@ -2758,7 +2833,7 @@ export function ScheduleGrid({
     } finally {
       setSaving(null);
     }
-  }, [dragSource, assignmentMap]);
+  }, [dragSource, assignmentMap, liveMode]);
 
   // Compute warnings for picker preview (uses picker cell for single, first selected cell for bulk)
   const pickerWarnings = useMemo(() => {
@@ -2819,6 +2894,7 @@ export function ScheduleGrid({
   const selectionCount = selection.size;
 
   async function runAutoSchedule() {
+    if (liveMode) return;
     setAutoLoading(true);
     try {
       const res = await fetch("/api/auto-schedule", {
@@ -2842,6 +2918,7 @@ export function ScheduleGrid({
   }
 
   async function applyAutoSuggestions() {
+    if (liveMode) return;
     if (!autoSuggestions?.length) return;
     setAutoLoading(true);
     try {
@@ -2923,6 +3000,7 @@ export function ScheduleGrid({
       const initial = new Map<string, string>();
       for (const c of outcome.grid) initial.set(`${c.staffId}:${c.date}`, c.shiftTypeId);
       liveInitialGridRef.current = initial;
+      setLiveReject([]);
       setLiveOutcome(outcome);
       setLiveMode(true);
     } catch (e) {
@@ -2935,6 +3013,7 @@ export function ScheduleGrid({
   function cancelLive() {
     setLiveMode(false);
     setLiveOutcome(null);
+    setLiveReject([]);
     liveInputRef.current = null;
     liveInitialGridRef.current = new Map();
     liveUndoStack.current = [];
@@ -2987,7 +3066,39 @@ export function ScheduleGrid({
     }
   }
 
+  // The unified Live edit (#231 core principle): every legal cell change — picker
+  // pick, clear, (later) drag/keyboard/paste — funnels here as pins (new content,
+  // locked) + frees (cells the edit emptied). Re-solve from the CURRENT live grid
+  // so edits chain, then either snap back (hard-illegal pin) or show the new ripple.
+  function liveEdit(pins: ScenarioPin[], frees: ScenarioFree[]) {
+    const base = liveInputRef.current;
+    const prev = liveOutcome;
+    if (!base || !prev) return;
+    const input: AutoScheduleInput = {
+      ...base,
+      existingAssignments: prev.grid.map((c) => ({
+        staffId: c.staffId,
+        date: c.date,
+        shiftTypeId: c.shiftTypeId,
+        code: c.code,
+        isLocked: false,
+      })),
+    };
+    const outcome = applyScenario(input, pins, frees);
+    if (!outcome.applied) {
+      // Hard-illegal: the edit snaps back (we keep the prior grid) and the banner
+      // explains why.
+      setLiveReject(outcome.rejected);
+      return;
+    }
+    setLiveReject([]);
+    liveUndoStack.current.push(prev);
+    liveRedoStack.current = [];
+    setLiveOutcome(outcome);
+  }
+
   async function clearAutoScheduled() {
+    if (liveMode) return;
     if (!dates.length) return;
     setAutoLoading(true);
     try {
@@ -3241,8 +3352,9 @@ export function ScheduleGrid({
         </div>
         <button
           onClick={() => setShowVersions(true)}
-          className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300 flex items-center gap-1.5"
-          title="Save or restore versions of this month's schedule"
+          disabled={liveMode}
+          className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded transition-colors text-slate-300 flex items-center gap-1.5"
+          title={liveMode ? "Exit Live to save or restore versions" : "Save or restore versions of this month's schedule"}
         >
           Versions
           {focalVersion && (
@@ -3278,7 +3390,7 @@ export function ScheduleGrid({
               )}
               <button
                 onClick={clearAutoScheduled}
-                disabled={autoLoading}
+                disabled={autoLoading || liveMode}
                 className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded transition-colors text-red-400 font-medium"
                 title="Remove all auto-scheduled assignments (keeps manual entries)"
               >
@@ -3286,7 +3398,7 @@ export function ScheduleGrid({
               </button>
               <button
                 onClick={runAutoSchedule}
-                disabled={autoLoading}
+                disabled={autoLoading || liveMode}
                 className="px-3 py-1 text-sm bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 rounded transition-colors text-emerald-100 font-medium"
                 title="Auto-fill empty slots using fairness-weighted scheduling"
               >
@@ -3366,13 +3478,18 @@ export function ScheduleGrid({
             <div className="flex items-center gap-4">
               <span className="text-sm font-semibold text-violet-200">Live what-if</span>
               <span className="text-xs text-violet-300/80">
-                {liveOutcome.changes.length === 0
-                  ? "engine re-solve matches the current grid (0 changes)"
-                  : `${liveOutcome.changes.length} cell${liveOutcome.changes.length !== 1 ? "s" : ""} would change`}
+                {liveRippleSet.size === 0
+                  ? "matches the current grid (no changes yet)"
+                  : `${liveRippleSet.size} cell${liveRippleSet.size !== 1 ? "s" : ""} changed`}
               </span>
               {liveOutcome.softWarnings.length > 0 && (
                 <span className="text-xs text-amber-400" title={liveOutcome.softWarnings.join("\n")}>
                   {liveOutcome.softWarnings.length} warning{liveOutcome.softWarnings.length !== 1 ? "s" : ""}
+                </span>
+              )}
+              {liveReject.length > 0 && (
+                <span className="text-xs text-rose-300" title={liveReject.map((r) => `${r.staffId} ${r.date}: ${r.reason}`).join("\n")}>
+                  ✕ edit not allowed ({liveReject.map((r) => r.reason).join(", ")})
                 </span>
               )}
             </div>
@@ -3412,8 +3529,8 @@ export function ScheduleGrid({
         </div>
       )}
 
-      {/* Auto-schedule review panel */}
-      {autoSuggestions && (
+      {/* Auto-schedule review panel (hidden in Live — suggestions are folded in) */}
+      {autoSuggestions && !liveMode && (
         <div data-print-hide className="px-6 py-3 bg-emerald-950/50 border-b border-emerald-800 shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
@@ -3655,8 +3772,11 @@ export function ScheduleGrid({
                     </span>
                   </td>
                   {visibleStaff.map((p) => {
-                    const a = assignmentMap.get(`${p.id}:${date}`);
                     const cellKey = `${p.id}:${date}`;
+                    // In Live mode the cell shows the in-browser re-solve, not the
+                    // saved assignment; isRipple flags cells the engine changed.
+                    const a = liveMode ? (liveDisplayMap.get(cellKey) ?? null) : assignmentMap.get(cellKey);
+                    const isRipple = liveMode && liveRippleSet.has(cellKey);
                     // Per-shift PRINT background tint (Settings → Shift Types → Print background).
                     // Carried as a --print-bg CSS var, consumed only by an @media print rule, so
                     // the on-screen cell is unchanged. null/undefined → no attribute, no tint.
@@ -3669,7 +3789,9 @@ export function ScheduleGrid({
                     const isSelected = selection.has(cellKey);
                     const isActiveCell = activeCol === p.id && isActiveRow;
                     const suggestion = suggestionMap.get(cellKey);
-                    const isSuggested = !!suggestion;
+                    // Live folds suggestions into its own grid, so the dashed
+                    // suggestion overlay is suppressed while Live is on.
+                    const isSuggested = !liveMode && !!suggestion;
                     const reqs = showRequests ? requestsByCell.get(cellKey) : undefined;
                     const reqSummary = reqs ? summarizeCellRequests(reqs, (id) => shiftTypeMap.get(id)?.code ?? id) : null;
                     const reqCls = reqSummary ? REQ_CAT_CLASSES[reqSummary.category] : null;
@@ -3709,6 +3831,7 @@ export function ScheduleGrid({
                           isDragTarget ? "ring-2 ring-inset ring-cyan-400 bg-cyan-900/20" : "",
                           isDragSrc ? "opacity-30" : "",
                           isSuggested && !a ? "bg-emerald-900/30" : "",
+                          isRipple ? "ring-2 ring-inset ring-amber-400/80 bg-amber-500/10" : "",
                           !a && !isSaving && !isSuggested ? "hover:bg-slate-700/30" : "",
                           isActiveCell ? (requestMode ? "ring-2 ring-inset ring-violet-400 z-[2]" : "ring-2 ring-inset ring-blue-400 z-[2]") : "",
                         ].join(" ")}
@@ -3731,7 +3854,7 @@ export function ScheduleGrid({
                       >
                         {a && !(isSuggested && shiftTypeMap.get(a.shiftTypeId)?.isOffShift && !a.isLocked) ? (
                           <div
-                            draggable={canEdit && !a.isLocked}
+                            draggable={canEdit && !a.isLocked && !liveMode}
                             onDragStart={(e) => handleDragStart(p.id, date, e)}
                             onDragEnd={handleDragEnd}
                             data-shift-code
@@ -3973,8 +4096,8 @@ export function ScheduleGrid({
             }
             onDeleteRequest={handleDeleteRequest}
             onSaveRequest={handleSaveRequests}
-            tab={requestMode ? "request" : "assign"}
-            onTabChange={(t) => { const on = t === "request"; if (on) setShowRequests(true); setRequestMode(on); }}
+            tab={liveMode ? "assign" : (requestMode ? "request" : "assign")}
+            onTabChange={(t) => { if (liveMode) return; const on = t === "request"; if (on) setShowRequests(true); setRequestMode(on); }}
             requestTargetCount={
               selectionCount > 1
                 ? groupCellsIntoTargets([...selection].map((k) => { const [staffId, date] = k.split(":"); return { staffId, date }; })).length

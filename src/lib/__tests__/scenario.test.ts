@@ -276,6 +276,28 @@ describe("applyScenario — quality delta & purity", () => {
     expect(out.qualityDelta).toBe(0);
   });
 
+  it("chains: re-solving from a prior outcome's grid preserves it (no-op)", () => {
+    // Live mode chains edits by feeding each outcome's grid back as the next
+    // baseline. Re-solving that grid with no new edit must reproduce it exactly —
+    // otherwise edits would drift on every interaction.
+    const baseline = DATES.map((d) => lockedOR("p1", d));
+    const out1 = applyScenario(
+      makeInput({ existingAssignments: baseline }),
+      [{ staffId: "p2", date: "2025-05-12", shiftTypeId: "st-or" }],
+      [],
+    );
+    expect(out1.applied).toBe(true);
+
+    const chained = makeInput({
+      existingAssignments: out1.grid.map((c) => ({ ...c, isLocked: false })),
+    });
+    const out2 = applyScenario(chained, [], []);
+    expect(out2.applied).toBe(true);
+    expect(out2.changes).toEqual([]);
+    expect(cellAt(out2.grid, "p2", "2025-05-12")).toBe("st-or");
+    for (const d of DATES) expect(cellAt(out2.grid, "p1", d)).toBe("st-or");
+  });
+
   it("does not mutate the caller's input", () => {
     const baseline = [lockedOR("p1", "2025-05-12")];
     const input = makeInput({ existingAssignments: baseline });
