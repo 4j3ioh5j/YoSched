@@ -895,6 +895,15 @@ export function ScheduleGrid({
     return s;
   }, [liveMode, liveOutcome]);
 
+  // In Live, the schedule-health computations (cell warnings, day staffing, PP-hours
+  // totals/colors, count columns) read the LIVE grid so breaches reflect the what-if;
+  // outside Live these ARE the saved assignment/suggestion maps, so normal behavior
+  // is unchanged. (Edit logic still reads assignmentMap — the SAVED state — for lock
+  // checks.) In Live the live grid already holds every cell, so no suggestion overlay.
+  const emptySuggestionMap = useRef(new Map<string, SuggestionEntry>()).current;
+  const effectiveAssignmentMap = (liveMode && liveOutcome) ? liveDisplayMap : assignmentMap;
+  const effectiveSuggestionMap = liveMode ? emptySuggestionMap : suggestionMap;
+
   // Reverse map for paste: UPPERCASE shift code → id (codes are unique). Lets a pasted
   // "ORC"/"x" resolve to a shift type without a server round-trip.
   const codeToId = useMemo(() => {
@@ -1032,8 +1041,8 @@ export function ScheduleGrid({
         while (cursor <= end) {
           const dateStr = toDateStr(cursor);
           const key = `${p.id}:${dateStr}`;
-          const a = assignmentMap.get(key);
-          const sug = !a ? suggestionMap.get(key) : null;
+          const a = effectiveAssignmentMap.get(key);
+          const sug = !a ? effectiveSuggestionMap.get(key) : null;
           const stId = a?.shiftTypeId ?? sug?.shiftTypeId;
           if (stId && shiftCountsTowardFte(stId)) {
             const dow = cursor.getDay();
@@ -1053,7 +1062,7 @@ export function ScheduleGrid({
       result.set(pp.startDate, staffHours);
     }
     return result;
-  }, [sortedPPs, visibleStaff, assignmentMap, suggestionMap, overrideMap, shiftTypeMap]);
+  }, [sortedPPs, visibleStaff, effectiveAssignmentMap, effectiveSuggestionMap, overrideMap, shiftTypeMap]);
 
   const followRuleMap = useMemo(() => buildFollowRuleMap(followRules ?? []), [followRules]);
 
@@ -1061,7 +1070,7 @@ export function ScheduleGrid({
     const map = new Map<string, Warning[]>();
     for (const date of dates) {
       for (const p of staff) {
-        const a = assignmentMap.get(`${p.id}:${date}`);
+        const a = effectiveAssignmentMap.get(`${p.id}:${date}`);
         if (!a) continue;
         const warnings = checkCellWarnings({
           staffId: p.id,
@@ -1069,7 +1078,7 @@ export function ScheduleGrid({
           shiftTypeId: a.shiftTypeId,
           staff: p,
           shiftTypeMap,
-          assignmentMap,
+          assignmentMap: effectiveAssignmentMap,
           allStaff: staff,
           holidaySet,
           staffingMins,
@@ -1082,7 +1091,7 @@ export function ScheduleGrid({
       }
     }
     return map;
-  }, [dates, staff, assignmentMap, shiftTypeMap, holidaySet, staffingMins, followRuleMap, approvedRequests]);
+  }, [dates, staff, effectiveAssignmentMap, shiftTypeMap, holidaySet, staffingMins, followRuleMap, approvedRequests]);
 
   // Compute per-day staffing warnings
   const dayWarnings = useMemo(() => {
@@ -1091,7 +1100,7 @@ export function ScheduleGrid({
       const warnings = checkDayStaffing({
         date,
         staff,
-        assignmentMap,
+        assignmentMap: effectiveAssignmentMap,
         shiftTypeMap,
         holidaySet,
         staffingMins,
@@ -1102,7 +1111,7 @@ export function ScheduleGrid({
       }
     }
     return map;
-  }, [dates, staff, assignmentMap, shiftTypeMap, holidaySet, staffingMins, staffingReqs]);
+  }, [dates, staff, effectiveAssignmentMap, shiftTypeMap, holidaySet, staffingMins, staffingReqs]);
 
   const columnCounts = useMemo(() => {
     return countColumns.map((col) => {
@@ -1112,8 +1121,8 @@ export function ScheduleGrid({
         let count = 0;
         for (const p of staff) {
           const key = `${p.id}:${date}`;
-          const a = assignmentMap.get(key);
-          const sug = !a ? suggestionMap.get(key) : null;
+          const a = effectiveAssignmentMap.get(key);
+          const sug = !a ? effectiveSuggestionMap.get(key) : null;
           const code = a?.code ?? sug?.code;
           if (code && codeSet.has(code)) count++;
         }
@@ -1121,7 +1130,7 @@ export function ScheduleGrid({
       }
       return counts;
     });
-  }, [dates, staff, assignmentMap, suggestionMap, countColumns]);
+  }, [dates, staff, effectiveAssignmentMap, effectiveSuggestionMap, countColumns]);
 
   // Shift types flagged for a dedicated column, in sort order. Each gets its own
   // column (left of the count columns) listing the initials of whoever covers
