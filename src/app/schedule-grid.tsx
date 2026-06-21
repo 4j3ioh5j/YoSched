@@ -6,6 +6,8 @@ import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } 
 import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
+import { applyScenario, type ScenarioOutcome } from "@/lib/scenario";
+import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { formatDate, formatDateCompact, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
@@ -183,6 +185,11 @@ type FairnessEntry = {
 
 type Props = {
   canEdit?: boolean;
+  // Live mode needs the engine input bundle, which requires schedule:auto AND
+  // requests:view (it serves raw request/availability data). Gate the entry point
+  // on the real permission so a schedule:edit-only group never sees a button that
+  // only 403s.
+  canLive?: boolean;
   staff: Staff[];
   assignments: AssignmentData[];
   shiftTypes: ShiftType[];
@@ -381,6 +388,7 @@ function ShiftChip({ st }: { st?: { code: string; color: string } }) {
 
 export function ScheduleGrid({
   canEdit = true,
+  canLive = false,
   staff,
   assignments: initialAssignments,
   shiftTypes,
@@ -515,6 +523,28 @@ export function ScheduleGrid({
   const [autoStats, setAutoStats] = useState<{ totalSlotsFilled: number; byStep: Record<string, number> } | null>(null);
   const [autoQuality, setAutoQuality] = useState<{ breakdown: { hardBreaches: number; ppHoursDeviation: number; requestsDenied: number; fairnessSpread: number } } | null>(null);
   const [autoLoading, setAutoLoading] = useState(false);
+
+  // ── "Live" mode (#231): interactive what-if scheduling ──
+  // S2 skeleton: enter fetches the engine input bundle once, runs a NO-OP
+  // constrained re-solve (applyScenario with no pins/frees) to prove the client
+  // engine reproduces the current grid, and wires Accept (existing PUT) / Cancel.
+  // Editing → ripple highlight is S3; rendering still flows through the saved
+  // grid + suggestion overlay for now.
+  const [liveMode, setLiveMode] = useState(false);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveOutcome, setLiveOutcome] = useState<ScenarioOutcome | null>(null);
+  // The fetched engine input with the current grid (saved DB ∪ previewed
+  // suggestions) as its baseline; the un-overlaid saved DB cells (for the Accept
+  // diff); and the sandbox undo/redo stacks (a SEPARATE stack from the persisted
+  // grid undo — populated in S3 when edits exist).
+  const liveInputRef = useRef<AutoScheduleInput | null>(null);
+  // The grid as it stood the instant Live was entered (key → shiftTypeId). Accept
+  // persists only cells that differ from THIS — never the engine's enter-time
+  // fills of empty cells (those are baked into the initial grid and the user never
+  // saw them), so Accept can't silently commit changes that weren't displayed.
+  const liveInitialGridRef = useRef<Map<string, string>>(new Map());
+  const liveUndoStack = useRef<ScenarioOutcome[]>([]);
+  const liveRedoStack = useRef<ScenarioOutcome[]>([]);
 
   type SuggestionEntry = NonNullable<typeof autoSuggestions>[0];
   const suggestionSet = useMemo(() => {
@@ -2852,6 +2882,111 @@ export function ScheduleGrid({
     }
   }
 
+  // Build the Live baseline engine input: the fetched bundle's saved DB
+  // assignments, overlaid with any currently-previewed (not-yet-applied) auto
+  // suggestions so Live operates on exactly what the scheduler sees.
+  function buildLiveInput(bundle: AutoScheduleInput): AutoScheduleInput {
+    const byKey = new Map<string, AutoScheduleInput["existingAssignments"][number]>();
+    for (const a of bundle.existingAssignments) byKey.set(`${a.staffId}:${a.date}`, a);
+    for (const s of autoSuggestions ?? []) {
+      byKey.set(`${s.staffId}:${s.date}`, {
+        staffId: s.staffId,
+        date: s.date,
+        shiftTypeId: s.shiftTypeId,
+        code: s.code,
+        isLocked: false,
+      });
+    }
+    return { ...bundle, existingAssignments: [...byKey.values()] };
+  }
+
+  async function enterLive() {
+    if (!dates.length) return;
+    setLiveLoading(true);
+    try {
+      const res = await fetch(`/api/auto-schedule/inputs?start=${dates[0]}&end=${dates[dates.length - 1]}`);
+      if (!res.ok) {
+        console.error("Live: failed to load engine inputs", res.status);
+        return;
+      }
+      const bundle: AutoScheduleInput = await res.json();
+      const liveInput = buildLiveInput(bundle);
+      liveInputRef.current = liveInput;
+      liveUndoStack.current = [];
+      liveRedoStack.current = [];
+
+      // No-op re-solve: with the whole baseline locked and nothing pinned/freed,
+      // the engine reproduces the current grid (a complete schedule ⇒ 0 ripple).
+      const outcome = applyScenario(liveInput, [], []);
+      // Snapshot the enter-time grid (incl. any engine fills of empty cells) as the
+      // Accept baseline — only later, user-driven divergence from this gets saved.
+      const initial = new Map<string, string>();
+      for (const c of outcome.grid) initial.set(`${c.staffId}:${c.date}`, c.shiftTypeId);
+      liveInitialGridRef.current = initial;
+      setLiveOutcome(outcome);
+      setLiveMode(true);
+    } catch (e) {
+      console.error("Live: enter failed", e);
+    } finally {
+      setLiveLoading(false);
+    }
+  }
+
+  function cancelLive() {
+    setLiveMode(false);
+    setLiveOutcome(null);
+    liveInputRef.current = null;
+    liveInitialGridRef.current = new Map();
+    liveUndoStack.current = [];
+    liveRedoStack.current = [];
+  }
+
+  async function acceptLive() {
+    const outcome = liveOutcome;
+    if (!outcome) { cancelLive(); return; }
+    // Persist ONLY cells that diverge from the enter-time grid — i.e. changes the
+    // user actually drove (and, in S3, saw). The engine's enter-time fills are in
+    // the initial snapshot, so they are NEVER committed here. (work→off is an OFF
+    // upsert, so no deletion path is needed.) In S2 (no edits) this is a no-op.
+    const initial = liveInitialGridRef.current;
+    const toApply = outcome.grid
+      .filter((c) => initial.get(`${c.staffId}:${c.date}`) !== c.shiftTypeId)
+      .map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId: c.shiftTypeId }));
+    if (toApply.length === 0) { cancelLive(); return; }
+    setLiveLoading(true);
+    try {
+      const res = await fetch("/api/auto-schedule", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suggestions: toApply }),
+      });
+      const data = await res.json();
+      const applied: AssignmentData[] = data.applied;
+      const undoOps: UndoOp[] = applied.map((a) => ({
+        staffId: a.staffId,
+        date: a.date,
+        prev: assignmentMap.get(`${a.staffId}:${a.date}`) ?? null,
+        next: a,
+      }));
+      setLocalAssignments((prev) => {
+        const keys = new Set(applied.map((a) => `${a.staffId}:${a.date}`));
+        return [...prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`)), ...applied];
+      });
+      applyRequestDelta({ requests: data.requestChanges });
+      pushUndo(undoOps);
+      // Clearing any previewed suggestions: they've been folded into the saved grid.
+      setAutoSuggestions(null);
+      setAutoWarnings([]);
+      setAutoStats(null);
+      setAutoQuality(null);
+    } catch (e) {
+      console.error("Live: accept failed", e);
+    } finally {
+      setLiveLoading(false);
+      cancelLive();
+    }
+  }
+
   async function clearAutoScheduled() {
     if (!dates.length) return;
     setAutoLoading(true);
@@ -3157,6 +3292,16 @@ export function ScheduleGrid({
               >
                 {autoLoading ? "Working..." : "Auto-Schedule"}
               </button>
+              {canLive && (
+                <button
+                  onClick={enterLive}
+                  disabled={liveLoading || liveMode}
+                  className="px-3 py-1 text-sm bg-violet-700 hover:bg-violet-600 disabled:opacity-50 rounded transition-colors text-violet-100 font-medium"
+                  title="Live what-if: edit any cell and the engine instantly re-solves the rest"
+                >
+                  {liveLoading ? "Loading…" : "Live"}
+                </button>
+              )}
               <button
                 onClick={handleUndo}
                 className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-400"
@@ -3212,6 +3357,60 @@ export function ScheduleGrid({
           </button>
         </div>
       </div>
+
+      {/* Live mode banner (#231). S2: parity readout + Accept/Cancel + sandbox
+          revert/advance arrows (disabled until edits exist in S3). */}
+      {liveMode && liveOutcome && (
+        <div data-print-hide className="px-6 py-3 bg-violet-950/50 border-b border-violet-800 shrink-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <span className="text-sm font-semibold text-violet-200">Live what-if</span>
+              <span className="text-xs text-violet-300/80">
+                {liveOutcome.changes.length === 0
+                  ? "engine re-solve matches the current grid (0 changes)"
+                  : `${liveOutcome.changes.length} cell${liveOutcome.changes.length !== 1 ? "s" : ""} would change`}
+              </span>
+              {liveOutcome.softWarnings.length > 0 && (
+                <span className="text-xs text-amber-400" title={liveOutcome.softWarnings.join("\n")}>
+                  {liveOutcome.softWarnings.length} warning{liveOutcome.softWarnings.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { const o = liveUndoStack.current.pop(); if (o) { liveRedoStack.current.push(liveOutcome); setLiveOutcome(o); } }}
+                disabled={liveUndoStack.current.length === 0}
+                className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded transition-colors text-slate-300"
+                title="Revert (undo within this Live session)"
+              >
+                ↩
+              </button>
+              <button
+                onClick={() => { const o = liveRedoStack.current.pop(); if (o) { liveUndoStack.current.push(liveOutcome); setLiveOutcome(o); } }}
+                disabled={liveRedoStack.current.length === 0}
+                className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded transition-colors text-slate-300"
+                title="Advance (redo within this Live session)"
+              >
+                ↪
+              </button>
+              <button
+                onClick={acceptLive}
+                disabled={liveLoading}
+                className="px-3 py-1 text-sm bg-violet-600 hover:bg-violet-500 disabled:opacity-50 rounded transition-colors text-white font-medium"
+              >
+                Accept
+              </button>
+              <button
+                onClick={cancelLive}
+                disabled={liveLoading}
+                className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded transition-colors text-slate-300"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Auto-schedule review panel */}
       {autoSuggestions && (

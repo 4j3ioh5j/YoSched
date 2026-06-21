@@ -20,6 +20,10 @@ export default async function Home() {
   // Approved requests are honored as real shifts (the published schedule) and stay
   // visible to all — they're not "viewing a request" any more than seeing a shift.
   const canViewAllRequests = permissions!.includes("requests:view");
+  // Live what-if mode fetches the engine input bundle, which requires schedule:auto
+  // AND requests:view (it serves raw request/availability data) — gate the button
+  // on the real permission so it never shows a 403-only control.
+  const canLive = permissions!.includes("schedule:auto") && canViewAllRequests;
   const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, printColumnRules, printAggregateColumns, currentVersions, scheduleRequests, mutedAlerts] =
     await Promise.all([
       prisma.staff.findMany({
@@ -118,6 +122,7 @@ export default async function Home() {
 
       <ScheduleGrid
         canEdit={canEdit}
+        canLive={canLive}
         staff={staff.map((p) => ({
           id: p.id,
           initials: p.initials,
