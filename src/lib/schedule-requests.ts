@@ -199,6 +199,10 @@ export type ScheduleRequestData = {
   // treated as a human decision with no timestamp (queues last).
   autoApproved?: boolean; // approval derived from a satisfying assignment (auto-revertible). human-approved = approved && !autoApproved
   receivedAt?: string | null; // ISO timestamp the request came in; first-come ordering
+  // Day-off fulfillment order (slice 2-3 engine): ordered ORC_ADJACENT | ORL_PAIR |
+  // LEAVE:<shiftTypeId> the engine tries top-down as a soft, lowest-priority bias.
+  // Absent/empty ⇒ no preference. See the "Day-off fulfillment strategies" section.
+  offStrategyOrder?: string[];
 };
 
 // One request that contributed to a fold, plus the strength it was applied at AFTER

@@ -2,7 +2,7 @@ import { computeFairness, type FairnessSummary, type EquityFactor } from "./fair
 import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule, type PayPeriodRange } from "./availability";
 import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
 import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, isAtRollingMaximum, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
-import { foldRequestsForDate, detectRequestConflicts, coversDate, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode, type RequestConflictPolicy } from "./schedule-requests";
+import { foldRequestsForDate, detectRequestConflicts, coversDate, parseOffStrategyOrder, LEAVE_STRATEGY_PREFIX, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode, type RequestConflictPolicy } from "./schedule-requests";
 import { matchesWhen, standingToWhen } from "./recurrence";
 
 export type ScheduleStaff = {
@@ -503,6 +503,69 @@ export function autoSchedule({
     return folded;
   }
 
+  // ── Day-off fulfillment strategies (slice 2: hold the day + ORC_ADJACENT) ──
+  // A "day-off-strategy request" is a PURE day-off ask carrying a non-empty
+  // offStrategyOrder: kind OFF, or a REQUEST_SHIFT whose ONLY shift is the off
+  // shift (the staff "day off" path). A mixed Off-OR-work REQUEST_SHIFT is NOT one
+  // — it's a flexible OR ask and gets no strategy treatment. The order is honored
+  // as a soft, lowest-priority bias; LEAVE/ORL_PAIR fulfillment lands in slice 3.
+  const offShiftId = offShift?.id ?? null;
+
+  function pureOffStrategyOrder(r: ScheduleRequestData): string[] {
+    const order = parseOffStrategyOrder(r.offStrategyOrder);
+    if (order.length === 0) return [];
+    const isPureOff =
+      r.kind === "OFF" ||
+      (r.kind === "REQUEST_SHIFT" && offShiftId !== null && r.shiftTypeIds.length === 1 && r.shiftTypeIds[0] === offShiftId);
+    return isPureOff ? order : [];
+  }
+
+  // Active given the pending mode (mirrors fold's status gate): approved always;
+  // pending only when the mode honors pending at all ("soft"/"full").
+  function strategyRequestActive(r: ScheduleRequestData): boolean {
+    if (r.status === "approved") return true;
+    if (r.status === "pending") return pendingMode !== "off";
+    return false;
+  }
+
+  // EFFECTIVE-hard day-off hold on (staff, date): approved-hard, or pending-hard only
+  // under "full" mode (mirrors foldRequestsForDate's pending→soft downgrade — pending
+  // under "soft" does NOT hold). Returns the order when a hold applies, else null.
+  function heldDayOffOrder(staffId: string, date: string): string[] | null {
+    if (requestList.length === 0) return null;
+    for (const r of requestList) {
+      if (r.staffId !== staffId || !coversDate(r, date)) continue;
+      if (!strategyRequestActive(r) || r.strength !== "hard") continue;
+      if (r.status === "pending" && pendingMode === "soft") continue; // downgraded → soft
+      if (pureOffStrategyOrder(r).length > 0) return pureOffStrategyOrder(r);
+    }
+    return null;
+  }
+
+  // Does the staff prefer ORC-the-day-before to free an off on `date`? True when an
+  // active pure-off request covering date ranks ORC_ADJACENT before any LEAVE token.
+  // Strength-agnostic — it's only a soft tie-break for who fills an ORC slot.
+  function prefersOrcAdjacentOff(staffId: string, date: string): boolean {
+    if (requestList.length === 0) return false;
+    for (const r of requestList) {
+      if (r.staffId !== staffId || !coversDate(r, date)) continue;
+      if (!strategyRequestActive(r)) continue;
+      const order = pureOffStrategyOrder(r);
+      const orcIdx = order.indexOf("ORC_ADJACENT");
+      if (orcIdx === -1) continue;
+      const leaveIdx = order.findIndex((t) => t.startsWith(LEAVE_STRATEGY_PREFIX));
+      if (leaveIdx === -1 || orcIdx < leaveIdx) return true;
+    }
+    return false;
+  }
+
+  // An "ORC-like" shift triggers a post-call day off: it has an each_day required
+  // follower that is itself an off shift (settings-driven; no hardcoded codes).
+  function isPostCallSource(st: ScheduleShiftType): boolean {
+    const spec = followerBySource.get(st.id);
+    return !!spec && spec.scope === "each_day" && spec.follower.isOffShift;
+  }
+
   // A working shift is anything that isn't an off-shift or a leave shift. A hard
   // OFF request forbids working shifts but still allows OFF / leave placement.
   function requestBlocksWork(staffId: string, date: string, st: ScheduleShiftType): boolean {
@@ -510,6 +573,12 @@ export function autoSchedule({
     const folded = foldFor(staffId, date);
     if (folded.forbidWorking && !st.isOffShift && !st.isLeave) return true;
     if (folded.forbiddenShiftIds.has(st.id)) return true;
+    // An effective-hard PURE-off day-off-strategy request forbids work on its date —
+    // the same gate a kind:"OFF" request gets. STEP 0b pre-places the off shift, but
+    // that cell is unlocked and any later isAvailable-gated work placement (staffing
+    // fill, FTE fill, reconciliation re-home) would otherwise overwrite it; this hold
+    // keeps the requested day genuinely off so the strategies act on a real day off.
+    if (!st.isOffShift && !st.isLeave && heldDayOffOrder(staffId, date)) return true;
     return false;
   }
 
@@ -523,6 +592,10 @@ export function autoSchedule({
     if (folded.preferredShiftIds.has(st.id)) bias += 1;
     if (folded.avoidedShiftIds.has(st.id)) bias -= 1;
     if (folded.avoidWorking && !st.isOffShift && !st.isLeave) bias -= 1;
+    // ORC_ADJACENT: nudge an ORC-like (post-call) shift toward a staffer who wants
+    // the NEXT day off via post-call and ranks it ahead of burning leave. Pure
+    // tie-break (same ±1 tier) — it never outranks any hard/soft staffing need.
+    if (isPostCallSource(st) && prefersOrcAdjacentOff(staffId, nextDate(date))) bias += 1;
     return bias;
   }
 
@@ -690,6 +763,11 @@ export function autoSchedule({
       if (isWorkFollower) warnings.push(`${member.initials}: could not place required ${spec.follower.code} after ${sourceShift.code} on ${next} (${why})`);
     };
     if (isAssigned(staffId, next)) { warn("cell already filled"); return; }
+    // A WORK follower must not overwrite a day the staff holds off via an effective-hard
+    // day-off-strategy request. This path assigns directly (it never flows through
+    // isAvailable), so the requestBlocksWork hold wouldn't catch it — check here too.
+    // An off-shift follower is fine (the day is meant to be off anyway).
+    if (isWorkFollower && heldDayOffOrder(staffId, next)) { warn("staff requested this day off"); return; }
     const avail = evaluateAvailability(member.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
     if (!avail.available) { warn("staff unavailable"); return; }
     if (holidaySet.has(next) && isWorkFollower) { warn("holiday"); return; }

@@ -98,10 +98,11 @@ export function MyRequestsPage({
   const awayChoices = useMemo(() => awayShiftChoices(shiftTypes, isRequest), [shiftTypes, isRequest]);
   // The queue feedback only makes sense when this is an "away" ask (off/leave picked).
   const requestingAway = isRequest && shiftTypeIds.some(isAwayId);
-  // The day-off fulfillment-order widget shows only when the staff is asking for
-  // the day off itself (selecting the Off shift in a Request) — it's about HOW to
-  // free that day. Picking a specific leave type directly is a plain leave request.
-  const requestingDayOff = isRequest && offShiftId !== null && shiftTypeIds.includes(offShiftId);
+  // The day-off fulfillment-order widget shows only for a PURE day-off ask — the Off
+  // shift is the SOLE selection. It's about HOW to free that day. Adding any other
+  // chip makes it a flexible "Off OR work" request (no firm day off), so the widget
+  // hides and no order is sent. Picking a leave type directly is a plain leave request.
+  const requestingDayOff = isRequest && offShiftId !== null && shiftTypeIds.length === 1 && shiftTypeIds[0] === offShiftId;
 
   // Live leave-queue feedback: how many others are already away over the chosen
   // range, and where this staff would stand. Debounced; counts only (the API

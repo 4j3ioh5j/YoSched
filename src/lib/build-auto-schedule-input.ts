@@ -7,7 +7,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
-import { parsePendingRequestMode, parseRequestConflictPolicy, type ScheduleRequestData } from "@/lib/schedule-requests";
+import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, type ScheduleRequestData } from "@/lib/schedule-requests";
 import { effectiveTargetsForStaff, type DepartmentShiftTarget } from "@/lib/department-targets";
 
 /**
@@ -352,6 +352,9 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       status: r.status as ScheduleRequestData["status"],
       autoApproved: r.autoApproved,
       receivedAt: r.receivedAt ? r.receivedAt.toISOString() : null,
+      // Lenient parse: drops unknown/dup tokens (stale leave shifts can't be re-checked
+      // here without the eligibility set, but the engine only acts on known tokens).
+      offStrategyOrder: parseOffStrategyOrder(r.offStrategyOrder),
     })),
     requiredFollowers: requiredFollowers.map((r) => ({
       sourceShiftId: r.sourceShiftId,

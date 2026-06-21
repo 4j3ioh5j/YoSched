@@ -2429,3 +2429,103 @@ describe("autoScheduleCandidates (Slice 4b)", () => {
     expect(cands.length).toBe(1);
   });
 });
+
+describe("day-off fulfillment strategies (slice 2: hold + ORC_ADJACENT)", () => {
+  const ORC2 = makeShift("st-orc", "ORC", { schedulePriority: 2, autoSchedulable: true });
+  // weekdayDates("2025-05-12",5) = Mon..Fri; X-1 = 05-13 (Tue, dayKey 2), X = 05-14 (Wed).
+  const X = "2025-05-14";
+  const XPREV = "2025-05-13";
+
+  function dayOffReq(order: string[], opts: Partial<ScheduleRequestData> = {}): ScheduleRequestData {
+    return {
+      id: "r1", staffId: "p1", startDate: X, endDate: X,
+      kind: "REQUEST_SHIFT", shiftTypeIds: ["st-off"], leaveShiftTypeId: null,
+      strength: "hard", status: "approved", offStrategyOrder: order, ...opts,
+    };
+  }
+  const cellOf = (r: AutoScheduleResult, staffId: string, date: string) =>
+    r.suggestions.find((s) => s.staffId === staffId && s.date === date);
+  const orcStaffOn = (r: AutoScheduleResult, date: string) =>
+    r.suggestions.find((s) => s.date === date && s.code === "ORC")?.staffId;
+
+  it("ORC_ADJACENT prefers the requester for the ORC slot the day before, freeing the day", () => {
+    const r = runSchedule({
+      staff: [
+        makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
+        makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
+      ],
+      shiftTypes: [OR, ORC2, OFF],
+      staffingRequirements: [{ shiftCode: "ORC", dayKey: "2", minCount: 1 }],
+      requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false }],
+      scheduleRequests: [dayOffReq(["ORC_ADJACENT"])],
+    });
+    expect(orcStaffOn(r, XPREV)).toBe("p1"); // soft bias won the single ORC slot
+    expect(cellOf(r, "p1", X)?.code).toBe("X"); // the requested day is off (post-call covered)
+  });
+
+  // Precondition (existing behavior, documented): STEP 0b pre-places the off shift for
+  // an effective-hard pure-off request and it holds — so the strategies build on a day
+  // that is genuinely off without needing a separate work-forbid.
+  it("a hard pure-off request leaves the requested day off", () => {
+    const r = runSchedule({
+      staff: [makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-off"] })],
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
+      scheduleRequests: [dayOffReq(["ORC_ADJACENT"])],
+    });
+    expect(cellOf(r, "p1", X)?.code).toBe("X");
+  });
+
+  // Pure-off gate: a mixed Off-OR-work REQUEST_SHIFT is a flexible ask, not a firm day
+  // off, so it gets NO ORC bias (ORC distribution matches the no-request baseline) and
+  // the staff works the day.
+  it("a mixed Off+work REQUEST_SHIFT gets no ORC bias and is not a held day", () => {
+    const base = {
+      staff: [
+        makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
+        makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
+      ],
+      shiftTypes: [OR, ORC2, OFF],
+      staffingRequirements: [{ shiftCode: "ORC", dayKey: "2", minCount: 1 }],
+      requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false }],
+    };
+    const baseline = orcStaffOn(runSchedule(base), XPREV);
+    const mixed = runSchedule({ ...base, scheduleRequests: [dayOffReq(["ORC_ADJACENT"], { shiftTypeIds: ["st-off", "st-or"] })] });
+    expect(orcStaffOn(mixed, XPREV)).toBe(baseline); // pure-off gate → bias did not fire
+    expect(cellOf(mixed, "p1", X)?.code).not.toBe("X"); // flexible OR ask → works the day
+  });
+
+  it("ORC bias does NOT fire when LEAVE is ranked before ORC_ADJACENT", () => {
+    const base = {
+      staff: [
+        makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
+        makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
+      ],
+      shiftTypes: [OR, ORC2, OFF],
+      staffingRequirements: [{ shiftCode: "ORC", dayKey: "2", minCount: 1 }],
+      requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false }],
+    };
+    const baseline = orcStaffOn(runSchedule(base), XPREV);
+    const orcFirst = orcStaffOn(runSchedule({ ...base, scheduleRequests: [dayOffReq(["ORC_ADJACENT"])] }), XPREV);
+    const leaveFirst = orcStaffOn(runSchedule({ ...base, scheduleRequests: [dayOffReq(["LEAVE:al", "ORC_ADJACENT"])] }), XPREV);
+    expect(orcFirst).toBe("p1");       // bias fired → requester took the ORC
+    expect(leaveFirst).toBe(baseline); // LEAVE ranked first → bias inert → same as no request
+  });
+
+  // A required WORK follower assigns directly (not via isAvailable), so it could
+  // overwrite a held-off day. With the work shift required the day BEFORE the
+  // requested off, its each_day work follower would land on the off day — the guard
+  // in placeFollowerAfter must skip it so the requested day stays off.
+  it("a required work follower does not overwrite a held pure-off day", () => {
+    const CALL = makeShift("st-call", "CALL", { schedulePriority: 1, autoSchedulable: true });
+    const ADM = makeShift("st-adm", "ADM", { autoSchedulable: true }); // no priority → follower-only
+    const r = runSchedule({
+      staff: [makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-call", "st-adm", "st-off"] })],
+      shiftTypes: [CALL, ADM, OFF],
+      staffingRequirements: [{ shiftCode: "CALL", dayKey: "2", minCount: 1 }], // CALL on X-1 (Tue)
+      requiredFollowers: [{ sourceShiftId: "st-call", followerShiftId: "st-adm", scope: "each_day", countsTowardTargets: false }],
+      scheduleRequests: [dayOffReq(["LEAVE:al"])], // pure-off hard request on X (Wed)
+    });
+    expect(cellOf(r, "p1", XPREV)?.code).toBe("CALL"); // works the call the day before
+    expect(cellOf(r, "p1", X)?.code).toBe("X"); // ADM work-follower skipped → day stays off
+  });
+});
