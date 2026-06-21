@@ -9,18 +9,19 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Other open items
 
-- [ ] **Day-off fulfillment-strategy ordering (My Requests)** — let staff rank *how* a requested day
-  off is produced, to conserve their leave pool. A day off is an outcome manufacturable several ways:
-  `ORC_ADJACENT` (ORC the day before → post-call off, free), `ORL_PAIR` (2 ORLs anywhere in the PP →
-  frees one 8h day, placeable on the requested date, free), and one-to-many ranked specific leave
-  types (`LEAVE:<shiftTypeId>`, burns the pool). Engine-aware (it tries the order top-down, stops at
-  first feasible) but every strategy is a **soft hint at the lowest objective priority** — never
-  disrupts coverage, scheduler can override. Order = department default + per-user override (settings);
-  default ships `ORC_ADJACENT → ORL_PAIR → leave types`. 3 slices: (1) schema `offStrategyOrder
-  String[]` + settings + `/my-requests` reorder UI + scheduler-facing display; (2) engine LEAVE +
-  ORC_ADJACENT; (3) engine ORL_PAIR (hours-math, touches the 3 hour-computation sites). Separate cheap
-  win surfaced same convo: receipt "Reference" = request cuid PK, persisted but not lookup-able — add
-  `r.id` to the admin `/requests` search haystack.
+- [ ] **Day-off fulfillment-strategy ordering — engine (slices 2-3)** — let staff rank *how* a requested
+  day off is produced, to conserve their leave pool: `ORC_ADJACENT` (ORC the day before → post-call off,
+  free), `ORL_PAIR` (2 ORLs anywhere in the PP → frees one 8h day, free), and one-to-many ranked leave
+  types (`LEAVE:<shiftTypeId>`, burns the pool). Soft hints at the **lowest objective priority** — never
+  disrupts coverage, scheduler can override. **Slice 1a SHIPPED** (`c3af34f`): schema `offStrategyOrder`
+  cols, validators, `/my-requests` reorder widget (shows when "the day off" picked), Settings dept-default
+  editor, `/requests` display, undo/restore preservation. **Remaining:** slice 2 = engine LEAVE +
+  ORC_ADJACENT; slice 3 = engine ORL_PAIR (hours-math, touches the 3 hour-computation sites). Slice-2
+  follow-up (Codex #1186): the restore route should pass a `validLeaveShiftIds` set to
+  `parseOffStrategyOrder` so a crafted `schedule:edit` restore can't persist a stale `LEAVE:<id>`.
+- [ ] **Make the request "Reference" lookup-able** — receipt/email "Reference" = the request cuid PK,
+  persisted but not searchable anywhere. Cheap win: add `r.id` to the admin `/requests` search haystack
+  (one line). Consider a short human-friendly `referenceCode` only if staff read it aloud.
 - [ ] **Multi-cell drag / batch in all modes** — dragging a *selection* of cells as a group does not
   exist in either normal or Live mode (base drag is single-cell). Batch via picker/keyboard already
   works in both modes; this adds group DRAG. Open design questions first: offset axis (shift dates vs
