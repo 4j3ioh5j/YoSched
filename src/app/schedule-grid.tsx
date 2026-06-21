@@ -2618,7 +2618,7 @@ export function ScheduleGrid({
       setSelectionAnchor(null);
       await saveRequestMarksForCells(cells, marks);
     },
-    [picker, selection, saveRequestMarksForCells],
+    [picker, selection, saveRequestMarksForCells, liveMode],
   );
 
   // Keyboard request entry (request mode): apply one keystroke's intent to the
