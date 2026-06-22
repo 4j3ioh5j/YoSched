@@ -40,6 +40,13 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 - [ ] **Multi-editor coordination — Slice 3: presence** — `SchedulePresence` table + ~5s heartbeat poll
   (TTL-reaped); page banner of active editors + per-cell focus outline. Advisory only. (Slices 1 & 2 —
   focus-refresh + optimistic conflict detection — already shipped.) See handoffs #152–#155.
+- [ ] **Cell lock toggle (persist `isLocked`)** — add a user-facing per-cell lock/unlock control that
+  writes `Assignment.isLocked` to the DB (currently nothing ever sets it true — the 🔒/🔓 in the cell
+  tooltip is read-only, and the lock machinery is plumbed through the engine / Clear-Auto / Live but
+  dormant). Opt-in pin: a locked cell is held fixed across auto-runs and rejected by edit/delete/swap
+  until unlocked — works for *auto* cells too, not just manual. Needs a lock API (PATCH), grid affordance,
+  and an unlock path. Complements the manual-cell protection shipped this session (manual cells are
+  already safe by default; this lets you additionally freeze engine-placed cells).
 
 ---
 

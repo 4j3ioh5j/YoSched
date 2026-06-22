@@ -266,6 +266,7 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       shiftTypeId: a.shiftTypeId,
       code: shiftCodeMap.get(a.shiftTypeId) ?? "?",
       isLocked: a.isLocked,
+      source: a.source,
     })),
     payPeriods: payPeriods.map((pp) => ({
       startDate: pp.startDate.toISOString().split("T")[0],

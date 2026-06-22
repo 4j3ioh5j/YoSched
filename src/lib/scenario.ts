@@ -307,6 +307,9 @@ export function freesForScope(
   const frees: ScenarioFree[] = [];
   for (const a of input.existingAssignments) {
     const k = keyOf(a.staffId, a.date);
+    // Never free a hand-placed cell: the engine compensates by reshuffling its
+    // own discretionary fills, not by undoing the user's manual assignments.
+    if (a.source === "manual") continue;
     if (!a.isLocked && !pinned.has(k) && inScope(a.date)) frees.push({ staffId: a.staffId, date: a.date });
   }
   return frees;

@@ -47,6 +47,11 @@ export type ScheduleAssignment = {
   shiftTypeId: string;
   code: string;
   isLocked: boolean;
+  // Provenance of the cell: "manual" (typed by a human), "auto" (engine-placed),
+  // "imported", "request". The engine treats a hand-placed cell as fixed — it is
+  // never overwritten, even when it's an unlocked day-off ("X"). Undefined is
+  // treated as non-manual (fillable) so older callers/tests keep prior behavior.
+  source?: string;
 };
 
 // A required follower (settings-driven): after `sourceShift`, auto-place
@@ -611,12 +616,13 @@ export function autoSchedule({
   // loaded from existingAssignments). The hour-balancing repair (STEP 3b) reads
   // it to swap only scheduler-placed coverage/fill cells, never authoritative
   // placements (leave, standing commitments, honored requests, followers).
-  const grid = new Map<string, { shiftTypeId: string; code: string; locked: boolean; noCount?: boolean; step?: string }>();
+  const grid = new Map<string, { shiftTypeId: string; code: string; locked: boolean; noCount?: boolean; step?: string; source?: string }>();
   for (const a of existingAssignments) {
     grid.set(`${a.staffId}:${a.date}`, {
       shiftTypeId: a.shiftTypeId,
       code: a.code,
       locked: a.isLocked,
+      source: a.source,
     });
   }
 
@@ -675,16 +681,25 @@ export function autoSchedule({
     equityFactors,
   });
 
+  // An unlocked off-shift cell ("X") is normally treated as an empty slot the
+  // engine may fill. EXCEPTION: a cell a human placed by hand (source "manual")
+  // is fixed — the autoscheduler must never overwrite a manual assignment, even
+  // a manual day-off. Auto/imported/engine-placed off cells stay fillable;
+  // request-backed days off are held separately via requestBlocksWork().
+  function isFillableOffCell(cell: { shiftTypeId: string; locked: boolean; source?: string }): boolean {
+    return !!offShift && cell.shiftTypeId === offShift.id && !cell.locked && cell.source !== "manual";
+  }
+
   function getCell(staffId: string, date: string) {
     const cell = grid.get(`${staffId}:${date}`);
-    if (cell && offShift && cell.shiftTypeId === offShift.id && !cell.locked) return undefined;
+    if (cell && isFillableOffCell(cell)) return undefined;
     return cell;
   }
 
   function isAssigned(staffId: string, date: string): boolean {
     const cell = grid.get(`${staffId}:${date}`);
     if (!cell) return false;
-    if (offShift && cell.shiftTypeId === offShift.id && !cell.locked) return false;
+    if (isFillableOffCell(cell)) return false;
     return true;
   }
 
@@ -733,7 +748,7 @@ export function autoSchedule({
   ) {
     const key = `${staffId}:${date}`;
     const existing = grid.get(key);
-    if (existing && !(offShift && existing.shiftTypeId === offShift.id && !existing.locked)) return;
+    if (existing && !isFillableOffCell(existing)) return;
     grid.set(key, { shiftTypeId: shiftType.id, code: shiftType.code, locked: false, noCount, step });
     suggestions.push({
       staffId,

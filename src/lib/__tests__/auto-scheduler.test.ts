@@ -381,6 +381,40 @@ describe("autoSchedule", () => {
       );
       expect(p1Mon).toHaveLength(0);
     });
+
+    // The autoscheduler must never overwrite a hand-placed cell — including a
+    // manual day-off ("X"). Without source-awareness the engine treats an
+    // unlocked off-shift as an empty slot and fills it; source "manual" pins it.
+    it("does not overwrite a manually-placed day off (unlocked off-shift)", () => {
+      const result = runSchedule({
+        staff: [makeStaff("p1", "AB")],
+        staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }], // Monday demand
+        existingAssignments: [
+          { staffId: "p1", date: "2025-05-12", shiftTypeId: "st-off", code: "X", isLocked: false, source: "manual" },
+        ],
+      });
+      const p1MonWork = result.suggestions.filter(
+        (s) => s.staffId === "p1" && s.date === "2025-05-12" && s.shiftTypeId !== "st-off"
+      );
+      expect(p1MonWork).toHaveLength(0);
+    });
+
+    // Scoping guard: the protection is limited to source "manual". An unlocked
+    // off cell that is auto/engine-placed (or has no source) stays fillable, so
+    // Clear-Auto re-runs and FTE fills keep their existing behavior.
+    it("still fills an unlocked off cell that is not manual", () => {
+      const result = runSchedule({
+        staff: [makeStaff("p1", "AB")],
+        staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }], // Monday demand
+        existingAssignments: [
+          { staffId: "p1", date: "2025-05-12", shiftTypeId: "st-off", code: "X", isLocked: false, source: "auto" },
+        ],
+      });
+      const p1MonOR = result.suggestions.filter(
+        (s) => s.staffId === "p1" && s.date === "2025-05-12" && s.shiftTypeId === "st-or"
+      );
+      expect(p1MonOR.length).toBeGreaterThan(0);
+    });
   });
 
   describe("follow rules integration", () => {

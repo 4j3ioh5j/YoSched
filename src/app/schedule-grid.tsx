@@ -3066,7 +3066,14 @@ export function ScheduleGrid({
       // Re-solve base = the complete enter-time grid, with true lock flags carried
       // from the bundle (engine-filled cells are unlocked/discretionary).
       const lockedKeys = new Set<string>();
-      for (const a of liveInput.existingAssignments) if (a.isLocked) lockedKeys.add(`${a.staffId}:${a.date}`);
+      // Carry the saved cells' provenance so Live re-solves keep manual cells
+      // fixed (freesForScope never frees source "manual"); engine-filled empty
+      // cells aren't in the map and stay discretionary (undefined source).
+      const sourceByKey = new Map<string, string | undefined>();
+      for (const a of liveInput.existingAssignments) {
+        if (a.isLocked) lockedKeys.add(`${a.staffId}:${a.date}`);
+        sourceByKey.set(`${a.staffId}:${a.date}`, a.source);
+      }
       liveBaseInputRef.current = {
         ...liveInput,
         existingAssignments: outcome.grid.map((c) => ({
@@ -3075,6 +3082,7 @@ export function ScheduleGrid({
           shiftTypeId: c.shiftTypeId,
           code: c.code,
           isLocked: lockedKeys.has(`${c.staffId}:${c.date}`),
+          source: sourceByKey.get(`${c.staffId}:${c.date}`),
         })),
       };
       setLiveReject([]);

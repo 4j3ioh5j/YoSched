@@ -411,6 +411,20 @@ describe("freesForScope — ripple scope → freed cells (Auto-generate)", () =>
     expect(frees.has("p2:2025-05-12")).toBe(false); // locked
   });
 
+  it("never frees a manual cell — even unlocked and in scope", () => {
+    // A hand-placed cell (source "manual") stays fixed during a Live re-solve;
+    // the engine compensates for an edit by reshuffling only its own auto fills.
+    const existing = [
+      { staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or", code: "OR", isLocked: false }, // the edit (pinned)
+      { staffId: "p1", date: "2025-05-13", shiftTypeId: "st-or", code: "OR", isLocked: false, source: "manual" },
+      { staffId: "p1", date: "2025-05-14", shiftTypeId: "st-or", code: "OR", isLocked: false, source: "auto" },
+    ];
+    const input = makeInput({ existingAssignments: existing });
+    const frees = keysOf(freesForScope(input, new Set(["p1:2025-05-12"]), new Set(["2025-05-12"]), "range"));
+    expect(frees.has("p1:2025-05-13")).toBe(false); // manual → never freed
+    expect(frees.has("p1:2025-05-14")).toBe(true);  // auto → discretionary, freed
+  });
+
   it("day scope frees only the touched date; pp scope frees the touched pay period", () => {
     const input = makeInput({ existingAssignments: filled() });
     const touched = new Set(["2025-05-12"]);
