@@ -2330,7 +2330,9 @@ export function ScheduleGrid({
       // (it ripples like any other edit) instead of persisting.
       if (liveModeRef.current) {
         const ok = liveEditRef.current(sets.map((s) => ({ staffId: s.staffId, date: s.date, shiftTypeId: s.shiftTypeId })), []);
-        setPasteToast(ok ? pasteSummary(sets.length, resolution) : "Paste not applied — see the Live banner.");
+        // On failure liveEdit already raised a specific rejection toast (who/shift/day);
+        // only announce the success summary here so we don't overwrite it.
+        if (ok) setPasteToast(pasteSummary(sets.length, resolution));
         return;
       }
 
@@ -2592,12 +2594,17 @@ export function ScheduleGrid({
     // Live mode: clearing a cell FREES it (the engine re-solves the hole) — never
     // a DB delete. Frees route through the what-if engine like every other edit.
     if (liveMode) {
-      const frees: ScenarioFree[] = [];
+      const candidates: ScenarioFree[] = [];
       if (!target && selection.size > 0) {
-        for (const key of selection) { const [pid, d] = key.split(":"); frees.push({ staffId: pid, date: d }); }
+        for (const key of selection) { const [pid, d] = key.split(":"); candidates.push({ staffId: pid, date: d }); }
       } else if (anchor) {
-        frees.push(anchor);
+        candidates.push(anchor);
       }
+      // Only free cells that actually hold a shift in the live grid. Clearing an
+      // already-empty cell removes nothing, yet "touching" its date would still
+      // trigger a full pay-period re-solve — a confusing amber ripple over cells the
+      // user never edited (e.g. pressing Delete on a day a staffer can't work).
+      const frees = candidates.filter((c) => liveDisplayMap.has(`${c.staffId}:${c.date}`));
       setPicker(null);
       setSelection(new Set());
       setSelectionAnchor(null);
@@ -2669,7 +2676,7 @@ export function ScheduleGrid({
     } finally {
       setSaving(null);
     }
-  }, [picker, assignmentMap, selection, liveMode, liveEdit]);
+  }, [picker, assignmentMap, selection, liveMode, liveEdit, liveDisplayMap]);
   useEffect(() => { clearRef.current = handleClear; }, [handleClear]);
 
   const closePicker = useCallback(() => {
@@ -3160,6 +3167,23 @@ export function ScheduleGrid({
     return [...pinsMap].map(([k, shiftTypeId]) => ({ ...pinKeyParts(k), shiftTypeId }));
   }
 
+  // Human-readable reason an edit was refused, for the toast. A refused keystroke
+  // changes nothing on the grid, so without this it looked like the key did nothing
+  // (the real cause: the staff is ineligible/unavailable for that shift on that day).
+  function describeRejection(rejected: ScenarioPinRejection[]): string {
+    const r = rejected[0];
+    const who = staffMap.get(r.staffId)?.initials ?? "Staff";
+    const code = shiftTypeMap.get(r.shiftTypeId)?.code ?? "that shift";
+    const day = formatDateCompact(parseDate(r.date), dateFormat);
+    const why =
+      r.reason === "ineligible" ? `isn't eligible for ${code}` :
+      r.reason === "unavailable" ? "is unavailable" :
+      r.reason === "request-blocked" ? "is blocked by an approved request" :
+      `can't be assigned ${code}`;
+    const more = rejected.length > 1 ? ` (+${rejected.length - 1} more)` : "";
+    return `✕ ${who} ${why} on ${day}${more}`;
+  }
+
   // Returns true if the edit was applied, false if a hard-illegal pin snapped it back
   // (callers like paste use this to avoid a misleading "applied" toast).
   function liveEdit(newPins: ScenarioPin[], newFrees: ScenarioFree[]): boolean {
@@ -3177,8 +3201,11 @@ export function ScheduleGrid({
 
     const outcome = applyScenario(base, pinsArray(nextPins), freesForScope(base, nextPins, nextTouched, liveScope));
     if (!outcome.applied) {
-      // Hard-illegal pin: snap back (keep current grid + pins) and explain.
+      // Hard-illegal pin: snap back (keep current grid + pins) and surface WHY.
+      // The banner note alone was too easy to miss, so a refused keystroke read as
+      // a dead key — show a toast naming the staff, shift, and day it was refused.
       setLiveReject(outcome.rejected);
+      setPasteToast(describeRejection(outcome.rejected));
       return false;
     }
     liveUndoStack.current.push({ pins: livePinsRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
