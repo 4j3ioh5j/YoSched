@@ -232,12 +232,13 @@ export function dedicatedPasteSummary(
   shiftCode: string,
   added: number,
   removed: number,
-  skips: { unknown: number; conflict: number; locked: number; clipped: number }
+  skips: { unknown: number; conflict: number; locked: number; clipped: number; dayCap?: number }
 ): string {
   const parts = [`${added} added`, `${removed} removed`];
   if (skips.unknown) parts.push(`${skips.unknown} unknown`);
   if (skips.conflict) parts.push(`${skips.conflict} conflict`);
   if (skips.locked) parts.push(`${skips.locked} locked`);
+  if (skips.dayCap) parts.push(`${skips.dayCap} over daily limit`);
   if (skips.clipped) parts.push(`${skips.clipped} past edge`);
   return `${shiftCode}: ${parts.join(" · ")}`;
 }
@@ -250,11 +251,13 @@ export function dedicatedPasteSummary(
 export function pasteSummary(
   appliedCount: number,
   r: Pick<PasteResolution, "skippedUnknown" | "skippedLocked" | "skippedBlank" | "clipped">,
-  extraLocked = 0
+  extraLocked = 0,
+  dayCap = 0
 ): string {
   const parts = [`${appliedCount} cell${appliedCount === 1 ? "" : "s"} set`];
   const locked = r.skippedLocked + extraLocked;
   if (locked) parts.push(`${locked} locked`);
+  if (dayCap) parts.push(`${dayCap} over daily limit`);
   if (r.skippedUnknown) parts.push(`${r.skippedUnknown} unknown code${r.skippedUnknown === 1 ? "" : "s"}`);
   if (r.clipped) parts.push(`${r.clipped} past edge`);
   if (r.skippedBlank) parts.push(`${r.skippedBlank} blank`);

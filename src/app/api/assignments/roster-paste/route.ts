@@ -56,7 +56,7 @@ export async function PUT(req: NextRequest) {
     groups.push({ date, addStaffIds, removeStaffIds });
   }
 
-  const st = await prisma.shiftType.findUnique({ where: { id: shiftTypeId }, select: { id: true } });
+  const st = await prisma.shiftType.findUnique({ where: { id: shiftTypeId }, select: { id: true, code: true, maxPerDay: true } });
   if (!st) return NextResponse.json({ error: "Unknown shift type" }, { status: 400 });
 
   // Fetch current state for every involved cell once.
@@ -70,6 +70,19 @@ export async function PUT(req: NextRequest) {
       })
     : [];
   const stateByKey = new Map(existing.map((e) => [`${e.staffId}:${dateKey(e.date)}`, e]));
+
+  // Per-day cap: a dedicated column (ICU/CARD) may be capped at one holder per day.
+  // Compute each date's full CURRENT roster for this shift so we can reject a group
+  // whose resulting roster (current − removes + adds) would exceed maxPerDay.
+  const rosterByDate = new Map<string, Set<string>>();
+  if (st.maxPerDay != null) {
+    const dates = [...new Set(groups.map((g) => g.date))].map(asUtcDate);
+    const holders = await prisma.assignment.findMany({ where: { date: { in: dates }, shiftTypeId }, select: { staffId: true, date: true } });
+    for (const h of holders) {
+      const k = dateKey(h.date);
+      (rosterByDate.get(k) ?? rosterByDate.set(k, new Set()).get(k)!).add(h.staffId);
+    }
+  }
 
   // Decide each group against the authoritative current state. A group survives only if
   // nothing involved is locked and applying it can't clobber a different shift.
@@ -86,6 +99,16 @@ export async function PUT(req: NextRequest) {
     if (addConflict || removeDrift) {
       skippedGroups.push({ date: g.date, reason: "conflict" });
       continue;
+    }
+    // Per-day cap: would the resulting roster (current − removes + adds) overflow?
+    if (st.maxPerDay != null) {
+      const roster = new Set(rosterByDate.get(g.date) ?? []);
+      for (const id of g.removeStaffIds) roster.delete(id);
+      for (const id of g.addStaffIds) roster.add(id);
+      if (roster.size > st.maxPerDay) {
+        skippedGroups.push({ date: g.date, reason: "day-full" });
+        continue;
+      }
     }
     survivors.push({ date: g.date, adds: g.addStaffIds, removes: g.removeStaffIds });
   }

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
+import { dayCapViolations } from "@/lib/max-per-day";
 import { NextRequest, NextResponse } from "next/server";
 
 // updatedByName is the resolved display NAME of the acting user (this route is
@@ -38,6 +39,23 @@ export async function PUT(req: NextRequest) {
   });
   if (existing?.isLocked) {
     return NextResponse.json({ error: "Cannot modify locked assignment" }, { status: 400 });
+  }
+
+  // Per-day cap (maxPerDay): authoritatively refuse a write that would place more
+  // than the allowed number of this shift on the date (e.g. a second ORC/ORL/ICU).
+  // Defense-in-depth behind the client guard — also stops concurrent-editor races.
+  // Re-assigning the SAME shift to this same cell is fine (count excludes self).
+  const st = await prisma.shiftType.findUnique({ where: { id: shiftTypeId }, select: { code: true, maxPerDay: true } });
+  if (st?.maxPerDay != null && (existing?.shiftTypeId !== shiftTypeId)) {
+    const sameDay = await prisma.assignment.count({
+      where: { date: new Date(date + "T00:00:00Z"), shiftTypeId, staffId: { not: staffId } },
+    });
+    if (sameDay >= st.maxPerDay) {
+      return NextResponse.json(
+        { error: `Only ${st.maxPerDay} ${st.code} allowed per day`, reason: "day-full", code: st.code, maxPerDay: st.maxPerDay },
+        { status: 409 },
+      );
+    }
   }
 
   // Capture the value the Auto-schedule run placed here so the tooltip can show
@@ -89,6 +107,41 @@ export async function POST(req: NextRequest) {
 
     if (fromAssignment.isLocked || toAssignment?.isLocked) {
       return NextResponse.json({ error: "Cannot move locked assignments" }, { status: 400 });
+    }
+
+    // Per-day cap: a move/swap relocates the dragged shift to `to` (and, on a swap,
+    // the displaced shift to `from`). Refuse if either landing would exceed that
+    // shift's maxPerDay on its date. The swap rewrites EXACTLY two cells — the
+    // source (from) and the destination (to) — so only THOSE two cells are excluded
+    // from the count (not every assignment those staff hold on the landing dates).
+    // dayCapViolations excludes the landing keys; we additionally drop the vacated
+    // source cell so a pure move on the same date isn't counted against itself.
+    const landings = [{ staffId: to.staffId, date: to.date, shiftTypeId: fromAssignment.shiftTypeId }];
+    if (toAssignment) landings.push({ staffId: from.staffId, date: from.date, shiftTypeId: toAssignment.shiftTypeId });
+    const capIds = [...new Set(landings.map((l) => l.shiftTypeId))];
+    const caps = new Map(
+      (await prisma.shiftType.findMany({ where: { id: { in: capIds } }, select: { id: true, code: true, maxPerDay: true } }))
+        .map((s) => [s.id, s]),
+    );
+    const cappedLandingIds = capIds.filter((id) => caps.get(id)?.maxPerDay != null);
+    if (cappedLandingIds.length > 0) {
+      const dates = [...new Set([from.date, to.date])].map((d) => new Date(d + "T00:00:00Z"));
+      const rows = await prisma.assignment.findMany({
+        where: { date: { in: dates }, shiftTypeId: { in: cappedLandingIds } },
+        select: { staffId: true, date: true, shiftTypeId: true },
+      });
+      const rewritten = new Set([`${from.staffId}:${from.date}`, `${to.staffId}:${to.date}`]);
+      const current = rows
+        .map((r) => ({ staffId: r.staffId, date: r.date.toISOString().split("T")[0], shiftTypeId: r.shiftTypeId }))
+        .filter((r) => !rewritten.has(`${r.staffId}:${r.date}`));
+      const violations = dayCapViolations(landings, current, (id) => caps.get(id)?.maxPerDay ?? null);
+      if (violations.length > 0) {
+        const cap = caps.get(violations[0].shiftTypeId)!;
+        return NextResponse.json(
+          { error: `Only ${cap.maxPerDay} ${cap.code} allowed per day`, reason: "day-full", code: cap.code, maxPerDay: cap.maxPerDay },
+          { status: 409 },
+        );
+      }
     }
 
     const actorName = userId ? (await resolveUpdaterNames([userId])).get(userId) ?? null : null;

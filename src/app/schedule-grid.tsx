@@ -15,6 +15,7 @@ import { monthGridDates } from "@/lib/grid-dates";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary } from "@/lib/grid-clipboard";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
+import { dayCapViolations, type DayCapCell } from "@/lib/max-per-day";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, keysToRequestIntent, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory, type RequestKind, type RequestStrength, type RequestStatus } from "@/lib/schedule-requests";
@@ -136,6 +137,10 @@ type ShiftType = {
   defaultHoursWeekend: number; // 0 = does not accrue weekend hours
   defaultHoursHoliday: number; // 0 = does not accrue holiday hours; holiday wins over weekend
   countsTowardFte: boolean;
+  // Max times this shift may appear on one date (null = no limit). Mirrors the
+  // auto-scheduler cap; enforced on manual edits so e.g. only one ORC/ORL/ICU
+  // lands per day.
+  maxPerDay?: number | null;
   hotkey?: string | null;
   dedicatedColumn?: boolean;
   boldOnSchedule?: boolean;
@@ -378,6 +383,14 @@ function ShiftChip({ st }: { st?: { code: string; color: string } }) {
       {st?.code ?? "—"}
     </span>
   );
+}
+
+// A failed assignment write, tagged so callers can tell a per-day-cap rejection
+// (HTTP 409, reason "day-full") from any other failure and react accordingly.
+type RejectionError = Error & { dayFull?: boolean };
+async function rejectionError(res: Response): Promise<RejectionError> {
+  const body = await res.json().catch(() => null);
+  return Object.assign(new Error(body?.error ?? `request failed: ${res.status}`), { dayFull: body?.reason === "day-full" });
 }
 
 export function ScheduleGrid({
@@ -1729,6 +1742,18 @@ export function ScheduleGrid({
     if (unknown.length > 0) {
       window.alert(`Unknown initials (no matching staff): ${unknown.join(", ")}`);
     }
+
+    // The dedicated cell holds the FULL roster for the date, so the typed initials
+    // are the intended holders. Refuse the whole entry if it names more than the
+    // shift's per-day cap allows (e.g. two names in a max-one ICU/CARD column),
+    // anchoring the same red-border + popover on the first over-cap staff's cell.
+    if (st.maxPerDay != null && resolved.length > st.maxPerDay) {
+      const over = resolved[st.maxPerDay];
+      setLiveReject([]);
+      showRejectAt([{ staffId: over.id, date, shiftTypeId, reason: "day-full" }]);
+      return;
+    }
+
     const resolvedIds = new Set(resolved.map((r) => r.id));
 
     // Who currently holds this dedicated shift on this date (REAL assignments only).
@@ -1738,49 +1763,74 @@ export function ScheduleGrid({
     }
 
     const initialsOf = (id: string) => staff.find((p) => p.id === id)?.initials ?? id;
+    const dayLabel = formatDate(parseDate(date), dateFormat);
+
+    // Dedicated-column entry is a ROSTER edit: the typed initials are the intended
+    // full holder set. Apply it ATOMICALLY — PRE-FLIGHT every add and removal with
+    // NO mutations first, and abort the WHOLE entry (no changes) if it can't be
+    // realized exactly as typed. This prevents data loss: with a per-day cap, a
+    // naive "remove old then add new" would delete the old holder even when the new
+    // add is then refused (locked target, a cancelled replace prompt, or the cap),
+    // blanking the cell. All-or-nothing avoids that and any half-applied roster.
+    const additions = resolved.filter((r) => !currentIds.has(r.id));
+    const removalIds = [...currentIds].filter((id) => !resolvedIds.has(id));
+
+    // Validate removals: a current holder we must drop has to be unlocked.
+    const blockedRemovals: string[] = [];
+    for (const id of removalIds) {
+      const existing = assignmentMap.get(`${id}:${date}`) ?? null;
+      if (!existing || existing.code !== st.code) continue; // already gone / different shift
+      if (existing.isLocked) blockedRemovals.push(initialsOf(id));
+    }
+
+    // Validate additions: target must be unlocked; a different existing shift needs
+    // an explicit replace confirmation (gathered up front, before any write).
+    const plannedAdds: { id: string; existing: AssignmentData | null }[] = [];
+    const blockedAdds: string[] = [];
+    let cancelled = false;
+    for (const r of additions) {
+      const existing = assignmentMap.get(`${r.id}:${date}`) ?? null;
+      if (existing?.isLocked) { blockedAdds.push(initialsOf(r.id)); continue; }
+      if (existing && existing.code !== st.code) {
+        const ok = window.confirm(`${initialsOf(r.id)} already has ${existing.code} on ${dayLabel}. Replace with ${st.code}?`);
+        if (!ok) { cancelled = true; break; }
+      }
+      plannedAdds.push({ id: r.id, existing });
+    }
+
+    // Abort the whole edit if it can't be realized exactly — no holder is deleted
+    // unless every intended holder can be placed.
+    if (cancelled) return; // user backed out of a replace → make no changes
+    if (blockedRemovals.length > 0 || blockedAdds.length > 0) {
+      const who = [...blockedAdds, ...blockedRemovals].join(", ");
+      window.alert(`Locked assignment(s) for ${who} on ${dayLabel} — no changes made.`);
+      return;
+    }
+
     const ops: UndoOp[] = [];
     setSaving(`ded-${shiftTypeId}:${date}`);
 
-    // Additions: staff named in the entry who don't already hold this shift.
-    for (const r of resolved) {
-      if (currentIds.has(r.id)) continue;
-      const existing = assignmentMap.get(`${r.id}:${date}`) ?? null;
-      if (existing?.isLocked) {
-        window.alert(`${initialsOf(r.id)} is locked on ${formatDate(parseDate(date), dateFormat)} — skipped.`);
-        continue;
+    // Removals first (frees any capped slot), then the validated additions. Each
+    // add now lands within cap because the old holder was already cleared.
+    for (const id of removalIds) {
+      const existing = assignmentMap.get(`${id}:${date}`) ?? null;
+      if (!existing || existing.code !== st.code) continue;
+      if (await applyAssignmentChecked(id, date, null, existing)) {
+        ops.push({ staffId: id, date, prev: existing, next: null });
       }
-      if (existing && existing.code !== st.code) {
-        const ok = window.confirm(
-          `${initialsOf(r.id)} already has ${existing.code} on ${formatDate(parseDate(date), dateFormat)}. Replace with ${st.code}?`,
-        );
-        if (!ok) continue;
-      }
+    }
+    for (const { id, existing } of plannedAdds) {
       const next: AssignmentData = {
-        id: `temp-${r.id}:${date}`,
-        staffId: r.id,
+        id: `temp-${id}:${date}`,
+        staffId: id,
         date,
         shiftTypeId,
         isLocked: false,
         code: st.code,
         color: st.color,
       };
-      if (await applyAssignmentChecked(r.id, date, next, existing)) {
-        ops.push({ staffId: r.id, date, prev: existing, next });
-      }
-    }
-
-    // Removals: staff dropped from the entry — delete only if their current cell
-    // is THIS dedicated shift and not locked (never clobber another shift).
-    for (const id of currentIds) {
-      if (resolvedIds.has(id)) continue;
-      const existing = assignmentMap.get(`${id}:${date}`) ?? null;
-      if (!existing || existing.code !== st.code) continue;
-      if (existing.isLocked) {
-        window.alert(`${initialsOf(id)} is locked on ${formatDate(parseDate(date), dateFormat)} — not removed.`);
-        continue;
-      }
-      if (await applyAssignmentChecked(id, date, null, existing)) {
-        ops.push({ staffId: id, date, prev: existing, next: null });
+      if (await applyAssignmentChecked(id, date, next, existing)) {
+        ops.push({ staffId: id, date, prev: existing, next });
       }
     }
 
@@ -2261,10 +2311,12 @@ export function ScheduleGrid({
 
         const serverLocked = skippedGroups.filter((s) => s.reason === "locked").length;
         const serverConflict = skippedGroups.filter((s) => s.reason === "conflict").length;
+        const serverDayCap = skippedGroups.filter((s) => s.reason === "day-full").length;
         setPasteToast(dedicatedPasteSummary(dedSt.code, applied.length, cleared.length, {
           unknown: resolution.unknown,
           conflict: resolution.conflict + serverConflict,
           locked: resolution.locked + serverLocked,
+          dayCap: serverDayCap,
           clipped: resolution.clipped,
         }));
       } catch {
@@ -2376,7 +2428,7 @@ export function ScheduleGrid({
           body: JSON.stringify({ cells: sets }),
         });
         if (!res.ok) throw new Error(String(res.status));
-        const { applied, skippedLocked = 0, requestChanges } = (await res.json()) as { applied: AssignmentData[]; skippedLocked?: number; requestChanges?: AffectedDelta["requests"] };
+        const { applied, skippedLocked = 0, skippedDayCap = 0, requestChanges } = (await res.json()) as { applied: AssignmentData[]; skippedLocked?: number; skippedDayCap?: number; requestChanges?: AffectedDelta["requests"] };
         const appliedKeys = new Set(applied.map((a) => `${a.staffId}:${a.date}`));
 
         // Reconcile to exactly what the server persisted: drop temps, add authoritative
@@ -2398,7 +2450,7 @@ export function ScheduleGrid({
         if (undoOps.length) pushUndo(undoOps);
         applyRequestDelta({ requests: requestChanges });
 
-        setPasteToast(pasteSummary(applied.length, resolution, skippedLocked));
+        setPasteToast(pasteSummary(applied.length, resolution, skippedLocked, skippedDayCap));
       } catch {
         // Atomic write → nothing persisted. Revert the optimistic temps to prior state.
         setLocalAssignments((prev) => {
@@ -2465,6 +2517,12 @@ export function ScheduleGrid({
       return;
     }
 
+    // Refuse if this would exceed the shift's per-day cap (e.g. a second ORC).
+    if (blockedByDayCap(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId: st.id })))) {
+      setPicker(null);
+      return;
+    }
+
     const undoOps: UndoOp[] = cells.map(({ staffId, date }) => {
       const prev = assignmentMap.get(`${staffId}:${date}`) ?? null;
       const next: AssignmentData = {
@@ -2506,17 +2564,27 @@ export function ScheduleGrid({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cells, shiftTypeId: st.id }),
       });
-      if (res.ok) {
-        const { applied, requestChanges } = await res.json() as { applied: AssignmentData[]; requestChanges?: AffectedDelta["requests"] };
-        setLocalAssignments((prev) => {
-          const savedKeys = new Set(applied.map((s) => `${s.staffId}:${s.date}`));
-          return [...prev.filter((a) => !savedKeys.has(`${a.staffId}:${a.date}`)), ...applied];
-        });
-        applyRequestDelta({ requests: requestChanges });
+      if (!res.ok) throw await rejectionError(res);
+      const { applied, requestChanges } = await res.json() as { applied: AssignmentData[]; requestChanges?: AffectedDelta["requests"] };
+      setLocalAssignments((prev) => {
+        const savedKeys = new Set(applied.map((s) => `${s.staffId}:${s.date}`));
+        return [...prev.filter((a) => !savedKeys.has(`${a.staffId}:${a.date}`)), ...applied];
+      });
+      applyRequestDelta({ requests: requestChanges });
+    } catch (err) {
+      // Revert the optimistic temps to their prior values; surface a day-cap race.
+      setLocalAssignments((prev) => {
+        const keys = new Set(cells.map((c) => `${c.staffId}:${c.date}`));
+        const filtered = prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`));
+        const priors = undoOps.map((o) => o.prev).filter((p): p is AssignmentData => !!p);
+        return [...filtered, ...priors];
+      });
+      if ((err as RejectionError)?.dayFull) {
+        showRejectAt(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId: st.id, reason: "day-full" as const })));
       }
-    } catch { /* optimistic stays */ }
+    }
     setSaving(null);
-  }, [selection, activeCol, activeRow, assignmentMap, liveMode, liveEdit]);
+  }, [selection, activeCol, activeRow, assignmentMap, liveMode, liveEdit, blockedByDayCap]);
 
   const hotkeyAssignRef = useRef(hotkeyAssign);
   useEffect(() => { hotkeyAssignRef.current = hotkeyAssign; }, [hotkeyAssign]);
@@ -2545,6 +2613,12 @@ export function ScheduleGrid({
       setSelection(new Set());
       setSelectionAnchor(null);
       liveEdit(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId })), []);
+      return;
+    }
+
+    // Refuse if this would exceed the shift's per-day cap (e.g. a second ORC).
+    if (blockedByDayCap(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId })))) {
+      setPicker(null);
       return;
     }
 
@@ -2594,6 +2668,7 @@ export function ScheduleGrid({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ staffId, date, shiftTypeId }),
         });
+        if (!res.ok) throw await rejectionError(res);
         const { requestChanges, ...saved } = await res.json();
         setLocalAssignments((prev) =>
           prev.map((a) => (a.staffId === staffId && a.date === date ? saved : a)),
@@ -2605,6 +2680,7 @@ export function ScheduleGrid({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cells, shiftTypeId }),
         });
+        if (!res.ok) throw await rejectionError(res);
         const { applied: saved, requestChanges }: { applied: AssignmentData[]; requestChanges?: AffectedDelta["requests"] } = await res.json();
         setLocalAssignments((prev) => {
           const keys = new Set(saved.map((s) => `${s.staffId}:${s.date}`));
@@ -2613,13 +2689,23 @@ export function ScheduleGrid({
         });
         applyRequestDelta({ requests: requestChanges });
       }
-    } catch {
-      // Revert temps on failure
-      setLocalAssignments((prev) => prev.filter((a) => !a.id.startsWith("temp-")));
+    } catch (err) {
+      // Revert the optimistic temps to each cell's prior value (a server 409 day-cap
+      // or any failure leaves nothing persisted). Surface a day-cap race with the
+      // same red-border + popover the client guard uses.
+      setLocalAssignments((prev) => {
+        const keys = new Set(cells.map((c) => `${c.staffId}:${c.date}`));
+        const filtered = prev.filter((a) => !keys.has(`${a.staffId}:${a.date}`));
+        const priors = undoOps.map((o) => o.prev).filter((p): p is AssignmentData => !!p);
+        return [...filtered, ...priors];
+      });
+      if ((err as RejectionError)?.dayFull) {
+        showRejectAt(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId, reason: "day-full" as const })));
+      }
     } finally {
       setSaving(null);
     }
-  }, [picker, shiftTypeMap, assignmentMap, selection, liveMode, liveEdit]);
+  }, [picker, shiftTypeMap, assignmentMap, selection, liveMode, liveEdit, blockedByDayCap]);
 
   const handleClear = useCallback(async (target?: { staffId: string; date: string }) => {
     const anchor = target ?? (picker ? { staffId: picker.staffId, date: picker.date } : null);
@@ -2976,6 +3062,14 @@ export function ScheduleGrid({
     const toA = assignmentMap.get(`${toStaffId}:${toDate}`);
     if (!fromA || fromA.isLocked || toA?.isLocked) return;
 
+    // Refuse a move/swap that would exceed a shift's per-day cap on a landing date
+    // (the dragged shift lands on toDate; a swapped-back shift lands on fromDate).
+    // The drag SOURCE cell is vacated, so free it from the count — otherwise moving
+    // the day's only capped shift to an empty cell would falsely self-reject.
+    const dropProposed: DayCapCell[] = [{ staffId: toStaffId, date: toDate, shiftTypeId: fromA.shiftTypeId }];
+    if (toA) dropProposed.push({ staffId: fromStaffId, date: fromDate, shiftTypeId: toA.shiftTypeId });
+    if (blockedByDayCap(dropProposed, [{ staffId: fromStaffId, date: fromDate }])) return;
+
     const fromKey = `${fromStaffId}:${fromDate}`;
     const toKey = `${toStaffId}:${toDate}`;
 
@@ -3011,7 +3105,7 @@ export function ScheduleGrid({
           to: { staffId: toStaffId, date: toDate },
         }),
       });
-      if (!res.ok) throw new Error("Swap failed");
+      if (!res.ok) throw await rejectionError(res);
       const result = await res.json();
 
       setLocalAssignments((prev) => {
@@ -3026,12 +3120,24 @@ export function ScheduleGrid({
         return next;
       });
       applyRequestDelta({ requests: result.requestChanges });
-    } catch {
-      window.location.reload();
+    } catch (err) {
+      if ((err as RejectionError)?.dayFull) {
+        // Day-cap race: restore both cells to their prior occupants and warn,
+        // rather than forcing a full reload.
+        setLocalAssignments((prev) => {
+          const next = prev.filter((a) => !(a.staffId === fromStaffId && a.date === fromDate) && !(a.staffId === toStaffId && a.date === toDate));
+          next.push(fromA);
+          if (toA) next.push(toA);
+          return next;
+        });
+        showRejectAt([{ staffId: toStaffId, date: toDate, shiftTypeId: fromA.shiftTypeId, reason: "day-full" }]);
+      } else {
+        window.location.reload();
+      }
     } finally {
       setSaving(null);
     }
-  }, [dragSource, assignmentMap, liveMode, liveDisplayMap, liveEdit]);
+  }, [dragSource, assignmentMap, liveMode, liveDisplayMap, liveEdit, blockedByDayCap]);
 
   // Compute warnings for picker preview (uses picker cell for single, first selected cell for bulk)
   const pickerWarnings = useMemo(() => {
@@ -3223,6 +3329,12 @@ export function ScheduleGrid({
     // Manual-cell lock: a hand-placed shift can't be changed in auto-generate mode.
     if (r.reason === "manual-locked")
       return `${who}'s ${code} on ${day} was set manually and can't be changed in auto-generate${more}`;
+    // Per-day cap: this date already holds the max allowed of this shift.
+    if (r.reason === "day-full") {
+      const cap = shiftTypeMap.get(r.shiftTypeId)?.maxPerDay ?? 1;
+      const limit = cap === 1 ? `Only one ${code}` : `Only ${cap} ${code}`;
+      return `${limit} allowed per day — ${day} is already full${more}`;
+    }
     const why =
       r.reason === "ineligible" ? `isn't eligible for ${code}` :
       r.reason === "unavailable" ? "is unavailable" :
@@ -3250,6 +3362,26 @@ export function ScheduleGrid({
     top = Math.max(8, Math.min(top, window.innerHeight - 72));
     left = Math.max(8, Math.min(left, window.innerWidth - POP_W - 8));
     setRejectPopover({ cellKey, text, top, left });
+  }
+
+  // Per-day cap guard for NORMAL-mode edits (the engine + Live mode enforce their
+  // own caps elsewhere). If applying `proposed` would place more than a shift's
+  // maxPerDay on a date — e.g. a second ORC/ORL/CARD/ICU — refuse the WHOLE edit
+  // with the same red-border + popover used for other prohibited actions, anchored
+  // on the first offending cell, and return true so the caller bails out before any
+  // optimistic update or write. Counts against the current saved grid, MINUS any
+  // `freed` cells the edit empties without re-pinning (e.g. a drag's drag-source
+  // cell), so moving the day's only capped shift to an empty cell is allowed.
+  function blockedByDayCap(proposed: DayCapCell[], freed: { staffId: string; date: string }[] = []): boolean {
+    const freedKeys = new Set(freed.map((f) => `${f.staffId}:${f.date}`));
+    const current: DayCapCell[] = localAssignments
+      .filter((a) => !freedKeys.has(`${a.staffId}:${a.date}`))
+      .map((a) => ({ staffId: a.staffId, date: a.date, shiftTypeId: a.shiftTypeId }));
+    const violations = dayCapViolations(proposed, current, (id) => shiftTypeMap.get(id)?.maxPerDay ?? null);
+    if (violations.length === 0) return false;
+    setLiveReject([]);
+    showRejectAt(violations.map((v) => ({ ...v, reason: "day-full" as const })));
+    return true;
   }
 
   // Returns true if the edit was applied, false if a hard-illegal pin snapped it back

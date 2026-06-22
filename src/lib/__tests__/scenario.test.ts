@@ -267,6 +267,43 @@ describe("applyScenario — HYBRID breach classification", () => {
     expect(out.applied).toBe(false);
     expect(out.rejected[0].reason).toBe("unknown-staff");
   });
+
+  it("rejects a pin that would exceed a shift's per-day cap (day-full)", () => {
+    // ORC is capped at one per day; p1 already holds it on Monday, so pinning a
+    // second ORC (p2) on the same date is hard-illegal and snaps the edit back.
+    const ORC = makeShift("st-orc", "ORC", { maxPerDay: 1 });
+    const elig = { eligibleShiftTypeIds: ["st-or", "st-off", "st-orc"] };
+    const input = makeInput({
+      shiftTypes: [OR, OFF, ORC],
+      staff: [makeStaff("p1", "AB", elig), makeStaff("p2", "CD", elig)],
+      existingAssignments: [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-orc", code: "ORC", isLocked: true }],
+    });
+    const out = applyScenario(input, [{ staffId: "p2", date: "2025-05-12", shiftTypeId: "st-orc" }], []);
+
+    expect(out.applied).toBe(false);
+    expect(out.rejected).toHaveLength(1);
+    expect(out.rejected[0]).toMatchObject({ staffId: "p2", date: "2025-05-12", reason: "day-full" });
+  });
+
+  it("allows moving the day's only capped shift to another staff (free old + pin new)", () => {
+    // Freeing p1's ORC in the SAME edit drops the count, so pinning p2's ORC on
+    // that date stays within the cap of 1.
+    const ORC = makeShift("st-orc", "ORC", { maxPerDay: 1 });
+    const elig = { eligibleShiftTypeIds: ["st-or", "st-off", "st-orc"] };
+    const input = makeInput({
+      shiftTypes: [OR, OFF, ORC],
+      staff: [makeStaff("p1", "AB", elig), makeStaff("p2", "CD", elig)],
+      existingAssignments: [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-orc", code: "ORC", isLocked: false }],
+    });
+    const out = applyScenario(
+      input,
+      [{ staffId: "p2", date: "2025-05-12", shiftTypeId: "st-orc" }],
+      [{ staffId: "p1", date: "2025-05-12" }],
+    );
+
+    expect(out.applied).toBe(true);
+    expect(cellAt(out.grid, "p2", "2025-05-12")).toBe("st-orc");
+  });
 });
 
 describe("applyScenario — quality delta & purity", () => {

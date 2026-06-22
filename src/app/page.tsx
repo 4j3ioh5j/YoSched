@@ -192,6 +192,7 @@ export default async function Home() {
           defaultHoursWeekend: st.defaultHoursWeekend,
           defaultHoursHoliday: st.defaultHoursHoliday,
           countsTowardFte: st.countsTowardFte,
+          maxPerDay: st.maxPerDay,
           hotkey: st.hotkey,
           dedicatedColumn: st.dedicatedColumn,
           boldOnSchedule: st.boldOnSchedule,

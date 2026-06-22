@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
+import { dayCapViolations } from "@/lib/max-per-day";
 import { NextRequest, NextResponse } from "next/server";
 
 // Paste write path for the schedule grid: a block of already-resolved cells, each with
@@ -43,10 +44,11 @@ export async function PUT(req: NextRequest) {
   // Reject unknown shift type ids up front — otherwise one bad id (e.g. a stale client)
   // would abort the whole transaction with an opaque FK error.
   const ids = [...new Set(cells.map((c) => c.shiftTypeId))];
-  const known = await prisma.shiftType.findMany({ where: { id: { in: ids } }, select: { id: true } });
+  const known = await prisma.shiftType.findMany({ where: { id: { in: ids } }, select: { id: true, maxPerDay: true } });
   if (known.length !== ids.length) {
     return NextResponse.json({ error: "Unknown shift type" }, { status: 400 });
   }
+  const maxPerDayById = new Map(known.map((s) => [s.id, s.maxPerDay] as const));
 
   // Server is the source of truth on locks — filter locked targets out (expected, not a
   // failure), so they never enter the transaction.
@@ -59,8 +61,31 @@ export async function PUT(req: NextRequest) {
   );
   // Look up the prior row per cell to capture the auto-override value (was X).
   const existingByKey = new Map(existing.map((e) => [`${e.staffId}:${e.date.toISOString().split("T")[0]}`, e]));
-  const toApply = cells.filter((c) => !lockedKeys.has(`${c.staffId}:${c.date}`));
-  const skippedLocked = cells.length - toApply.length;
+  const unlocked = cells.filter((c) => !lockedKeys.has(`${c.staffId}:${c.date}`));
+  const skippedLocked = cells.length - unlocked.length;
+
+  // Per-day cap: drop cells that would push a capped shift past maxPerDay on its
+  // date (counting the date's CURRENT holders of that shift plus already-accepted
+  // cells in this paste). Skipped like locked cells; the client restores their prior
+  // value from the reconcile. `existing` only covers the pasted cells' own keys, so
+  // count the full current roster of each capped shift on the affected dates.
+  const cappedIds = [...maxPerDayById].filter(([, m]) => m != null).map(([id]) => id);
+  let toApply = unlocked;
+  let skippedDayCap = 0;
+  if (cappedIds.length > 0) {
+    const dates = [...new Set(unlocked.map((c) => c.date))].map(asUtcDate);
+    const rosters = await prisma.assignment.findMany({
+      where: { date: { in: dates }, shiftTypeId: { in: cappedIds } },
+      select: { staffId: true, date: true, shiftTypeId: true },
+    });
+    const current = rosters.map((r) => ({ staffId: r.staffId, date: r.date.toISOString().split("T")[0], shiftTypeId: r.shiftTypeId }));
+    const violations = dayCapViolations(unlocked, current, (id) => maxPerDayById.get(id) ?? null);
+    if (violations.length > 0) {
+      const capKeys = new Set(violations.map((v) => `${v.staffId}:${v.date}`));
+      toApply = unlocked.filter((c) => !capKeys.has(`${c.staffId}:${c.date}`));
+      skippedDayCap = violations.length;
+    }
+  }
 
   const saved = toApply.length
     ? await prisma.$transaction(
@@ -106,5 +131,5 @@ export async function PUT(req: NextRequest) {
     updatedAt: a.updatedAt.toISOString(),
   }));
 
-  return NextResponse.json({ applied, skippedLocked, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
+  return NextResponse.json({ applied, skippedLocked, skippedDayCap, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }

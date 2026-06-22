@@ -2,9 +2,13 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
+import { dayCapViolations } from "@/lib/max-per-day";
 import { NextRequest, NextResponse } from "next/server";
 
 type BulkItem = { staffId: string; date: string };
+
+const asUtcDate = (date: string) => new Date(date + "T00:00:00Z");
+const dateKey = (d: Date) => d.toISOString().split("T")[0];
 
 export async function PUT(req: NextRequest) {
   const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
@@ -16,6 +20,23 @@ export async function PUT(req: NextRequest) {
 
   if (!cells?.length || !shiftTypeId) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+  }
+
+  // Per-day cap: bulk applies ONE shift to many cells, so a selection spanning a
+  // date more than maxPerDay times would over-fill it. Refuse the whole batch
+  // (atomic, matching the client guard) rather than silently dropping cells.
+  const capSt = await prisma.shiftType.findUnique({ where: { id: shiftTypeId }, select: { code: true, maxPerDay: true } });
+  if (capSt?.maxPerDay != null) {
+    const dates = [...new Set(cells.map((c) => c.date))].map(asUtcDate);
+    const onDates = await prisma.assignment.findMany({ where: { date: { in: dates }, shiftTypeId }, select: { staffId: true, date: true } });
+    const current = onDates.map((e) => ({ staffId: e.staffId, date: dateKey(e.date), shiftTypeId }));
+    const proposed = cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId }));
+    if (dayCapViolations(proposed, current, () => capSt.maxPerDay).length > 0) {
+      return NextResponse.json(
+        { error: `Only ${capSt.maxPerDay} ${capSt.code} allowed per day`, reason: "day-full", code: capSt.code, maxPerDay: capSt.maxPerDay },
+        { status: 409 },
+      );
+    }
   }
 
   const actorName = userId ? (await resolveUpdaterNames([userId])).get(userId) ?? null : null;
