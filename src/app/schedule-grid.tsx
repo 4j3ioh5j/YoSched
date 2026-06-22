@@ -6,7 +6,7 @@ import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } 
 import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, ALERT_CATEGORIES, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
-import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
+import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForScope, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
@@ -515,10 +515,12 @@ export function ScheduleGrid({
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveOutcome, setLiveOutcome] = useState<ScenarioOutcome | null>(null);
   // How wide the engine may re-solve to compensate for an edit (user-selectable in
-  // the Live banner). "pp" (default) re-solves only the pay period(s) you touched —
-  // enough to rebalance PP hours without churning the whole month; "day" is tightest
-  // (same-day coverage only); "range" re-solves everything (most compensation).
-  const [liveScope, setLiveScope] = useState<"day" | "pp" | "range">("pp");
+  // the Live banner). "pp" (default) re-solves the pay period(s) you touched — enough
+  // to rebalance PP hours without churning the whole month; "day" frees the touched
+  // day(s); "range" re-solves everything. "limited" (#248 Option 4) is the tightest:
+  // it frees minimally and widens only as coverage needs — least churn, but it does
+  // NOT rebalance PP hours (so hours can drift; switch to "pp" to rebalance).
+  const [liveScope, setLiveScope] = useState<"limited" | "day" | "pp" | "range">("pp");
   // Hard-rejected pins from the most recent edit (snap-back reasons for the banner).
   const [liveReject, setLiveReject] = useState<ScenarioPinRejection[]>([]);
   // The "this cell can't take that shift" reason, anchored next to the offending
@@ -3283,10 +3285,13 @@ export function ScheduleGrid({
     for (const p of newPins) nextTouched.add(p.date);
     for (const f of newFrees) nextTouched.add(f.date);
 
-    // Minimal freeing (#248 Option 4): free the explicit frees plus the smallest ring
-    // of discretionary cells that keeps coverage whole, capped at the chosen scope.
-    const explicitFrees = [...nextFrees].map(pinKeyParts);
-    const outcome = applyScenarioExpanding(base, pinsArray(nextPins), explicitFrees, nextTouched, nextPins, liveScope);
+    // "limited" (#248 Option 4): free only the explicit frees + the smallest ring of
+    // discretionary cells that keeps coverage whole (least churn; no PP-hours rebalance).
+    // day/pp/range: free EVERYTHING in scope and let the engine re-solve it — more churn,
+    // but it rebalances PP hours (the pre-Option-4 behavior).
+    const outcome = liveScope === "limited"
+      ? applyScenarioExpanding(base, pinsArray(nextPins), [...nextFrees].map(pinKeyParts), nextTouched, nextPins, "range")
+      : applyScenario(base, pinsArray(nextPins), freesForScope(base, nextPins, nextTouched, liveScope));
     if (!outcome.applied) {
       // Hard-illegal pin: snap back (keep current grid + pins) and surface WHY.
       // The banner note alone was too easy to miss, so a refused keystroke read as
@@ -3307,14 +3312,15 @@ export function ScheduleGrid({
 
   // Re-solve the current pin-set at a new scope (a scope change is not an edit, so
   // it doesn't touch the undo stack — it just widens/narrows the displayed ripple).
-  function changeLiveScope(scope: "day" | "pp" | "range") {
+  function changeLiveScope(scope: "limited" | "day" | "pp" | "range") {
     setLiveScope(scope);
     const base = liveBaseInputRef.current;
     if (!base || !liveOutcome) return;
-    // Scope is the ceiling on how far the edit may ripple; re-solve at the new ceiling
-    // (expanding stops at the smallest feasible ring within it).
-    const explicitFrees = [...liveFreesRef.current].map(pinKeyParts);
-    const outcome = applyScenarioExpanding(base, pinsArray(livePinsRef.current), explicitFrees, liveTouchedRef.current, livePinsRef.current, scope);
+    // Re-solve the current pins at the new scope: "limited" frees minimally and widens
+    // only as coverage needs; day/pp/range free everything in scope (full rebalance).
+    const outcome = scope === "limited"
+      ? applyScenarioExpanding(base, pinsArray(livePinsRef.current), [...liveFreesRef.current].map(pinKeyParts), liveTouchedRef.current, livePinsRef.current, "range")
+      : applyScenario(base, pinsArray(livePinsRef.current), freesForScope(base, livePinsRef.current, liveTouchedRef.current, scope));
     if (outcome.applied) { clearReject(); setLiveOutcome(outcome); }
   }
 
@@ -3742,10 +3748,12 @@ export function ScheduleGrid({
                   ✕ edit not allowed ({liveReject.map((r) => r.reason).join(", ")})
                 </span>
               )}
-              {/* Ripple scope: how wide the engine may re-solve to compensate. */}
-              <div className="flex items-center gap-1 text-xs" title="How much of the schedule the engine may change to compensate for an edit">
-                <span className="text-violet-300/60">re-solve:</span>
-                {([["day", "Day"], ["pp", "Pay period"], ["range", "Whole range"]] as const).map(([val, label]) => (
+              {/* Ripple scope: how wide the engine may re-solve to compensate.
+                  "Limited" = minimal churn (no PP-hours rebalance); the others free
+                  everything in scope and rebalance hours (#248). */}
+              <div className="flex items-center gap-1 text-xs" title="How much of the schedule the engine may change to compensate for an edit. Limited = fewest changes (hours may drift). Pay period = rebalances hours across the period.">
+                <span className="text-violet-300/60">Scope:</span>
+                {([["limited", "Limited"], ["day", "Day(s)"], ["pp", "Pay period"], ["range", "Whole range"]] as const).map(([val, label]) => (
                   <button
                     key={val}
                     onClick={() => changeLiveScope(val)}
