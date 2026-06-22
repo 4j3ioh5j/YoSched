@@ -72,7 +72,7 @@ describe("checkCellWarnings", () => {
       });
       expect(w).toHaveLength(1);
       expect(w[0].type).toBe("non-working-day");
-      expect(w[0].message).toContain("Sat");
+      expect(w[0].message).toContain("Saturdays"); // full day name, not an abbreviation
     });
 
     it("does not warn on working days", () => {

@@ -147,7 +147,7 @@ export function checkCellWarnings({
   if (!hasWorkRule && !st.isOffShift && !st.ignoresWorkingDays) {
     warnings.push({
       type: "non-working-day",
-      message: `${staff.initials} doesn't normally work on ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dow]}s`,
+      message: `${staff.initials} doesn't normally work on ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][dow]}s`,
     });
   }
 
