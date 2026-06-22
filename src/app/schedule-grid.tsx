@@ -3205,12 +3205,15 @@ export function ScheduleGrid({
     const who = staffMap.get(r.staffId)?.initials ?? "Staff";
     const code = shiftTypeMap.get(r.shiftTypeId)?.code ?? "that shift";
     const day = formatDateCompact(parseDate(r.date), dateFormat);
+    const more = rejected.length > 1 ? ` (+${rejected.length - 1} more)` : "";
+    // Manual-cell lock: a hand-placed shift can't be changed in auto-generate mode.
+    if (r.reason === "manual-locked")
+      return `${who}'s ${code} on ${day} was set manually and can't be changed in auto-generate${more}`;
     const why =
       r.reason === "ineligible" ? `isn't eligible for ${code}` :
       r.reason === "unavailable" ? "is unavailable" :
       r.reason === "request-blocked" ? "is blocked by an approved request" :
       `can't be assigned ${code}`;
-    const more = rejected.length > 1 ? ` (+${rejected.length - 1} more)` : "";
     return `${who} ${why} on ${day}${more}`;
   }
 
@@ -3240,6 +3243,25 @@ export function ScheduleGrid({
   function liveEdit(newPins: ScenarioPin[], newFrees: ScenarioFree[]): boolean {
     const base = liveBaseInputRef.current;
     if (!base || !liveOutcome) return false;
+
+    // Manual cells (hand-placed BEFORE entering auto-generate) are locked: the user
+    // may not overwrite, move, or clear them in the sandbox. The engine already
+    // refuses to RIPPLE them (freesForScope skips source "manual"), but a user's OWN
+    // direct edit — a pin landing on a manual cell, or a free/drag emptying one —
+    // bypassed that. Refuse it here with the same red-border + popover feedback used
+    // for hard-illegal pins. Atomic: any manual hit snaps the whole edit back.
+    const manualSrc = new Map<string, string>(
+      base.existingAssignments
+        .filter((a) => a.source === "manual")
+        .map((a) => [`${a.staffId}:${a.date}`, a.shiftTypeId]),
+    );
+    const manualHit = [...newPins, ...newFrees].find((e) => manualSrc.has(`${e.staffId}:${e.date}`));
+    if (manualHit) {
+      const key = `${manualHit.staffId}:${manualHit.date}`;
+      setLiveReject([]);
+      showRejectAt([{ staffId: manualHit.staffId, date: manualHit.date, shiftTypeId: manualSrc.get(key)!, reason: "manual-locked" }]);
+      return false;
+    }
 
     // Fold this edit into the accumulated pin set (a free un-pins its cell) and the
     // touched-date anchor.

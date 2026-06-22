@@ -47,7 +47,9 @@ export type ScenarioPinRejection = {
   staffId: string;
   date: string;
   shiftTypeId: string;
-  reason: "ineligible" | "unavailable" | "request-blocked" | "unknown-staff" | "unknown-shift";
+  // "manual-locked" is raised by the Live UI (not the engine): a user edit that
+  // targets a hand-placed cell is refused so auto-generate can't overwrite/move it.
+  reason: "ineligible" | "unavailable" | "request-blocked" | "unknown-staff" | "unknown-shift" | "manual-locked";
 };
 
 export type ScenarioOutcome = {
