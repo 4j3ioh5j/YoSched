@@ -2411,6 +2411,24 @@ export function ScheduleGrid({
     return () => clearTimeout(id);
   }, [pasteToast]);
 
+  // While the cell-rejection message is showing, Escape or any click anywhere
+  // dismisses it and clears the red cell boundary. The rejected keystroke was
+  // already snapped back (the edit never applied), so the cell keeps its original
+  // contents — dismissing just removes the message + highlight. Listeners attach
+  // after this render, so the keystroke/click that raised the message can't
+  // immediately dismiss it; capture phase wins over the grid's own handlers.
+  useEffect(() => {
+    if (!rejectPopover) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") clearReject(); };
+    const onDown = () => clearReject();
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("mousedown", onDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onDown, true);
+    };
+  }, [rejectPopover]);
+
   const hotkeyAssign = useCallback(async (st: ShiftType) => {
     const cells: { staffId: string; date: string }[] = [];
     if (selection.size > 0) {
@@ -3193,7 +3211,7 @@ export function ScheduleGrid({
       r.reason === "request-blocked" ? "is blocked by an approved request" :
       `can't be assigned ${code}`;
     const more = rejected.length > 1 ? ` (+${rejected.length - 1} more)` : "";
-    return `✕ ${who} ${why} on ${day}${more}`;
+    return `${who} ${why} on ${day}${more}`;
   }
 
   // Anchor the rejection reason beside the offending cell — placed 1–2 cells away
@@ -4230,16 +4248,9 @@ export function ScheduleGrid({
           data-print-hide
           role="alert"
           style={{ top: rejectPopover.top, left: rejectPopover.left, maxWidth: 256 }}
-          className="fixed z-[70] flex items-start gap-2 bg-slate-900/95 border-2 border-red-500 text-red-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-xl"
+          className="fixed z-[70] bg-slate-900/95 border-2 border-red-500 text-red-400 text-xs font-semibold leading-snug px-3 py-2 rounded-lg shadow-xl"
         >
-          <span className="leading-snug">{rejectPopover.text}</span>
-          <button
-            onClick={clearReject}
-            className="text-red-300 hover:text-red-100 text-sm leading-none shrink-0"
-            title="Dismiss"
-          >
-            ×
-          </button>
+          {rejectPopover.text}
         </div>
       )}
 
