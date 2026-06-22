@@ -521,6 +521,10 @@ export function ScheduleGrid({
   const [liveScope, setLiveScope] = useState<"day" | "pp" | "range">("pp");
   // Hard-rejected pins from the most recent edit (snap-back reasons for the banner).
   const [liveReject, setLiveReject] = useState<ScenarioPinRejection[]>([]);
+  // The "this cell can't take that shift" reason, anchored next to the offending
+  // cell (red popover + red cell boundary) instead of a top-of-page toast.
+  const [rejectPopover, setRejectPopover] = useState<{ cellKey: string; text: string; top: number; left: number } | null>(null);
+  const clearReject = () => { setLiveReject([]); setRejectPopover(null); };
   // Mirror of liveMode for the document-level keyboard/paste listeners, which close
   // over their effect's scope and would otherwise read a stale value.
   const liveModeRef = useRef(false);
@@ -3085,7 +3089,7 @@ export function ScheduleGrid({
           source: sourceByKey.get(`${c.staffId}:${c.date}`),
         })),
       };
-      setLiveReject([]);
+      clearReject();
       setRequestMode(false); // Live is assign-only; requests aren't part of the sandbox
       setLiveOutcome(outcome);
       setLiveMode(true);
@@ -3099,7 +3103,7 @@ export function ScheduleGrid({
   function cancelLive() {
     setLiveMode(false);
     setLiveOutcome(null);
-    setLiveReject([]);
+    clearReject();
     liveInputRef.current = null;
     liveBaseInputRef.current = null;
     liveInitialGridRef.current = new Map();
@@ -3192,6 +3196,27 @@ export function ScheduleGrid({
     return `✕ ${who} ${why} on ${day}${more}`;
   }
 
+  // Anchor the rejection reason beside the offending cell — placed 1–2 cells away
+  // (flipping toward whichever side has room) so it never covers the cell itself.
+  // Falls back to the top-of-page toast if the cell isn't currently in the DOM.
+  function showRejectAt(rejected: ScenarioPinRejection[]) {
+    const r = rejected[0];
+    const cellKey = `${r.staffId}:${r.date}`;
+    const text = describeRejection(rejected);
+    const el = document.querySelector(`[data-cell="${cellKey}"]`) as HTMLElement | null;
+    if (!el) { setRejectPopover(null); setPasteToast(text); return; }
+    el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const rect = el.getBoundingClientRect();
+    const cw = rect.width, ch = rect.height, POP_W = 256;
+    const below = rect.top < window.innerHeight * 0.5; // room below? else go above
+    const right = rect.left < window.innerWidth * 0.55; // room right? else go left
+    let top = below ? rect.bottom + ch : rect.top - ch * 2;
+    let left = right ? rect.right + cw : rect.left - cw - POP_W;
+    top = Math.max(8, Math.min(top, window.innerHeight - 72));
+    left = Math.max(8, Math.min(left, window.innerWidth - POP_W - 8));
+    setRejectPopover({ cellKey, text, top, left });
+  }
+
   // Returns true if the edit was applied, false if a hard-illegal pin snapped it back
   // (callers like paste use this to avoid a misleading "applied" toast).
   function liveEdit(newPins: ScenarioPin[], newFrees: ScenarioFree[]): boolean {
@@ -3213,14 +3238,14 @@ export function ScheduleGrid({
       // The banner note alone was too easy to miss, so a refused keystroke read as
       // a dead key — show a toast naming the staff, shift, and day it was refused.
       setLiveReject(outcome.rejected);
-      setPasteToast(describeRejection(outcome.rejected));
+      showRejectAt(outcome.rejected);
       return false;
     }
     liveUndoStack.current.push({ pins: livePinsRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
     liveRedoStack.current = [];
     livePinsRef.current = nextPins;
     liveTouchedRef.current = nextTouched;
-    setLiveReject([]);
+    clearReject();
     setLiveOutcome(outcome);
     return true;
   }
@@ -3232,7 +3257,7 @@ export function ScheduleGrid({
     const base = liveBaseInputRef.current;
     if (!base || !liveOutcome) return;
     const outcome = applyScenario(base, pinsArray(livePinsRef.current), freesForScope(base, livePinsRef.current, liveTouchedRef.current, scope));
-    if (outcome.applied) { setLiveReject([]); setLiveOutcome(outcome); }
+    if (outcome.applied) { clearReject(); setLiveOutcome(outcome); }
   }
 
   function liveSandboxUndo() {
@@ -3241,7 +3266,7 @@ export function ScheduleGrid({
     liveRedoStack.current.push({ pins: livePinsRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
     livePinsRef.current = snap.pins;
     liveTouchedRef.current = snap.touched;
-    setLiveReject([]);
+    clearReject();
     setLiveOutcome(snap.outcome);
   }
 
@@ -3251,7 +3276,7 @@ export function ScheduleGrid({
     liveUndoStack.current.push({ pins: livePinsRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
     livePinsRef.current = snap.pins;
     liveTouchedRef.current = snap.touched;
-    setLiveReject([]);
+    clearReject();
     setLiveOutcome(snap.outcome);
   }
   const liveUndoFnRef = useRef(liveSandboxUndo);
@@ -3920,6 +3945,8 @@ export function ScheduleGrid({
                     const isDragSrc = dragSource?.staffId === p.id && dragSource?.date === date;
                     const isSelected = selection.has(cellKey);
                     const isActiveCell = activeCol === p.id && isActiveRow;
+                    // Cell that just refused a shift: bright-red boundary until dismissed.
+                    const isRejectCell = rejectPopover?.cellKey === cellKey;
                     const reqs = showRequests ? requestsByCell.get(cellKey) : undefined;
                     // Tooltip always sees EVERY request on the cell — independent of the
                     // RQ toggle and the status filter (those only shape the visual pills).
@@ -3968,6 +3995,7 @@ export function ScheduleGrid({
                         style={{
                           ...(isActiveCell ? { backgroundColor: requestMode ? "rgba(124,58,237,0.45)" : "rgba(29,78,216,0.45)" } : null),
                           ...(printBg ? { "--print-bg": printBg } : null),
+                          ...(isRejectCell ? { outline: "2px solid #ef4444", outlineOffset: "-1px", zIndex: 4 } : null),
                         } as React.CSSProperties}
                         onMouseDown={(e) => handleCellMouseDown(p.id, date, e)}
                         onMouseEnter={(e) => {
@@ -4188,6 +4216,26 @@ export function ScheduleGrid({
           <button
             onClick={() => setPasteToast(null)}
             className="text-slate-400 hover:text-white text-base leading-none"
+            title="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* Rejection reason anchored beside the offending cell (red), with a matching
+          bright-red boundary on the cell itself; both clear on dismiss or next edit. */}
+      {rejectPopover && (
+        <div
+          data-print-hide
+          role="alert"
+          style={{ top: rejectPopover.top, left: rejectPopover.left, maxWidth: 256 }}
+          className="fixed z-[70] flex items-start gap-2 bg-slate-900/95 border-2 border-red-500 text-red-400 text-xs font-semibold px-3 py-2 rounded-lg shadow-xl"
+        >
+          <span className="leading-snug">{rejectPopover.text}</span>
+          <button
+            onClick={clearReject}
+            className="text-red-300 hover:text-red-100 text-sm leading-none shrink-0"
             title="Dismiss"
           >
             ×
