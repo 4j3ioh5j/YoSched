@@ -6,7 +6,7 @@ import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } 
 import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, ALERT_CATEGORIES, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
-import { applyScenario, cellsToCommitOnAccept, freesForScope, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
+import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
@@ -553,12 +553,19 @@ export function ScheduleGrid({
   // everything not locked/pinned is freed so the engine re-solves it to compensate
   // (the "ripple"). A clear/free removes the cell's pin.
   const livePinsRef = useRef<Map<string, string>>(new Map());
+  // Cells the user EXPLICITLY emptied this session (drag source, Delete) — keys
+  // `${staffId}:${date}`. These are always freed (ring 0) on every re-solve so the
+  // engine refills them; without tracking them separately, minimal freeing (#248
+  // Option 4) would leave a dragged-away cell stuck at its stale value. Pinning a
+  // cell removes it from this set.
+  const liveFreesRef = useRef<Set<string>>(new Set());
   // Dates the user has touched this session — the anchor for the "day"/"pp" scope
   // (only periods/days containing a touched date are re-solved).
   const liveTouchedRef = useRef<Set<string>>(new Set());
-  // Sandbox undo/redo: each entry snapshots the accumulated pins, touched-dates, AND
-  // the resulting outcome, so reverting restores all three (editing can continue).
-  type LiveSnap = { pins: Map<string, string>; touched: Set<string>; outcome: ScenarioOutcome };
+  // Sandbox undo/redo: each entry snapshots the accumulated pins, explicit frees,
+  // touched-dates, AND the resulting outcome, so reverting restores all four
+  // (editing can continue).
+  type LiveSnap = { pins: Map<string, string>; frees: Set<string>; touched: Set<string>; outcome: ScenarioOutcome };
   const liveUndoStack = useRef<LiveSnap[]>([]);
   const liveRedoStack = useRef<LiveSnap[]>([]);
   useEffect(() => { liveModeRef.current = liveMode; }, [liveMode]);
@@ -3073,6 +3080,7 @@ export function ScheduleGrid({
       const liveInput = bundle;
       liveInputRef.current = liveInput;
       livePinsRef.current = new Map();
+      liveFreesRef.current = new Set();
       liveTouchedRef.current = new Set();
       liveUndoStack.current = [];
       liveRedoStack.current = [];
@@ -3127,6 +3135,7 @@ export function ScheduleGrid({
     liveInitialGridRef.current = new Map();
     liveSavedGridRef.current = new Map();
     livePinsRef.current = new Map();
+    liveFreesRef.current = new Set();
     liveTouchedRef.current = new Set();
     liveUndoStack.current = [];
     liveRedoStack.current = [];
@@ -3263,16 +3272,21 @@ export function ScheduleGrid({
       return false;
     }
 
-    // Fold this edit into the accumulated pin set (a free un-pins its cell) and the
-    // touched-date anchor.
+    // Fold this edit into the accumulated pin set (a free un-pins its cell), the
+    // explicit-free set (an emptied cell is freed; a re-pinned cell is un-freed), and
+    // the touched-date anchor.
     const nextPins = new Map(livePinsRef.current);
-    for (const f of newFrees) nextPins.delete(`${f.staffId}:${f.date}`);
-    for (const p of newPins) nextPins.set(`${p.staffId}:${p.date}`, p.shiftTypeId);
+    const nextFrees = new Set(liveFreesRef.current);
+    for (const f of newFrees) { const k = `${f.staffId}:${f.date}`; nextPins.delete(k); nextFrees.add(k); }
+    for (const p of newPins) { const k = `${p.staffId}:${p.date}`; nextPins.set(k, p.shiftTypeId); nextFrees.delete(k); }
     const nextTouched = new Set(liveTouchedRef.current);
     for (const p of newPins) nextTouched.add(p.date);
     for (const f of newFrees) nextTouched.add(f.date);
 
-    const outcome = applyScenario(base, pinsArray(nextPins), freesForScope(base, nextPins, nextTouched, liveScope));
+    // Minimal freeing (#248 Option 4): free the explicit frees plus the smallest ring
+    // of discretionary cells that keeps coverage whole, capped at the chosen scope.
+    const explicitFrees = [...nextFrees].map(pinKeyParts);
+    const outcome = applyScenarioExpanding(base, pinsArray(nextPins), explicitFrees, nextTouched, nextPins, liveScope);
     if (!outcome.applied) {
       // Hard-illegal pin: snap back (keep current grid + pins) and surface WHY.
       // The banner note alone was too easy to miss, so a refused keystroke read as
@@ -3281,9 +3295,10 @@ export function ScheduleGrid({
       showRejectAt(outcome.rejected);
       return false;
     }
-    liveUndoStack.current.push({ pins: livePinsRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
+    liveUndoStack.current.push({ pins: livePinsRef.current, frees: liveFreesRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
     liveRedoStack.current = [];
     livePinsRef.current = nextPins;
+    liveFreesRef.current = nextFrees;
     liveTouchedRef.current = nextTouched;
     clearReject();
     setLiveOutcome(outcome);
@@ -3296,15 +3311,19 @@ export function ScheduleGrid({
     setLiveScope(scope);
     const base = liveBaseInputRef.current;
     if (!base || !liveOutcome) return;
-    const outcome = applyScenario(base, pinsArray(livePinsRef.current), freesForScope(base, livePinsRef.current, liveTouchedRef.current, scope));
+    // Scope is the ceiling on how far the edit may ripple; re-solve at the new ceiling
+    // (expanding stops at the smallest feasible ring within it).
+    const explicitFrees = [...liveFreesRef.current].map(pinKeyParts);
+    const outcome = applyScenarioExpanding(base, pinsArray(livePinsRef.current), explicitFrees, liveTouchedRef.current, livePinsRef.current, scope);
     if (outcome.applied) { clearReject(); setLiveOutcome(outcome); }
   }
 
   function liveSandboxUndo() {
     const snap = liveUndoStack.current.pop();
     if (!snap || !liveOutcome) return;
-    liveRedoStack.current.push({ pins: livePinsRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
+    liveRedoStack.current.push({ pins: livePinsRef.current, frees: liveFreesRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
     livePinsRef.current = snap.pins;
+    liveFreesRef.current = snap.frees;
     liveTouchedRef.current = snap.touched;
     clearReject();
     setLiveOutcome(snap.outcome);
@@ -3313,8 +3332,9 @@ export function ScheduleGrid({
   function liveSandboxRedo() {
     const snap = liveRedoStack.current.pop();
     if (!snap || !liveOutcome) return;
-    liveUndoStack.current.push({ pins: livePinsRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
+    liveUndoStack.current.push({ pins: livePinsRef.current, frees: liveFreesRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
     livePinsRef.current = snap.pins;
+    liveFreesRef.current = snap.frees;
     liveTouchedRef.current = snap.touched;
     clearReject();
     setLiveOutcome(snap.outcome);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyScenario, cellsToCommitOnAccept, freesForScope, type ScenarioPin, type ScenarioFree } from "../scenario";
+import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForRing, freesForScope, type ScenarioPin, type ScenarioFree } from "../scenario";
 import { type AutoScheduleInput, type ScheduleStaff, type ScheduleShiftType } from "../auto-scheduler";
 import { whenToColumns, legacyPatternToWhen } from "../recurrence";
 
@@ -434,5 +434,99 @@ describe("freesForScope — ripple scope → freed cells (Auto-generate)", () =>
     // All DATES fall in PP 2025-05-11..2025-05-24, so pp scope frees them all.
     const pp = keysOf(freesForScope(input, new Set<string>(), touched, "pp"));
     for (const d of DATES) expect(pp.has(`p1:${d}`)).toBe(true);
+  });
+});
+
+describe("freesForRing — minimal-freeing ladder (#248 Option 4)", () => {
+  const keysOf = (frees: ScenarioFree[]) => new Set(frees.map((f) => `${f.staffId}:${f.date}`));
+  const filled = () =>
+    DATES.flatMap((d) => [
+      { staffId: "p1", date: d, shiftTypeId: "st-or", code: "OR", isLocked: false },
+      { staffId: "p2", date: d, shiftTypeId: "st-or", code: "OR", isLocked: false },
+    ]);
+
+  it("ring 0 frees nothing extra; higher rings widen day → pp → range", () => {
+    const input = makeInput({ existingAssignments: filled() });
+    const touched = new Set(["2025-05-12"]);
+    const noPins = new Set<string>();
+
+    expect(freesForRing(input, noPins, touched, 0)).toEqual([]); // ring 0: nothing
+
+    const ring1 = keysOf(freesForRing(input, noPins, touched, 1));
+    expect(ring1.has("p1:2025-05-12")).toBe(true);  // touched day
+    expect(ring1.has("p1:2025-05-13")).toBe(false); // other day excluded
+
+    // pp + range both cover every day here (single PP spans the week).
+    const ring2 = keysOf(freesForRing(input, noPins, touched, 2));
+    const ring3 = keysOf(freesForRing(input, noPins, touched, 3));
+    for (const d of DATES) { expect(ring2.has(`p1:${d}`)).toBe(true); expect(ring3.has(`p1:${d}`)).toBe(true); }
+  });
+
+  it("ring N matches the equivalent scope (freesForScope delegates here)", () => {
+    const input = makeInput({ existingAssignments: filled() });
+    const touched = new Set(["2025-05-12"]);
+    const noPins = new Set<string>();
+    expect(freesForRing(input, noPins, touched, 1)).toEqual(freesForScope(input, noPins, touched, "day"));
+    expect(freesForRing(input, noPins, touched, 3)).toEqual(freesForScope(input, noPins, touched, "range"));
+  });
+});
+
+describe("applyScenarioExpanding — expand only as far as coverage needs (#248 Option 4)", () => {
+  const cellKeys = (changes: { staffId: string; date: string }[]) => changes.map((c) => `${c.staffId}:${c.date}`);
+
+  it("stops at ring 0 when the edit doesn't drop coverage — ripple = just the edited cell", () => {
+    // Both staff OR all days; minCount OR(Mon)=1, so p1 dropping off Monday still
+    // leaves p2 covering it → no hard breach → no discretionary cell is ever freed.
+    const baseline = DATES.flatMap((d) => [
+      { staffId: "p1", date: d, shiftTypeId: "st-or", code: "OR", isLocked: false },
+      { staffId: "p2", date: d, shiftTypeId: "st-or", code: "OR", isLocked: false },
+    ]);
+    const input = makeInput({
+      existingAssignments: baseline,
+      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }],
+    });
+    const pins: ScenarioPin[] = [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-off" }];
+    const pinned = new Set(["p1:2025-05-12"]);
+    const touched = new Set(["2025-05-12"]);
+
+    // Even with the WIDEST ceiling, expanding stops at ring 0.
+    const out = applyScenarioExpanding(input, pins, [], touched, pinned, "range");
+    expect(out.applied).toBe(true);
+    expect(cellKeys(out.changes)).toEqual(["p1:2025-05-12"]); // only the edit moved
+
+    // Full-scope (un-expanded) freeing can only ever touch ≥ as many cells.
+    const full = applyScenario(input, pins, freesForScope(input, pinned, touched, "range"));
+    expect(out.changes.length).toBeLessThanOrEqual(full.changes.length);
+  });
+
+  it("widens until coverage is restored — backfills the freed slot from the next ring", () => {
+    // p1 covers Monday's OR (minCount 1), p2 is off. Pinning p1 off Monday breaks
+    // coverage at ring 0 (delta +1 hard breach) → expand to ring 1 → p2:Mon is freed
+    // and the engine must place p2 on OR (hard min) → coverage restored.
+    const baseline = [
+      { staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or", code: "OR", isLocked: false },
+      { staffId: "p2", date: "2025-05-12", shiftTypeId: "st-off", code: "X", isLocked: false },
+    ];
+    const input = makeInput({
+      existingAssignments: baseline,
+      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }],
+    });
+    const pins: ScenarioPin[] = [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-off" }];
+    const pinned = new Set(["p1:2025-05-12"]);
+    const touched = new Set(["2025-05-12"]);
+
+    const out = applyScenarioExpanding(input, pins, [], touched, pinned, "range");
+    expect(out.applied).toBe(true);
+    expect(cellAt(out.grid, "p2", "2025-05-12")).toBe("st-or"); // backfilled by expansion
+    expect(out.result.quality.breakdown.hardBreaches).toBe(0);  // coverage whole again
+  });
+
+  it("a hard-illegal pin snaps back without widening", () => {
+    const input = makeInput({ existingAssignments: DATES.flatMap((d) => [lockedOR("p1", d)]) });
+    // p1 isn't eligible for a shift that doesn't exist in their eligibility set.
+    const pins: ScenarioPin[] = [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-ghost" }];
+    const out = applyScenarioExpanding(input, pins, [], new Set(["2025-05-12"]), new Set(["p1:2025-05-12"]), "range");
+    expect(out.applied).toBe(false);
+    expect(out.changes).toEqual([]);
   });
 });

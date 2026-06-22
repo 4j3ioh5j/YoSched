@@ -9,6 +9,18 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Other open items
 
+- [ ] **Auto-generate ripple reduction (IN PROGRESS — Option 4 + Option 3)** — one manual change in
+  Auto-generate currently reshuffles many cells; humans will trade a slightly-less-optimal schedule for
+  far less disruption. Root cause: engine frees all in-scope cells, removes them entirely, and scores
+  only absolute quality (no "distance from prior grid" term). **Option 4** (shipping first): expanding /
+  minimal freeing — free only disturbed cells, widen ring-by-ring only on coverage shortfall, up to the
+  chosen scope as a *ceiling*. **Option 3**: a "disruption ↔ optimality" dial — a configurable stability
+  objective tier (number of cells differing from baseline) that can outrank the SOFT objectives but
+  **never** the hard/inviolable tiers (coverage floor, eligibility, requests). Options 1/2/5 + the
+  OR-Tools question (not used; recommend against swapping in — Live runs client-side, native lib forces a
+  server round-trip) all documented in **handoff #248**. Engine-core work → dry-run harness + Codex, small
+  slices.
+
 - [ ] **Day-off fulfillment-strategy ordering — LEAVE fallback + ORL_PAIR (DEFERRED)** — let staff rank
   *how* a requested day off is produced, to conserve their leave pool. Soft hints at the **lowest
   objective priority** — never disrupts coverage, scheduler can override. **SHIPPED & deployed:** slice 1a

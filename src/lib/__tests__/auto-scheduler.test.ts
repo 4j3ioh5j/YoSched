@@ -1996,7 +1996,7 @@ describe("resolveShiftHourOverride — stored row → per-day-type hours", () =>
 
 describe("compareScheduleQuality (lexicographic, #220 priority)", () => {
   const q = (rank: number[]): ScheduleQuality => ({
-    breakdown: { hardBreaches: rank[0], ppHoursDeviation: rank[1], requestsDenied: rank[2], fairnessSpread: rank[3] },
+    breakdown: { hardBreaches: rank[0], ppHoursDeviation: rank[1], requestsDenied: rank[2], fairnessSpread: rank[3], coverageShortfall: 0 },
     rank,
   });
 

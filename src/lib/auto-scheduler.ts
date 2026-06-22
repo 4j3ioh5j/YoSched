@@ -175,6 +175,13 @@ export type ScheduleQuality = {
     ppHoursDeviation: number;  // T1: Σ |worked − target| over staff×PP (measures #217)
     requestsDenied: number;    // T2: non-human-approved REQUEST_SHIFT work-days not honored, counted per covered date (measures #221)
     fairnessSpread: number;    // T3: stddev of FTE-normalized desirability load across staff
+    // Measurement only (NOT in `rank`): total Σ(required − assigned) coverage gap
+    // across all date×shift minimums, counted UNCONDITIONALLY — including gaps
+    // `hardBreaches` excludes because they're sanctioned by a locked/approved cell.
+    // Used by the Live "expanding freeing" re-solve (#248 Option 4) to tell whether
+    // an edit opened a coverage hole that freeing more cells could let the engine
+    // backfill (locked survivors mask such a hole from `hardBreaches`).
+    coverageShortfall: number;
   };
   rank: number[];
 };
@@ -2071,6 +2078,7 @@ export function autoSchedule({
   // Filled by the audit loops below (no extra iteration), assembled into
   // result.quality just before return. See ScheduleQuality / compareScheduleQuality.
   let qHardBreaches = 0;
+  let qCoverageShortfall = 0;
   let qPpHoursDeviation = 0;
 
   function auditPayPeriodHours(): void {
@@ -2347,6 +2355,9 @@ export function autoSchedule({
           ? "limited by approved leave / locked assignments"
           : "true shortage — every eligible staff member is unavailable or already at their pay-period hour cap";
       warnings.push(`${date}: ${st.code} below its required minimum (${assigned}/${required}) — ${cause}`);
+      // Raw coverage gap — counted for EVERY shortfall (the expanding re-solve needs
+      // to see gaps that `hardBreaches` sanctions away when a locked cell blocks them).
+      qCoverageShortfall += required - assigned;
       // T0: count the missing slots as a hard breach UNLESS the gap is sanctioned
       // by a human-approved leave / locked cell (#220: human-approved > coverage).
       if (!blockedByApproved) qHardBreaches += required - assigned;
@@ -2510,6 +2521,7 @@ export function autoSchedule({
       ppHoursDeviation: qPpHoursDeviation,
       requestsDenied: qRequestsDenied,
       fairnessSpread: qFairnessSpread,
+      coverageShortfall: qCoverageShortfall,
     },
     rank: [qHardBreaches, qPpHoursDeviation, qRequestsDenied, qFairnessSpread],
   };

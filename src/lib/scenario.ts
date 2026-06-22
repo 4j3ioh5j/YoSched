@@ -282,28 +282,37 @@ export function cellsToCommitOnAccept(
     .map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId: c.shiftTypeId }));
 }
 
-// Which baseline cells an Auto-generate edit FREES for the engine to re-solve,
-// given the chosen ripple `scope`. `pinned`/`touchedDates` are keyed/dated by the
-// user's accumulated edits this session.
+// Ripple RADIUS as a 0-based ring (the "minimal freeing" ladder, #248 Option 4):
+//   0 = free nothing extra (only the user's explicit frees apply)
+//   1 = same-date cells (the touched day)         — was scope "day"
+//   2 = pay-periods overlapping a touched date     — was scope "pp"
+//   3 = the whole displayed range                  — was scope "range"
+// The chosen `scope` is the CEILING; `applyScenarioExpanding` starts at ring 0 and
+// widens one ring at a time only when the smaller set can't restore coverage.
+const SCOPE_RING: Record<"day" | "pp" | "range", number> = { day: 1, pp: 2, range: 3 };
+
+// Which baseline cells an Auto-generate edit may free for the engine to re-solve at
+// a given ripple `ring`. `pinned`/`touchedDates` are keyed/dated by the user's
+// accumulated edits this session.
 //
-// CRITICAL guard: with NO touched dates there is no edit to compensate for, so we
-// free NOTHING regardless of scope. Without this, the "range" scope (inScope ≡ true)
-// would free + re-solve the WHOLE grid on a bare scope switch — and the seed-0
-// re-solve diverges from the enter-time fill, lighting up phantom ripple on cells
-// the user never touched. (Day/PP already free nothing when no date is touched.)
-export function freesForScope(
+// CRITICAL guard: with NO touched dates (or ring 0) there is no discretionary set to
+// free — return NOTHING. Without this, the widest ring (inRing ≡ true) would free +
+// re-solve the WHOLE grid on a bare scope switch, and the seed-0 re-solve diverges
+// from the enter-time fill, lighting up phantom ripple on cells the user never
+// touched. (Smaller rings already free nothing when no date is touched.)
+export function freesForRing(
   input: AutoScheduleInput,
   pinned: { has(key: string): boolean },
   touchedDates: ReadonlySet<string>,
-  scope: "day" | "pp" | "range",
+  ring: number,
 ): ScenarioFree[] {
-  if (touchedDates.size === 0) return [];
-  const ppRanges = scope === "pp"
+  if (ring <= 0 || touchedDates.size === 0) return [];
+  const ppRanges = ring === 2
     ? input.payPeriods.filter((pp) => [...touchedDates].some((t) => pp.startDate <= t && t <= pp.endDate))
     : [];
-  const inScope = (date: string): boolean => {
-    if (scope === "range") return true;
-    if (scope === "day") return touchedDates.has(date);
+  const inRing = (date: string): boolean => {
+    if (ring >= 3) return true;
+    if (ring === 1) return touchedDates.has(date);
     return ppRanges.some((pp) => pp.startDate <= date && date <= pp.endDate);
   };
   const frees: ScenarioFree[] = [];
@@ -312,7 +321,65 @@ export function freesForScope(
     // Never free a hand-placed cell: the engine compensates by reshuffling its
     // own discretionary fills, not by undoing the user's manual assignments.
     if (a.source === "manual") continue;
-    if (!a.isLocked && !pinned.has(k) && inScope(a.date)) frees.push({ staffId: a.staffId, date: a.date });
+    if (!a.isLocked && !pinned.has(k) && inRing(a.date)) frees.push({ staffId: a.staffId, date: a.date });
   }
   return frees;
+}
+
+// Back-compat shim: the full-scope free set (the whole ring for `scope`). Kept for
+// callers/tests that want the un-expanded behavior; the Live UI now goes through
+// `applyScenarioExpanding`.
+export function freesForScope(
+  input: AutoScheduleInput,
+  pinned: { has(key: string): boolean },
+  touchedDates: ReadonlySet<string>,
+  scope: "day" | "pp" | "range",
+): ScenarioFree[] {
+  return freesForRing(input, pinned, touchedDates, SCOPE_RING[scope]);
+}
+
+// Expanding (minimal-perturbation) re-solve — #248 Option 4. Instead of freeing the
+// whole scope at once, free the user's explicit frees plus an ever-widening ring of
+// discretionary cells, stopping at the SMALLEST ring that doesn't introduce a new
+// HARD breach (unmet coverage / hard min-max) beyond the baseline. The user's chosen
+// `scope` is the ceiling. Result: an edit ripples only as far as it must to stay
+// feasible, not as far as the scope allows.
+//
+// Feasibility is gauged ONLY on raw COVERAGE shortfall — not soft tiers (PP-hours /
+// fairness), whose deltas ARE the gratuitous churn we're suppressing, and not
+// `hardBreaches`, which sanctions away a gap blocked by a locked survivor (and in a
+// re-solve every un-freed cell is locked, so ring 0 would always look "fine"). The
+// raw `coverageShortfall` sees the hole an overwrite opens; widening frees a body the
+// engine can backfill it with. A hard-illegal pin (applied === false) snaps back
+// immediately and never widens.
+export function applyScenarioExpanding(
+  input: AutoScheduleInput,
+  pins: ScenarioPin[],
+  explicitFrees: ScenarioFree[],
+  touchedDates: ReadonlySet<string>,
+  pinned: { has(key: string): boolean },
+  scope: "day" | "pp" | "range",
+): ScenarioOutcome {
+  const ceiling = SCOPE_RING[scope];
+  // The locked-baseline coverage shortfall is the reference: only widen for a gap the
+  // EDIT opened, never for one the baseline already had. (applyScenario also grades the
+  // baseline internally for qualityDelta; we grade it once here so each ring can be
+  // compared without widening applyScenario's return shape.)
+  const baselineShortfall = autoSchedule({
+    ...input,
+    existingAssignments: input.existingAssignments.map((a) => ({ ...a, isLocked: true })),
+  }).quality.breakdown.coverageShortfall;
+
+  let outcome: ScenarioOutcome | null = null;
+  for (let ring = 0; ring <= ceiling; ring++) {
+    const frees = [...explicitFrees, ...freesForRing(input, pinned, touchedDates, ring)];
+    outcome = applyScenario(input, pins, frees);
+    // Hard-illegal pin: nothing to widen — snap back with the rejection.
+    if (!outcome.applied) return outcome;
+    // Smallest ring that doesn't leave the edit's coverage worse than baseline.
+    if (outcome.result.quality.breakdown.coverageShortfall - baselineShortfall <= 0) return outcome;
+  }
+  // Ceiling reached and still short of baseline coverage — return the widest attempt
+  // (its warnings drive the UI's breach flags).
+  return outcome!;
 }
