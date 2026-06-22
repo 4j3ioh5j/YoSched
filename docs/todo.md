@@ -9,17 +9,16 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Other open items
 
-- [ ] **Auto-generate ripple reduction (IN PROGRESS — Option 4 + Option 3)** — one manual change in
-  Auto-generate currently reshuffles many cells; humans will trade a slightly-less-optimal schedule for
-  far less disruption. Root cause: engine frees all in-scope cells, removes them entirely, and scores
-  only absolute quality (no "distance from prior grid" term). **Option 4** (shipping first): expanding /
-  minimal freeing — free only disturbed cells, widen ring-by-ring only on coverage shortfall, up to the
-  chosen scope as a *ceiling*. **Option 3**: a "disruption ↔ optimality" dial — a configurable stability
-  objective tier (number of cells differing from baseline) that can outrank the SOFT objectives but
-  **never** the hard/inviolable tiers (coverage floor, eligibility, requests). Options 1/2/5 + the
-  OR-Tools question (not used; recommend against swapping in — Live runs client-side, native lib forces a
-  server round-trip) all documented in **handoff #248**. Engine-core work → dry-run harness + Codex, small
-  slices.
+- [ ] **Auto-generate ripple reduction — Option 4 SHIPPED as "Limited" scope; Option 3 parked** — one
+  manual edit reshuffled many cells; humans will trade a less-optimal schedule for less disruption.
+  **Option 4 SHIPPED** (`0a13880` + `0bbfeb6`): minimal/expanding freeing, now a dedicated **"Limited"**
+  scope button (`Scope: Limited | Day(s) | Pay period | Whole range`, default Pay period). Limited frees
+  minimally and widens only as coverage needs (least churn, but does NOT rebalance PP hours — pick Pay
+  period for that). Day/PP/Range keep the original full-freeing/hours-rebalancing behavior.
+  **Option 3 (disruption↔optimality slider) PARKED** on branch `option3-stability-wip` — the dial must
+  influence the off-day/hours-fill distribution (not just `pickStaff`), which is bigger/riskier than
+  planned; alternative is a post-solve snap-back (handoff #248 Option 5). Decide after using Limited.
+  OR-Tools deliberately NOT adopted (Live runs client-side). Full design: handoffs #248/#249.
 
 - [ ] **Day-off fulfillment-strategy ordering — LEAVE fallback + ORL_PAIR (DEFERRED)** — let staff rank
   *how* a requested day off is produced, to conserve their leave pool. Soft hints at the **lowest
