@@ -9,16 +9,27 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Other open items
 
-- [ ] **Day-off fulfillment-strategy ordering — engine (slices 2-3)** — let staff rank *how* a requested
-  day off is produced, to conserve their leave pool: `ORC_ADJACENT` (ORC the day before → post-call off,
-  free), `ORL_PAIR` (2 ORLs anywhere in the PP → frees one 8h day, free), and one-to-many ranked leave
-  types (`LEAVE:<shiftTypeId>`, burns the pool). Soft hints at the **lowest objective priority** — never
-  disrupts coverage, scheduler can override. **Slice 1a SHIPPED** (`c3af34f`): schema `offStrategyOrder`
-  cols, validators, `/my-requests` reorder widget (shows when "the day off" picked), Settings dept-default
-  editor, `/requests` display, undo/restore preservation. **Remaining:** slice 2 = engine LEAVE +
-  ORC_ADJACENT; slice 3 = engine ORL_PAIR (hours-math, touches the 3 hour-computation sites). Slice-2
-  follow-up (Codex #1186): the restore route should pass a `validLeaveShiftIds` set to
-  `parseOffStrategyOrder` so a crafted `schedule:edit` restore can't persist a stale `LEAVE:<id>`.
+- [ ] **Day-off fulfillment-strategy ordering — LEAVE fallback + ORL_PAIR (DEFERRED)** — let staff rank
+  *how* a requested day off is produced, to conserve their leave pool. Soft hints at the **lowest
+  objective priority** — never disrupts coverage, scheduler can override. **SHIPPED & deployed:** slice 1a
+  (`c3af34f` — schema `offStrategyOrder` cols, validators, `/my-requests` reorder widget, Settings
+  dept-default editor, `/requests` display, undo/restore) + slice 2 (`9ed5a17` — engine consumes
+  `ORC_ADJACENT` as a soft `requestBias` tie-break toward the prior-day ORC slot → post-call frees the
+  day; + holds the requested pure-off day off via `requestBlocksWork` AND a `placeFollowerAfter` work-
+  follower guard). Today: orders are captured/displayed, ORC_ADJACENT is honored, the day is held off;
+  `LEAVE:<id>` / `ORL_PAIR` tokens are captured-but-inert (the day is still held off, just not leave-
+  credited/ORL-freed — scheduler applies those manually). **DEFERRED by David 2026-06-21 (chose to ship
+  1a+2):** (3a) hours-aware LEAVE fallback — place a ranked leave on the held-off day only when it
+  strictly fits PP hours (`current<target && current+leaveHrs<=target`, no overshoot/overage), scanning
+  the order for the first *feasible* leave. **Gotcha for whoever picks this up:** it must also thread
+  `offStrategyOrder` into `assignmentSatisfiesRequestOnDate`/request-reconciliation so a leave-placed day
+  *satisfies/auto-approves* the OFF request (a leave shift isn't an off shift, so today it wouldn't) — and
+  handle that the held cell is *empty* before STEP 4 for `kind:"OFF"` (use raw `grid`, not `getCell`).
+  (3b) `ORL_PAIR` — bias ORL pair distribution so a freed 8h day lands on the requested date; touches the
+  3 hour-computation sites. Codex blocked the 3a plan 4× surfacing these (#1200/#1202/#1204) — real,
+  delicate reconciliation-engine work, hence deferred. Slice-2 follow-up (Codex #1186): restore route
+  should pass `validLeaveShiftIds` to `parseOffStrategyOrder` so a crafted `schedule:edit` restore can't
+  persist a stale `LEAVE:<id>`.
 - [ ] **Make the request "Reference" lookup-able** — receipt/email "Reference" = the request cuid PK,
   persisted but not searchable anywhere. Cheap win: add `r.id` to the admin `/requests` search haystack
   (one line). Consider a short human-friendly `referenceCode` only if staff read it aloud.
