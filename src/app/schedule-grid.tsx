@@ -1674,58 +1674,6 @@ export function ScheduleGrid({
     setSaving(null);
   }
 
-  // Response-checked single-cell write for reverse dedicated-column entry. Unlike
-  // applyAssignment (used by the keyboard/picker/drag paths, which keep the
-  // optimistic value even on a failed request), this reverts to `prev` when the
-  // server rejects the write — so a locked/raced 400 never leaves stale local
-  // state. Returns whether the write committed.
-  async function applyAssignmentChecked(
-    staffId: string,
-    date: string,
-    next: AssignmentData | null,
-    prev: AssignmentData | null,
-  ): Promise<boolean> {
-    if (liveMode) return false; // hard guard: no persisted assignment writes during a Live sandbox
-    setLocalAssignments((cur) => {
-      const filtered = cur.filter((a) => !(a.staffId === staffId && a.date === date));
-      return next ? [...filtered, next] : filtered;
-    });
-    try {
-      let res: Response;
-      if (next) {
-        res = await fetch("/api/assignments", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ staffId, date, shiftTypeId: next.shiftTypeId }),
-        });
-      } else {
-        res = await fetch("/api/assignments", {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ staffId, date }),
-        });
-      }
-      if (!res.ok) throw new Error(`write failed: ${res.status}`);
-      if (next) {
-        const { requestChanges, ...saved } = await res.json();
-        setLocalAssignments((cur) =>
-          cur.map((a) => (a.staffId === staffId && a.date === date ? saved : a)),
-        );
-        applyRequestDelta({ requests: requestChanges });
-      } else {
-        const data = await res.json().catch(() => null);
-        applyRequestDelta({ requests: data?.requestChanges });
-      }
-      return true;
-    } catch {
-      // Revert this cell to its prior value (the optimistic change did not stick).
-      setLocalAssignments((cur) => {
-        const filtered = cur.filter((a) => !(a.staffId === staffId && a.date === date));
-        return prev ? [...filtered, prev] : filtered;
-      });
-      return false;
-    }
-  }
 
   // Reverse dedicated-column entry: parse initials typed into a dedicated column's
   // cell and assign that shift to the named staff for the date (the inverse of the
@@ -1807,35 +1755,69 @@ export function ScheduleGrid({
       return;
     }
 
-    const ops: UndoOp[] = [];
+    const addStaffIds = plannedAdds.map((p) => p.id);
+    if (addStaffIds.length === 0 && removalIds.length === 0) return; // typed == current
+
+    // Apply the whole roster edit ATOMICALLY via one transactional request, so a
+    // mid-write failure can never leave the column half-applied (old holder gone,
+    // replacement not written). Mirrors the dedicated-paste optimistic/reconcile.
+    const involvedKeys = new Set([...addStaffIds, ...removalIds].map((id) => `${id}:${date}`));
+    const prevByKey = new Map<string, AssignmentData | null>();
+    for (const k of involvedKeys) prevByKey.set(k, assignmentMap.get(k) ?? null);
+
+    setLocalAssignments((prev) => {
+      const next = prev.filter((a) => !involvedKeys.has(`${a.staffId}:${a.date}`));
+      for (const id of addStaffIds) {
+        next.push({ id: `temp-${id}:${date}`, staffId: id, date, shiftTypeId, isLocked: false, code: st.code, color: st.color });
+      }
+      return next;
+    });
     setSaving(`ded-${shiftTypeId}:${date}`);
 
-    // Removals first (frees any capped slot), then the validated additions. Each
-    // add now lands within cap because the old holder was already cleared.
-    for (const id of removalIds) {
-      const existing = assignmentMap.get(`${id}:${date}`) ?? null;
-      if (!existing || existing.code !== st.code) continue;
-      if (await applyAssignmentChecked(id, date, null, existing)) {
-        ops.push({ staffId: id, date, prev: existing, next: null });
-      }
-    }
-    for (const { id, existing } of plannedAdds) {
-      const next: AssignmentData = {
-        id: `temp-${id}:${date}`,
-        staffId: id,
-        date,
-        shiftTypeId,
-        isLocked: false,
-        code: st.code,
-        color: st.color,
+    try {
+      const res = await fetch("/api/assignments/dedicated-entry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shiftTypeId, date, addStaffIds, removeStaffIds: removalIds }),
+      });
+      if (!res.ok) throw await rejectionError(res);
+      const { applied, cleared, requestChanges } = (await res.json()) as {
+        applied: AssignmentData[]; cleared: { staffId: string; date: string }[]; requestChanges?: AffectedDelta["requests"];
       };
-      if (await applyAssignmentChecked(id, date, next, existing)) {
-        ops.push({ staffId: id, date, prev: existing, next });
+      const appliedKeys = new Set(applied.map((a) => `${a.staffId}:${a.date}`));
+      const clearedKeys = new Set(cleared.map((c) => `${c.staffId}:${c.date}`));
+      setLocalAssignments((prev) => {
+        const next = prev.filter((a) => !involvedKeys.has(`${a.staffId}:${a.date}`)).concat(applied);
+        // Restore prior for any involved cell the server neither applied nor cleared.
+        for (const k of involvedKeys) {
+          if (!appliedKeys.has(k) && !clearedKeys.has(k)) {
+            const prior = prevByKey.get(k);
+            if (prior) next.push(prior);
+          }
+        }
+        return next;
+      });
+      const ops: UndoOp[] = [];
+      for (const a of applied) ops.push({ staffId: a.staffId, date: a.date, prev: prevByKey.get(`${a.staffId}:${a.date}`) ?? null, next: a });
+      for (const c of cleared) ops.push({ staffId: c.staffId, date: c.date, prev: prevByKey.get(`${c.staffId}:${c.date}`) ?? null, next: null });
+      if (ops.length > 0) pushUndo(ops);
+      applyRequestDelta({ requests: requestChanges });
+    } catch (err) {
+      // Atomic route → nothing persisted on failure. Revert every involved cell.
+      setLocalAssignments((prev) => {
+        const next = prev.filter((a) => !involvedKeys.has(`${a.staffId}:${a.date}`));
+        for (const prior of prevByKey.values()) if (prior) next.push(prior);
+        return next;
+      });
+      if ((err as RejectionError)?.dayFull) {
+        const anchor = addStaffIds[0] ?? removalIds[0];
+        showRejectAt([{ staffId: anchor, date, shiftTypeId, reason: "day-full" }]);
+      } else {
+        window.alert(`Couldn't update ${st.code} on ${dayLabel} — no changes made.`);
       }
+    } finally {
+      setSaving(null);
     }
-
-    if (ops.length > 0) pushUndo(ops);
-    setSaving(null);
   }
 
   // Optimistically drop / re-add requests in local state, then persist. Best-
