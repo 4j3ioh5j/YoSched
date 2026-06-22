@@ -4,6 +4,7 @@ import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, u
 import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
+import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
 import { OffStrategyEditor } from "@/components/off-strategy-editor";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
 import { RecurrencePicker } from "../staff/recurrence-picker";
@@ -78,6 +79,7 @@ type SchedulingPrefs = {
   pendingRequestMode: PendingRequestMode;
   requestConflictPolicy: RequestConflictPolicy;
   defaultOffStrategyOrder: string[];
+  defaultLiveScope: LiveScope;
 };
 
 type DefaultAvailabilityRule = {
@@ -2165,6 +2167,32 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
     }
   }
 
+  const [scopeStatus, setScopeStatus] = useState<SaveStatus>("idle");
+  async function saveLiveScope(value: LiveScope) {
+    const prev = prefs.defaultLiveScope;
+    setPrefs((p) => ({ ...p, defaultLiveScope: value }));
+    setScopeStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ defaultLiveScope: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setScopeStatus("saved");
+      setTimeout(() => setScopeStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, defaultLiveScope: prev }));
+      setScopeStatus("error");
+    }
+  }
+  const LIVE_SCOPE_HINTS: Record<LiveScope, string> = {
+    limited: "Fewest changes; hours may drift",
+    day: "Re-solve the edited day(s)",
+    pp: "Rebalance the whole pay period",
+    range: "Re-solve the whole range",
+  };
+
   return (
     <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
       <SectionHeader
@@ -2218,6 +2246,36 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
             onBlur={(e) => canEdit && saveMaxLeave(Math.max(0, Math.min(999, parseInt(e.target.value) || 0)))}
             className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 text-center focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
           />
+        </div>
+
+        <div className="pt-2 border-t border-slate-700/50">
+          <div className="text-sm font-medium text-slate-200">Default scope of live changes</div>
+          <div className="text-xs text-slate-400">
+            When you edit a generated schedule, how much of the rest the engine re-solves to compensate. Schedulers can change it per session. &ldquo;Limited&rdquo; disturbs the fewest cells but may leave pay-period hours unbalanced; &ldquo;Pay period&rdquo; rebalances hours.
+            {scopeStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
+            {scopeStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
+            {scopeStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+            {LIVE_SCOPES.map((scope) => (
+              <button
+                key={scope}
+                onClick={() => canEdit && saveLiveScope(scope)}
+                disabled={!canEdit}
+                title={LIVE_SCOPE_HINTS[scope]}
+                className={[
+                  "flex flex-col items-start px-3 py-2 rounded-lg border text-left transition-colors",
+                  prefs.defaultLiveScope === scope
+                    ? "bg-blue-600/20 border-blue-500 text-blue-300"
+                    : "bg-slate-700/30 border-slate-600/50 text-slate-300 hover:border-slate-500",
+                  !canEdit ? "opacity-60 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                <span className="text-sm font-medium">{LIVE_SCOPE_LABELS[scope]}</span>
+                <span className="text-[11px] text-slate-500 mt-0.5">{LIVE_SCOPE_HINTS[scope]}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="pt-2 border-t border-slate-700/50">

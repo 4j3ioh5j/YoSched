@@ -7,6 +7,7 @@ import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForScope, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
+import { LIVE_SCOPES, LIVE_SCOPE_LABELS, DEFAULT_LIVE_SCOPE, type LiveScope } from "@/lib/live-scope";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
@@ -228,6 +229,7 @@ type Props = {
   printColumnRules?: PrintRule[];
   printAggregateColumns?: AggregateColumn[];
   dateFormat?: string;
+  defaultLiveScope?: LiveScope; // dept default scope for auto-generate edits (#248)
   currentVersions?: CurrentVersionMeta[];
   scheduleRequests?: GridRequest[];
   mutedAlertKeys?: string[]; // alert keys muted by any login (shared, single-tenant)
@@ -397,6 +399,7 @@ export function ScheduleGrid({
   printColumnRules = [],
   printAggregateColumns = [],
   dateFormat: dateFormatProp,
+  defaultLiveScope = DEFAULT_LIVE_SCOPE,
   currentVersions = [],
   scheduleRequests = [],
   mutedAlertKeys = [],
@@ -520,7 +523,7 @@ export function ScheduleGrid({
   // day(s); "range" re-solves everything. "limited" (#248 Option 4) is the tightest:
   // it frees minimally and widens only as coverage needs — least churn, but it does
   // NOT rebalance PP hours (so hours can drift; switch to "pp" to rebalance).
-  const [liveScope, setLiveScope] = useState<"limited" | "day" | "pp" | "range">("pp");
+  const [liveScope, setLiveScope] = useState<LiveScope>(defaultLiveScope);
   // Hard-rejected pins from the most recent edit (snap-back reasons for the banner).
   const [liveReject, setLiveReject] = useState<ScenarioPinRejection[]>([]);
   // The "this cell can't take that shift" reason, anchored next to the offending
@@ -3312,7 +3315,7 @@ export function ScheduleGrid({
 
   // Re-solve the current pin-set at a new scope (a scope change is not an edit, so
   // it doesn't touch the undo stack — it just widens/narrows the displayed ripple).
-  function changeLiveScope(scope: "limited" | "day" | "pp" | "range") {
+  function changeLiveScope(scope: LiveScope) {
     setLiveScope(scope);
     const base = liveBaseInputRef.current;
     if (!base || !liveOutcome) return;
@@ -3752,14 +3755,14 @@ export function ScheduleGrid({
                   "Limited" = minimal churn (no PP-hours rebalance); the others free
                   everything in scope and rebalance hours (#248). */}
               <div className="flex items-center gap-1 text-xs" title="How much of the schedule the engine may change to compensate for an edit. Limited = fewest changes (hours may drift). Pay period = rebalances hours across the period.">
-                <span className="text-violet-300/60">Scope:</span>
-                {([["limited", "Limited"], ["day", "Day(s)"], ["pp", "Pay period"], ["range", "Whole range"]] as const).map(([val, label]) => (
+                <span className="text-violet-300/60">Scope of live changes:</span>
+                {LIVE_SCOPES.map((val) => (
                   <button
                     key={val}
                     onClick={() => changeLiveScope(val)}
                     className={`px-1.5 py-0.5 rounded transition-colors ${liveScope === val ? "bg-violet-600 text-white" : "bg-slate-700/60 text-slate-300 hover:bg-slate-600"}`}
                   >
-                    {label}
+                    {LIVE_SCOPE_LABELS[val]}
                   </button>
                 ))}
               </div>

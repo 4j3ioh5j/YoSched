@@ -4,6 +4,7 @@ import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
 import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, DEFAULT_OFF_STRATEGY_ORDER } from "@/lib/schedule-requests";
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
+import { parseLiveScope } from "@/lib/live-scope";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +48,7 @@ export default async function Settings() {
     defaultOffStrategyOrder: schedulingPrefsRow
       ? parseOffStrategyOrder(schedulingPrefsRow.defaultOffStrategyOrder, leaveShiftIds)
       : [...DEFAULT_OFF_STRATEGY_ORDER],
+    defaultLiveScope: parseLiveScope(schedulingPrefsRow?.defaultLiveScope),
   };
 
   return (

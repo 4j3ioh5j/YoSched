@@ -7,6 +7,7 @@ import { getSession } from "@/lib/auth-guard";
 import { resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { isRequestVisibleToViewer } from "@/lib/schedule-requests";
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
+import { parseLiveScope } from "@/lib/live-scope";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -254,6 +255,7 @@ export default async function Home() {
           conditionScope: c.conditionScope,
         }))}
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
+        defaultLiveScope={parseLiveScope(schedPrefs?.defaultLiveScope)}
         currentVersions={currentVersions.map((v) => ({
           year: v.year,
           month: v.month,
