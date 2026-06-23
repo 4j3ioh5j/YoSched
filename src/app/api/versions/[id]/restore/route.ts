@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
+import { syncRequestApprovals } from "@/lib/request-sync";
 import { NextRequest, NextResponse } from "next/server";
-import { type AssignmentSnapshot, monthDateRange, hashSnapshot, nextVersionNumber } from "@/lib/versions";
+import { type AssignmentSnapshot, monthDateRange, hashSnapshot, nextVersionNumber, restoreAffectedCells } from "@/lib/versions";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -21,7 +22,7 @@ const LIST_SELECT = {
 // its saved snapshot. The current month state is auto-backed-up to a new version
 // first so nothing is ever lost, then the target version is marked current.
 export async function POST(_req: NextRequest, { params }: Ctx) {
-  const { error } = await getSession("schedule:edit");
+  const { error, userId } = await getSession("schedule:edit");
   if (error) return error;
   const { id } = await params;
 
@@ -80,10 +81,26 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
 
       // 3. Make the restored version the current one for this month.
       await tx.scheduleVersion.updateMany({ where: { year, month, isCurrent: true }, data: { isCurrent: false } });
-      return tx.scheduleVersion.update({ where: { id }, data: { isCurrent: true }, select: LIST_SELECT });
+      const version = await tx.scheduleVersion.update({ where: { id }, data: { isCurrent: true }, select: LIST_SELECT });
+
+      // The cells this restore touched (cleared then recreated) — reconciled below
+      // once the new state is committed. Carry them out of the tx.
+      const affected = restoreAffectedCells(
+        liveRows.map((a) => ({ staffId: a.staffId, date: a.date.toISOString().split("T")[0] })),
+        snapshot.map((s) => ({ staffId: s.staffId, date: s.date })),
+      );
+      return { version, affected };
     });
 
-    return NextResponse.json({ version: restored });
+    // Reconcile request approvals against the restored schedule. A restore swaps a
+    // whole month of assignments wholesale, so any auto-approved request whose
+    // satisfying cell it dropped must revert to pending (and any the snapshot now
+    // satisfies may auto-approve). Runs AFTER the tx so it reads the committed
+    // state. Without this, restores silently strand approvals (approved with no
+    // assignment) — exactly what a wrong-month restore did to August's roster.
+    await syncRequestApprovals(restored.affected, userId);
+
+    return NextResponse.json({ version: restored.version });
   } catch (e) {
     // Most likely an FK violation: the snapshot references a staff or shift
     // type that has since been deleted. Fail loudly rather than silently drop rows.

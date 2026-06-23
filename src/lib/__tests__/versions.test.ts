@@ -8,6 +8,7 @@ import {
   nextVersionNumber,
   diffSnapshots,
   summarizeChanges,
+  restoreAffectedCells,
 } from "../versions";
 
 function snap(partial: Partial<AssignmentSnapshot> & { staffId: string; date: string; shiftTypeId: string }): AssignmentSnapshot {
@@ -193,5 +194,41 @@ describe("nextVersionNumber", () => {
     expect(nextVersionNumber([1, 2, 3])).toBe(4);
     expect(nextVersionNumber([1, 5])).toBe(6);
     expect(nextVersionNumber([3])).toBe(4);
+  });
+});
+
+describe("restoreAffectedCells", () => {
+  it("unions before (cleared) and after (recreated) cells", () => {
+    const before = [
+      { staffId: "s1", date: "2026-08-17" }, // dropped by the restore
+      { staffId: "s2", date: "2026-08-01" },
+    ];
+    const after = [
+      { staffId: "s2", date: "2026-08-01" }, // unchanged (in both)
+      { staffId: "s3", date: "2026-08-05" }, // added by the restore
+    ];
+    const cells = restoreAffectedCells(before, after);
+    // The dropped cell must be present so its stranded approval can be reverted.
+    expect(cells).toContainEqual({ staffId: "s1", date: "2026-08-17" });
+    // The added cell must be present so a now-satisfied request can auto-approve.
+    expect(cells).toContainEqual({ staffId: "s3", date: "2026-08-05" });
+    expect(cells).toContainEqual({ staffId: "s2", date: "2026-08-01" });
+  });
+
+  it("dedupes a cell present in both snapshots (same staff+date once)", () => {
+    const cell = { staffId: "s1", date: "2026-08-17" };
+    expect(restoreAffectedCells([cell], [{ ...cell }])).toEqual([cell]);
+  });
+
+  it("returns [] when both sides are empty", () => {
+    expect(restoreAffectedCells([], [])).toEqual([]);
+  });
+
+  it("keeps same-date cells for different staff distinct", () => {
+    const cells = restoreAffectedCells(
+      [{ staffId: "a", date: "2026-08-04" }],
+      [{ staffId: "b", date: "2026-08-04" }],
+    );
+    expect(cells).toHaveLength(2);
   });
 });
