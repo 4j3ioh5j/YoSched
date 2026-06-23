@@ -60,6 +60,10 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
   const [filter, setFilter] = useState<RequestStatus | "all">("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // After an unapprove/reopen, the days the request STILL satisfies via a shift it
+  // didn't place (auto/manual). Such a pending request silently re-approves on the
+  // next reconcile, so we offer to clear the shift too.
+  const [stillPrompt, setStillPrompt] = useState<{ staffId: string; cells: { date: string; code: string }[] } | null>(null);
   // Client-side, session-only (no persistence, no server round-trip).
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<RequestSort | null>(null);
@@ -195,10 +199,39 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
       } else {
         const updated = await res.json();
         setRequests((rs) => rs.map((r) => (r.id === id ? { ...r, status: updated.status, approvedAt: updated.approvedAt } : r)));
+        // Unapproved/reopened but a non-request shift still sits on the cell → it
+        // will re-approve unless that shift is cleared. Offer the one-click fix.
+        const still = updated.stillScheduled as { date: string; shiftTypeId: string; code: string }[] | undefined;
+        if (status === "pending" && still && still.length > 0) {
+          setStillPrompt({ staffId: requests.find((r) => r.id === id)?.staffId ?? "", cells: still.map((s) => ({ date: s.date, code: s.code })) });
+        }
       }
     } catch {
       setRequests(prev);
       setError("Failed to update request.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // Clear the leftover shift(s) a just-unapproved request still satisfies, so it
+  // won't silently re-approve. A plain assignment delete on each (staff, day).
+  async function clearStillScheduled() {
+    if (!stillPrompt) return;
+    setBusyId("still");
+    setError(null);
+    try {
+      const results = await Promise.all(
+        stillPrompt.cells.map((c) =>
+          fetch("/api/assignments", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ staffId: stillPrompt.staffId, date: c.date }),
+          }).then((r) => r.ok).catch(() => false),
+        ),
+      );
+      if (results.some((ok) => !ok)) setError("Some shifts couldn't be cleared.");
+      setStillPrompt(null);
     } finally {
       setBusyId(null);
     }
@@ -262,6 +295,29 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
       {error && (
         <div role="alert" className="mb-3 bg-red-900/60 border border-red-500/50 text-red-100 text-sm px-3 py-2 rounded">
           {error}
+        </div>
+      )}
+
+      {stillPrompt && (
+        <div className="mb-3 bg-amber-900/40 border border-amber-500/50 text-amber-100 text-sm px-3 py-2 rounded flex items-center gap-3">
+          <span className="flex-1">
+            {staffName[stillPrompt.staffId]?.initials ?? "Staff"} is still scheduled{" "}
+            {stillPrompt.cells.map((c) => `${c.code} on ${fmt(c.date)}`).join(", ")} — the request will
+            re-approve unless that shift is cleared.
+          </span>
+          <button
+            disabled={busyId === "still"}
+            onClick={clearStillScheduled}
+            className="shrink-0 px-2 py-0.5 text-xs rounded bg-amber-700/70 hover:bg-amber-600 text-amber-50 disabled:opacity-40"
+          >
+            Clear shift{stillPrompt.cells.length > 1 ? "s" : ""}
+          </button>
+          <button
+            onClick={() => setStillPrompt(null)}
+            className="shrink-0 px-2 py-0.5 text-xs rounded text-amber-200 hover:bg-amber-800/40"
+          >
+            Keep
+          </button>
         </div>
       )}
 

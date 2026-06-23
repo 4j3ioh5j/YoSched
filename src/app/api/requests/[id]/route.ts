@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, placeApprovedRequestShift } from "@/lib/request-sync";
 import { resolveUpdaterNames } from "@/lib/assignment-attribution";
-import { resolveRequestPlacement, releasableDates, eachDateInclusive, type RequestKind } from "@/lib/schedule-requests";
+import { resolveRequestPlacement, releasableDates, eachDateInclusive, isRequestSatisfied, type RequestKind } from "@/lib/schedule-requests";
 import { NextRequest, NextResponse } from "next/server";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -130,6 +130,28 @@ async function affectedWindow(staffId: string, cells: { staffId: string; date: s
   };
 }
 
+// The shifts a just-unapproved request would RE-APPROVE on: returned ONLY when the
+// request is still FULLY satisfied (every covered day) by shifts it didn't place
+// (auto/manual) — because re-approval needs the whole range (isRequestSatisfied),
+// so a partially-satisfied multi-day request stays pending and must NOT warn.
+// Caller gates on placement != null, so NEGATE / multi-option requests don't reach
+// here. Returns the covered-day cells to clear so the unapprove sticks. Pure read.
+async function stillScheduledDays(req: RequestRow): Promise<{ date: string; shiftTypeId: string; code: string }[]> {
+  const days = coveredCells(req).map((c) => c.date);
+  if (days.length === 0) return [];
+  const offIds = new Set(
+    (await prisma.shiftType.findMany({ where: { isOffShift: true }, select: { id: true } })).map((s) => s.id),
+  );
+  const rows = await prisma.assignment.findMany({
+    where: { staffId: req.staffId, date: { in: days.map((d) => new Date(d + "T00:00:00Z")) } },
+    select: { date: true, shiftTypeId: true, shiftType: { select: { code: true } } },
+  });
+  const byDate = new Map(rows.map((a) => [ymd(a.date), a]));
+  // Only a request still satisfied across its WHOLE range re-approves next reconcile.
+  if (!isRequestSatisfied(reqShape(req), (d) => byDate.get(d)?.shiftTypeId ?? null, (s) => offIds.has(s))) return [];
+  return [...byDate.values()].map((a) => ({ date: ymd(a.date), shiftTypeId: a.shiftTypeId, code: a.shiftType.code }));
+}
+
 // PATCH — change a request's status (the approval action). Requires schedule:edit.
 //
 // Approval and assignment are two routes to the same end state, so this keeps
@@ -214,7 +236,12 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     // Reconcile OTHER requests on those cells, but never re-derive THIS one — the
     // explicit transition is authoritative, even if a satisfying shift remains.
     await syncRequestApprovals(cells, result.userId, { excludeRequestId: id });
-    return NextResponse.json({ ...serialize(updated), affected: await affectedWindow(existing.staffId, cells) });
+    // Only PENDING re-approves on the next reconcile, so the "still scheduled"
+    // warning only matters there; declined/withdrawn stay put regardless. Gate on
+    // placement: a single concrete shift (REQUEST_SHIFT-of-one / LEAVE / OFF) — not
+    // NEGATE or multi-option, which place nothing to "leave behind".
+    const stillScheduled = status === "pending" && placement != null ? await stillScheduledDays(existing) : [];
+    return NextResponse.json({ ...serialize(updated), affected: await affectedWindow(existing.staffId, cells), stillScheduled });
   }
 
   // fulfilled — record the outcome only; leave assignments and the stamp as-is.

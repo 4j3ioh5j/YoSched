@@ -1903,15 +1903,16 @@ export function ScheduleGrid({
   // PATCH one request's status and apply the affected window it returns. The
   // explicit row's status is set by the caller (a terminal status like declined
   // drops out of the returned window). Returns ok + http status (409 = locked).
-  async function patchRequestStatus(id: string, status: RequestStatus): Promise<{ ok: boolean; httpStatus: number; affected?: AffectedDelta }> {
+  async function patchRequestStatus(id: string, status: RequestStatus): Promise<{ ok: boolean; httpStatus: number; affected?: AffectedDelta; stillScheduled?: { date: string; code: string }[] }> {
     try {
       const res = await fetch(`/api/requests/${id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }),
       });
       if (res.ok) {
-        const affected = (await res.json())?.affected as AffectedDelta | undefined;
+        const body = await res.json();
+        const affected = body?.affected as AffectedDelta | undefined;
         applyRequestDelta(affected);
-        return { ok: true, httpStatus: res.status, affected };
+        return { ok: true, httpStatus: res.status, affected, stillScheduled: body?.stillScheduled };
       }
       return { ok: res.ok, httpStatus: res.status };
     } catch {
@@ -2924,6 +2925,9 @@ export function ScheduleGrid({
     if (snapshots.length === 0) return;
     pushUndoEntry({ kind: "request-delete", snapshots });
     void deleteRequestsForUndo(snapshots); // optimistic remove + DELETE
+    // Make the request-vs-assignment split explicit: in request mode Delete removes
+    // the REQUEST, not the shift on the cell (the assignment is left in place).
+    setPasteToast(`Removed ${snapshots.length} request${snapshots.length > 1 ? "s" : ""} — the shift${snapshots.length > 1 ? "s" : ""} on the schedule ${snapshots.length > 1 ? "are" : "is"} untouched (exit request mode to clear cells).`);
   }, [selection, activeCol, activeRow, localRequests, requestFilter, liveMode]);
   const requestDeleteRef = useRef(handleRequestDelete);
   useEffect(() => { requestDeleteRef.current = handleRequestDelete; }, [handleRequestDelete]);
@@ -2965,11 +2969,15 @@ export function ScheduleGrid({
 
     setLocalRequests((prev) => prev.map((r) => (explicit.includes(r.id) ? { ...r, status: target } : r)));
     let failed = 0, locked = 0;
+    // Reset-to-pending only: days a reset request still satisfies via a shift it
+    // didn't place (auto/manual) — it will re-approve unless that shift is cleared.
+    const stillScheduled: { date: string; code: string }[] = [];
     for (const id of explicit) {
-      const { ok, httpStatus, affected } = await patchRequestStatus(id, target);
+      const { ok, httpStatus, affected, stillScheduled: still } = await patchRequestStatus(id, target);
       if (ok) {
         postStatus.set(id, target);
         for (const ar of affected?.requests ?? []) postStatus.set(ar.id, ar.status); // co-approved neighbours
+        if (still) stillScheduled.push(...still);
       } else {
         failed++;
         if (httpStatus === 409) locked++; // a covered day is locked-and-unsatisfied
@@ -2986,6 +2994,11 @@ export function ScheduleGrid({
       .map(([id, st]) => ({ id, from: preStatus.get(id) ?? ("pending" as RequestStatus), to: st }));
     if (changed.length === 1) pushUndoEntry({ kind: "request-status", item: changed[0] });
     else if (changed.length > 1) pushUndoEntry({ kind: "request-status-multi", items: changed });
+    if (stillScheduled.length > 0) {
+      const summary = stillScheduled.slice(0, 3).map((s) => `${s.code} on ${formatDateCompact(parseDate(s.date), dateFormat)}`).join(", ");
+      const more = stillScheduled.length > 3 ? ` +${stillScheduled.length - 3} more` : "";
+      setPasteToast(`Still scheduled (${summary}${more}) — these will re-approve. Clear the shift to fully un-approve: exit request mode (Esc), then Delete the cell, or use the Requests view.`);
+    }
     if (failed > 0) {
       const verb = target === "approved" ? "approved" : target === "declined" ? "denied" : "reset to pending";
       setRequestError(`${failed} request(s) couldn't be ${verb}${locked > 0 ? ` (${locked} locked)` : ""}.`);
@@ -3630,7 +3643,7 @@ export function ScheduleGrid({
           data-print-hide
           className="shrink-0 flex items-center justify-center gap-2 px-4 py-1 bg-violet-600 text-white text-xs font-semibold"
         >
-          <span>REQUEST MODE — letters add requests (Shift = avoid, Alt = soft). Press “/” or Esc to exit.</span>
+          <span>REQUEST MODE — letters add requests (Shift = avoid, Alt = soft) · + approve · ! deny · ^ reset to pending · Delete removes the request (not the shift). Press “/” or Esc to exit.</span>
         </div>
       )}
       {/* Print-only title: bold-centered "YoSched" brand above the month/year */}
