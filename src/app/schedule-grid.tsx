@@ -541,7 +541,9 @@ export function ScheduleGrid({
   const [liveReject, setLiveReject] = useState<ScenarioPinRejection[]>([]);
   // The "this cell can't take that shift" reason, anchored next to the offending
   // cell (red popover + red cell boundary) instead of a top-of-page toast.
-  const [rejectPopover, setRejectPopover] = useState<{ cellKey: string; text: string; top: number; left: number } | null>(null);
+  // Anchored cell popover. variant "reject" = red (a blocked edit); "advisory" =
+  // amber (a non-blocking heads-up, e.g. an unapprove that left a shift behind).
+  const [rejectPopover, setRejectPopover] = useState<{ cellKey: string; text: string; top: number; left: number; variant: "reject" | "advisory" } | null>(null);
   const clearReject = () => { setLiveReject([]); setRejectPopover(null); };
   // Mirror of liveMode for the document-level keyboard/paste listeners, which close
   // over their effect's scope and would otherwise read a stale value.
@@ -2971,13 +2973,14 @@ export function ScheduleGrid({
     let failed = 0, locked = 0;
     // Reset-to-pending only: days a reset request still satisfies via a shift it
     // didn't place (auto/manual) — it will re-approve unless that shift is cleared.
-    const stillScheduled: { date: string; code: string }[] = [];
+    const stillScheduled: { staffId: string; date: string; code: string }[] = [];
     for (const id of explicit) {
+      const staffId = localRequests.find((r) => r.id === id)?.staffId ?? "";
       const { ok, httpStatus, affected, stillScheduled: still } = await patchRequestStatus(id, target);
       if (ok) {
         postStatus.set(id, target);
         for (const ar of affected?.requests ?? []) postStatus.set(ar.id, ar.status); // co-approved neighbours
-        if (still) stillScheduled.push(...still);
+        if (still) for (const s of still) stillScheduled.push({ staffId, date: s.date, code: s.code });
       } else {
         failed++;
         if (httpStatus === 409) locked++; // a covered day is locked-and-unsatisfied
@@ -2995,9 +2998,12 @@ export function ScheduleGrid({
     if (changed.length === 1) pushUndoEntry({ kind: "request-status", item: changed[0] });
     else if (changed.length > 1) pushUndoEntry({ kind: "request-status-multi", items: changed });
     if (stillScheduled.length > 0) {
-      const summary = stillScheduled.slice(0, 3).map((s) => `${s.code} on ${formatDateCompact(parseDate(s.date), dateFormat)}`).join(", ");
-      const more = stillScheduled.length > 3 ? ` +${stillScheduled.length - 3} more` : "";
-      setPasteToast(`Still scheduled (${summary}${more}) — these will re-approve. Clear the shift to fully un-approve: exit request mode (Esc), then Delete the cell, or use the Requests view.`);
+      // Anchor the heads-up beside the offending cell (amber, non-blocking) — a top
+      // toast was easy to miss. The shift stayed, so the request re-approves unless
+      // it's cleared. Pick the first still-scheduled cell that's actually on screen.
+      const first = stillScheduled[0];
+      const more = stillScheduled.length > 1 ? ` (+${stillScheduled.length - 1} more)` : "";
+      anchorPopover(`${first.staffId}:${first.date}`, `${first.code} still here — re-approves unless you delete this shift.${more}`, "advisory");
     }
     if (failed > 0) {
       const verb = target === "approved" ? "approved" : target === "declined" ? "denied" : "reset to pending";
@@ -3362,8 +3368,12 @@ export function ScheduleGrid({
   // Falls back to the top-of-page toast if the cell isn't currently in the DOM.
   function showRejectAt(rejected: ScenarioPinRejection[]) {
     const r = rejected[0];
-    const cellKey = `${r.staffId}:${r.date}`;
-    const text = describeRejection(rejected);
+    anchorPopover(`${r.staffId}:${r.date}`, describeRejection(rejected), "reject");
+  }
+
+  // Anchor a popover beside a cell (same placement as showRejectAt). Falls back to
+  // the top toast only if the cell isn't on screen. variant picks red vs amber.
+  function anchorPopover(cellKey: string, text: string, variant: "reject" | "advisory") {
     const el = document.querySelector(`[data-cell="${cellKey}"]`) as HTMLElement | null;
     if (!el) { setRejectPopover(null); setPasteToast(text); return; }
     el.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -3375,7 +3385,7 @@ export function ScheduleGrid({
     let left = right ? rect.right + cw : rect.left - cw - POP_W;
     top = Math.max(8, Math.min(top, window.innerHeight - 72));
     left = Math.max(8, Math.min(left, window.innerWidth - POP_W - 8));
-    setRejectPopover({ cellKey, text, top, left });
+    setRejectPopover({ cellKey, text, top, left, variant });
   }
 
   // Per-day cap guard for NORMAL-mode edits (the engine + Live mode enforce their
@@ -4212,7 +4222,7 @@ export function ScheduleGrid({
                         style={{
                           ...(isActiveCell ? { backgroundColor: requestMode ? "rgba(124,58,237,0.45)" : "rgba(29,78,216,0.45)" } : null),
                           ...(printBg ? { "--print-bg": printBg } : null),
-                          ...(isRejectCell ? { outline: "2px solid #ef4444", outlineOffset: "-1px", zIndex: 4 } : null),
+                          ...(isRejectCell ? { outline: `2px solid ${rejectPopover?.variant === "advisory" ? "#f59e0b" : "#ef4444"}`, outlineOffset: "-1px", zIndex: 4 } : null),
                         } as React.CSSProperties}
                         onMouseDown={(e) => handleCellMouseDown(p.id, date, e)}
                         onMouseEnter={(e) => {
@@ -4447,7 +4457,7 @@ export function ScheduleGrid({
           data-print-hide
           role="alert"
           style={{ top: rejectPopover.top, left: rejectPopover.left, maxWidth: 256 }}
-          className="fixed z-[70] bg-slate-900/95 border-2 border-red-500 text-red-400 text-xs font-semibold leading-snug px-3 py-2 rounded-lg shadow-xl"
+          className={`fixed z-[70] bg-slate-900/95 border-2 text-xs font-semibold leading-snug px-3 py-2 rounded-lg shadow-xl ${rejectPopover.variant === "advisory" ? "border-amber-500 text-amber-300" : "border-red-500 text-red-400"}`}
         >
           {rejectPopover.text}
         </div>
