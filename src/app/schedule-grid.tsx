@@ -789,14 +789,16 @@ export function ScheduleGrid({
     | { kind: "assignment"; ops: UndoOp[] }
     | { kind: "request-create"; snapshots: RequestSnapshot[] }
     | { kind: "request-delete"; snapshots: RequestSnapshot[] }
-    // approve/deny that changed EXACTLY ONE request (no co-approval cascade) —
-    // safely reversible by a single PATCH. undo/redo PATCH it back and apply the
-    // returned affected window.
+    // approve/deny/reset that changed EXACTLY ONE request (no co-approval
+    // cascade) — reversible by a single PATCH. undo/redo PATCH it back and apply
+    // the returned affected window.
     | { kind: "request-status"; item: { id: string; from: RequestStatus; to: RequestStatus } }
-    // approve/deny that cascaded (co-approved neighbours / shared placement):
-    // a single-PATCH undo would race the auto-approve sync and leave stale state,
-    // so it is NOT undoable — Cmd-Z warns instead of attempting it.
-    | { kind: "request-status-blocked" };
+    // approve/deny/reset that changed MULTIPLE requests (a multi-cell batch, or a
+    // co-approval cascade that also moved neighbours). Holds the FULL change set
+    // so undo/redo can replay every request's status. Replayed SEQUENTIALLY, each
+    // PATCH to its from/to status, so reconcile converges to the right end state
+    // (releases placements + cascades the un-approval) regardless of order.
+    | { kind: "request-status-multi"; items: { id: string; from: RequestStatus; to: RequestStatus }[] };
   const undoStack = useRef<UndoEntry[]>([]);
   const redoStack = useRef<UndoEntry[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1921,11 +1923,6 @@ export function ScheduleGrid({
     if (liveMode) return; // Live has its own sandbox revert/advance in the banner
     const entry = undoStack.current.pop();
     if (!entry) return;
-    if (entry.kind === "request-status-blocked") {
-      // Consume the marker and warn — a cascading approve/deny isn't Cmd-Z-able.
-      setRequestError("That approve/deny also changed related requests, so it can't be undone with Cmd-Z — reverse it from the Requests view.");
-      return;
-    }
     redoStack.current.push(entry);
     if (entry.kind === "assignment") {
       await Promise.all(entry.ops.map((op) => applyAssignment(op.staffId, op.date, op.prev)));
@@ -1939,6 +1936,15 @@ export function ScheduleGrid({
       setLocalRequests((prev) => prev.map((r) => (r.id === entry.item.id ? { ...r, status: entry.item.from } : r)));
       const { ok } = await patchRequestStatus(entry.item.id, entry.item.from);
       if (!ok) setRequestError("The request approval could not be reverted during undo.");
+    } else if (entry.kind === "request-status-multi") {
+      // Revert the whole change set: PATCH each request back to its `from` status,
+      // SEQUENTIALLY so each reconcile settles before the next (releasing placed
+      // shifts and cascading the un-approval converge to the correct end state).
+      const fromMap = new Map(entry.items.map((it) => [it.id, it.from]));
+      setLocalRequests((prev) => prev.map((r) => (fromMap.has(r.id) ? { ...r, status: fromMap.get(r.id)! } : r)));
+      let failed = 0;
+      for (const it of entry.items) { const { ok } = await patchRequestStatus(it.id, it.from); if (!ok) failed++; }
+      if (failed > 0) setRequestError(`${failed} request(s) couldn't be reverted during undo.`);
     }
   }
 
@@ -1957,6 +1963,12 @@ export function ScheduleGrid({
       setLocalRequests((prev) => prev.map((r) => (r.id === entry.item.id ? { ...r, status: entry.item.to } : r)));
       const { ok } = await patchRequestStatus(entry.item.id, entry.item.to);
       if (!ok) setRequestError("The request approval could not be re-applied during redo.");
+    } else if (entry.kind === "request-status-multi") {
+      const toMap = new Map(entry.items.map((it) => [it.id, it.to]));
+      setLocalRequests((prev) => prev.map((r) => (toMap.has(r.id) ? { ...r, status: toMap.get(r.id)! } : r)));
+      let failed = 0;
+      for (const it of entry.items) { const { ok } = await patchRequestStatus(it.id, it.to); if (!ok) failed++; }
+      if (failed > 0) setRequestError(`${failed} request(s) couldn't be re-applied during redo.`);
     }
   }
 
@@ -2015,12 +2027,13 @@ export function ScheduleGrid({
         return;
       }
       // Request mode only: "+" approves / "!" denies every pending request on
-      // the active cell / selection. Both already require Shift on the key
-      // (Shift+= / Shift+1) — match the produced char. Never fires in normal
-      // mode, so a stray + can't approve.
-      if (requestMode && !liveModeRef.current && !picker && canEdit && !activeDedCol && (activeRow || selection.size > 0) && !e.metaKey && !e.ctrlKey && (e.key === "+" || e.key === "!")) {
+      // the active cell / selection; "^" (Shift+6) RESETS approved/denied ones
+      // back to pending (un-approve / un-deny without a verdict). All three are
+      // Shift-produced chars — match the produced char. Never fire in normal mode,
+      // so a stray +/!/^ can't change a request.
+      if (requestMode && !liveModeRef.current && !picker && canEdit && !activeDedCol && (activeRow || selection.size > 0) && !e.metaKey && !e.ctrlKey && (e.key === "+" || e.key === "!" || e.key === "^")) {
         e.preventDefault();
-        requestApproveRef.current(e.key === "+" ? "approved" : "declined");
+        requestApproveRef.current(e.key === "+" ? "approved" : e.key === "!" ? "declined" : "pending");
         return;
       }
       if (e.key === "Escape" && !picker) {
@@ -2915,13 +2928,15 @@ export function ScheduleGrid({
   const requestDeleteRef = useRef(handleRequestDelete);
   useEffect(() => { requestDeleteRef.current = handleRequestDelete; }, [handleRequestDelete]);
 
-  // Request-mode + / ! : approve / deny every PENDING request overlapping the
-  // active cell / selection. The decision is made against a PRE-BATCH snapshot
-  // (only requests pending right now) so co-approval triggered by an earlier
-  // PATCH can't make it order-dependent. Approving a single-shift request also
-  // places that shift (server-side; mirrored locally), skipping requests whose
-  // covered days are locked-and-unsatisfied (which the server would 409).
-  const handleRequestApproveDeny = useCallback(async (target: "approved" | "declined") => {
+  // Request-mode + / ! / ^ : approve / deny / reset-to-pending every eligible
+  // request overlapping the active cell / selection. + and ! act on requests that
+  // are PENDING right now; ^ reverses a decision, acting on requests that are
+  // currently approved or declined. The decision is made against a PRE-BATCH
+  // snapshot so co-approval/reversion triggered by an earlier PATCH can't make it
+  // order-dependent. Approving a single-shift request also places that shift
+  // (server-side; mirrored locally), skipping requests whose covered days are
+  // locked-and-unsatisfied (which the server would 409).
+  const handleRequestSetStatus = useCallback(async (target: "approved" | "declined" | "pending") => {
     const cells: { staffId: string; date: string }[] = [];
     if (selection.size > 0) {
       for (const key of selection) { const [pid, d] = key.split(":"); cells.push({ staffId: pid, date: d }); }
@@ -2930,10 +2945,15 @@ export function ScheduleGrid({
     }
     if (cells.length === 0) return;
 
-    // PRE-BATCH snapshot: only requests pending RIGHT NOW (so co-approval from an
-    // earlier PATCH in this batch can't make the decision order-dependent).
+    // PRE-BATCH snapshot of the eligible requests (so a cascade from an earlier
+    // PATCH in this batch can't make the decision order-dependent). + / ! target
+    // pending requests; ^ (reset-to-pending) targets ones that already have a
+    // decision (approved/declined) — a no-op on already-pending requests.
+    const isEligible = target === "pending"
+      ? (s: RequestStatus) => s === "approved" || s === "declined"
+      : (s: RequestStatus) => s === "pending";
     const explicit = localRequests
-      .filter((r) => r.status === "pending" && cells.some((c) => c.staffId === r.staffId && r.startDate <= c.date && c.date <= r.endDate))
+      .filter((r) => isEligible(r.status) && cells.some((c) => c.staffId === r.staffId && r.startDate <= c.date && c.date <= r.endDate))
       .map((r) => r.id);
     if (explicit.length === 0) return;
 
@@ -2953,27 +2973,26 @@ export function ScheduleGrid({
       } else {
         failed++;
         if (httpStatus === 409) locked++; // a covered day is locked-and-unsatisfied
-        setLocalRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: "pending" } : r))); // revert
+        setLocalRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: preStatus.get(id) ?? "pending" } : r))); // revert to prior
       }
     }
 
-    // Record undo based on blast radius: a change confined to ONE request is
-    // safely reversible by a single PATCH; anything that also moved other
-    // requests (a co-approval cascade, or a multi-cell batch) can't be undone
-    // by sequential PATCHes without racing the auto-approve sync — push a
-    // non-undoable marker so Cmd-Z warns rather than corrupting state.
+    // Record undo by blast radius: a change confined to ONE request is a single
+    // PATCH to reverse; a multi-cell batch or a co-approval cascade that moved
+    // neighbours records the FULL change set (request-status-multi) so undo/redo
+    // replays every request — sequentially, letting reconcile converge.
     const changed = [...postStatus.entries()]
       .filter(([id, st]) => preStatus.get(id) !== st)
       .map(([id, st]) => ({ id, from: preStatus.get(id) ?? ("pending" as RequestStatus), to: st }));
     if (changed.length === 1) pushUndoEntry({ kind: "request-status", item: changed[0] });
-    else if (changed.length > 1) pushUndoEntry({ kind: "request-status-blocked" });
+    else if (changed.length > 1) pushUndoEntry({ kind: "request-status-multi", items: changed });
     if (failed > 0) {
-      const verb = target === "approved" ? "approved" : "denied";
+      const verb = target === "approved" ? "approved" : target === "declined" ? "denied" : "reset to pending";
       setRequestError(`${failed} request(s) couldn't be ${verb}${locked > 0 ? ` (${locked} locked)` : ""}.`);
     }
   }, [selection, activeCol, activeRow, localRequests]);
-  const requestApproveRef = useRef(handleRequestApproveDeny);
-  useEffect(() => { requestApproveRef.current = handleRequestApproveDeny; }, [handleRequestApproveDeny]);
+  const requestApproveRef = useRef(handleRequestSetStatus);
+  useEffect(() => { requestApproveRef.current = handleRequestSetStatus; }, [handleRequestSetStatus]);
 
   // Delete an existing request (the × in the picker's request list).
   const handleDeleteRequest = useCallback(async (id: string) => {
@@ -4649,6 +4668,7 @@ export function ScheduleGrid({
                     ["Alt + letter", "Request: soft (preference). Shift + Alt = soft avoid"],
                     ["+", "Approve every pending request on the cell / selection"],
                     ["!", "Deny every pending request on the cell / selection"],
+                    ["^", "Reset every approved/denied request on the cell / selection back to pending"],
                     ["Delete / Backspace", "Remove the request(s) on the cell / selection"],
                     ["?", "Show or hide the request overlay (the RQ button)"],
                   ].map(([k, d]) => (

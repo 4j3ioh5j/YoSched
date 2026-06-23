@@ -362,6 +362,16 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
                           Unapprove
                         </button>
                       )}
+                      {(r.status === "declined" || r.status === "withdrawn") && (
+                        <button
+                          disabled={busy}
+                          onClick={() => patchStatus(r.id, "pending")}
+                          className="px-2 py-0.5 text-xs rounded bg-slate-700 hover:bg-slate-600 text-slate-200 disabled:opacity-40"
+                          title="Return this request to pending (no decision)"
+                        >
+                          Reopen
+                        </button>
+                      )}
                       <button
                         disabled={busy}
                         onClick={() => remove(r.id)}
