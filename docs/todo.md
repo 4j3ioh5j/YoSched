@@ -9,6 +9,29 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Other open items
 
+- [ ] **PRIORITY — Configurable & transparent auto-generation factor priority (currently hardcoded)** —
+  so the app generalizes to any staffing domain, not one department's policy. The order auto-generation
+  applies its factors, and the weight each carries, must be visible and admin-editable. Motivated by the
+  8/4 ORL case: the engine refused to exceed SR's pay-period hour cap to fill an ORL coverage minimum —
+  a hardcoded "hours beats coverage" choice with no setting to change it. **Decisions (David):**
+  lexicographic reorderable tiers (drag-to-rank, not continuous weights); admin-editable any time
+  (onboarding only seeds defaults); the hard structural constraints (no double-booking, eligibility,
+  locked/manual cells, approved-hard requests) stay **pinned** and non-rerankable; a dry-run preview
+  before saving is recommended. **Key gotcha:** two layers — the objective `rank[]` only *grades*
+  finished schedules, while the greedy STEP pipeline *builds* them and made the 8/4 call; reordering
+  `rank[]` alone won't change placements. Slices: (0) read-only transparency panel first → (1) persist +
+  wire the objective, behavior-identical at defaults → (2) teach the builder the coverage↔hour-cap
+  tradeoff and dry-run-prove 8/4 flips → (3) unify the scattered soft weights → (4) dry-run preview.
+  Full design + symbols: handoff #252. NOT built.
+
+- [ ] **NEGATE-on-empty request satisfaction (latent semantics)** — `assignmentSatisfiesRequestOnDate`
+  treats an empty/null cell as NOT satisfying any request kind, including `NEGATE_SHIFT`. So an approved
+  "don't give me X" reverts to pending on an empty day even though *absence* arguably satisfies the
+  negation. Surfaced during the restore-reconcile fix (handoff #253): of the 114 stranded approvals that
+  the v2-restore created, ~18 were NEGATE that now show pending until a cell exists. Pre-existing, not
+  caused by that fix. Decide intended semantics (does empty satisfy a negation?), then optionally
+  special-case NEGATE in the satisfaction helper. Low urgency.
+
 - [ ] **Auto-generate ripple reduction — Option 4 SHIPPED as "Limited" scope; Option 3 parked** — one
   manual edit reshuffled many cells; humans will trade a less-optimal schedule for less disruption.
   **Option 4 SHIPPED** (`0a13880` + `0bbfeb6`): minimal/expanding freeing, now a dedicated **"Limited"**
