@@ -2029,12 +2029,13 @@ export function ScheduleGrid({
         toggleShowRequests();
         return;
       }
-      // Request mode only: "+" approves / "!" denies every pending request on
-      // the active cell / selection; "^" (Shift+6) RESETS approved/denied ones
-      // back to pending (un-approve / un-deny without a verdict). All three are
-      // Shift-produced chars — match the produced char. Never fire in normal mode,
-      // so a stray +/!/^ can't change a request.
-      if (requestMode && !liveModeRef.current && !picker && canEdit && !activeDedCol && (activeRow || selection.size > 0) && !e.metaKey && !e.ctrlKey && (e.key === "+" || e.key === "!" || e.key === "^")) {
+      // "+" approves / "!" denies every pending request on the active cell /
+      // selection; "^" (Shift+6) RESETS approved/denied ones back to pending
+      // (un-approve / un-deny without a verdict). Works in both normal and
+      // request mode — they only ever touch eligible requests on the target
+      // cells, so a stray +/!/^ over a cell with no request is a no-op. Still
+      // blocked in Live/auto-gen mode, where requests sit outside the sandbox.
+      if (!liveModeRef.current && !picker && canEdit && !activeDedCol && (activeRow || selection.size > 0) && !e.metaKey && !e.ctrlKey && (e.key === "+" || e.key === "!" || e.key === "^")) {
         e.preventDefault();
         requestApproveRef.current(e.key === "+" ? "approved" : e.key === "!" ? "declined" : "pending");
         return;
@@ -2928,8 +2929,8 @@ export function ScheduleGrid({
   const requestDeleteRef = useRef(handleRequestDelete);
   useEffect(() => { requestDeleteRef.current = handleRequestDelete; }, [handleRequestDelete]);
 
-  // Request-mode + / ! / ^ : approve / deny / reset-to-pending every eligible
-  // request overlapping the active cell / selection. + and ! act on requests that
+  // + / ! / ^ : approve / deny / reset-to-pending every eligible request
+  // overlapping the active cell / selection (works in normal and request mode). + and ! act on requests that
   // are PENDING right now; ^ reverses a decision, acting on requests that are
   // currently approved or declined. The decision is made against a PRE-BATCH
   // snapshot so co-approval/reversion triggered by an earlier PATCH can't make it
