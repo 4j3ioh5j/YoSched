@@ -2040,19 +2040,13 @@ export function ScheduleGrid({
         return;
       }
       if (e.key === "Escape" && !picker) {
-        // Precedence: exit request mode first; only clear the selection/active
-        // cell once we're back in normal mode.
-        if (requestMode) {
-          setRequestMode(false);
-        } else {
-          setSelection(new Set());
-          setSelectionAnchor(null);
-          setActiveRow(null);
-          setActiveCol(null);
-          setActiveDedCol(null);
-          setDedSelection(null);
-          dedAnchorRef.current = null;
-        }
+        setSelection(new Set());
+        setSelectionAnchor(null);
+        setActiveRow(null);
+        setActiveCol(null);
+        setActiveDedCol(null);
+        setDedSelection(null);
+        dedAnchorRef.current = null;
       }
       if (e.key === "Tab" && !picker && canEdit && activeRow && activeCol) {
         e.preventDefault();
@@ -3647,13 +3641,13 @@ export function ScheduleGrid({
   return (
     <div className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}>
       {/* Request mode indicator — "/" toggles; letters create requests, not
-          assignments (Shift=avoid, Alt=soft). Esc exits. */}
+          assignments (Shift=avoid, Alt=soft). */}
       {requestMode && (
         <div
           data-print-hide
           className="shrink-0 flex items-center justify-center gap-2 px-4 py-1 bg-violet-600 text-white text-xs font-semibold"
         >
-          <span>REQUEST MODE — letters add requests (Shift = avoid, Alt = soft) · + approve · ! deny · ^ reset to pending · Delete removes the request (not the shift). Press “/” or Esc to exit.</span>
+          <span>REQUEST MODE — letters add requests (Shift = avoid, Alt = soft) · + approve · ! deny · ^ reset to pending · Delete removes the request (not the shift). Press “/” to exit.</span>
         </div>
       )}
       {/* Print-only title: bold-centered "YoSched" brand above the month/year */}
@@ -4062,12 +4056,17 @@ export function ScheduleGrid({
                       const target = pp.targetHours * p.ftePercentage;
                       const diff = hours - target;
 
-                      // Binary signal: green only when hours EXACTLY hit target,
-                      // red for any divergence. No ranges, no intermediate colors.
-                      // (epsilon guards float rounding, matching PP_HOURS_EPSILON.)
+                      // Green when hours EXACTLY hit target; below target is red,
+                      // above target is amber. (epsilon guards float rounding,
+                      // matching PP_HOURS_EPSILON.)
                       let color = "text-slate-500";
                       if (hours > 0) {
-                        color = Math.abs(diff) < 0.001 ? "text-emerald-400" : "text-red-400";
+                        color =
+                          Math.abs(diff) < 0.001
+                            ? "text-emerald-400"
+                            : diff < 0
+                              ? "text-red-400"
+                              : "text-amber-400";
                       }
 
                       const diffLabel = diff >= 0 ? `+${diff}` : `${diff}`;
@@ -4633,7 +4632,7 @@ export function ScheduleGrid({
                     ["Ctrl / Cmd + click", "Add or remove a cell from the selection"],
                     ["Right-click", "Open the shift picker on a cell"],
                     ["Tab", "Open the shift picker on the active cell"],
-                    ["Esc", "Close the picker, exit request mode, or clear the selection"],
+                    ["Esc", "Close the picker or clear the selection"],
                   ].map(([k, d]) => (
                     <div key={k} className="flex items-start gap-3">
                       <kbd className="shrink-0 min-w-[96px] px-2 py-0.5 text-xs font-mono bg-slate-900 border border-slate-600 rounded text-slate-200">{k}</kbd>

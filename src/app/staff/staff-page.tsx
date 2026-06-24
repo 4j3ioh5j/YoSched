@@ -1167,7 +1167,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
                       </td>
                       <td className="py-2 px-3 text-center">
                         <span className="text-xs text-slate-400 font-mono">
-                          {!p.isAutoScheduled || p.employmentTypeName !== "FTE" ? "—" : p.ftePercentage % 1 === 0 ? p.ftePercentage.toFixed(1) : String(p.ftePercentage)}
+                          {p.employmentTypeName !== "FTE" ? "—" : p.ftePercentage % 1 === 0 ? p.ftePercentage.toFixed(1) : String(p.ftePercentage)}
                         </span>
                       </td>
                       <td className="py-2 px-3">
@@ -1277,7 +1277,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
                   ))}
                 </select>
               </FieldRow>
-              {ep.isAutoScheduled && ep.employmentTypeName === "FTE" && (
+              {ep.employmentTypeName === "FTE" && (
                 <FieldRow label="FTE" description="Target hours = FTE x pay period hours">
                   <input
                     type="number"
