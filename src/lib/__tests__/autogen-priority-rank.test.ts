@@ -64,6 +64,25 @@ describe("buildRankFromConfig", () => {
     expect(buildRankFromConfig(TERMS, extra)).toEqual(DEFAULT_RANK);
   });
 
+  it("unknown key alongside a REORDERED known set → fallback, NOT a silent reorder (Codex #1761)", () => {
+    // The known factors are reordered (fairness first). A naive filter-then-validate
+    // would drop `bogus`, see all four known present, and honor the reorder. The
+    // contract requires a full fallback instead.
+    const reorderedPlusUnknown = [
+      cfg("fairness", 0),
+      cfg("ppHours", 1),
+      cfg("requests", 2),
+      cfg("coverageAndHardLimits", 3),
+      cfg("bogus", 4),
+    ];
+    expect(buildRankFromConfig(TERMS, reorderedPlusUnknown)).toEqual(DEFAULT_RANK);
+  });
+
+  it("an unknown key REPLACING a known one → fallback", () => {
+    const replaced = [cfg("bogus", 0), cfg("ppHours", 1), cfg("requests", 2), cfg("fairness", 3)];
+    expect(buildRankFromConfig(TERMS, replaced)).toEqual(DEFAULT_RANK);
+  });
+
   it("duplicate key → fallback (defensive; DB unique constraint prevents this)", () => {
     const dup = [cfg("coverageAndHardLimits", 0), cfg("coverageAndHardLimits", 1), cfg("ppHours", 2), cfg("requests", 3)];
     expect(buildRankFromConfig(TERMS, dup)).toHaveLength(DEFAULT_FACTOR_ORDER.length);

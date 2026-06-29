@@ -234,18 +234,19 @@ export function buildRankFromConfig(
   const known: readonly string[] = DEFAULT_FACTOR_ORDER;
   let orderedKeys: readonly string[] = DEFAULT_FACTOR_ORDER;
   if (config && config.length) {
-    const enabled = config.filter((f) => f.enabled && known.includes(f.key));
-    const enabledKeys = new Set(enabled.map((f) => f.key));
-    // Valid only if exactly the known factors are present and enabled — no missing,
-    // no disabled, no duplicates (the last guards a malformed config; the DB `key`
-    // unique constraint already prevents dups in practice). Then order by sortOrder;
-    // otherwise fall back to the canonical order.
-    if (
-      enabled.length === enabledKeys.size &&
-      enabledKeys.size === known.length &&
-      known.every((k) => enabledKeys.has(k))
-    ) {
-      orderedKeys = [...enabled].sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.key);
+    // Validate the WHOLE config — do NOT pre-filter unknowns, or an unknown key
+    // alongside a reordered known set would slip through and reorder the known
+    // factors instead of falling back (Codex #1761). The config is honored only when
+    // it is EXACTLY the known factors: same count, no duplicates, every entry known
+    // AND enabled. Anything else → canonical fallback (so coverage is never silently
+    // demoted by a missing/disabled/unknown/duplicate entry).
+    const keys = new Set(config.map((f) => f.key));
+    const valid =
+      config.length === known.length &&
+      keys.size === config.length &&
+      config.every((f) => f.enabled && known.includes(f.key));
+    if (valid) {
+      orderedKeys = [...config].sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.key);
     }
   }
   return orderedKeys.map((k) => terms[k as (typeof DEFAULT_FACTOR_ORDER)[number]]);

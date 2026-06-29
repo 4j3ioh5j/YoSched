@@ -13,7 +13,7 @@ export default async function Settings() {
   const { error, permissions } = await getSession("settings:view");
   if (error) redirect("/");
   const canEditSettings = permissions!.includes("settings:edit");
-  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, departmentTargets, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, departmentTargets, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns, autoGenFactors] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
@@ -31,6 +31,7 @@ export default async function Settings() {
     prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.printColumnRule.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.printAggregateColumn.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.autoGenFactor.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
 
   // Lenient read of the dept-default day-off order: drop tokens for since-deleted
@@ -146,6 +147,14 @@ export default async function Settings() {
           weight: f.weight,
           enabled: f.enabled,
           sortOrder: f.sortOrder,
+        }))}
+        autoGenFactors={autoGenFactors.map((f) => ({
+          id: f.id,
+          key: f.key,
+          label: f.label,
+          sortOrder: f.sortOrder,
+          enabled: f.enabled,
+          hardness: f.hardness,
         }))}
         shiftCodes={shiftTypes.filter((st) => !st.isOffShift && !st.isLeave).map((st) => st.code)}
         followRules={followRules.map((r) => ({

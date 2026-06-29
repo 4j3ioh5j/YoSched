@@ -18,14 +18,10 @@ export type PinnedConstraint = {
   description: string;
 };
 
-/** A negotiable policy factor. `tier` is its current position in the lexicographic
- *  `rank[]` (lower = higher precedence; ties broken by the next tier down). */
-export type PriorityFactor = {
-  key: string;
-  label: string;
-  description: string;
-  tier: number;
-};
+/** Display metadata for a negotiable factor, keyed by the factor `key` that the engine
+ *  (DEFAULT_FACTOR_ORDER) and the AutoGenFactor table share. The live order/enabled
+ *  state comes from the DB; this supplies the human label + description. */
+export type FactorMeta = { label: string; description: string };
 
 // The hard structural constraints, pinned above every negotiable factor. These map to
 // the gates in `isAvailable()` / the schema `@@unique([staffId,date])` — see #252 §2.3.
@@ -64,42 +60,38 @@ export const PINNED_CONSTRAINTS: PinnedConstraint[] = [
   },
 ];
 
-// The negotiable factors, in current precedence order (tier 0 = highest). This mirrors
-// `rank[]` = [hardBreaches, ppHoursDeviation, requestsDenied, fairnessSpread] exactly.
-export const PRIORITY_FACTORS: PriorityFactor[] = [
-  {
-    key: "coverage-and-hard-limits",
+// Display metadata for the negotiable factors, keyed by the canonical factor `key`
+// shared with the engine (DEFAULT_FACTOR_ORDER in auto-scheduler.ts) and the
+// AutoGenFactor table. The live precedence order + enabled state come from the DB;
+// this is just the label + description the Settings panel renders. Slice 1 has the
+// four current aggregate factors; Slice 2 adds split keys (coverage, hours over/under).
+export const FACTOR_META: Record<string, FactorMeta> = {
+  coverageAndHardLimits: {
     label: "Coverage & hard staffing limits",
     description:
-      "Meet the required number of staff for every shift, every day, and respect hard per-staff minimums and maximums. Highest priority. (Today coverage and the hard limits share one tier.)",
-    tier: 0,
+      "Meet the required number of staff for every shift, every day, and respect hard per-staff minimums and maximums. (Today coverage and the hard limits share one tier.)",
   },
-  {
-    key: "pp-hours",
+  ppHours: {
     label: "Pay-period hours balance",
     description:
       "Keep each person close to their pay-period hour target. Today this penalizes going over and under target equally.",
-    tier: 1,
   },
-  {
-    key: "requests",
+  requests: {
     label: "Requested shifts honored",
     description: "Honor staff shift requests that aren’t already guaranteed by an approval.",
-    tier: 2,
   },
-  {
-    key: "fairness",
+  fairness: {
     label: "Fairness / equity spread",
     description: "Distribute undesirable shifts evenly across staff (FTE-normalized).",
-    tier: 3,
   },
-];
+};
 
-// What this panel will become — shown as a forward-looking note so the current
-// (fixed) state isn't mistaken for the finished feature. Tracks David's locked
-// decisions (handoff #252 + 2026-06-28 directional-hours policy).
+// Forward-looking note so the current capability isn't mistaken for the finished
+// feature. Tracks David's locked decisions (handoff #252 + 2026-06-28 directional-hours
+// policy). Reordering today re-ranks how finished schedules are GRADED; the builder's
+// placement still follows its fixed pipeline until the next step.
 export const PRIORITY_ROADMAP_NOTE =
-  "This order is currently fixed. It will become admin-reorderable (drag to rank). Coverage will " +
-  "split out of the top tier so it can be ranked against hours, and pay-period hours will split into " +
-  "“over target” (soft — better to go slightly over than leave a shift uncovered) and " +
-  "“under target” (not allowed without a manual override).";
+  "Reordering changes how auto-generation grades a finished schedule. Coming next: the builder will " +
+  "also honor this order while placing shifts, coverage will split out of the top factor so it can be " +
+  "ranked against hours, and pay-period hours will split into “over target” (soft — better to go " +
+  "slightly over than leave a shift uncovered) and “under target” (not allowed without a manual override).";

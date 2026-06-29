@@ -5,7 +5,7 @@ import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
-import { PINNED_CONSTRAINTS, PRIORITY_FACTORS, PRIORITY_ROADMAP_NOTE } from "@/lib/autogen-priority";
+import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
 import { OffStrategyEditor } from "@/components/off-strategy-editor";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
 import { RecurrencePicker } from "../staff/recurrence-picker";
@@ -174,6 +174,7 @@ type Props = {
   departmentTargets: DeptTargetData[];
   employmentTypes: EmploymentTypeData[];
   equityFactors: EquityFactorData[];
+  autoGenFactors: AutoGenFactorData[];
   shiftCodes: string[];
   followRules: FollowRuleData[];
   requiredFollowers: RequiredFollowerData[];
@@ -1797,18 +1798,81 @@ function DesirabilitySection({
   );
 }
 
-// ─── Auto-Generation Priority (read-only transparency, Slice 0 / #252) ───────
+// ─── Auto-Generation Priority (drag-to-reorder, Slice 1 / #252) ──────────────
+
+type AutoGenFactorData = {
+  id: string;
+  key: string;
+  label: string;
+  sortOrder: number;
+  enabled: boolean;
+  hardness: string;
+};
 
 // Surfaces the order auto-generation applies its factors and the constraints it can
-// never trade away. Read-only for now — the order is hardcoded in the engine (see
-// src/lib/autogen-priority.ts). Slice 1 makes it admin-reorderable.
-function AutoGenPrioritySection() {
+// never trade away. The pinned constraints stay read-only; an admin can drag the
+// negotiable factors to re-rank them. Reordering changes how schedules are GRADED
+// (multi-option selection + Live re-solve); the greedy builder's placement still
+// follows its fixed pipeline until Slice 2. Label/description come from FACTOR_META;
+// order + enabled state are the live DB rows.
+function AutoGenPrioritySection({ initial }: { initial: AutoGenFactorData[] }) {
+  const canEdit = useCanEdit();
+  const [factors, setFactors] = useState(initial);
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+  const dragIdx = useRef<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  function metaFor(f: AutoGenFactorData): FactorMeta {
+    return FACTOR_META[f.key] ?? { label: f.label, description: "" };
+  }
+
+  async function persist(reordered: AutoGenFactorData[]) {
+    const prev = factors;
+    setFactors(reordered); // optimistic
+    setStatus("saving");
+    setError("");
+    try {
+      const res = await fetch("/api/settings/autogen-factors", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order: reordered.map((f) => f.key) }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const saved: AutoGenFactorData[] = await res.json();
+      setFactors(saved);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setFactors(prev); // roll back on failure
+      setError(e instanceof Error ? e.message : "Failed to save");
+      setStatus("error");
+    }
+  }
+
+  function handleDragOver(e: React.DragEvent, idx: number) {
+    e.preventDefault();
+    if (dragIdx.current !== null && dragIdx.current !== idx) setDragOverIdx(idx);
+  }
+
+  function handleDrop(idx: number) {
+    const from = dragIdx.current;
+    dragIdx.current = null;
+    setDragOverIdx(null);
+    if (from === null || from === idx) return;
+    const reordered = [...factors];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(idx, 0, moved);
+    persist(reordered);
+  }
+
   return (
     <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
       <SectionHeader
         title="Auto-Generation Priority"
-        description="How auto-generation decides what to schedule when goals compete. Higher items win — a factor is never traded away to improve one below it."
-        status="idle"
+        description="How auto-generation decides what to schedule when goals compete. Higher items win — a factor is never traded away to improve one below it. Drag to re-rank."
+        status={status}
+        error={error}
       />
 
       <div className="mt-4">
@@ -1836,20 +1900,35 @@ function AutoGenPrioritySection() {
           Priority order
         </h3>
         <div className="space-y-1.5">
-          {PRIORITY_FACTORS.map((f, idx) => (
-            <div
-              key={f.key}
-              className="flex items-start gap-3 bg-slate-700/30 border border-slate-600/50 rounded-lg px-4 py-2.5"
-            >
-              <span className="shrink-0 w-6 h-6 rounded-full bg-slate-800 border border-slate-600 text-xs text-slate-300 flex items-center justify-center font-semibold mt-[1px]">
-                {idx + 1}
-              </span>
-              <div className="min-w-0">
-                <span className="text-sm text-slate-200 font-medium">{f.label}</span>
-                <p className="text-xs text-slate-500 mt-0.5">{f.description}</p>
+          {factors.map((f, idx) => {
+            const meta = metaFor(f);
+            return (
+              <div
+                key={f.key}
+                draggable={canEdit}
+                onDragStart={() => { dragIdx.current = idx; }}
+                onDragOver={(e) => handleDragOver(e, idx)}
+                onDrop={() => handleDrop(idx)}
+                onDragEnd={() => { dragIdx.current = null; setDragOverIdx(null); }}
+                className={[
+                  "flex items-start gap-3 bg-slate-700/30 border rounded-lg px-4 py-2.5 transition-colors",
+                  dragOverIdx === idx ? "border-blue-500" : "border-slate-600/50",
+                  canEdit ? "cursor-grab active:cursor-grabbing" : "",
+                ].join(" ")}
+              >
+                {canEdit && (
+                  <span className="shrink-0 text-slate-500 mt-[2px] select-none" title="Drag to reorder">⋮⋮</span>
+                )}
+                <span className="shrink-0 w-6 h-6 rounded-full bg-slate-800 border border-slate-600 text-xs text-slate-300 flex items-center justify-center font-semibold mt-[1px]">
+                  {idx + 1}
+                </span>
+                <div className="min-w-0">
+                  <span className="text-sm text-slate-200 font-medium">{meta.label}</span>
+                  {meta.description && <p className="text-xs text-slate-500 mt-0.5">{meta.description}</p>}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -3675,7 +3754,7 @@ function AdditionalColumnsSection({
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, canEdit = true }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, canEdit = true }: Props) {
   const undo = useUndo();
   const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
 
@@ -3695,7 +3774,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
         <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
-        <AutoGenPrioritySection />
+        <AutoGenPrioritySection initial={initialAutoGenFactors} />
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
         <SchedulingPrefsSection initial={schedulingPrefs} shiftTypes={shiftTypes} />
