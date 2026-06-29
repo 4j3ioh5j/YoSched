@@ -5,6 +5,7 @@ import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
+import { PINNED_CONSTRAINTS, PRIORITY_FACTORS, PRIORITY_ROADMAP_NOTE } from "@/lib/autogen-priority";
 import { OffStrategyEditor } from "@/components/off-strategy-editor";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
 import { RecurrencePicker } from "../staff/recurrence-picker";
@@ -1792,6 +1793,69 @@ function DesirabilitySection({
           <span className="inline-block w-3 h-3 rounded bg-emerald-900/60" /> Great (+5)
         </div>
       </div>
+    </section>
+  );
+}
+
+// ─── Auto-Generation Priority (read-only transparency, Slice 0 / #252) ───────
+
+// Surfaces the order auto-generation applies its factors and the constraints it can
+// never trade away. Read-only for now — the order is hardcoded in the engine (see
+// src/lib/autogen-priority.ts). Slice 1 makes it admin-reorderable.
+function AutoGenPrioritySection() {
+  return (
+    <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
+      <SectionHeader
+        title="Auto-Generation Priority"
+        description="How auto-generation decides what to schedule when goals compete. Higher items win — a factor is never traded away to improve one below it."
+        status="idle"
+      />
+
+      <div className="mt-4">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">
+          Always enforced
+        </h3>
+        <div className="space-y-1.5">
+          {PINNED_CONSTRAINTS.map((c) => (
+            <div
+              key={c.key}
+              className="flex items-start gap-3 bg-slate-900/40 border border-slate-700/40 rounded-lg px-4 py-2"
+            >
+              <span className="text-slate-500 mt-[1px] shrink-0" title="Pinned — not reorderable">🔒</span>
+              <div className="min-w-0">
+                <span className="text-sm text-slate-200 font-medium">{c.label}</span>
+                <p className="text-xs text-slate-500 mt-0.5">{c.description}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">
+          Priority order
+        </h3>
+        <div className="space-y-1.5">
+          {PRIORITY_FACTORS.map((f, idx) => (
+            <div
+              key={f.key}
+              className="flex items-start gap-3 bg-slate-700/30 border border-slate-600/50 rounded-lg px-4 py-2.5"
+            >
+              <span className="shrink-0 w-6 h-6 rounded-full bg-slate-800 border border-slate-600 text-xs text-slate-300 flex items-center justify-center font-semibold mt-[1px]">
+                {idx + 1}
+              </span>
+              <div className="min-w-0">
+                <span className="text-sm text-slate-200 font-medium">{f.label}</span>
+                <p className="text-xs text-slate-500 mt-0.5">{f.description}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <p className="mt-4 text-xs text-slate-500 italic border-t border-slate-700/50 pt-3">
+        {PRIORITY_ROADMAP_NOTE}
+      </p>
     </section>
   );
 }
@@ -3631,6 +3695,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
         <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
+        <AutoGenPrioritySection />
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
         <SchedulingPrefsSection initial={schedulingPrefs} shiftTypes={shiftTypes} />

@@ -22,7 +22,13 @@ archive is at the bottom for traceability (full technical detail lives in the nu
   `rank[]` alone won't change placements. Slices: (0) read-only transparency panel first → (1) persist +
   wire the objective, behavior-identical at defaults → (2) teach the builder the coverage↔hour-cap
   tradeoff and dry-run-prove 8/4 flips → (3) unify the scattered soft weights → (4) dry-run preview.
-  Full design + symbols: handoff #252. NOT built.
+  **Hours must split by direction (David, 2026-06-28):** the symmetric `ppHoursDeviation` tier becomes
+  two factors — **over-hours = soft, ranked BELOW coverage** ("better to go slightly over hours than
+  under staff", so the builder may exceed a PP target to cover a slot), and **under-hours =
+  hard-by-default, override-able** ("under hours never without manual override" — surfaced as a true
+  shortage a human must accept, not silently produced). So the factor list isn't the 4 current tiers
+  reshuffled: coverage splits out of `hardBreaches`, hours splits by direction, plus an override-able-hard
+  hardness class between pinned structural constraints and soft factors. Full design + symbols: handoff #252. NOT built.
 
 - [ ] **NEGATE-on-empty request satisfaction (latent semantics)** — `assignmentSatisfiesRequestOnDate`
   treats an empty/null cell as NOT satisfying any request kind, including `NEGATE_SHIFT`. So an approved
