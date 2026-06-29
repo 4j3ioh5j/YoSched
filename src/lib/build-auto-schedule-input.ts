@@ -57,6 +57,7 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
     departmentTargets,
     scheduleRequests,
     requiredFollowers,
+    autoGenFactors,
   ] = await Promise.all([
     prisma.staff.findMany({ where: { isActive: true } }),
     prisma.shiftType.findMany(),
@@ -101,6 +102,7 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       },
     }),
     prisma.requiredFollower.findMany(),
+    prisma.autoGenFactor.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
 
   const payPeriods = allPayPeriods;
@@ -362,6 +364,11 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       followerShiftId: r.followerShiftId,
       scope: r.scope,
       countsTowardTargets: r.countsTowardTargets,
+    })),
+    factorOrder: autoGenFactors.map((f) => ({
+      key: f.key,
+      sortOrder: f.sortOrder,
+      enabled: f.enabled,
     })),
   };
 }

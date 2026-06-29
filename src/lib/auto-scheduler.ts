@@ -209,6 +209,48 @@ export function compareScheduleQuality(a: ScheduleQuality, b: ScheduleQuality): 
   return 0;
 }
 
+// Admin-configurable order of the negotiable objective factors (#252, Slice 1). One
+// entry per AutoGenFactor row; the engine reorders `rank[]` to match. Optional on the
+// input — when absent or invalid the engine uses DEFAULT_FACTOR_ORDER, so default
+// output is byte-for-byte unchanged from the pre-config hardcoded behavior.
+export type AutoGenFactorConfig = { key: string; sortOrder: number; enabled: boolean };
+
+// The canonical lexicographic order — also the fallback. Each key maps to one of the
+// already-computed breakdown terms in buildRankFromConfig. Slice 1 keeps the four
+// CURRENT aggregate tiers; Slice 2 splits coverage/hours into more keys.
+export const DEFAULT_FACTOR_ORDER = ["coverageAndHardLimits", "ppHours", "requests", "fairness"] as const;
+
+// Build the lexicographic rank vector from the configured factor order. `terms` holds
+// the four computed objective values keyed by factor. The config is HONORED only when
+// it is well-formed — every known factor present and enabled — otherwise we fall back
+// to DEFAULT_FACTOR_ORDER. In Slice 1 `coverageAndHardLimits` is non-disableable in the
+// UI; a config that drops or disables a known factor is treated as invalid here so the
+// inviolable coverage tier can never be silently demoted (mirrors the independent
+// feasibility floor in autoScheduleCandidates — Codex #1752 W1).
+export function buildRankFromConfig(
+  terms: Record<(typeof DEFAULT_FACTOR_ORDER)[number], number>,
+  config: AutoGenFactorConfig[] | undefined,
+): number[] {
+  const known: readonly string[] = DEFAULT_FACTOR_ORDER;
+  let orderedKeys: readonly string[] = DEFAULT_FACTOR_ORDER;
+  if (config && config.length) {
+    const enabled = config.filter((f) => f.enabled && known.includes(f.key));
+    const enabledKeys = new Set(enabled.map((f) => f.key));
+    // Valid only if exactly the known factors are present and enabled — no missing,
+    // no disabled, no duplicates (the last guards a malformed config; the DB `key`
+    // unique constraint already prevents dups in practice). Then order by sortOrder;
+    // otherwise fall back to the canonical order.
+    if (
+      enabled.length === enabledKeys.size &&
+      enabledKeys.size === known.length &&
+      known.every((k) => enabledKeys.has(k))
+    ) {
+      orderedKeys = [...enabled].sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.key);
+    }
+  }
+  return orderedKeys.map((k) => terms[k as (typeof DEFAULT_FACTOR_ORDER)[number]]);
+}
+
 function toDateStr(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -420,6 +462,9 @@ export type AutoScheduleInput = {
   followRules?: FollowRuleRow[];
   scheduleRequests?: ScheduleRequestData[];
   requiredFollowers?: RequiredFollowerRow[];
+  // Admin-configured objective factor order (#252, Slice 1). Absent/invalid ⇒ the
+  // engine uses DEFAULT_FACTOR_ORDER, so default output is unchanged.
+  factorOrder?: AutoGenFactorConfig[];
   // Multi-option candidate seed (Slice 4b). 0/undefined ⇒ the canonical schedule,
   // byte-for-byte identical to the pre-4b output (guaranteed by snapshot test).
   // A positive seed appends a deterministic hash AFTER every existing tiebreak
@@ -449,6 +494,7 @@ export function autoSchedule({
   followRules,
   scheduleRequests,
   requiredFollowers,
+  factorOrder,
   seed,
 }: AutoScheduleInput): AutoScheduleResult {
   // Seeded final tiebreak helper (Slice 4b). seed 0/undefined ⇒ returns 0 for
@@ -2523,7 +2569,15 @@ export function autoSchedule({
       fairnessSpread: qFairnessSpread,
       coverageShortfall: qCoverageShortfall,
     },
-    rank: [qHardBreaches, qPpHoursDeviation, qRequestsDenied, qFairnessSpread],
+    rank: buildRankFromConfig(
+      {
+        coverageAndHardLimits: qHardBreaches,
+        ppHours: qPpHoursDeviation,
+        requests: qRequestsDenied,
+        fairness: qFairnessSpread,
+      },
+      factorOrder,
+    ),
   };
 
   return {
