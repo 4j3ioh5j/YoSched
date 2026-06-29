@@ -9,7 +9,11 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Other open items
 
-- [ ] **PRIORITY — Configurable & transparent auto-generation factor priority (currently hardcoded)** —
+- [ ] **PRIORITY — Configurable & transparent auto-generation factor priority** — *Slices 0 + 1 SHIPPED
+  (3f0fd88 read-only panel, 9066023 + 1d3a167 persist/reorder + drag UI). Settings → Auto-Generation
+  Priority is now admin-reorderable; reordering affects GRADING only (multi-option + Live), not builder
+  placement yet. **Slice 2 next:** split coverage out of the top tier + directional hours (over=soft below
+  coverage, under=hard-overridable) AND teach the greedy builder to honor the order — the real 8/4 fix.* —
   so the app generalizes to any staffing domain, not one department's policy. The order auto-generation
   applies its factors, and the weight each carries, must be visible and admin-editable. Motivated by the
   8/4 ORL case: the engine refused to exceed SR's pay-period hour cap to fill an ORL coverage minimum —
