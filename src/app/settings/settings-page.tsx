@@ -1859,7 +1859,10 @@ function AutoGenPrioritySection({ initial }: { initial: AutoGenFactorData[] }) {
     const from = dragIdx.current;
     dragIdx.current = null;
     setDragOverIdx(null);
-    if (from === null || from === idx) return;
+    // Ignore drops while a save is in flight — dragging is disabled then, but guard
+    // defensively so overlapping PUTs can't race and let a late failure roll back to
+    // a stale order (Codex #1765). One save at a time keeps client/server in sync.
+    if (status === "saving" || from === null || from === idx) return;
     const reordered = [...factors];
     const [moved] = reordered.splice(from, 1);
     reordered.splice(idx, 0, moved);
@@ -1905,7 +1908,7 @@ function AutoGenPrioritySection({ initial }: { initial: AutoGenFactorData[] }) {
             return (
               <div
                 key={f.key}
-                draggable={canEdit}
+                draggable={canEdit && status !== "saving"}
                 onDragStart={() => { dragIdx.current = idx; }}
                 onDragOver={(e) => handleDragOver(e, idx)}
                 onDrop={() => handleDrop(idx)}
@@ -1913,7 +1916,7 @@ function AutoGenPrioritySection({ initial }: { initial: AutoGenFactorData[] }) {
                 className={[
                   "flex items-start gap-3 bg-slate-700/30 border rounded-lg px-4 py-2.5 transition-colors",
                   dragOverIdx === idx ? "border-blue-500" : "border-slate-600/50",
-                  canEdit ? "cursor-grab active:cursor-grabbing" : "",
+                  !canEdit ? "" : status === "saving" ? "cursor-wait opacity-70" : "cursor-grab active:cursor-grabbing",
                 ].join(" ")}
               >
                 {canEdit && (
