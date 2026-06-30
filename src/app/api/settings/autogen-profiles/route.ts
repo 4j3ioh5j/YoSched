@@ -35,7 +35,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { error, userId } = await getSession("settings:edit");
+  const { error, userId } = await getSession("settings:autogen-priority");
   if (error) return error;
 
   const body = (await req.json().catch(() => null)) as { name?: unknown; order?: unknown } | null;

@@ -13,6 +13,7 @@ export default async function Settings() {
   const { error, permissions } = await getSession("settings:view");
   if (error) redirect("/");
   const canEditSettings = permissions!.includes("settings:edit");
+  const canEditAutoGenPriority = permissions!.includes("settings:autogen-priority");
   const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, departmentTargets, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns, autoGenFactors, autoGenProfiles] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
@@ -207,6 +208,7 @@ export default async function Settings() {
           conditionScope: c.conditionScope,
         }))}
         canEdit={canEditSettings}
+        canEditAutoGenPriority={canEditAutoGenPriority}
       />
     </main>
   );

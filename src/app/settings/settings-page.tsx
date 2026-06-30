@@ -184,6 +184,7 @@ type Props = {
   printColumnRules: PrintColumnRuleData[];
   printAggregateColumns: PrintAggregateColumnData[];
   canEdit?: boolean;
+  canEditAutoGenPriority?: boolean;
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -1844,11 +1845,14 @@ function formatProfileStamp(iso: string): string {
 function AutoGenPrioritySection({
   initial,
   initialProfiles,
+  canEdit,
 }: {
   initial: AutoGenFactorData[];
   initialProfiles: AutoGenProfileData[];
+  // Editing the priority order is gated by its own admin-level permission
+  // (settings:autogen-priority), independent of the general settings:edit context.
+  canEdit: boolean;
 }) {
-  const canEdit = useCanEdit();
   const [factors, setFactors] = useState(initial); // working draft
   const [savedFactors, setSavedFactors] = useState(initial); // last persisted order
   const [profiles, setProfiles] = useState(initialProfiles);
@@ -1927,7 +1931,8 @@ function AutoGenPrioritySection({
     }
   }
 
-  async function deleteProfile(id: string) {
+  async function deleteProfile(id: string, name: string) {
+    if (!confirm(`Delete the priority profile "${name}"? This cannot be undone.`)) return;
     const prev = profiles;
     setProfiles((p) => p.filter((x) => x.id !== id)); // optimistic
     try {
@@ -1966,6 +1971,12 @@ function AutoGenPrioritySection({
         status={status}
         error={error}
       />
+
+      {!canEdit && (
+        <p className="mt-3 px-3 py-2 bg-slate-900/40 border border-slate-700/50 rounded text-xs text-slate-400">
+          🔒 Admin only — you can view the priority order but not change it.
+        </p>
+      )}
 
       <div className="mt-4">
         <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">
@@ -2096,7 +2107,7 @@ function AutoGenPrioritySection({
                       Apply
                     </button>
                     <button
-                      onClick={() => deleteProfile(p.id)}
+                      onClick={() => deleteProfile(p.id, p.name)}
                       className="px-2.5 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-red-400 hover:bg-slate-800 transition-colors shrink-0"
                       title="Delete profile"
                     >
@@ -3932,7 +3943,7 @@ function AdditionalColumnsSection({
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, shiftCodes: availableShiftCodes, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, canEdit = true }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, shiftCodes: availableShiftCodes, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, canEdit = true, canEditAutoGenPriority = false }: Props) {
   const undo = useUndo();
   const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
 
@@ -3952,7 +3963,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
         <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
-        <AutoGenPrioritySection initial={initialAutoGenFactors} initialProfiles={initialAutoGenProfiles} />
+        <AutoGenPrioritySection initial={initialAutoGenFactors} initialProfiles={initialAutoGenProfiles} canEdit={canEditAutoGenPriority} />
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
         <SchedulingPrefsSection initial={schedulingPrefs} shiftTypes={shiftTypes} />

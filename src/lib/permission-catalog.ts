@@ -32,6 +32,7 @@ export const PERMISSION_CATALOG: { key: Permission; label: string; category: Per
   { key: "statistics:manage", label: "Manage Statistics Views", category: "Statistics" },
   { key: "settings:view", label: "View Settings", category: "Settings" },
   { key: "settings:edit", label: "Edit Settings", category: "Settings" },
+  { key: "settings:autogen-priority", label: "Edit Auto-Generation Priority", category: "Settings" },
   { key: "users:view", label: "View Users", category: "Users" },
   { key: "users:edit", label: "Edit Users", category: "Users" },
   { key: "groups:view", label: "View Groups", category: "Groups" },

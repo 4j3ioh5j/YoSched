@@ -8,7 +8,7 @@ export type Permission =
   | "requests:self" | "requests:view"
   | "staff:view" | "staff:edit"
   | "statistics:view" | "statistics:manage"
-  | "settings:view" | "settings:edit"
+  | "settings:view" | "settings:edit" | "settings:autogen-priority"
   | "users:view" | "users:edit"
   | "groups:view" | "groups:edit";
 

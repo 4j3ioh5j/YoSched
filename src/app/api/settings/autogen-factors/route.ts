@@ -17,7 +17,9 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
-  const { error } = await getSession("settings:edit");
+  // Admin-level carveout (#252 follow-up): changing the priority order needs its own
+  // permission, not the general settings:edit — a stray reorder shifts dept-wide scheduling.
+  const { error } = await getSession("settings:autogen-priority");
   if (error) return error;
 
   const body = (await req.json().catch(() => null)) as { order?: unknown } | null;
