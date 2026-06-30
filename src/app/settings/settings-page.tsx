@@ -1813,7 +1813,7 @@ type AutoGenFactorData = {
 // never trade away. The pinned constraints stay read-only; an admin can drag the
 // negotiable factors to re-rank them. Reordering changes how schedules are GRADED
 // (multi-option selection + Live re-solve); the greedy builder's placement still
-// follows its fixed pipeline until Slice 2. Label/description come from FACTOR_META;
+// follows its fixed pipeline until Slice 2b. Label/description come from FACTOR_META;
 // order + enabled state are the live DB rows.
 function AutoGenPrioritySection({ initial }: { initial: AutoGenFactorData[] }) {
   const canEdit = useCanEdit();

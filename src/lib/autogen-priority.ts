@@ -6,10 +6,11 @@
 // DESCRIBES the fixed order so the Settings "Auto-Generation Priority" panel can make
 // it visible (Slice 0, read-only transparency — handoff #252).
 //
-// Slice 1 turns `PRIORITY_FACTORS` into a persisted, admin-reorderable config and
-// builds `rank[]` from it instead of the literal; keep this the seed / source of
-// truth. Slice 2 teaches the builder to honor the configured order (the real 8/4
-// fix). Until then, everything here is informational.
+// Slice 1 turned the order into a persisted, admin-reorderable config and builds
+// `rank[]` from it. Slice 2a split the aggregate factors (coverage out of the hard
+// limits; pay-period hours into over/under) so they rank independently. Slice 2b
+// teaches the builder to honor the order (the real 8/4 fix). The grading metadata
+// here is the human-readable source of truth for those keys.
 
 /** Constraints auto-generation can NEVER trade away — not reorderable, shown for transparency only. */
 export type PinnedConstraint = {
@@ -52,12 +53,6 @@ export const PINNED_CONSTRAINTS: PinnedConstraint[] = [
     label: "Per-day shift caps",
     description: "No more than the configured number of a shift on a single day (e.g. one ORC per day).",
   },
-  {
-    key: "rolling-max",
-    label: "Rolling maximum caps",
-    description:
-      "A staff member never exceeds their hard maximum count of a shift within any rolling window.",
-  },
 ];
 
 // Display metadata for the negotiable factors, keyed by the canonical factor `key`
@@ -66,15 +61,25 @@ export const PINNED_CONSTRAINTS: PinnedConstraint[] = [
 // this is just the label + description the Settings panel renders. Slice 1 has the
 // four current aggregate factors; Slice 2 adds split keys (coverage, hours over/under).
 export const FACTOR_META: Record<string, FactorMeta> = {
-  coverageAndHardLimits: {
-    label: "Coverage & hard staffing limits",
+  hardLimits: {
+    label: "Hard per-staff limits (min / max)",
     description:
-      "Meet the required number of staff for every shift, every day, and respect hard per-staff minimums and maximums. (Today coverage and the hard limits share one tier.)",
+      "Respect each staff member's hard minimum and maximum shift counts (the max is a rolling-window cap). Rank coverage above this to let auto-generation exceed a hard max when it's the only way to fill a required shift.",
   },
-  ppHours: {
-    label: "Pay-period hours balance",
+  coverage: {
+    label: "Coverage (required staff per shift)",
     description:
-      "Keep each person close to their pay-period hour target. Today this penalizes going over and under target equally.",
+      "Meet the required number of staff for every shift, every day. Rank this above hours to fill a shift even when it pushes someone over their pay-period target.",
+  },
+  overHours: {
+    label: "Pay-period hours — over target",
+    description:
+      "Avoid scheduling people past their pay-period hour target. Ranked below coverage by default — better to go slightly over than leave a shift uncovered.",
+  },
+  underHours: {
+    label: "Pay-period hours — under target",
+    description:
+      "Keep people from landing under their pay-period hour target. Under-target hours surface as a shortage to review rather than being produced silently.",
   },
   requests: {
     label: "Requested shifts honored",
@@ -87,11 +92,12 @@ export const FACTOR_META: Record<string, FactorMeta> = {
 };
 
 // Forward-looking note so the current capability isn't mistaken for the finished
-// feature. Tracks David's locked decisions (handoff #252 + 2026-06-28 directional-hours
-// policy). Reordering today re-ranks how finished schedules are GRADED; the builder's
-// placement still follows its fixed pipeline until the next step.
+// feature. Tracks David's locked decisions (handoff #252/#376 + directional-hours
+// policy). Slice 2a split coverage out of the hard limits and hours into over/under so
+// they can be ranked independently — but reordering still only re-ranks how finished
+// schedules are GRADED. The builder honoring this order while placing shifts is next.
 export const PRIORITY_ROADMAP_NOTE =
   "Reordering changes how auto-generation grades a finished schedule. Coming next: the builder will " +
-  "also honor this order while placing shifts, coverage will split out of the top factor so it can be " +
-  "ranked against hours, and pay-period hours will split into “over target” (soft — better to go " +
-  "slightly over than leave a shift uncovered) and “under target” (not allowed without a manual override).";
+  "also honor this order while placing shifts — e.g. ranking coverage above the hours or hard-limit " +
+  "factors will let it exceed a pay-period target, or a hard maximum, when that's the only way to " +
+  "fill a required shift.";

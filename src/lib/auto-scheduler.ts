@@ -166,21 +166,29 @@ export type Suggestion = {
 // it does NOT change how the engine builds one. `rank` is a lexicographic key in
 // #220 precedence order (each element "lower is better"): compare two schedules
 // element-by-element, first difference decides — so a better higher-priority term
-// is never traded for a lower one. Today's tiers: [hardBreaches, ppHoursDeviation,
-// requestsDenied, fairnessSpread]. Day-off quality (#226 T4) is a reserved lower
-// tier, added later before multi-option needs fine tiebreaking.
+// is never traded for a lower one. Slice 2a SPLIT the old aggregate tiers so admins
+// can rank them independently (handoff #376): coverage / hardLimits (was the single
+// `coverageAndHardLimits` T0) and overHours / underHours (was the two-directional
+// `ppHours` T1). Default order [hardLimits, coverage, overHours, underHours,
+// requests, fairness]. Day-off quality (#226) is a reserved lower tier, added later.
 export type ScheduleQuality = {
   breakdown: {
-    hardBreaches: number;      // T0: unmet coverage (not human-approved) + hard min/max breaches
-    ppHoursDeviation: number;  // T1: Σ |worked − target| over staff×PP (measures #217)
-    requestsDenied: number;    // T2: non-human-approved REQUEST_SHIFT work-days not honored, counted per covered date (measures #221)
-    fairnessSpread: number;    // T3: stddev of FTE-normalized desirability load across staff
+    coverage: number;          // unmet coverage minimums NOT sanctioned by a human-approved/locked cell
+    hardLimits: number;        // hard per-staff MIN shortfall + hard per-staff (rolling) MAX overage
+    overHours: number;         // Σ max(0, worked − target) over staff×PP (measures #217, over side)
+    underHours: number;        // Σ max(0, target − worked) over staff×PP (measures #217, under side)
+    requestsDenied: number;    // non-human-approved REQUEST_SHIFT work-days not honored, per covered date (#221)
+    fairnessSpread: number;    // stddev of FTE-normalized desirability load across staff
+    // Derived aggregate (coverage + hardLimits). NOT a rank tier — kept so the
+    // feasibility floor in autoScheduleCandidates keeps its Slice-1 meaning until
+    // the Slice-2b floor redesign. Equals the old T0 `hardBreaches`.
+    hardBreaches: number;
     // Measurement only (NOT in `rank`): total Σ(required − assigned) coverage gap
     // across all date×shift minimums, counted UNCONDITIONALLY — including gaps
-    // `hardBreaches` excludes because they're sanctioned by a locked/approved cell.
+    // `coverage` excludes because they're sanctioned by a locked/approved cell.
     // Used by the Live "expanding freeing" re-solve (#248 Option 4) to tell whether
     // an edit opened a coverage hole that freeing more cells could let the engine
-    // backfill (locked survivors mask such a hole from `hardBreaches`).
+    // backfill (locked survivors mask such a hole from `coverage`).
     coverageShortfall: number;
   };
   rank: number[];
@@ -216,17 +224,24 @@ export function compareScheduleQuality(a: ScheduleQuality, b: ScheduleQuality): 
 export type AutoGenFactorConfig = { key: string; sortOrder: number; enabled: boolean };
 
 // The canonical lexicographic order — also the fallback. Each key maps to one of the
-// already-computed breakdown terms in buildRankFromConfig. Slice 1 keeps the four
-// CURRENT aggregate tiers; Slice 2 splits coverage/hours into more keys.
-export const DEFAULT_FACTOR_ORDER = ["coverageAndHardLimits", "ppHours", "requests", "fairness"] as const;
+// already-computed breakdown terms in buildRankFromConfig. Slice 2a split the old
+// aggregate tiers (coverageAndHardLimits → hardLimits + coverage; ppHours → overHours
+// + underHours). Default protects hard caps and ranks coverage above BOTH hour terms.
+export const DEFAULT_FACTOR_ORDER = [
+  "hardLimits",
+  "coverage",
+  "overHours",
+  "underHours",
+  "requests",
+  "fairness",
+] as const;
 
 // Build the lexicographic rank vector from the configured factor order. `terms` holds
-// the four computed objective values keyed by factor. The config is HONORED only when
-// it is well-formed — every known factor present and enabled — otherwise we fall back
-// to DEFAULT_FACTOR_ORDER. In Slice 1 `coverageAndHardLimits` is non-disableable in the
-// UI; a config that drops or disables a known factor is treated as invalid here so the
-// inviolable coverage tier can never be silently demoted (mirrors the independent
-// feasibility floor in autoScheduleCandidates — Codex #1752 W1).
+// the computed objective values keyed by factor. The config is HONORED only when it is
+// well-formed — every known factor present and enabled — otherwise we fall back to
+// DEFAULT_FACTOR_ORDER. A config that drops, disables, duplicates, or adds an unknown
+// factor is treated as invalid here so no factor can be silently demoted (mirrors the
+// independent feasibility floor in autoScheduleCandidates — Codex #1752 W1).
 export function buildRankFromConfig(
   terms: Record<(typeof DEFAULT_FACTOR_ORDER)[number], number>,
   config: AutoGenFactorConfig[] | undefined,
@@ -2124,9 +2139,13 @@ export function autoSchedule({
   // ── Schedule quality accumulators (#224 item 4, Slice 4a) ──
   // Filled by the audit loops below (no extra iteration), assembled into
   // result.quality just before return. See ScheduleQuality / compareScheduleQuality.
-  let qHardBreaches = 0;
+  // Slice 2a split: coverage / hardLimits (was qHardBreaches) and overHours /
+  // underHours (was the two-directional qPpHoursDeviation).
+  let qCoverage = 0;
+  let qHardLimits = 0;
   let qCoverageShortfall = 0;
-  let qPpHoursDeviation = 0;
+  let qOverHours = 0;
+  let qUnderHours = 0;
 
   function auditPayPeriodHours(): void {
     const auditPPs = payPeriods.filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate));
@@ -2145,7 +2164,10 @@ export function autoSchedule({
         if (target <= 0) continue;
         const hours = ppHoursForStaff(staff.id, pp);
         const dev = Math.round(hours - target);
-        qPpHoursDeviation += Math.abs(dev); // T1: two-directional PP-hours deviation
+        // Slice 2a: split the two-directional deviation into over / under sides so
+        // they can be ranked independently (over = soft, under = shortage).
+        if (dev > 0) qOverHours += dev;
+        else if (dev < 0) qUnderHours += -dev;
         if (dev === 0) continue;
         // A scarce-eligibility shift this staff actually worked in the PP marks
         // the deviation as structural (Class 2 — no engine fix).
@@ -2405,9 +2427,9 @@ export function autoSchedule({
       // Raw coverage gap — counted for EVERY shortfall (the expanding re-solve needs
       // to see gaps that `hardBreaches` sanctions away when a locked cell blocks them).
       qCoverageShortfall += required - assigned;
-      // T0: count the missing slots as a hard breach UNLESS the gap is sanctioned
-      // by a human-approved leave / locked cell (#220: human-approved > coverage).
-      if (!blockedByApproved) qHardBreaches += required - assigned;
+      // `coverage` term: count the missing slots UNLESS the gap is sanctioned by a
+      // human-approved leave / locked cell (#220: human-approved > coverage).
+      if (!blockedByApproved) qCoverage += required - assigned;
     }
   }
 
@@ -2449,7 +2471,7 @@ export function autoSchedule({
         // Soft (preference) targets are advisory-only — bias without warnings.
         if (!met && targetIsHard(target)) {
           warnings.push(`${staff.initials}: only ${current}/${needed} ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
-          qHardBreaches += needed - current; // T0: hard minimum shortfall
+          qHardLimits += needed - current; // hardLimits: hard per-staff minimum shortfall
         }
       }
 
@@ -2476,7 +2498,7 @@ export function autoSchedule({
               ? `${target.windowDays}d`
               : `${(target.windowCount ?? 1) > 1 ? `${target.windowCount} ` : ""}${target.window}`;
           warnings.push(`${staff.initials}: ${st.code} exceeds max ${target.maxCount} per ${windowDesc} (rolling) — ${overCap.join(", ")}`);
-          qHardBreaches += overCap.length; // T0: hard rolling-max overage
+          qHardLimits += overCap.length; // hardLimits: hard per-staff (rolling) MAX overage
         }
       }
     }
@@ -2564,16 +2586,22 @@ export function autoSchedule({
 
   const quality: ScheduleQuality = {
     breakdown: {
-      hardBreaches: qHardBreaches,
-      ppHoursDeviation: qPpHoursDeviation,
+      coverage: qCoverage,
+      hardLimits: qHardLimits,
+      overHours: qOverHours,
+      underHours: qUnderHours,
       requestsDenied: qRequestsDenied,
       fairnessSpread: qFairnessSpread,
+      // Derived aggregate kept for the Slice-1 feasibility floor (redesigned in 2b).
+      hardBreaches: qCoverage + qHardLimits,
       coverageShortfall: qCoverageShortfall,
     },
     rank: buildRankFromConfig(
       {
-        coverageAndHardLimits: qHardBreaches,
-        ppHours: qPpHoursDeviation,
+        coverage: qCoverage,
+        hardLimits: qHardLimits,
+        overHours: qOverHours,
+        underHours: qUnderHours,
         requests: qRequestsDenied,
         fairness: qFairnessSpread,
       },

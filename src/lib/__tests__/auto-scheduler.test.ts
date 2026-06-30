@@ -1995,30 +1995,36 @@ describe("resolveShiftHourOverride — stored row → per-day-type hours", () =>
 // ─── #224 item 4 / Slice 4a: global quality objective ───
 
 describe("compareScheduleQuality (lexicographic, #220 priority)", () => {
+  // rank vectors are in DEFAULT_FACTOR_ORDER after the Slice-2a split:
+  // [hardLimits, coverage, overHours, underHours, requests, fairness]. The breakdown
+  // is filler — compareScheduleQuality reads only `rank`.
   const q = (rank: number[]): ScheduleQuality => ({
-    breakdown: { hardBreaches: rank[0], ppHoursDeviation: rank[1], requestsDenied: rank[2], fairnessSpread: rank[3], coverageShortfall: 0 },
+    breakdown: {
+      coverage: 0, hardLimits: 0, overHours: 0, underHours: 0,
+      requestsDenied: 0, fairnessSpread: 0, hardBreaches: 0, coverageShortfall: 0,
+    },
     rank,
   });
 
-  it("ranks fewer hard breaches first, regardless of every lower tier", () => {
-    // a has worse PP-hours/requests/fairness but ZERO hard breaches → a wins.
-    expect(compareScheduleQuality(q([0, 999, 9, 9]), q([1, 0, 0, 0]))).toBeLessThan(0);
+  it("ranks the top tier first, regardless of every lower tier", () => {
+    // a is worse on every lower tier but better on the top tier → a wins.
+    expect(compareScheduleQuality(q([0, 9, 99, 9, 9, 9]), q([1, 0, 0, 0, 0, 0]))).toBeLessThan(0);
   });
 
-  it("falls through to PP-hours deviation only when hard breaches tie", () => {
-    expect(compareScheduleQuality(q([0, 4, 9, 9]), q([0, 8, 0, 0]))).toBeLessThan(0);
+  it("falls through tier by tier only when higher tiers tie", () => {
+    expect(compareScheduleQuality(q([0, 0, 4, 9, 9, 9]), q([0, 0, 8, 0, 0, 0]))).toBeLessThan(0);
   });
 
-  it("uses requests-denied above fairness", () => {
-    expect(compareScheduleQuality(q([0, 2, 0, 5]), q([0, 2, 1, 0]))).toBeLessThan(0);
+  it("uses requests above fairness", () => {
+    expect(compareScheduleQuality(q([0, 0, 0, 0, 0, 5]), q([0, 0, 0, 0, 1, 0]))).toBeLessThan(0);
   });
 
   it("uses fairness spread only as the final tiebreak", () => {
-    expect(compareScheduleQuality(q([0, 2, 1, 0.5]), q([0, 2, 1, 1.5]))).toBeLessThan(0);
+    expect(compareScheduleQuality(q([0, 0, 0, 0, 1, 0.5]), q([0, 0, 0, 0, 1, 1.5]))).toBeLessThan(0);
   });
 
   it("treats identical ranks as equivalent", () => {
-    expect(compareScheduleQuality(q([0, 2, 1, 3]), q([0, 2, 1, 3]))).toBe(0);
+    expect(compareScheduleQuality(q([0, 0, 0, 1, 1, 3]), q([0, 0, 0, 1, 1, 3]))).toBe(0);
   });
 });
 
@@ -2026,17 +2032,19 @@ describe("autoSchedule — quality breakdown (Slice 4a)", () => {
   it("reports zero breaches and on-target hours for a clean feasible fill", () => {
     const res = runSchedule(); // 2 staff, OR=8h, 5 weekdays, target 40 → exactly 40h each
     expect(res.quality.breakdown.hardBreaches).toBe(0);
-    expect(res.quality.breakdown.ppHoursDeviation).toBe(0);
+    expect(res.quality.breakdown.overHours).toBe(0);
+    expect(res.quality.breakdown.underHours).toBe(0);
     expect(res.quality.breakdown.requestsDenied).toBe(0);
-    expect(res.quality.rank).toEqual([0, 0, 0, 0]);
+    expect(res.quality.rank).toEqual([0, 0, 0, 0, 0, 0]);
   });
 
-  it("accumulates two-directional PP-hours deviation when target is unreachable", () => {
+  it("accumulates under-target PP-hours (overHours stays 0) when target is unreachable", () => {
     // target 48h but only 5 weekdays × 8h = 40h reachable → 8h under for each of 2 staff.
     const res = runSchedule({
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 48 }],
     });
-    expect(res.quality.breakdown.ppHoursDeviation).toBe(16);
+    expect(res.quality.breakdown.underHours).toBe(16);
+    expect(res.quality.breakdown.overHours).toBe(0);
     expect(res.quality.breakdown.hardBreaches).toBe(0); // no staffing requirement → no coverage gap
   });
 

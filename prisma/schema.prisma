@@ -385,13 +385,14 @@ model EquityFactor {
 // requests) are NOT rows here — they're pinned above every factor.
 model AutoGenFactor {
   id        String  @id @default(cuid())
-  key       String  @unique // stable factor id, e.g. "coverageAndHardLimits" | "ppHours" | "requests" | "fairness"
+  key       String  @unique // stable factor id: "hardLimits" | "coverage" | "overHours" | "underHours" | "requests" | "fairness" (split from the Slice-1 aggregates in 2a)
   label     String
   sortOrder Int     @default(0) // lexicographic precedence; 0 = highest priority
   enabled   Boolean @default(true)
-  // "soft" | "hardOverridable" — validated in app code. Inert in Slice 1; consumed in
-  // Slice 2 when hours splits into over (soft) / under (hardOverridable). (`weight` was
-  // intentionally omitted until the Slice 3 tier/group model needs it — Codex #1752.)
+  // "soft" | "hardOverridable" — validated in app code. Slice 2a seeds underHours as
+  // "hardOverridable" (consumed in 2c as an acceptable under-target shortage); the
+  // others are "soft". (`weight` was intentionally omitted until the Slice 3 tier/group
+  // model needs it — Codex #1752.)
   hardness  String  @default("soft")
 
   @@map("autogen_factors")
