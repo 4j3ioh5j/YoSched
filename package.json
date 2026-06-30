@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:fast": "tsc --noEmit && vitest run",
-    "backfill:staff-logins": "tsx prisma/backfill-staff-logins.ts"
+    "backfill:staff-logins": "tsx prisma/backfill-staff-logins.ts",
+    "backfill:manual-permission": "tsx prisma/backfill-manual-permission.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

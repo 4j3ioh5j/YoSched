@@ -215,6 +215,10 @@ type Props = {
   // so it's gated on this — independent of canEdit (schedule:edit) and canLive
   // (which also needs requests:view). Matches the server permission exactly.
   canAuto?: boolean;
+  // Shows the "Full user manual" link in the Help modal. Gated on the separate
+  // manual:view permission (granted to level-1+ groups by default), and the link
+  // targets the permission-checked /manual route, so the button never 403s.
+  canViewManual?: boolean;
   staff: Staff[];
   assignments: AssignmentData[];
   shiftTypes: ShiftType[];
@@ -397,6 +401,7 @@ export function ScheduleGrid({
   canEdit = true,
   canLive = false,
   canAuto = false,
+  canViewManual = false,
   staff,
   assignments: initialAssignments,
   shiftTypes,
@@ -4787,6 +4792,20 @@ export function ScheduleGrid({
                 </div>
               </section>
             </div>
+            {canViewManual && (
+              <div className="border-t border-slate-700 px-5 py-3 shrink-0">
+                <a
+                  href="/manual"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300"
+                >
+                  <span aria-hidden>📖</span>
+                  Open the full user manual
+                  <span aria-hidden className="text-xs">↗</span>
+                </a>
+              </div>
+            )}
           </div>
         </div>
       )}

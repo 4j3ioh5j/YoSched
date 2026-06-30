@@ -31,6 +31,10 @@ export default async function Home() {
   // schedule:auto directly so it matches the server and never shows a 403-only
   // control (an edit-only user must NOT see it; an auto-only user MUST).
   const canAuto = permissions!.includes("schedule:auto");
+  // The Help modal's "Full user manual" link — gated on the separate manual:view
+  // permission (default-granted to level-1+ groups), and the /manual route it opens
+  // re-checks the same permission server-side.
+  const canViewManual = permissions!.includes("manual:view");
   const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, printColumnRules, printAggregateColumns, currentVersions, scheduleRequests, mutedAlerts] =
     await Promise.all([
       prisma.staff.findMany({
@@ -142,6 +146,7 @@ export default async function Home() {
         canEdit={canEdit}
         canLive={canLive}
         canAuto={canAuto}
+        canViewManual={canViewManual}
         staff={staff.map((p) => ({
           id: p.id,
           initials: p.initials,

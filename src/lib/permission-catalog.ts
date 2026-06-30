@@ -18,7 +18,8 @@ export type PermissionCategory =
   | "Statistics"
   | "Settings"
   | "Users"
-  | "Groups";
+  | "Groups"
+  | "Help";
 
 export const PERMISSION_CATALOG: { key: Permission; label: string; category: PermissionCategory }[] = [
   { key: "schedule:view", label: "View Schedule", category: "Schedule" },
@@ -37,6 +38,7 @@ export const PERMISSION_CATALOG: { key: Permission; label: string; category: Per
   { key: "users:edit", label: "Edit Users", category: "Users" },
   { key: "groups:view", label: "View Groups", category: "Groups" },
   { key: "groups:edit", label: "Edit Groups", category: "Groups" },
+  { key: "manual:view", label: "View User Manual", category: "Help" },
 ];
 
 // Category render order for the editor (mirrors the nav tabs).
@@ -49,6 +51,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
   "Settings",
   "Users",
   "Groups",
+  "Help",
 ];
 
 // Just the keys — for server-side validation and seeding.

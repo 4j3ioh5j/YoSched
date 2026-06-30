@@ -41,6 +41,12 @@ ln -sf ../../public .next/standalone/public
 echo "--- prisma migrate"
 npx prisma migrate deploy
 
+# Idempotent permission backfills — keep stored group permission arrays in sync with
+# the catalog (a new permission isn't granted to existing/locked groups otherwise).
+# Each skips groups that already have the permission, so this is safe every deploy.
+echo "--- backfill group permissions"
+pnpm backfill:manual-permission
+
 echo "--- restart service"
 systemctl --user restart yosched-app
 sleep 3

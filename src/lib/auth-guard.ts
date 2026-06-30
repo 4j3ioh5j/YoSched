@@ -10,7 +10,8 @@ export type Permission =
   | "statistics:view" | "statistics:manage"
   | "settings:view" | "settings:edit" | "settings:autogen-priority"
   | "users:view" | "users:edit"
-  | "groups:view" | "groups:edit";
+  | "groups:view" | "groups:edit"
+  | "manual:view";
 
 type SessionOk = {
   error: null;
