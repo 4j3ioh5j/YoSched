@@ -4096,8 +4096,8 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
           <SchedulingPrefsSection initial={schedulingPrefs} shiftTypes={shiftTypes} />
           <PayPeriodPrefsSection initial={departmentTargets} shiftTypes={shiftTypes} />
           <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
-          <AutoGenPrioritySection initial={initialAutoGenFactors} initialProfiles={initialAutoGenProfiles} canEdit={canEditAutoGenPriority} />
           <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
+          <AutoGenPrioritySection initial={initialAutoGenFactors} initialProfiles={initialAutoGenProfiles} canEdit={canEditAutoGenPriority} />
         </div>
 
         <SectionGroup label="Printed Schedule" />
