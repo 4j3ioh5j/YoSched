@@ -9,30 +9,22 @@ archive is at the bottom for traceability (full technical detail lives in the nu
 
 ## Other open items
 
-- [ ] **PRIORITY — Configurable & transparent auto-generation factor priority** — *Slices 0 + 1 SHIPPED
-  (3f0fd88 read-only panel, 9066023 + 1d3a167 persist/reorder + drag UI). Settings → Auto-Generation
-  Priority is now admin-reorderable; reordering affects GRADING only (multi-option + Live), not builder
-  placement yet. **Slice 2 next:** split coverage out of the top tier + directional hours (over=soft below
-  coverage, under=hard-overridable) AND teach the greedy builder to honor the order — the real 8/4 fix.* —
-  so the app generalizes to any staffing domain, not one department's policy. The order auto-generation
-  applies its factors, and the weight each carries, must be visible and admin-editable. Motivated by the
-  8/4 ORL case: the engine refused to exceed SR's pay-period hour cap to fill an ORL coverage minimum —
-  a hardcoded "hours beats coverage" choice with no setting to change it. **Decisions (David):**
-  lexicographic reorderable tiers (drag-to-rank, not continuous weights); admin-editable any time
-  (onboarding only seeds defaults); the hard structural constraints (no double-booking, eligibility,
-  locked/manual cells, approved-hard requests) stay **pinned** and non-rerankable; a dry-run preview
-  before saving is recommended. **Key gotcha:** two layers — the objective `rank[]` only *grades*
-  finished schedules, while the greedy STEP pipeline *builds* them and made the 8/4 call; reordering
-  `rank[]` alone won't change placements. Slices: (0) read-only transparency panel first → (1) persist +
-  wire the objective, behavior-identical at defaults → (2) teach the builder the coverage↔hour-cap
-  tradeoff and dry-run-prove 8/4 flips → (3) unify the scattered soft weights → (4) dry-run preview.
-  **Hours must split by direction (David, 2026-06-28):** the symmetric `ppHoursDeviation` tier becomes
-  two factors — **over-hours = soft, ranked BELOW coverage** ("better to go slightly over hours than
-  under staff", so the builder may exceed a PP target to cover a slot), and **under-hours =
-  hard-by-default, override-able** ("under hours never without manual override" — surfaced as a true
-  shortage a human must accept, not silently produced). So the factor list isn't the 4 current tiers
-  reshuffled: coverage splits out of `hardBreaches`, hours splits by direction, plus an override-able-hard
-  hardness class between pinned structural constraints and soft factors. Full design + symbols: handoff #252. NOT built.
+- [ ] **Configurable & transparent auto-generation factor priority — CORE SHIPPED (Slices 0–2); 3–4 optional.**
+  Settings → Auto-Generation Priority is admin-reorderable (drag-to-rank lexicographic tiers).
+  - **Slice 0+1 SHIPPED** (3f0fd88 panel, 9066023 + 1d3a167 persist/reorder/drag) — reordering affected GRADING only.
+  - **Slice 2a SHIPPED** (5d8e676) — split the aggregate factors into `hardLimits / coverage / overHours /
+    underHours` (+ requests, fairness); expand-in-place migration; default `hardLimits > coverage >
+    overHours > underHours > requests > fairness`.
+  - **Slice 2b SHIPPED** (c13b3c3) — the greedy BUILDER now honors the order: coverage>overHours exceeds a
+    soft PP target to cover; coverage>hardLimits exceeds a hard per-staff MAX to cover; feasibility floor is
+    a lexicographic compare over [coverage, hardLimits]. Default order = byte-identical to pre-2b.
+  - **KEY EMPIRICAL FINDING (handoff #377):** the original 8/4-ORL motivation NO LONGER reproduces — an
+    August dry-run showed all current coverage gaps are genuine BODY SHORTAGES (0 are hours- or cap-blocked),
+    so 2b is a deliberate no-op on today's data; payoff is future-facing. **Prioritizing which shift wins
+    scarce staff is ALREADY handled** by each shift's `schedulePriority` (engine fills in that order; OR=lowest
+    is the one that goes short) — editable in the shift-type editor. No new feature needed there.
+  - **Optional remaining:** (3) unify the scattered soft weights (sequentialOff/3-4-day-weekend, equity) into
+    the panel — where the dropped `weight` column returns; (4) dry-run preview before save. Design: handoffs #252/#376/#377.
 
 - [ ] **NEGATE-on-empty request satisfaction (latent semantics)** — `assignmentSatisfiesRequestOnDate`
   treats an empty/null cell as NOT satisfying any request kind, including `NEGATE_SHIFT`. So an approved
