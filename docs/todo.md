@@ -26,6 +26,18 @@ archive is at the bottom for traceability (full technical detail lives in the nu
   - **Optional remaining:** (3) unify the scattered soft weights (sequentialOff/3-4-day-weekend, equity) into
     the panel — where the dropped `weight` column returns; (4) dry-run preview before save. Design: handoffs #252/#376/#382.
 
+- [ ] **ORL lone-pairing / ±4h PP shortfall (e.g. BC 76/80 in PP ending 8/22)** — investigation done,
+  fix deferred. Confirmed (instrumented the pairing loop vs live August): a 12h ORL on an 8h-aligned 80h
+  target can only land 76 or 84 when it's a *lone* ORL (clean needs 0/2 ORLs, or a target ≡4 mod 8). Two
+  causes: (1) divisibility; (2) the greedy pairing commits spread pairs one-at-a-time with no look-ahead,
+  stranding a final date-set no single staffer can host. **A manually-approved ORL (KZ 8/18) leaves the
+  engine an ODD count → ≥1 lone is mathematically forced no matter the algorithm** — so the goal is to
+  minimize/best-place the lone, not eliminate it. Future-fix ideas (each its own slice, touches the 3
+  hour-computation sites): (1) global per-PP ORL pairing (matching, fixes greedy stranding when count is
+  even); (2) route the unavoidable lone to a staffer whose target ≡4 mod 8 so 12h divides cleanly; (3)
+  accept + enrich the "cannot reach 80hrs" warning to explain lone-ORL divisibility. Full diagnosis +
+  gotchas: handoff #385.
+
 - [ ] **NEGATE-on-empty request satisfaction (latent semantics)** — `assignmentSatisfiesRequestOnDate`
   treats an empty/null cell as NOT satisfying any request kind, including `NEGATE_SHIFT`. So an approved
   "don't give me X" reverts to pending on an empty day even though *absence* arguably satisfies the
