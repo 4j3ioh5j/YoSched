@@ -13,7 +13,7 @@ export default async function Settings() {
   const { error, permissions } = await getSession("settings:view");
   if (error) redirect("/");
   const canEditSettings = permissions!.includes("settings:edit");
-  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, departmentTargets, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns, autoGenFactors] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, departmentTargets, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns, autoGenFactors, autoGenProfiles] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
@@ -32,6 +32,7 @@ export default async function Settings() {
     prisma.printColumnRule.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.printAggregateColumn.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.autoGenFactor.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.autoGenPriorityProfile.findMany({ orderBy: { createdAt: "desc" } }),
   ]);
 
   // Lenient read of the dept-default day-off order: drop tokens for since-deleted
@@ -155,6 +156,13 @@ export default async function Settings() {
           sortOrder: f.sortOrder,
           enabled: f.enabled,
           hardness: f.hardness,
+        }))}
+        autoGenProfiles={autoGenProfiles.map((p) => ({
+          id: p.id,
+          name: p.name,
+          order: Array.isArray(p.order) ? (p.order as string[]) : [],
+          createdByName: p.createdByName,
+          createdAt: p.createdAt.toISOString(),
         }))}
         shiftCodes={shiftTypes.filter((st) => !st.isOffShift && !st.isLeave).map((st) => st.code)}
         followRules={followRules.map((r) => ({

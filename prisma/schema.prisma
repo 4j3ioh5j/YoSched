@@ -27,6 +27,7 @@ model User {
   staff Staff? @relation(fields: [staffId], references: [id], onDelete: SetNull)
 
   savedGraphViews SavedGraphView[]
+  autoGenPriorityProfiles AutoGenPriorityProfile[]
 
   @@map("users")
 }
@@ -396,6 +397,26 @@ model AutoGenFactor {
   hardness  String  @default("soft")
 
   @@map("autogen_factors")
+}
+
+// A named snapshot of the AutoGenFactor priority order (#252). Lets an admin save the
+// current arrangement under a name and reapply it later, guarding against accidental
+// drag-reorders. Shared department-wide (no owner filter on read). `order` is a string[]
+// of AutoGenFactor.key in precedence order. `createdByName` is a denormalized snapshot of
+// the saver's display name so it survives the user being renamed or deleted.
+model AutoGenPriorityProfile {
+  id            String   @id @default(cuid())
+  name          String
+  order         Json // string[] of AutoGenFactor.key, highest priority first
+  createdById   String? // User id of saver; null if that user was later deleted
+  createdByName String // snapshot of the saver's name at save time
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  createdBy User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([createdById])
+  @@map("autogen_priority_profiles")
 }
 
 model Assignment {

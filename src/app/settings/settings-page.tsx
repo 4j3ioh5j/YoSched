@@ -6,6 +6,7 @@ import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKe
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
+import { reconcileOrder } from "@/lib/autogen-profile";
 import { OffStrategyEditor } from "@/components/off-strategy-editor";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
 import { RecurrencePicker } from "../staff/recurrence-picker";
@@ -175,6 +176,7 @@ type Props = {
   employmentTypes: EmploymentTypeData[];
   equityFactors: EquityFactorData[];
   autoGenFactors: AutoGenFactorData[];
+  autoGenProfiles: AutoGenProfileData[];
   shiftCodes: string[];
   followRules: FollowRuleData[];
   requiredFollowers: RequiredFollowerData[];
@@ -1809,43 +1811,131 @@ type AutoGenFactorData = {
   hardness: string;
 };
 
+type AutoGenProfileData = {
+  id: string;
+  name: string;
+  order: string[];
+  createdByName: string;
+  createdAt: string; // ISO
+};
+
+const sameOrder = (a: AutoGenFactorData[], b: AutoGenFactorData[]) =>
+  a.length === b.length && a.every((f, i) => f.key === b[i].key);
+
+// Format a save stamp as `YYYY-MM-DD HH:mm` in 24-hour local time (project rule: never AM/PM).
+function formatProfileStamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 // Surfaces the order auto-generation applies its factors and the constraints it can
 // never trade away. The pinned constraints stay read-only; an admin can drag the
 // negotiable factors to re-rank them. Reordering changes how schedules are GRADED
 // (multi-option selection + Live re-solve) AND, since Slice 2b, how the builder places
 // shifts (coverage may exceed soft hours / a hard max when ranked above them).
+//
+// Reordering is STAGED, not auto-saved (#252): a drag only edits a local draft, and the
+// new order reaches the engine only after an explicit Save — this guards against a stray
+// drag silently changing department-wide scheduling. Named profiles snapshot the current
+// order (stamped with who saved it and when) so an arrangement can be restored later.
 // Label/description come from FACTOR_META; order + enabled state are the live DB rows.
-function AutoGenPrioritySection({ initial }: { initial: AutoGenFactorData[] }) {
+function AutoGenPrioritySection({
+  initial,
+  initialProfiles,
+}: {
+  initial: AutoGenFactorData[];
+  initialProfiles: AutoGenProfileData[];
+}) {
   const canEdit = useCanEdit();
-  const [factors, setFactors] = useState(initial);
+  const [factors, setFactors] = useState(initial); // working draft
+  const [savedFactors, setSavedFactors] = useState(initial); // last persisted order
+  const [profiles, setProfiles] = useState(initialProfiles);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
   const dragIdx = useRef<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const [profileName, setProfileName] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  const dirty = !sameOrder(factors, savedFactors);
 
   function metaFor(f: AutoGenFactorData): FactorMeta {
     return FACTOR_META[f.key] ?? { label: f.label, description: "" };
   }
 
-  async function persist(reordered: AutoGenFactorData[]) {
-    const prev = factors;
-    setFactors(reordered); // optimistic
+  // Commit the staged order. The active order is only ever changed here (and the engine
+  // only reads AutoGenFactor.sortOrder), so nothing takes effect until the admin saves.
+  async function save() {
     setStatus("saving");
     setError("");
     try {
       const res = await fetch("/api/settings/autogen-factors", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order: reordered.map((f) => f.key) }),
+        body: JSON.stringify({ order: factors.map((f) => f.key) }),
       });
       if (!res.ok) throw new Error(await res.text());
       const saved: AutoGenFactorData[] = await res.json();
       setFactors(saved);
+      setSavedFactors(saved);
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2000);
     } catch (e) {
-      setFactors(prev); // roll back on failure
       setError(e instanceof Error ? e.message : "Failed to save");
+      setStatus("error");
+    }
+  }
+
+  function cancel() {
+    setFactors(savedFactors);
+    setStatus("idle");
+    setError("");
+  }
+
+  // Apply a saved profile into the DRAFT only (staged) — the admin still has to Save to
+  // activate it. reconcileOrder keeps this safe if the factor catalog has since changed.
+  function applyProfile(p: AutoGenProfileData) {
+    const order = reconcileOrder(p.order, factors.map((f) => f.key));
+    const byKey = new Map(factors.map((f) => [f.key, f]));
+    setFactors(order.map((k) => byKey.get(k)!));
+    setStatus("idle");
+    setError("");
+  }
+
+  async function saveAsProfile() {
+    const name = profileName.trim();
+    if (!name || savingProfile) return;
+    setSavingProfile(true);
+    setError("");
+    try {
+      const res = await fetch("/api/settings/autogen-profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, order: factors.map((f) => f.key) }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const created: AutoGenProfileData = await res.json();
+      setProfiles((prev) => [created, ...prev]);
+      setProfileName("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save profile");
+      setStatus("error");
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  async function deleteProfile(id: string) {
+    const prev = profiles;
+    setProfiles((p) => p.filter((x) => x.id !== id)); // optimistic
+    try {
+      const res = await fetch(`/api/settings/autogen-profiles/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (e) {
+      setProfiles(prev); // roll back
+      setError(e instanceof Error ? e.message : "Failed to delete profile");
       setStatus("error");
     }
   }
@@ -1859,21 +1949,20 @@ function AutoGenPrioritySection({ initial }: { initial: AutoGenFactorData[] }) {
     const from = dragIdx.current;
     dragIdx.current = null;
     setDragOverIdx(null);
-    // Ignore drops while a save is in flight — dragging is disabled then, but guard
-    // defensively so overlapping PUTs can't race and let a late failure roll back to
-    // a stale order (Codex #1765). One save at a time keeps client/server in sync.
+    // Drag only edits the local draft now — no network write. Save/Cancel control the
+    // commit (#252), so a stray drag is harmless until the admin explicitly saves.
     if (status === "saving" || from === null || from === idx) return;
     const reordered = [...factors];
     const [moved] = reordered.splice(from, 1);
     reordered.splice(idx, 0, moved);
-    persist(reordered);
+    setFactors(reordered);
   }
 
   return (
     <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
       <SectionHeader
         title="Auto-Generation Priority"
-        description="How auto-generation decides what to schedule when goals compete. Higher items win — a factor is never traded away to improve one below it. Drag to re-rank."
+        description="How auto-generation decides what to schedule when goals compete. Higher items win — a factor is never traded away to improve one below it. Drag to re-rank, then Save."
         status={status}
         error={error}
       />
@@ -1933,6 +2022,92 @@ function AutoGenPrioritySection({ initial }: { initial: AutoGenFactorData[] }) {
             );
           })}
         </div>
+
+        {canEdit && (
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              onClick={save}
+              disabled={!dirty || status === "saving"}
+              className="px-3 py-1.5 rounded-md text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors"
+            >
+              {status === "saving" ? "Saving…" : "Save"}
+            </button>
+            <button
+              onClick={cancel}
+              disabled={!dirty || status === "saving"}
+              className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Cancel
+            </button>
+            {dirty && <span className="text-xs text-amber-400">Unsaved order — Save to apply.</span>}
+          </div>
+        )}
+      </div>
+
+      {/* Named profiles — snapshot/restore the order, stamped with who saved it and when (#252) */}
+      <div className="mt-6 border-t border-slate-700/50 pt-4">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">
+          Saved profiles
+        </h3>
+
+        {canEdit && (
+          <div className="flex items-center gap-2 mb-3">
+            <input
+              type="text"
+              value={profileName}
+              onChange={(e) => setProfileName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") saveAsProfile(); }}
+              placeholder="Name this priority order…"
+              maxLength={80}
+              className="flex-1 min-w-0 px-3 py-1.5 rounded-md text-sm bg-slate-900/60 border border-slate-600 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+            />
+            <button
+              onClick={saveAsProfile}
+              disabled={!profileName.trim() || savingProfile}
+              className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+            >
+              {savingProfile ? "Saving…" : "Save as profile"}
+            </button>
+          </div>
+        )}
+
+        {profiles.length === 0 ? (
+          <p className="text-xs text-slate-500 italic">No saved profiles yet.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {profiles.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center gap-3 bg-slate-700/30 border border-slate-600/50 rounded-lg px-4 py-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <span className="text-sm text-slate-200 font-medium truncate">{p.name}</span>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Saved by {p.createdByName} · {formatProfileStamp(p.createdAt)}
+                  </p>
+                </div>
+                {canEdit && (
+                  <>
+                    <button
+                      onClick={() => applyProfile(p)}
+                      className="px-2.5 py-1 rounded-md text-xs font-medium bg-slate-700 hover:bg-blue-600 text-slate-200 transition-colors shrink-0"
+                      title="Load this order into the list (you still need to Save to apply)"
+                    >
+                      Apply
+                    </button>
+                    <button
+                      onClick={() => deleteProfile(p.id)}
+                      className="px-2.5 py-1 rounded-md text-xs font-medium text-slate-400 hover:text-red-400 hover:bg-slate-800 transition-colors shrink-0"
+                      title="Delete profile"
+                    >
+                      Delete
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <p className="mt-4 text-xs text-slate-500 italic border-t border-slate-700/50 pt-3">
@@ -3757,7 +3932,7 @@ function AdditionalColumnsSection({
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, shiftCodes: availableShiftCodes, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, canEdit = true }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, shiftCodes: availableShiftCodes, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, canEdit = true }: Props) {
   const undo = useUndo();
   const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
 
@@ -3777,7 +3952,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
         <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
         <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
         <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
-        <AutoGenPrioritySection initial={initialAutoGenFactors} />
+        <AutoGenPrioritySection initial={initialAutoGenFactors} initialProfiles={initialAutoGenProfiles} />
         <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
         <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
         <SchedulingPrefsSection initial={schedulingPrefs} shiftTypes={shiftTypes} />
