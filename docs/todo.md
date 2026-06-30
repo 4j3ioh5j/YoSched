@@ -18,13 +18,13 @@ archive is at the bottom for traceability (full technical detail lives in the nu
   - **Slice 2b SHIPPED** (c13b3c3) — the greedy BUILDER now honors the order: coverage>overHours exceeds a
     soft PP target to cover; coverage>hardLimits exceeds a hard per-staff MAX to cover; feasibility floor is
     a lexicographic compare over [coverage, hardLimits]. Default order = byte-identical to pre-2b.
-  - **KEY EMPIRICAL FINDING (handoff #377):** the original 8/4-ORL motivation NO LONGER reproduces — an
+  - **KEY EMPIRICAL FINDING (handoff #382):** the original 8/4-ORL motivation NO LONGER reproduces — an
     August dry-run showed all current coverage gaps are genuine BODY SHORTAGES (0 are hours- or cap-blocked),
     so 2b is a deliberate no-op on today's data; payoff is future-facing. **Prioritizing which shift wins
     scarce staff is ALREADY handled** by each shift's `schedulePriority` (engine fills in that order; OR=lowest
     is the one that goes short) — editable in the shift-type editor. No new feature needed there.
   - **Optional remaining:** (3) unify the scattered soft weights (sequentialOff/3-4-day-weekend, equity) into
-    the panel — where the dropped `weight` column returns; (4) dry-run preview before save. Design: handoffs #252/#376/#377.
+    the panel — where the dropped `weight` column returns; (4) dry-run preview before save. Design: handoffs #252/#376/#382.
 
 - [ ] **NEGATE-on-empty request satisfaction (latent semantics)** — `assignmentSatisfiesRequestOnDate`
   treats an empty/null cell as NOT satisfying any request kind, including `NEGATE_SHIFT`. So an approved
