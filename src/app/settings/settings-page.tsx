@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
@@ -289,14 +289,132 @@ function StatusBadge({ status, error }: { status: SaveStatus; error?: string }) 
   );
 }
 
-function SectionHeader({ title, description, status, error }: { title: string; description: string; status: SaveStatus; error?: string }) {
+// ─── Collapsible section infrastructure ─────────────────────────────────────
+
+type CollapseCtx = {
+  isCollapsed: (id: string) => boolean;
+  toggle: (id: string) => void;
+  setAll: (collapsed: boolean) => void;
+  register: (id: string) => () => void;
+};
+
+const CollapseContext = createContext<CollapseCtx | null>(null);
+const COLLAPSE_STORAGE_KEY = "yosched.settings.collapsed";
+const EMPTY_COLLAPSED: ReadonlySet<string> = new Set();
+
+// Backed by localStorage through useSyncExternalStore: the server snapshot is
+// always empty (everything expanded) so SSR/hydration stay stable, then React
+// swaps in the persisted client snapshot after mount — no setState-in-effect.
+function CollapseProvider({ children }: { children: React.ReactNode }) {
+  const idsRef = useRef<Set<string>>(new Set());
+  const storeRef = useRef<{ snap: Set<string>; loaded: boolean; listeners: Set<() => void> } | null>(null);
+  if (storeRef.current === null) {
+    storeRef.current = { snap: new Set(), loaded: false, listeners: new Set() };
+  }
+  const store = storeRef.current;
+
+  const getSnapshot = useCallback(() => {
+    if (!store.loaded) {
+      store.loaded = true;
+      try {
+        const raw = window.localStorage.getItem(COLLAPSE_STORAGE_KEY);
+        if (raw) store.snap = new Set<string>(JSON.parse(raw) as string[]);
+      } catch { /* ignore */ }
+    }
+    return store.snap;
+  }, [store]);
+  const getServerSnapshot = useCallback(() => EMPTY_COLLAPSED as Set<string>, []);
+  const subscribe = useCallback((cb: () => void) => {
+    store.listeners.add(cb);
+    return () => { store.listeners.delete(cb); };
+  }, [store]);
+
+  const collapsed = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+
+  const commit = useCallback((next: Set<string>) => {
+    store.snap = next;
+    store.loaded = true;
+    try { window.localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify([...next])); } catch { /* ignore */ }
+    store.listeners.forEach((l) => l());
+  }, [store]);
+
+  const register = useCallback((id: string) => {
+    idsRef.current.add(id);
+    return () => { idsRef.current.delete(id); };
+  }, []);
+
+  const toggle = useCallback((id: string) => {
+    const next = new Set(store.snap);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    commit(next);
+  }, [store, commit]);
+
+  const setAll = useCallback((collapse: boolean) => {
+    commit(collapse ? new Set(idsRef.current) : new Set<string>());
+  }, [commit]);
+
+  const value = useMemo<CollapseCtx>(() => ({
+    isCollapsed: (id: string) => collapsed.has(id),
+    toggle, setAll, register,
+  }), [collapsed, toggle, setAll, register]);
+
+  return <CollapseContext.Provider value={value}>{children}</CollapseContext.Provider>;
+}
+
+function CollapseToolbar() {
+  const ctx = useContext(CollapseContext);
+  if (!ctx) return null;
+  const btn = "text-xs px-3 py-1.5 rounded bg-slate-700/70 text-slate-300 hover:bg-slate-600 hover:text-slate-100 transition-colors";
   return (
-    <div className="flex items-center justify-between mb-4">
-      <div>
-        <h2 className="text-lg font-semibold text-slate-100">{title}</h2>
-        <p className="text-sm text-slate-400">{description}</p>
+    <div className="flex items-center gap-2">
+      <button type="button" onClick={() => ctx.setAll(false)} className={btn}>Reveal all</button>
+      <button type="button" onClick={() => ctx.setAll(true)} className={btn}>Collapse all</button>
+    </div>
+  );
+}
+
+function SectionGroup({ label }: { label: string }) {
+  return (
+    <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 pt-4 pb-1 px-1 border-b border-slate-700/40">
+      {label}
+    </h2>
+  );
+}
+
+function CollapsibleSection({ id, title, description, status, error, children }: {
+  id: string;
+  title: string;
+  description: string;
+  status: SaveStatus;
+  error?: string;
+  children: React.ReactNode;
+}) {
+  const ctx = useContext(CollapseContext);
+  useEffect(() => ctx?.register(id), [ctx, id]);
+  const open = ctx ? !ctx.isCollapsed(id) : true;
+
+  return (
+    <div className="bg-slate-800/50 border border-slate-700 rounded-lg">
+      <button
+        type="button"
+        onClick={() => ctx?.toggle(id)}
+        aria-expanded={open}
+        className="w-full flex items-start justify-between gap-3 p-6 text-left group"
+      >
+        <span className="flex items-start gap-3 min-w-0">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={`w-4 h-4 mt-1 shrink-0 text-slate-500 transition-transform group-hover:text-slate-300 ${open ? "" : "-rotate-90"}`}>
+            <path d="M5 7.5L10 12.5L15 7.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span className="min-w-0">
+            <span className="block text-lg font-semibold text-slate-100">{title}</span>
+            <span className="block text-sm text-slate-400">{description}</span>
+          </span>
+        </span>
+        <StatusBadge status={status} error={error} />
+      </button>
+      <div className={open ? "px-6 pb-6" : "hidden"}>
+        {children}
       </div>
-      <StatusBadge status={status} error={error} />
     </div>
   );
 }
@@ -754,13 +872,13 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules, initialRequi
   }, [editingId, requiredFollowers]);
 
   return (
-    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
-      <SectionHeader
-        title="Shift Types"
-        description="Configure shift codes, durations, and rules"
-        status={status}
-        error={error}
-      />
+    <CollapsibleSection
+      id="shift-types"
+      title="Shift Types"
+      description="Configure shift codes, durations, and rules"
+      status={status}
+      error={error}
+    >
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -969,7 +1087,7 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules, initialRequi
           + Add Shift Type
         </button>
       )}
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -1126,13 +1244,13 @@ function StaffingSection({
   }
 
   return (
-    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
-      <SectionHeader
-        title="Staffing Rules"
-        description="Minimum staff per shift type per day of the week"
-        status={status}
-        error={error}
-      />
+    <CollapsibleSection
+      id="staffing-rules"
+      title="Staffing Rules"
+      description="Minimum staff per shift type per day of the week"
+      status={status}
+      error={error}
+    >
 
       <div className="overflow-x-auto">
         <table className="text-sm">
@@ -1256,7 +1374,7 @@ function StaffingSection({
           Save Staffing Rules
         </button>
       )}
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -1348,13 +1466,13 @@ function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeri
   }
 
   return (
-    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
-      <SectionHeader
-        title="Pay Periods"
-        description="Biweekly pay period dates"
-        status={status}
-        error={error}
-      />
+    <CollapsibleSection
+      id="pay-periods"
+      title="Pay Periods"
+      description="Biweekly pay period dates"
+      status={status}
+      error={error}
+    >
 
       <div className="mb-4">
         <label className="text-xs text-slate-400 block mb-1">Hours per Pay Period (1.0 FTE)</label>
@@ -1428,7 +1546,7 @@ function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeri
           </div>
         </ScrollContainer>
       </div>
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -1561,13 +1679,13 @@ function HolidaysSection({ initial, payPeriods, pushUndo, dateFormat }: { initia
   }
 
   return (
-    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
-      <SectionHeader
-        title="Holidays"
-        description="Days with special staffing rules (reduced coverage, no ORL)"
-        status={status}
-        error={error}
-      />
+    <CollapsibleSection
+      id="holidays"
+      title="Holidays"
+      description="Days with special staffing rules (reduced coverage, no ORL)"
+      status={status}
+      error={error}
+    >
 
       {canEdit && (
         <div className="mb-4">
@@ -1630,7 +1748,7 @@ function HolidaysSection({ initial, payPeriods, pushUndo, dateFormat }: { initia
           </div>
         </ScrollContainer>
       )}
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -1723,13 +1841,13 @@ function DesirabilitySection({
   }
 
   return (
-    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
-      <SectionHeader
-        title="Shift Desirability"
-        description="Rate how desirable each shift is per day of week. Used by the equity engine and auto-scheduler."
-        status={status}
-        error={error}
-      />
+    <CollapsibleSection
+      id="shift-desirability"
+      title="Shift Desirability"
+      description="Rate how desirable each shift is per day of week. Used by the equity engine and auto-scheduler."
+      status={status}
+      error={error}
+    >
       <div className="overflow-x-auto">
         <table className="text-sm">
           <thead>
@@ -1797,7 +1915,7 @@ function DesirabilitySection({
           <span className="inline-block w-3 h-3 rounded bg-emerald-900/60" /> Great (+5)
         </div>
       </div>
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -1964,13 +2082,13 @@ function AutoGenPrioritySection({
   }
 
   return (
-    <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
-      <SectionHeader
-        title="Auto-Generation Priority"
-        description="How auto-generation decides what to schedule when goals compete. Higher items win — a factor is never traded away to improve one below it. Drag to re-rank, then Save."
-        status={status}
-        error={error}
-      />
+    <CollapsibleSection
+      id="autogen-priority"
+      title="Auto-Generation Priority"
+      description="How auto-generation decides what to schedule when goals compete. Higher items win — a factor is never traded away to improve one below it. Drag to re-rank, then Save."
+      status={status}
+      error={error}
+    >
 
       {!canEdit && (
         <p className="mt-3 px-3 py-2 bg-slate-900/40 border border-slate-700/50 rounded text-xs text-slate-400">
@@ -2124,7 +2242,7 @@ function AutoGenPrioritySection({
       <p className="mt-4 text-xs text-slate-500 italic border-t border-slate-700/50 pt-3">
         {PRIORITY_ROADMAP_NOTE}
       </p>
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -2201,13 +2319,13 @@ function EquityFactorsSection({
   const hasHoliday = factors.some((f) => f.factorType === "holiday");
 
   return (
-    <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
-      <SectionHeader
-        title="Equity Factors"
-        description="Configure which metrics factor into the equity score and their relative weights. All values are FTE-normalized."
-        status={status}
-        error={error}
-      />
+    <CollapsibleSection
+      id="equity-factors"
+      title="Equity Factors"
+      description="Configure which metrics factor into the equity score and their relative weights. All values are FTE-normalized."
+      status={status}
+      error={error}
+    >
       <div className="mt-4 space-y-2">
         {factors.map((f, idx) => (
           <div key={idx} className="flex items-center gap-3 bg-slate-700/30 border border-slate-600/50 rounded-lg px-4 py-2.5">
@@ -2312,7 +2430,7 @@ function EquityFactorsSection({
           </button>
         )}
       </div>
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -2342,13 +2460,13 @@ function DateFormatSection({ selected, onChange }: { selected: string; onChange:
   }
 
   return (
-    <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
-      <SectionHeader
-        title="Date Format"
-        description="Choose how dates are displayed throughout the application."
-        status={status}
-        error={error}
-      />
+    <CollapsibleSection
+      id="date-format"
+      title="Date Format"
+      description="Choose how dates are displayed throughout the application."
+      status={status}
+      error={error}
+    >
       <div className="grid grid-cols-3 gap-2 mt-4">
         {DATE_FORMAT_OPTIONS.map((opt) => (
           <button
@@ -2368,7 +2486,7 @@ function DateFormatSection({ selected, onChange }: { selected: string; onChange:
           </button>
         ))}
       </div>
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -2526,13 +2644,13 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
   };
 
   return (
-    <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
-      <SectionHeader
-        title="Scheduling Preferences"
-        description="Controls how the auto-scheduler places days off. Staffing requirements are always respected first."
-        status={status}
-        error={error}
-      />
+    <CollapsibleSection
+      id="scheduling-preferences"
+      title="Scheduling Preferences"
+      description="Controls how the auto-scheduler places days off. Staffing requirements are always respected first."
+      status={status}
+      error={error}
+    >
       <div className="space-y-4 mt-4">
         {items.map(({ key, label, description }) => (
           <label key={key} className="flex items-start gap-3 cursor-pointer group">
@@ -2688,7 +2806,7 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
           </div>
         </div>
       </div>
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -2787,13 +2905,13 @@ function PayPeriodPrefsSection({ initial, shiftTypes }: { initial: DeptTargetDat
   }
 
   return (
-    <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
-      <SectionHeader
-        title="Pay-period preferences"
-        description="Department-wide shift targets, expressed per 1.0 FTE. The auto-scheduler scales each target to a staffer's FTE (e.g. 2 per 1.0 FTE → ~2 at 0.8 FTE) to bias the shift mix. Only affects staff who are eligible for that shift; a per-staff target for the same shift overrides the department default. Staffing requirements are always respected first."
-        status={status}
-        error={error}
-      />
+    <CollapsibleSection
+      id="payperiod-preferences"
+      title="Pay-period preferences"
+      description="Department-wide shift targets, expressed per 1.0 FTE. The auto-scheduler scales each target to a staffer's FTE (e.g. 2 per 1.0 FTE → ~2 at 0.8 FTE) to bias the shift mix. Only affects staff who are eligible for that shift; a per-staff target for the same shift overrides the department default. Staffing requirements are always respected first."
+      status={status}
+      error={error}
+    >
       <div className="space-y-2 mt-4">
         {workShifts.map((st) => {
           const row = rowFor(st.id);
@@ -2825,7 +2943,7 @@ function PayPeriodPrefsSection({ initial, shiftTypes }: { initial: DeptTargetDat
         })}
       </div>
       <p className="text-[11px] text-slate-500 mt-3">Soft/hard enforcement of these targets lands in a follow-up; for now they feed the same min/max logic as per-staff targets.</p>
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -2874,13 +2992,13 @@ function EmailSettingsSection() {
   const input = "w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded text-sm text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50";
 
   return (
-    <section className="bg-slate-800/50 rounded-lg border border-slate-700 p-6">
-      <SectionHeader
-        title="Email (SMTP)"
-        description="Outbound mail for request confirmations. Nothing sends until this is filled in and enabled."
-        status={status}
-        error={error}
-      />
+    <CollapsibleSection
+      id="email-smtp"
+      title="Email (SMTP)"
+      description="Outbound mail for request confirmations. Nothing sends until this is filled in and enabled."
+      status={status}
+      error={error}
+    >
       {!loaded ? (
         <p className="text-sm text-slate-500">Loading…</p>
       ) : (
@@ -2930,7 +3048,7 @@ function EmailSettingsSection() {
           )}
         </div>
       )}
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -3199,13 +3317,13 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
   const et = editingType;
 
   return (
-    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
-      <SectionHeader
-        title="Employment Types"
-        description="Define employment categories and their default scheduling values"
-        status={status}
-        error={error}
-      />
+    <CollapsibleSection
+      id="employment-types"
+      title="Employment Types"
+      description="Define employment categories and their default scheduling values"
+      status={status}
+      error={error}
+    >
       <table className="w-full text-sm">
         <thead>
           <tr className="text-xs text-slate-400 uppercase tracking-wider">
@@ -3382,7 +3500,7 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
           + Add Employment Type
         </button>
       )}
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -3431,8 +3549,12 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
   }
 
   return (
-    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
-      <SectionHeader title="Count Columns on Printed Schedule" description="Define columns that count staff per day on the schedule grid." status={status} />
+    <CollapsibleSection
+      id="count-columns"
+      title="Count Columns on Printed Schedule"
+      description="Define columns that count staff per day on the schedule grid."
+      status={status}
+    >
 
       <div className="space-y-3">
         {columns.map((col, idx) => (
@@ -3482,7 +3604,7 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
           {status === "saving" ? "Saving..." : "Save"}
         </button>}
       </div>
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -3721,12 +3843,12 @@ function PrintColumnRulesSection({
   }
 
   return (
-    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
-      <SectionHeader
-        title="Staff Columns on Printed Schedule"
-        description="Rules deciding which staff get their own column when printing. Include rules pick who prints (no include rules = everyone); exclude rules then remove matches. A rule's shift conditions are ALL required (AND). No rules = print everyone. Print-only — the on-screen grid always shows all staff."
-        status={status}
-      />
+    <CollapsibleSection
+      id="print-staff-columns"
+      title="Staff Columns on Printed Schedule"
+      description="Rules deciding which staff get their own column when printing. Include rules pick who prints (no include rules = everyone); exclude rules then remove matches. A rule's shift conditions are ALL required (AND). No rules = print everyone. Print-only — the on-screen grid always shows all staff."
+      status={status}
+    >
 
       <div className="space-y-3">
         {rules.map((rule, idx) => (
@@ -3764,7 +3886,7 @@ function PrintColumnRulesSection({
           </button>
         </div>
       )}
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -3850,12 +3972,12 @@ function AdditionalColumnsSection({
   }
 
   return (
-    <section className="bg-slate-800/50 border border-slate-700 rounded-lg p-6">
-      <SectionHeader
-        title="Additional Columns on Printed Schedule"
-        description="Extra aggregate columns for the printed schedule. Each lists, per day, the initials of the staff matching its rule who are scheduled that day. 'Suppress members' hides those staff's own individual columns in print (otherwise they appear both places). Tick 'Catch-all' to make a column the residual — it lists everyone who appears in no other column (no rule of its own). A column with no one to show that month is hidden automatically. Print-only — the on-screen grid is unchanged."
-        status={status}
-      />
+    <CollapsibleSection
+      id="print-additional-columns"
+      title="Additional Columns on Printed Schedule"
+      description="Extra aggregate columns for the printed schedule. Each lists, per day, the initials of the staff matching its rule who are scheduled that day. 'Suppress members' hides those staff's own individual columns in print (otherwise they appear both places). Tick 'Catch-all' to make a column the residual — it lists everyone who appears in no other column (no rule of its own). A column with no one to show that month is hidden automatically. Print-only — the on-screen grid is unchanged."
+      status={status}
+    >
 
       <div className="space-y-3">
         {cols.map((col, idx) => {
@@ -3937,7 +4059,7 @@ function AdditionalColumnsSection({
           </button>
         </div>
       )}
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -3949,34 +4071,60 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
 
   return (
     <CanEditContext.Provider value={canEdit}>
+    <CollapseProvider>
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+      <div className="max-w-5xl mx-auto px-6 py-8">
+        <div className="sticky top-0 z-10 -mx-6 px-6 py-3 mb-6 bg-slate-900/85 backdrop-blur border-b border-slate-700/50 flex items-center justify-between gap-3">
+          <h1 className="text-xl font-semibold text-slate-100">Settings</h1>
+          <CollapseToolbar />
+        </div>
         {!canEdit && (
-          <div className="px-4 py-2.5 bg-slate-800/60 border border-slate-700/50 rounded text-xs text-slate-400 text-center">
+          <div className="px-4 py-2.5 mb-6 bg-slate-800/60 border border-slate-700/50 rounded text-xs text-slate-400 text-center">
             View-only — you do not have permission to edit settings
           </div>
         )}
-        <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} initialFollowRules={initialFollowRules} initialRequiredFollowers={initialRequiredFollowers} />
-        <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} shiftTypes={shiftTypes} />
-        <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
-        <PrintColumnRulesSection initial={initialPrintColumnRules} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
-        <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
-        <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
-        <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
-        <AutoGenPrioritySection initial={initialAutoGenFactors} initialProfiles={initialAutoGenProfiles} canEdit={canEditAutoGenPriority} />
-        <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
-        <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
-        <SchedulingPrefsSection initial={schedulingPrefs} shiftTypes={shiftTypes} />
-        <PayPeriodPrefsSection initial={departmentTargets} shiftTypes={shiftTypes} />
-        <EmailSettingsSection />
-        <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
-        <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
+
+        <SectionGroup label="Definitions" />
+        <div className="space-y-4 mb-8 mt-3">
+          <ShiftTypesSection initial={shiftTypes} pushUndo={undo.push} initialFollowRules={initialFollowRules} initialRequiredFollowers={initialRequiredFollowers} />
+          <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} shiftTypes={shiftTypes} />
+        </div>
+
+        <SectionGroup label="Scheduling Engine" />
+        <div className="space-y-4 mb-8 mt-3">
+          <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
+          <SchedulingPrefsSection initial={schedulingPrefs} shiftTypes={shiftTypes} />
+          <PayPeriodPrefsSection initial={departmentTargets} shiftTypes={shiftTypes} />
+          <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
+          <AutoGenPrioritySection initial={initialAutoGenFactors} initialProfiles={initialAutoGenProfiles} canEdit={canEditAutoGenPriority} />
+          <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
+        </div>
+
+        <SectionGroup label="Printed Schedule" />
+        <div className="space-y-4 mb-8 mt-3">
+          <PrintColumnRulesSection initial={initialPrintColumnRules} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
+          <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
+          <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
+        </div>
+
+        <SectionGroup label="Calendar" />
+        <div className="space-y-4 mb-8 mt-3">
+          <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
+          <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
+        </div>
+
+        <SectionGroup label="General & System" />
+        <div className="space-y-4 mt-3">
+          <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
+          <EmailSettingsSection />
+        </div>
       </div>
 
       {undo.pending && (
         <UndoToast action={undo.pending} onUndo={undo.execute} onDismiss={undo.dismiss} />
       )}
     </div>
+    </CollapseProvider>
     </CanEditContext.Provider>
   );
 }
