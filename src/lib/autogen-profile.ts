@@ -8,9 +8,14 @@ export type ProfileInputValidation =
   | { ok: true; name: string; order: string[] }
   | { ok: false; error: string };
 
-// Validates a "save as profile" request: a non-empty name plus an order that is an EXACT
-// permutation of the current factor keys (delegated to validateFactorOrder so a profile can
-// only ever store a complete, valid ordering). Returns the trimmed name on success.
+// Max profile-name length. Single source of truth shared by the API validator and the UI
+// input's maxLength so the server bound and the field cap can't drift (Codex note on #252).
+export const MAX_PROFILE_NAME_LENGTH = 80;
+
+// Validates a "save as profile" request: a non-empty name within the length bound plus an
+// order that is an EXACT permutation of the current factor keys (delegated to
+// validateFactorOrder so a profile can only ever store a complete, valid ordering).
+// Returns the trimmed name on success.
 export function validateProfileInput(
   name: unknown,
   order: unknown,
@@ -19,9 +24,13 @@ export function validateProfileInput(
   if (typeof name !== "string" || name.trim().length === 0) {
     return { ok: false, error: "Profile name is required" };
   }
+  const trimmed = name.trim();
+  if (trimmed.length > MAX_PROFILE_NAME_LENGTH) {
+    return { ok: false, error: `Profile name must be ${MAX_PROFILE_NAME_LENGTH} characters or fewer` };
+  }
   const orderResult = validateFactorOrder(order, existingKeys);
   if (!orderResult.ok) return { ok: false, error: orderResult.error };
-  return { ok: true, name: name.trim(), order: orderResult.order };
+  return { ok: true, name: trimmed, order: orderResult.order };
 }
 
 // Reconciles a saved profile order against the live factor catalog so that APPLYING an old

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateProfileInput, reconcileOrder } from "../autogen-profile";
+import { validateProfileInput, reconcileOrder, MAX_PROFILE_NAME_LENGTH } from "../autogen-profile";
 
 // Named auto-generation priority profiles (#252). validateProfileInput gates "save as
 // profile" (name + a valid full ordering); reconcileOrder makes applying an older profile
@@ -24,6 +24,18 @@ describe("validateProfileInput", () => {
   it("rejects a non-string name", () => {
     expect(validateProfileInput(42, EXISTING, EXISTING).ok).toBe(false);
     expect(validateProfileInput(null, EXISTING, EXISTING).ok).toBe(false);
+  });
+
+  it("accepts a name exactly at the length bound", () => {
+    const name = "a".repeat(MAX_PROFILE_NAME_LENGTH);
+    expect(validateProfileInput(name, [...EXISTING], EXISTING).ok).toBe(true);
+  });
+
+  it("rejects a name longer than the length bound (after trimming)", () => {
+    const tooLong = `  ${"a".repeat(MAX_PROFILE_NAME_LENGTH + 1)}  `;
+    const r = validateProfileInput(tooLong, [...EXISTING], EXISTING);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/characters or fewer/i);
   });
 
   it("rejects a name with a non-permutation order", () => {

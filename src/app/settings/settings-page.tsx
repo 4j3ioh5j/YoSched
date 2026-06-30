@@ -6,7 +6,7 @@ import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKe
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
-import { reconcileOrder } from "@/lib/autogen-profile";
+import { reconcileOrder, MAX_PROFILE_NAME_LENGTH } from "@/lib/autogen-profile";
 import { OffStrategyEditor } from "@/components/off-strategy-editor";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
 import { RecurrencePicker } from "../staff/recurrence-picker";
@@ -2069,7 +2069,7 @@ function AutoGenPrioritySection({
               onChange={(e) => setProfileName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") saveAsProfile(); }}
               placeholder="Name this priority order…"
-              maxLength={80}
+              maxLength={MAX_PROFILE_NAME_LENGTH}
               className="flex-1 min-w-0 px-3 py-1.5 rounded-md text-sm bg-slate-900/60 border border-slate-600 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
             />
             <button
