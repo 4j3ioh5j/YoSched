@@ -2072,6 +2072,92 @@ describe("autoSchedule — quality breakdown (Slice 4a)", () => {
   });
 });
 
+// ─── Slice 2b: builder honors the configured coverage trades ───
+// The default order (hardLimits > coverage > overHours > underHours) keeps the pre-2b
+// behavior: coverage already fills over soft hours, and hard caps stay protected. These
+// tests prove the *mechanism* flips with the configured order — the real-data payoff is
+// future-facing (an August dry-run showed today's gaps are all genuine body shortages,
+// not hours/cap refusals). A non-fill REQ shift (8h, counts toward FTE) is required once;
+// a separate FILL shift exists only so the PP-hours projection engages.
+describe("autoSchedule — Slice 2b coverage trades (builder)", () => {
+  const REQ = makeShift("st-req", "REQ", { schedulePriority: 1 });
+  const FILL = makeShift("st-fill", "FILL", { isFillShift: true });
+  const ordOf = (keys: string[]) => keys.map((k, i) => ({ key: k, sortOrder: i, enabled: true }));
+  const OVERHOURS_ABOVE_COVERAGE = ordOf(["hardLimits", "overHours", "underHours", "requests", "coverage", "fairness"]);
+  const COVERAGE_ABOVE_HARDLIMITS = ordOf(["coverage", "hardLimits", "overHours", "underHours", "requests", "fairness"]);
+
+  const reqOn = (res: AutoScheduleResult, date: string) =>
+    res.suggestions.filter((s) => s.shiftTypeId === "st-req" && s.date === date).length;
+
+  // coverage ↔ overHours: REQ=8h but the PP target is only 4h, so placing it pushes the
+  // lone eligible staffer OVER target (a soft "over" block).
+  function overHoursCase(factorOrder?: { key: string; sortOrder: number; enabled: boolean }[]) {
+    return runSchedule({
+      dates: weekdayDates("2025-05-12", 1),
+      staff: [makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-req", "st-fill", "st-off"] })],
+      shiftTypes: [REQ, FILL, OFF],
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 4 }],
+      staffingRequirements: [{ shiftCode: "REQ", dayKey: "1", minCount: 1 }],
+      factorOrder,
+    });
+  }
+
+  it("default order (coverage > overHours): fills the shift even though it exceeds soft PP hours", () => {
+    expect(reqOn(overHoursCase(undefined), "2025-05-12")).toBe(1);
+  });
+
+  it("overHours ranked above coverage: leaves the shift short rather than exceed hours", () => {
+    expect(reqOn(overHoursCase(OVERHOURS_ABOVE_COVERAGE), "2025-05-12")).toBe(0);
+  });
+
+  // coverage ↔ hardLimits: target is reachable (8h), so no hours block — the only barrier
+  // is a hard per-staff MAX of 0 for REQ.
+  function hardMaxCase(factorOrder?: { key: string; sortOrder: number; enabled: boolean }[]) {
+    return runSchedule({
+      dates: weekdayDates("2025-05-12", 1),
+      staff: [makeStaff("p1", "AB", {
+        eligibleShiftTypeIds: ["st-req", "st-fill", "st-off"],
+        shiftMinimumTargets: [{ shiftTypeId: "st-req", minCount: 0, maxCount: 0, window: "pay_period", windowDays: null }],
+      })],
+      shiftTypes: [REQ, FILL, OFF],
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 8 }],
+      staffingRequirements: [{ shiftCode: "REQ", dayKey: "1", minCount: 1 }],
+      factorOrder,
+    });
+  }
+
+  it("default order (hardLimits > coverage): respects the hard max and leaves the shift short", () => {
+    expect(reqOn(hardMaxCase(undefined), "2025-05-12")).toBe(0);
+  });
+
+  it("coverage ranked above hardLimits: exceeds the hard max to cover the required shift", () => {
+    expect(reqOn(hardMaxCase(COVERAGE_ABOVE_HARDLIMITS), "2025-05-12")).toBe(1);
+  });
+
+  // "under-reach" (a body that stays UNDER target afterward) is NOT an exceedance — the
+  // coverage fallback must still place it (covering the shift reduces underHours), in
+  // EVERY order. It is never gated by the over-target trade (Codex #1793). Target 40h with
+  // a single 8h day makes the lone staffer unable to reach target → an under-reach block.
+  function underReachCase(factorOrder?: { key: string; sortOrder: number; enabled: boolean }[]) {
+    return runSchedule({
+      dates: weekdayDates("2025-05-12", 1),
+      staff: [makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-req", "st-fill", "st-off"] })],
+      shiftTypes: [REQ, FILL, OFF],
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
+      staffingRequirements: [{ shiftCode: "REQ", dayKey: "1", minCount: 1 }],
+      factorOrder,
+    });
+  }
+
+  it("under-reach body still fills coverage in the fallback — default order", () => {
+    expect(reqOn(underReachCase(undefined), "2025-05-12")).toBe(1);
+  });
+
+  it("under-reach body still fills coverage even when overHours is ranked above coverage (it is not an exceedance)", () => {
+    expect(reqOn(underReachCase(OVERHOURS_ABOVE_COVERAGE), "2025-05-12")).toBe(1);
+  });
+});
+
 describe("autoSchedule — ORC distribution (Slice 2)", () => {
   // Recovery-only ORC: a 16h shift that forces an X the next day (ORC→X each_day).
   // Before the fix, wouldBreakPPHours valued every open day at the 8h fill shift,

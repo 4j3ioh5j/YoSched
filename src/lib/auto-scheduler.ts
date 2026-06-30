@@ -242,29 +242,33 @@ export const DEFAULT_FACTOR_ORDER = [
 // DEFAULT_FACTOR_ORDER. A config that drops, disables, duplicates, or adds an unknown
 // factor is treated as invalid here so no factor can be silently demoted (mirrors the
 // independent feasibility floor in autoScheduleCandidates — Codex #1752 W1).
-export function buildRankFromConfig(
-  terms: Record<(typeof DEFAULT_FACTOR_ORDER)[number], number>,
-  config: AutoGenFactorConfig[] | undefined,
-): number[] {
+// The effective (validated-or-default) factor order for a run. Single source of the
+// validity contract so the GRADER (buildRankFromConfig) and the BUILDER (Slice 2b's
+// coverage trades + the candidate floor) never disagree about the order. Honored only
+// when the config is EXACTLY the known factors: same count, no duplicates, every entry
+// known AND enabled. Anything else → DEFAULT_FACTOR_ORDER (no factor silently demoted).
+// Do NOT pre-filter unknowns, or an unknown key alongside a reordered known set would
+// slip through and reorder the known factors instead of falling back (Codex #1761).
+export function effectiveFactorKeys(config: AutoGenFactorConfig[] | undefined): string[] {
   const known: readonly string[] = DEFAULT_FACTOR_ORDER;
-  let orderedKeys: readonly string[] = DEFAULT_FACTOR_ORDER;
   if (config && config.length) {
-    // Validate the WHOLE config — do NOT pre-filter unknowns, or an unknown key
-    // alongside a reordered known set would slip through and reorder the known
-    // factors instead of falling back (Codex #1761). The config is honored only when
-    // it is EXACTLY the known factors: same count, no duplicates, every entry known
-    // AND enabled. Anything else → canonical fallback (so coverage is never silently
-    // demoted by a missing/disabled/unknown/duplicate entry).
     const keys = new Set(config.map((f) => f.key));
     const valid =
       config.length === known.length &&
       keys.size === config.length &&
       config.every((f) => f.enabled && known.includes(f.key));
-    if (valid) {
-      orderedKeys = [...config].sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.key);
-    }
+    if (valid) return [...config].sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.key);
   }
-  return orderedKeys.map((k) => terms[k as (typeof DEFAULT_FACTOR_ORDER)[number]]);
+  return [...known];
+}
+
+// Build the lexicographic rank vector from the configured factor order. `terms` holds
+// the computed objective values keyed by factor.
+export function buildRankFromConfig(
+  terms: Record<(typeof DEFAULT_FACTOR_ORDER)[number], number>,
+  config: AutoGenFactorConfig[] | undefined,
+): number[] {
+  return effectiveFactorKeys(config).map((k) => terms[k as (typeof DEFAULT_FACTOR_ORDER)[number]]);
 }
 
 function toDateStr(d: Date): string {
@@ -772,7 +776,12 @@ export function autoSchedule({
     return true;
   }
 
-  function isAvailable(staff: ScheduleStaff, date: string, st: ScheduleShiftType): boolean {
+  // `ignoreHardMax` (Slice 2b-2) waives ONLY the hard per-staff rolling-MAX gate so a
+  // coverage minimum can be filled by exceeding a hard max when coverage is ranked above
+  // hardLimits. Every other gate — eligibility, availability, follow rules, the per-day
+  // cap (maxPerDay), one-shift-per-day — still applies. Hard MIN is not an availability
+  // gate (it lives in the objective/floor), so only the MAX needs a waiver (Codex #1779).
+  function isAvailable(staff: ScheduleStaff, date: string, st: ScheduleShiftType, opts?: { ignoreHardMax?: boolean }): boolean {
     if (isAssigned(staff.id, date)) return false;
     // Approved hard requests (OFF / NEGATE_SHIFT) gate every placement that flows
     // through isAvailable (staffing fills, minimum targets, FTE fill shift).
@@ -802,7 +811,7 @@ export function autoSchedule({
       if (nextSt && !isShiftAllowedAfter(followMap, st.id, next.shiftTypeId, nextSt.isOffShift)) return false;
     }
     if (st.maxPerDay != null && countAssigned(st.code, date) >= st.maxPerDay) return false;
-    if (isAtMaximum(staff, st, date)) return false;
+    if (!opts?.ignoreHardMax && isAtMaximum(staff, st, date)) return false;
     return true;
   }
 
@@ -1045,6 +1054,44 @@ export function autoSchedule({
     return count;
   }
 
+  // Is this shift still below its required staffing minimum on `date`? (Slice 2b: the
+  // gate that authorizes the configured coverage trades — they only ever fire to fill a
+  // genuinely unmet coverage minimum, never to over-fill a satisfied one.)
+  function hasUnmetCoverageMinimum(date: string, st: ScheduleShiftType): boolean {
+    const required = getRequiredCount(st, date);
+    return required > 0 && countCoverage(st.code, date) < required;
+  }
+
+  // Configured coverage trades for THIS run (Slice 2b). With the default order
+  // (hardLimits > coverage > overHours > underHours) coverageBeatsOverHours is TRUE and
+  // coverageBeatsHardLimits is FALSE — so the fallback below stays byte-identical to the
+  // pre-2b behavior (coverage already filled over soft hours; hard caps stayed
+  // protected). An admin flips either trade by ranking coverage higher.
+  const factorKeys2b = effectiveFactorKeys(factorOrder);
+  const coverageRank2b = factorKeys2b.indexOf("coverage");
+  const coverageBeatsOverHours = coverageRank2b < factorKeys2b.indexOf("overHours");
+  const coverageBeatsHardLimits = coverageRank2b < factorKeys2b.indexOf("hardLimits");
+
+  // Slice 2b coverage-fill FALLBACK gate — consulted only when the hours-clean tier is
+  // empty (every remaining eligible body already has SOME block). It mirrors the pre-2b
+  // fallback `eligible.filter(isAvailable)` (place any available body to cover), with two
+  // config-driven adjustments:
+  //   • coverage > hardLimits → also consider a body at its hard rolling MAX (ignoreHardMax).
+  //   • overHours > coverage  → do NOT place a body whose assignment would push it OVER
+  //                             target (respect hours instead of covering).
+  // The ONLY hours condition this gate touches is the OVER-target exceedance. The
+  // "under-reach" block (a body that stays UNDER target afterward) is deliberately NOT
+  // gated: placing an under-target body covers the shift AND reduces underHours, so it is
+  // never an exceedance and there is nothing to waive — it is allowed exactly as pre-2b.
+  // (Codex #1793: the earlier "under-reach never waived" wording was wrong — excluding it
+  // would strand coverage AND worsen underHours.) Hard MIN is handled in tier1 via
+  // hasUnmetMinimum. With the default order this reduces to exactly `isAvailable(p,…)`.
+  function canFillCoverageOverLimits(p: ScheduleStaff, date: string, st: ScheduleShiftType): boolean {
+    if (!isAvailable(p, date, st, { ignoreHardMax: coverageBeatsHardLimits && hasUnmetCoverageMinimum(date, st) })) return false;
+    if (!coverageBeatsOverHours && ppHoursBlock(p.id, date, st) === "over") return false;
+    return true;
+  }
+
   function findPPForDate(date: string): PayPeriod | null {
     for (const pp of payPeriods) {
       if (date >= pp.startDate && date <= pp.endDate) return pp;
@@ -1052,7 +1099,20 @@ export function autoSchedule({
     return null;
   }
 
-  function wouldBreakPPHours(staffId: string, date: string, st: ScheduleShiftType): boolean {
+  // Slice 2b-0 (Codex #1779 C2): the PP-hours guard bundles TWO distinct blocks that
+  // the configurable-priority feature must treat differently:
+  //   "over"        — adding this shift pushes worked hours OVER the PP target (maps to
+  //                   the `overHours` factor; waivable to fill coverage when coverage is
+  //                   ranked above overHours).
+  //   "under-reach" — even after this shift the staff can't REACH their target with the
+  //                   days left (maps to `underHours`). This is NOT an exceedance: it
+  //                   keeps tier1 (the hours-clean pool) from relying on a body that can't
+  //                   hit target, but the coverage fallback still places such a body (that
+  //                   reduces underHours), so it is never the thing the over-target trade
+  //                   waives — see canFillCoverageOverLimits.
+  // Split the reason here so callers can gate only the over case. `wouldBreakPPHours`
+  // keeps the old boolean contract (either block ⇒ true) for the unchanged call sites.
+  function ppHoursBlock(staffId: string, date: string, st: ScheduleShiftType): "over" | "under-reach" | null {
     // An each_day follower (e.g. ORC→X) reliably drags one follower day — and its
     // hours — into the period per placement, so it's part of this projection.
     // each_run followers are shared across a run; their hours land via
@@ -1060,23 +1120,23 @@ export function autoSchedule({
     const followerSpec = followerBySource.get(st.id);
     const eachDayFollower = followerSpec?.scope === "each_day" ? followerSpec : null;
     const hasFollowerDay = !!eachDayFollower;
-    if (!st.countsTowardFte && !hasFollowerDay) return false;
+    if (!st.countsTowardFte && !hasFollowerDay) return null;
 
     const followerDate = hasFollowerDay ? nextDate(date) : null;
     const followerPP = followerDate ? findPPForDate(followerDate) : null;
     const pp = st.countsTowardFte ? findPPForDate(date) : followerPP;
-    if (!pp || !fillShift) return false;
+    if (!pp || !fillShift) return null;
     const staff = activeStaff.find((p) => p.id === staffId);
-    if (!staff) return false;
+    if (!staff) return null;
     const target = pp.targetHours * staff.ftePercentage;
-    if (target <= 0) return false;
+    if (target <= 0) return null;
 
     const sameFollowerPP = !!followerPP && followerPP.startDate === pp.startDate;
     const followerHrs = eachDayFollower && eachDayFollower.follower.countsTowardFte && sameFollowerPP
       ? getShiftHours(staffId, eachDayFollower.follower, overrideMap, followerDate ? dayTypeOf(followerDate, holidaySet) : "weekday") : 0;
     const addHours = (st.countsTowardFte ? getShiftHours(staffId, st, overrideMap, dayTypeOf(date, holidaySet)) : 0) + followerHrs;
     const current = ppHoursForStaff(staffId, pp);
-    if (current + addHours > target) return true;
+    if (current + addHours > target) return "over";
 
     // Value each remaining open day at the staff's longest reachable shift, not
     // the short fill shift, so a full-timer who can still hit target via 12h/16h
@@ -1106,7 +1166,12 @@ export function autoSchedule({
     const hoursStillNeeded = target - hoursAfterAssign;
     const maxFillable = remainingAvail * perDayHrs;
 
-    return hoursStillNeeded > 0 && maxFillable < hoursStillNeeded;
+    return hoursStillNeeded > 0 && maxFillable < hoursStillNeeded ? "under-reach" : null;
+  }
+
+  // Boolean wrapper preserving the pre-2b contract (either block ⇒ "would break").
+  function wouldBreakPPHours(staffId: string, date: string, st: ScheduleShiftType): boolean {
+    return ppHoursBlock(staffId, date, st) !== null;
   }
 
   const fillShift = shiftTypes.find((st) => st.isFillShift) ?? null;
@@ -1405,7 +1470,7 @@ export function autoSchedule({
         if (available.length === 0) {
           const fallback = eligible.filter(
             (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
-              isAvailable(p, sat, st) && isAvailable(p, sun, st)
+              canFillCoverageOverLimits(p, sat, st) && canFillCoverageOverLimits(p, sun, st)
           );
           if (fallback.length === 0) {
             warnings.push(`No eligible ${st.code} staff for ${sat}/${sun}`);
@@ -1416,12 +1481,12 @@ export function autoSchedule({
 
         const pool = available.length > 0 ? available : eligible.filter(
           (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
-            isAvailable(p, sat, st) && isAvailable(p, sun, st)
+            canFillCoverageOverLimits(p, sat, st) && canFillCoverageOverLimits(p, sun, st)
         );
         if (pool.length === 0) continue;
         const chosen = pickStaff(pool, sat);
         assign(chosen.id, sat, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
-        if (!isAtMaximum(chosen, st, sun)) {
+        if (coverageBeatsHardLimits || !isAtMaximum(chosen, st, sun)) {
           assign(chosen.id, sun, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
         } else {
           warnings.push(`${chosen.initials}: skipped ${st.code} on ${sun} — capped by max shift limit`);
@@ -1467,7 +1532,7 @@ export function autoSchedule({
         );
         if (available.length === 0) {
           available = eligible.filter(
-            (p) => !isAssigned(p.id, date) && isAvailable(p, date, st)
+            (p) => !isAssigned(p.id, date) && canFillCoverageOverLimits(p, date, st)
           );
         }
         if (available.length === 0) {
@@ -1594,7 +1659,7 @@ export function autoSchedule({
           const leftoverDates = ppNeedDates.filter((d) => !usedDates.has(d));
           for (const date of leftoverDates) {
             let available = eligible.filter((p) => isAvailable(p, date, st) && (!wouldBreakPPHours(p.id, date, st) || hasUnmetMinimum(p, st, date)));
-            if (available.length === 0) available = eligible.filter((p) => isAvailable(p, date, st));
+            if (available.length === 0) available = eligible.filter((p) => canFillCoverageOverLimits(p, date, st));
             if (available.length === 0) {
               warnings.push(`No eligible ${st.code} staff for ${date} (unpaired remainder) in PP ${pp.startDate}`);
               continue;
@@ -1621,7 +1686,7 @@ export function autoSchedule({
               (!wouldBreakPPHours(p.id, date, st) || hasUnmetMinimum(p, st, date))
           );
           if (available.length === 0) {
-            available = eligible.filter((p) => isAvailable(p, date, st));
+            available = eligible.filter((p) => canFillCoverageOverLimits(p, date, st));
           }
 
           if (available.length === 0) {
@@ -2642,15 +2707,18 @@ function suggestionSetKey(suggestions: Suggestion[]): string {
 // and returns up to `count` DISTINCT candidates ranked best-first by the global
 // quality objective (Slice 4a). Pure + deterministic: same input+count ⇒ same list.
 //
-// FEASIBILITY FLOOR: the seeded tiebreak only reorders TRUE ties and never makes
-// an individually-infeasible placement — but the engine is greedy, so a different
-// tie-order can still change which slots ultimately go unfilled. That means a
-// perturbed run can finish with MORE hard breaches than the canonical schedule.
-// We never surface such a candidate: an option that breaches the inviolable tier
-// (#220 T0, `hardBreaches`) worse than canonical is strictly dominated and
-// misleading. So every returned candidate has `hardBreaches <= canonical`. Lower
-// tiers (PP-hours, request grants, fairness) MAY vary — those are exactly the
-// legitimate trade-offs the compare/choose UI (Slice 4c) exists to show.
+// FEASIBILITY FLOOR (Slice 2b-3 redesign, Codex #1779 C1/W1): the seeded tiebreak only
+// reorders TRUE ties and never makes an individually-infeasible placement — but the
+// engine is greedy, so a different tie-order can still change which slots go unfilled.
+// We never surface a candidate that is strictly WORSE than canonical on the hard terms.
+// Pre-2b that test was the aggregate `hardBreaches` (coverage + hardLimits). Now that an
+// admin can rank coverage above hardLimits (and the builder will trade a hard MAX for
+// coverage), a single aggregate would wrongly drop a candidate that trades one for the
+// other. So the floor is a LEXICOGRAPHIC compare over just [coverage, hardLimits] IN THE
+// CONFIGURED ORDER: drop only if strictly worse on that prefix; an equal prefix is kept
+// and the full-objective sort below decides. This lets the sanctioned trade survive in
+// whichever direction it's ranked while still hiding dominated options. Lower tiers
+// (hours, requests, fairness) MAY vary — the trade-offs the compare/choose UI shows.
 //
 // `count` is the number of DISTINCT candidates wanted. We try a bounded budget of
 // seeds to find them (a highly-constrained schedule may yield fewer distinct
@@ -2666,19 +2734,32 @@ export function autoScheduleCandidates(
   const seen = new Set<string>();
   const candidates: ScheduleCandidate[] = [];
 
-  // Canonical schedule (seed 0): always included, and its hard-breach count is
-  // the feasibility floor every other candidate must meet or beat.
+  // The hard terms in the configured order (validated-or-default), the prefix the floor
+  // compares lexicographically. With the default order this is ["hardLimits","coverage"].
+  const hardPrefix = effectiveFactorKeys(input.factorOrder).filter(
+    (k): k is "coverage" | "hardLimits" => k === "coverage" || k === "hardLimits",
+  );
+  const worseOnHardPrefix = (cand: ScheduleQuality, base: ScheduleQuality): boolean => {
+    for (const k of hardPrefix) {
+      const cv = cand.breakdown[k];
+      const bv = base.breakdown[k];
+      if (cv !== bv) return cv > bv; // first differing hard term decides
+    }
+    return false; // equal on the hard prefix → keep; lower tiers decide
+  };
+
+  // Canonical schedule (seed 0): always included; its hard-term prefix is the floor
+  // every other candidate must match or beat.
   const canonical = autoSchedule({ ...input, seed: 0 });
-  const baselineHard = canonical.quality.breakdown.hardBreaches;
   seen.add(suggestionSetKey(canonical.suggestions));
   candidates.push({ seed: 0, result: canonical });
 
   for (let seed = 1; seed < maxSeeds && candidates.length < want; seed++) {
     const result = autoSchedule({ ...input, seed });
-    // Drop any candidate that breaches the inviolable tier worse than canonical
-    // (a perturbed tie-order stranded coverage). Equal or better is kept; a
+    // Drop any candidate strictly worse than canonical on the hard-term prefix (a
+    // perturbed tie-order stranded coverage/limits). Equal or better is kept; a
     // better-than-canonical run will simply rank ahead of seed 0 below.
-    if (result.quality.breakdown.hardBreaches > baselineHard) continue;
+    if (worseOnHardPrefix(result.quality, canonical.quality)) continue;
     const key = suggestionSetKey(result.suggestions);
     if (seen.has(key)) continue;
     seen.add(key);

@@ -91,13 +91,13 @@ export const FACTOR_META: Record<string, FactorMeta> = {
   },
 };
 
-// Forward-looking note so the current capability isn't mistaken for the finished
-// feature. Tracks David's locked decisions (handoff #252/#376 + directional-hours
-// policy). Slice 2a split coverage out of the hard limits and hours into over/under so
-// they can be ranked independently — but reordering still only re-ranks how finished
-// schedules are GRADED. The builder honoring this order while placing shifts is next.
+// Note on what reordering does. Tracks David's locked decisions (handoff #252/#376 +
+// directional-hours policy). Slice 2a split coverage out of the hard limits and hours
+// into over/under; Slice 2b taught the builder to honor the coverage trades while
+// placing shifts. (When bodies are genuinely scarce, which SHIFT gets covered first is
+// governed separately by each shift's schedule priority.)
 export const PRIORITY_ROADMAP_NOTE =
-  "Reordering changes how auto-generation grades a finished schedule. Coming next: the builder will " +
-  "also honor this order while placing shifts — e.g. ranking coverage above the hours or hard-limit " +
-  "factors will let it exceed a pay-period target, or a hard maximum, when that's the only way to " +
-  "fill a required shift.";
+  "Reordering changes both how auto-generation grades a finished schedule and how it places shifts: " +
+  "ranking coverage above the over-hours factor lets it exceed a pay-period target to fill a required " +
+  "shift, and ranking coverage above hard limits lets it exceed a hard maximum when that's the only " +
+  "way to cover one. Lower a factor to protect it instead.";

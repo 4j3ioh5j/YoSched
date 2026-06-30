@@ -1812,9 +1812,9 @@ type AutoGenFactorData = {
 // Surfaces the order auto-generation applies its factors and the constraints it can
 // never trade away. The pinned constraints stay read-only; an admin can drag the
 // negotiable factors to re-rank them. Reordering changes how schedules are GRADED
-// (multi-option selection + Live re-solve); the greedy builder's placement still
-// follows its fixed pipeline until Slice 2b. Label/description come from FACTOR_META;
-// order + enabled state are the live DB rows.
+// (multi-option selection + Live re-solve) AND, since Slice 2b, how the builder places
+// shifts (coverage may exceed soft hours / a hard max when ranked above them).
+// Label/description come from FACTOR_META; order + enabled state are the live DB rows.
 function AutoGenPrioritySection({ initial }: { initial: AutoGenFactorData[] }) {
   const canEdit = useCanEdit();
   const [factors, setFactors] = useState(initial);
