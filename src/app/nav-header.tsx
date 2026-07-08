@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
+import { BASE_PATH } from "@/lib/base-path";
 
 const NAV_ITEMS: { label: string; href: string; requiredPermission: string | null }[] = [
   { label: "Schedule", href: "/", requiredPermission: null },
@@ -65,7 +66,7 @@ export function NavHeader() {
           <button
             onClick={async () => {
               await signOut({ redirect: false });
-              window.location.href = "/login";
+              window.location.href = `${BASE_PATH}/login`;
             }}
             className="text-sm text-slate-500 hover:text-slate-300 transition-colors"
           >

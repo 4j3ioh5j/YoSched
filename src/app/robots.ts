@@ -4,7 +4,7 @@ import type { MetadataRoute } from "next";
 // fetch this first; a real robots.txt (instead of the old redirect-to-login) is
 // part of looking like a legitimate site. We invite crawling of the public
 // pages and keep the authenticated app out of any index.
-const BASE_URL = "https://yosched.yologiq.com";
+const BASE_URL = "https://yologiq.com/yosched";
 
 export default function robots(): MetadataRoute.Robots {
   return {

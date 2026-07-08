@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 // URL-categorization engines clear signals that this is legitimate business
 // scheduling software — a key part of avoiding "uncategorized" blocks.
 export const metadata: Metadata = {
-  metadataBase: new URL("https://yosched.yologiq.com"),
+  metadataBase: new URL("https://yologiq.com/yosched"),
   title: {
     default: "YoSched — Staff Scheduling Software",
     template: "%s · YoSched",
@@ -38,7 +38,7 @@ export const metadata: Metadata = {
     title: "YoSched — Staff Scheduling Software",
     description:
       "Automated, fair, and flexible staff scheduling. Smarter schedules and happier teams.",
-    url: "https://yosched.yologiq.com",
+    url: "https://yologiq.com/yosched",
     siteName: "YoSched",
     type: "website",
   },

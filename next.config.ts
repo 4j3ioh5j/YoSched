@@ -21,6 +21,12 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // The app is served under the `/yosched` sub-path of the apex domain
+  // (yologiq.com/yosched, reverse-proxied to this origin with the prefix kept).
+  // basePath makes Next emit every route, asset and next/image URL under it.
+  // NOTE: keep in sync with BASE_PATH in src/lib/base-path.ts — this config file
+  // can't import app modules, so the literal is duplicated here deliberately.
+  basePath: "/yosched",
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

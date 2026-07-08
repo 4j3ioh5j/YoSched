@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 // Serves /sitemap.xml — the list of public URLs we want crawlers to know about.
 // Only the unauthenticated pages belong here; the app itself is behind login.
-const BASE_URL = "https://yosched.yologiq.com";
+const BASE_URL = "https://yologiq.com/yosched";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   return [

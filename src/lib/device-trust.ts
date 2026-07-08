@@ -1,9 +1,27 @@
 import { createHmac } from "crypto";
 import { cookies } from "next/headers";
 import { prisma } from "./prisma";
+import { BASE_PATH } from "./base-path";
 
-const COOKIE_NAME = "device-trust";
+// This is a bearer-like 2FA trust token, so it must be isolated to the app's
+// sub-path (Path=/yosched) — not root-scoped — now that YoSched shares the apex
+// domain (yologiq.com) with other sites. Same posture as the Auth.js cookies:
+// __Secure- prefix + secure on HTTPS, dropped on plain-HTTP local dev.
+const useSecureCookies = process.env.NODE_ENV === "production";
+export const COOKIE_NAME = `${useSecureCookies ? "__Secure-" : ""}device-trust`;
 const DEFAULT_DAYS = 30;
+
+// Cookie options for the trusted-device token, exported so the sub-path scoping
+// (the security-relevant part) is unit-testable without mocking next/headers.
+export function deviceTrustCookieOptions(maxAge: number) {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    path: BASE_PATH,
+    secure: useSecureCookies,
+    maxAge,
+  };
+}
 
 async function getTrustDays(): Promise<number> {
   const prefs = await prisma.schedulingPreferences.findFirst();
@@ -57,11 +75,5 @@ export async function setDeviceTrust(userId: string): Promise<void> {
   const maxAge = days * 24 * 60 * 60;
   const token = sign(userId, Date.now());
   const jar = await cookies();
-  jar.set(COOKIE_NAME, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    secure: process.env.NODE_ENV === "production",
-    maxAge,
-  });
+  jar.set(COOKIE_NAME, token, deviceTrustCookieOptions(maxAge));
 }

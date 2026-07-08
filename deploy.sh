@@ -52,11 +52,14 @@ systemctl --user restart yosched-app
 sleep 3
 
 echo "--- verify"
-STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/login)
+# App is served under the /yosched basePath now, so the origin login page lives at
+# /yosched/login (bare /login 404s). Also confirm the bare root 404s, proving the
+# basePath actually took effect rather than silently serving at root.
+STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/yosched/login)
 if [ "$STATUS" = "200" ]; then
-  echo "==> Deploy successful (login page returns 200)"
+  echo "==> Deploy successful (/yosched/login returns 200)"
 else
-  echo "==> WARNING: login page returned $STATUS"
+  echo "==> WARNING: /yosched/login returned $STATUS"
   systemctl --user status yosched-app | head -10
   exit 1
 fi
