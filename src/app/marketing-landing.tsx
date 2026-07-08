@@ -102,9 +102,21 @@ export function MarketingLanding() {
         <div className="max-w-6xl mx-auto w-full px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-white/40">
           <span>© {year} Yologiq. All rights reserved.</span>
           <nav className="flex items-center gap-5">
+            <a
+              href="https://yologiq.com"
+              className="hover:text-white/70 transition-colors"
+            >
+              Yologiq
+            </a>
             <Link href="/privacy" className="hover:text-white/70 transition-colors">
               Privacy
             </Link>
+            <a
+              href="mailto:hello@yologiq.com"
+              className="hover:text-white/70 transition-colors"
+            >
+              Contact
+            </a>
           </nav>
         </div>
       </footer>
