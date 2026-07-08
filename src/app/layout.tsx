@@ -13,9 +13,35 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Richer, generic (non-industry-specific) metadata. metadataBase makes the
+// Open Graph/canonical URLs absolute, and the description/keywords give
+// URL-categorization engines clear signals that this is legitimate business
+// scheduling software — a key part of avoiding "uncategorized" blocks.
 export const metadata: Metadata = {
-  title: "YoSched",
-  description: "Staff Scheduling",
+  metadataBase: new URL("https://yosched.yologiq.com"),
+  title: {
+    default: "YoSched — Staff Scheduling Software",
+    template: "%s · YoSched",
+  },
+  description:
+    "YoSched is staff scheduling software for teams that run around the clock — automated schedule generation, fair shift distribution, time-off requests, and coverage rules.",
+  applicationName: "YoSched",
+  keywords: [
+    "staff scheduling",
+    "employee scheduling",
+    "shift scheduling software",
+    "workforce scheduling",
+    "schedule generator",
+    "shift management",
+  ],
+  openGraph: {
+    title: "YoSched — Staff Scheduling Software",
+    description:
+      "Automated, fair, and flexible staff scheduling. Smarter schedules and happier teams.",
+    url: "https://yosched.yologiq.com",
+    siteName: "YoSched",
+    type: "website",
+  },
 };
 
 export default function RootLayout({

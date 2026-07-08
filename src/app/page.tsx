@@ -9,10 +9,19 @@ import { isRequestVisibleToViewer } from "@/lib/schedule-requests";
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
 import { parseLiveScope } from "@/lib/live-scope";
 import { redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
+import { MarketingLanding } from "./marketing-landing";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
+  // Logged-out visitors (and web-filter categorization crawlers) get the public
+  // marketing landing instead of a bounce to /login — that public content is
+  // what lets corporate filters categorize the domain as legitimate business
+  // software. Signed-in users fall through to the schedule grid below.
+  const session = await auth();
+  if (!session?.user) return <MarketingLanding />;
+
   const { error, permissions, staffId } = await getSession("schedule:view");
   if (error) redirect("/login");
   const canEdit = permissions!.includes("schedule:edit");
