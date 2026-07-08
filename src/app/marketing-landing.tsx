@@ -81,14 +81,6 @@ export function MarketingLanding() {
             clock. Automated, fair, and flexible — smarter schedules and happier
             teams.
           </p>
-          <div className="mt-8 flex items-center justify-center gap-4">
-            <Link
-              href="/login"
-              className="py-2.5 px-6 bg-sky-500/80 hover:bg-sky-500 text-white font-medium rounded transition-colors backdrop-blur-sm"
-            >
-              Sign in
-            </Link>
-          </div>
         </section>
 
         {/* Feature grid */}
@@ -108,13 +100,10 @@ export function MarketingLanding() {
       {/* Footer */}
       <footer className="relative z-10 border-t border-white/10">
         <div className="max-w-6xl mx-auto w-full px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-white/40">
-          <span>© {year} YoSched. All rights reserved.</span>
+          <span>© {year} Yologiq. All rights reserved.</span>
           <nav className="flex items-center gap-5">
             <Link href="/privacy" className="hover:text-white/70 transition-colors">
               Privacy
-            </Link>
-            <Link href="/login" className="hover:text-white/70 transition-colors">
-              Sign in
             </Link>
           </nav>
         </div>
