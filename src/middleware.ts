@@ -1,6 +1,7 @@
 import NextAuth from "next-auth";
 import { authConfig } from "@/lib/auth.config";
 import { BASE_PATH } from "@/lib/base-path";
+import { CSP_RESPONSE_HEADER, buildCsp, generateNonce } from "@/lib/csp";
 import { NextResponse } from "next/server";
 
 const { auth } = NextAuth(authConfig);
@@ -20,7 +21,25 @@ function stripBasePath(pathname: string): string {
   return pathname;
 }
 
+// Per-request CSP, or null if we could not build one.
+//
+// 🔴 THIS FAILS OPEN, DELIBERATELY. This middleware runs on `/`, `/privacy`, `/robots.txt` and
+// `/sitemap.xml` — all crawled, all indexed. A throw here is a 500 on every one of them, and
+// sustained 5xx is how a site actually loses its index entries. A missing CSP header is a
+// return to the status quo we shipped for months; a 500 is not. Serving the page always wins
+// over serving the policy.
+function cspForRequest(): { nonce: string; policy: string } | null {
+  try {
+    const nonce = generateNonce();
+    return { nonce, policy: buildCsp(nonce) };
+  } catch {
+    return null;
+  }
+}
+
 export default auth((req) => {
+  const csp = cspForRequest();
+
   const path = stripBasePath(req.nextUrl.pathname);
   if (!req.auth && !PUBLIC_PATHS.has(path)) {
     // Build an absolute login URL that explicitly includes the basePath, so the
@@ -28,8 +47,22 @@ export default auth((req) => {
     const loginUrl = new URL(`${BASE_PATH}/login`, req.nextUrl.origin);
     // callbackUrl is basePath-relative; the client router re-adds basePath on push.
     loginUrl.searchParams.set("callbackUrl", path);
-    return NextResponse.redirect(loginUrl);
+    const redirect = NextResponse.redirect(loginUrl);
+    if (csp) redirect.headers.set(CSP_RESPONSE_HEADER, csp.policy);
+    return redirect;
   }
+
+  if (!csp) return NextResponse.next();
+
+  // Next reads the nonce back off the *request's* CSP header when it renders, and stamps it
+  // onto its own <script> tags. Forwarding the header on the request is what makes that work —
+  // setting it only on the response would leave every script un-nonced. See src/lib/csp.ts.
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set(CSP_RESPONSE_HEADER, csp.policy);
+
+  const res = NextResponse.next({ request: { headers: requestHeaders } });
+  res.headers.set(CSP_RESPONSE_HEADER, csp.policy);
+  return res;
 });
 
 export const config = {

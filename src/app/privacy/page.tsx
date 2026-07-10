@@ -14,6 +14,12 @@ export const metadata: Metadata = {
   alternates: { canonical: canonicalUrl("/privacy") },
 };
 
+// Rendered per-request so middleware's CSP nonce can be stamped onto Next's inline bootstrap
+// scripts — a nonce cannot be baked into prerendered HTML, and without one an enforced policy
+// strips this page of all JS. The trade is a server render per hit on an otherwise static page.
+// It does NOT change the markup: same content, same rel=canonical, still indexable.
+export const dynamic = "force-dynamic";
+
 export default function PrivacyPage() {
   return (
     <div className="min-h-dvh bg-slate-900 text-slate-200">

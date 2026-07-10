@@ -11,6 +11,12 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
+// Rendered per-request so middleware's CSP nonce reaches Next's inline bootstrap scripts.
+// This one is not optional: login/page.tsx is a client component, so under an enforced policy
+// an un-nonced prerender would block its JS and sign-in would simply stop working. It lives in
+// the layout because route segment config cannot be exported from a "use client" page.
+export const dynamic = "force-dynamic";
+
 export default function LoginLayout({ children }: { children: React.ReactNode }) {
   return children;
 }

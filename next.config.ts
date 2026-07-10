@@ -1,10 +1,11 @@
 import type { NextConfig } from "next";
 
 // Security headers applied to every response. These are a modest reputation
-// signal for scanners/filters and good practice generally. We deliberately do
-// NOT set a strict Content-Security-Policy here — Next.js relies on inline
-// bootstrap scripts, so a wrong CSP would break the app; that's a separate,
-// carefully-tested follow-up.
+// signal for scanners/filters and good practice generally.
+//
+// The Content-Security-Policy is NOT here: it carries a per-request nonce, and this
+// `headers()` block is evaluated once at build time. It is emitted from src/middleware.ts
+// instead, currently as Report-Only. See src/lib/csp.ts for the rollout gate.
 const securityHeaders = [
   // Force HTTPS for a year, including subdomains. (No "preload" — that requires
   // the apex to be set up and submitted first.)
@@ -46,8 +47,12 @@ const securityHeaders = [
 // A probe would prove the header arrives today, never that it arrives forever.
 //
 // The alias must therefore be suppressed by TOPOLOGY, not by this app: Cloudflare Access with a
-// service token on app-yosched.yologiq.com (Admin, bus directive #2252). Its failure mode is loud
-// — a broken token breaks /yosched visibly — instead of silently deindexing it.
+// service token on app-yosched.yologiq.com (Admin, bus directive #2252; shipped, handoff #512).
+//
+// That was chosen partly on the belief that its failure mode is loud — that a lapsed service
+// token (expires 2027-07-10) breaks /yosched visibly rather than silently. THAT CLAIM IS
+// UNPROVEN and is now marked as such upstream (YoLogiq, bus #2276/#2278). Do not build anything
+// that depends on the lapse announcing itself.
 //
 // The canonical tags (src/app/page.tsx, src/app/privacy/page.tsx) already point both copies
 // at the apex, which is what defuses the SEO duplicate. What remains is unauthenticated public
