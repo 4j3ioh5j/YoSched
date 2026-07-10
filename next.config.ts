@@ -30,13 +30,28 @@ const securityHeaders = [
 //     against production: even `curl -H 'X-Forwarded-Host: yologiq.com'` sent straight at
 //     app-yosched.yologiq.com still matched the "not the apex" rule.
 //
-// Net effect of that rule was `noindex` on the real apex page — the exact opposite of the
-// intent. Both requests look identical here, so the alias has to be suppressed upstream:
-// either the Pages Function sets a custom (non X-Forwarded-*) marker header this app can
-// require, or Admin makes the tunnel alias non-public. See handoff #510.
+// Net effect of that rule was `noindex` on the real apex page — the exact opposite of the intent.
+//
+// NO HEADER CAN FIX THIS, and picking a different header name is the trap. The asymmetry is in
+// the topology, not the header (YoLogiq, handoff #511):
+//
+//     apex path:   visitor -> CF -> Pages Function (can stamp a header) -> tunnel -> here
+//     alias path:  visitor -> CF ---------------------------------------> tunnel -> here
+//                                   nothing sits here to stamp anything
+//
+// Nothing is in front of the alias path, so no marker can positively identify a direct hit.
+// The only rule anyone can actually build is "noindex when the marker is ABSENT" — fail-OPEN:
+// the day Cloudflare renames, normalises or drops that header, every apex request looks like an
+// alias request and the apex silently goes noindex again. That is b3456e0 with a new header name.
+// A probe would prove the header arrives today, never that it arrives forever.
+//
+// The alias must therefore be suppressed by TOPOLOGY, not by this app: Cloudflare Access with a
+// service token on app-yosched.yologiq.com (Admin, bus directive #2252). Its failure mode is loud
+// — a broken token breaks /yosched visibly — instead of silently deindexing it.
 //
 // The canonical tags (src/app/page.tsx, src/app/privacy/page.tsx) already point both copies
-// at the apex, which is what actually defuses the duplicate.
+// at the apex, which is what defuses the SEO duplicate. What remains is unauthenticated public
+// access to an app origin — a security matter, not a search one, and not fixable from here.
 
 const nextConfig: NextConfig = {
   output: "standalone",
