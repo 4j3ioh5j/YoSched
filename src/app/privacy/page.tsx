@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
+import { canonicalUrl } from "@/lib/base-path";
 
 // Public privacy page. Two reasons it exists: (1) it's a real legitimacy signal
 // that URL-categorization engines look for when deciding a domain is a genuine
@@ -10,6 +11,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Privacy",
   description: "How YoSched handles your data.",
+  alternates: { canonical: canonicalUrl("/privacy") },
 };
 
 export default function PrivacyPage() {

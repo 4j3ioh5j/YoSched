@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Providers } from "./providers";
+import { SITE_URL, canonicalUrl } from "@/lib/base-path";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -17,8 +18,12 @@ const geistMono = Geist_Mono({
 // Open Graph/canonical URLs absolute, and the description/keywords give
 // URL-categorization engines clear signals that this is legitimate business
 // scheduling software — a key part of avoiding "uncategorized" blocks.
+// NOTE: deliberately no `alternates.canonical` here. Metadata cascades from the root
+// layout into every route that doesn't override it, so a canonical set here would make
+// /privacy (and every other page) claim to be the app root. Canonicals are declared
+// per-route instead.
 export const metadata: Metadata = {
-  metadataBase: new URL("https://yologiq.com/yosched"),
+  metadataBase: new URL(SITE_URL),
   title: {
     default: "YoSched — Staff Scheduling Software",
     template: "%s · YoSched",
@@ -38,7 +43,7 @@ export const metadata: Metadata = {
     title: "YoSched — Staff Scheduling Software",
     description:
       "Automated, fair, and flexible staff scheduling. Smarter schedules and happier teams.",
-    url: "https://yologiq.com/yosched",
+    url: canonicalUrl("/"),
     siteName: "YoSched",
     type: "website",
   },

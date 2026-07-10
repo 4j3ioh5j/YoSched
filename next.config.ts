@@ -19,6 +19,27 @@ const securityHeaders = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
+// The apex (yologiq.com/yosched) reverse-proxies to this origin, and the origin is ALSO
+// publicly reachable at its tunnel alias app-yosched.yologiq.com, serving the identical
+// page. Two live addresses for one page is a duplicate; the alias is the copy that should
+// never be indexed.
+//
+// The discriminator has to be X-Forwarded-Host, NOT Host. A Cloudflare Pages Function is
+// forbidden from setting `Host` on its outbound fetch (it is silently dropped) and the
+// tunnel rewrites Host anyway, so Host looks the same for a proxied request and a direct
+// hit on the alias — keying off it would noindex the apex too. The Pages Function does set
+// X-Forwarded-Host to the visitor's real host, which is always the apex now that www 301s
+// ahead of it (YoLogiq #509).
+//
+// `missing` fires when the header is absent OR present with a non-matching value (Next
+// wraps `value` in an anchored ^...$ regex), so direct alias hits and any future alias get
+// noindex while the apex stays indexable. The dot is escaped because this IS a regex.
+const CANONICAL_HOST_PATTERN = "yologiq\\.com";
+
+const noindexOffApexHeaders = [
+  { key: "X-Robots-Tag", value: "noindex, nofollow" },
+];
+
 const nextConfig: NextConfig = {
   output: "standalone",
   // The app is served under the `/yosched` sub-path of the apex domain
@@ -28,7 +49,14 @@ const nextConfig: NextConfig = {
   // can't import app modules, so the literal is duplicated here deliberately.
   basePath: "/yosched",
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      {
+        source: "/:path*",
+        missing: [{ type: "header", key: "x-forwarded-host", value: CANONICAL_HOST_PATTERN }],
+        headers: noindexOffApexHeaders,
+      },
+    ];
   },
 };
 

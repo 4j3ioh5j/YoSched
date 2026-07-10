@@ -1,11 +1,18 @@
 import type { MetadataRoute } from "next";
+import { canonicalUrl } from "@/lib/base-path";
 
-// Serves /robots.txt. Web-filter categorization crawlers and search engines
-// fetch this first; a real robots.txt (instead of the old redirect-to-login) is
-// part of looking like a legitimate site. We invite crawling of the public
-// pages and keep the authenticated app out of any index.
-const BASE_URL = "https://yologiq.com/yosched";
-
+// Serves /yosched/robots.txt.
+//
+// IMPORTANT: crawlers only honour robots.txt at the ROOT of a host — for the apex that is
+// https://yologiq.com/robots.txt, which is YoLogiq's static file, not this one. Because the
+// app runs under `basePath: /yosched`, this route is emitted at /yosched/robots.txt, where
+// Google will never look for directives. So the rules below are DOCUMENTATION of intent,
+// not an enforced policy: the real allow/disallow list for these paths has to live in the
+// apex robots.txt (see handoff #510 to YoLogiq).
+//
+// What actually keeps the authenticated app out of the index is `src/middleware.ts`, which
+// bounces every non-public path to /login before a crawler ever sees content, plus the
+// per-route `robots: { index: false }` metadata on /login itself.
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: {
@@ -13,6 +20,6 @@ export default function robots(): MetadataRoute.Robots {
       allow: ["/", "/login", "/privacy"],
       disallow: ["/api/", "/settings", "/staff", "/users", "/equity", "/requests", "/my-requests", "/account"],
     },
-    sitemap: `${BASE_URL}/sitemap.xml`,
+    sitemap: canonicalUrl("/sitemap.xml"),
   };
 }

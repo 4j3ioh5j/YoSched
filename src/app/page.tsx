@@ -11,6 +11,14 @@ import { parseLiveScope } from "@/lib/live-scope";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { MarketingLanding } from "./marketing-landing";
+import { canonicalUrl } from "@/lib/base-path";
+import type { Metadata } from "next";
+
+// This route is reachable at two live addresses (apex proxy + tunnel alias), so it has to
+// say which one is real. og:url is not a canonical signal to Google — only <link rel=canonical> is.
+export const metadata: Metadata = {
+  alternates: { canonical: canonicalUrl("/") },
+};
 
 export const dynamic = "force-dynamic";
 
