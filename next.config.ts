@@ -19,26 +19,24 @@ const securityHeaders = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
-// The apex (yologiq.com/yosched) reverse-proxies to this origin, and the origin is ALSO
-// publicly reachable at its tunnel alias app-yosched.yologiq.com, serving the identical
-// page. Two live addresses for one page is a duplicate; the alias is the copy that should
-// never be indexed.
+// DO NOT add an `X-Robots-Tag: noindex` rule keyed on the request's hostname here.
+// It was tried (b3456e0) and reverted the same day, because this origin CANNOT tell an
+// apex-proxied request apart from a direct hit on its tunnel alias:
 //
-// The discriminator has to be X-Forwarded-Host, NOT Host. A Cloudflare Pages Function is
-// forbidden from setting `Host` on its outbound fetch (it is silently dropped) and the
-// tunnel rewrites Host anyway, so Host looks the same for a proxied request and a direct
-// hit on the alias — keying off it would noindex the apex too. The Pages Function does set
-// X-Forwarded-Host to the visitor's real host, which is always the apex now that www 301s
-// ahead of it (YoLogiq #509).
+//   * `Host` is rewritten to yologiq.com by the tunnel (httpHostHeader) for BOTH, and a
+//     Cloudflare Pages Function is forbidden from setting Host on its outbound fetch.
+//   * `X-Forwarded-Host` never arrives as "yologiq.com" either. The Pages Function does
+//     set it, but Cloudflare strips/rewrites the X-Forwarded-* family inbound. Verified
+//     against production: even `curl -H 'X-Forwarded-Host: yologiq.com'` sent straight at
+//     app-yosched.yologiq.com still matched the "not the apex" rule.
 //
-// `missing` fires when the header is absent OR present with a non-matching value (Next
-// wraps `value` in an anchored ^...$ regex), so direct alias hits and any future alias get
-// noindex while the apex stays indexable. The dot is escaped because this IS a regex.
-const CANONICAL_HOST_PATTERN = "yologiq\\.com";
-
-const noindexOffApexHeaders = [
-  { key: "X-Robots-Tag", value: "noindex, nofollow" },
-];
+// Net effect of that rule was `noindex` on the real apex page — the exact opposite of the
+// intent. Both requests look identical here, so the alias has to be suppressed upstream:
+// either the Pages Function sets a custom (non X-Forwarded-*) marker header this app can
+// require, or Admin makes the tunnel alias non-public. See handoff #510.
+//
+// The canonical tags (src/app/page.tsx, src/app/privacy/page.tsx) already point both copies
+// at the apex, which is what actually defuses the duplicate.
 
 const nextConfig: NextConfig = {
   output: "standalone",
@@ -49,14 +47,7 @@ const nextConfig: NextConfig = {
   // can't import app modules, so the literal is duplicated here deliberately.
   basePath: "/yosched",
   async headers() {
-    return [
-      { source: "/:path*", headers: securityHeaders },
-      {
-        source: "/:path*",
-        missing: [{ type: "header", key: "x-forwarded-host", value: CANONICAL_HOST_PATTERN }],
-        headers: noindexOffApexHeaders,
-      },
-    ];
+    return [{ source: "/:path*", headers: securityHeaders }];
   },
 };
 
