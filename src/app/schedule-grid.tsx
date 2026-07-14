@@ -77,6 +77,7 @@ const REQUEST_FILTER_STATUSES: Record<RequestFilter, RequestStatus[]> = {
 // RQ visibility toggle or the status filter (which only shape the on-grid pills).
 const ALL_REQUEST_STATUSES: RequestStatus[] = ["pending", "approved", "declined", "withdrawn", "fulfilled"];
 import { useEscape } from "@/lib/use-escape";
+import { BASE_PATH } from "@/lib/base-path";
 
 type AvailabilityRuleData = {
   type: string;
@@ -4795,7 +4796,7 @@ export function ScheduleGrid({
             {canViewManual && (
               <div className="border-t border-slate-700 px-5 py-3 shrink-0">
                 <a
-                  href="/manual"
+                  href={`${BASE_PATH}/manual`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300"

@@ -113,7 +113,12 @@ function mdToHtml(md) {
       const level = m[1].length;
       const text = m[2].trim();
       const id = slug(text);
-      html += `<h${level} id="${id}">${inline(text)}<a class="anchor" href="#${id}" aria-hidden="true">#</a></h${level}>`;
+      // Brand the title's "YoSched" like the site logo: "Yo" in the heading color,
+      // "Sched" in the accent blue. inline() has already run esc(), so "YoSched" is a
+      // plain literal here — a string replace can't collide with escaped markup.
+      let rendered = inline(text);
+      if (level === 1) rendered = rendered.replace(/YoSched/g, 'Yo<span class="brand">Sched</span>');
+      html += `<h${level} id="${id}">${rendered}<a class="anchor" href="#${id}" aria-hidden="true">#</a></h${level}>`;
       i++; continue;
     }
     if (/^(-{3,}|\*{3,})\s*$/.test(line)) { html += "<hr>"; i++; continue; }
@@ -150,6 +155,7 @@ body { margin: 0; background: #0f172a; color: #cbd5e1;
 .topbar { position: sticky; top: 0; z-index: 10; background: #0b1220ee; backdrop-filter: blur(6px);
   border-bottom: 1px solid #334155; padding: 12px 24px; font-weight: 700; color: #e2e8f0; }
 .topbar span { color: #63b3ed; }
+.brand { color: #63b3ed; }
 main { max-width: 860px; margin: 0 auto; padding: 32px 24px 96px; }
 h1, h2, h3, h4 { color: #f1f5f9; line-height: 1.25; scroll-margin-top: 64px; }
 h1 { font-size: 2rem; margin: 0 0 .5rem; }
@@ -191,7 +197,7 @@ const page = `<!doctype html>
 <style>${CSS}</style>
 </head>
 <body>
-<div class="topbar"><span>Yo</span>Sched — User Manual</div>
+<div class="topbar">Yo<span>Sched</span> — User Manual</div>
 <main>${body}</main>
 <a class="totop" href="#top">↑ Top</a>
 </body>
