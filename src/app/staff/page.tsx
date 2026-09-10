@@ -121,6 +121,7 @@ export default async function Staff() {
           color: st.color ?? "#6b7280",
           category: st.category,
           isLeave: st.isLeave,
+          isOffShift: st.isOffShift,
           autoSchedulable: st.autoSchedulable,
           defaultHours: st.defaultHours,
           defaultHoursWeekend: st.defaultHoursWeekend,

@@ -131,6 +131,7 @@ type ShiftTypeInfo = {
   color: string;
   category: string;
   isLeave: boolean;
+  isOffShift: boolean;
   autoSchedulable: boolean;
   defaultHours: number; // weekday hours
   defaultHoursWeekend: number; // 0 = does not accrue weekend hours
@@ -563,15 +564,20 @@ function ShiftEligibilityEditor({
 // Master "Override shift hours" toggle → per-staff, per-shift hours by day type.
 // Off (no overrides) keeps the standard shift hours; on reveals an hours editor
 // for each shift this staff member is eligible for. Turning it off clears every
-// override. The list scopes to eligible auto-schedulable shifts because hours
-// only matter where the staff can actually be placed.
+// override. The list deliberately ignores autoSchedulable: manually-assigned
+// shifts (CARD/ICU dedicated columns) accrue hours too, and an override keeps
+// counting in every hour total whether or not the shift is auto-schedulable —
+// so any shift with an existing override row is ALWAYS listed, even if the
+// staff's eligibility was since removed (an active override must never be
+// invisible or uneditable). Off-shifts carry no hours and stay excluded.
 function ShiftHoursOverrideSection({ ep, allShiftTypes, updateField }: {
   ep: Staff;
   allShiftTypes: ShiftTypeInfo[];
   updateField: (id: string, field: keyof Staff, value: unknown) => void;
 }) {
   const eligibleShifts = allShiftTypes.filter(
-    (st) => st.autoSchedulable && ep.eligibleShiftTypeIds.includes(st.id),
+    (st) => !st.isOffShift &&
+      (ep.eligibleShiftTypeIds.includes(st.id) || ep.shiftOverrides.some((o) => o.shiftTypeId === st.id)),
   );
   const [enabled, setEnabled] = useState(ep.shiftOverrides.length > 0);
 
