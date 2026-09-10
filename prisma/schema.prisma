@@ -333,6 +333,7 @@ model SchedulingPreferences {
   defaultLiveScope        String   @default("day") // default re-solve scope for auto-generate edits: "limited" | "day" | "pp" | "range" (#248). Seeds the grid's scope selector.
   payPeriodAnchor         DateTime? @db.Date // any real period start; with payPeriodLengthDays defines the infinite period ladder (null = legacy manually-generated periods)
   payPeriodLengthDays     Int      @default(14)
+  staffColumnOrder        Json?    // ordered criteria stack for schedule column order, [{key, dir?}] (see src/lib/staff-order.ts); null = default (employmentType → ftePercentage desc → alphabetical)
 
   @@map("scheduling_preferences")
 }

@@ -9,6 +9,7 @@ import { resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { isRequestVisibleToViewer } from "@/lib/schedule-requests";
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
 import { parseLiveScope } from "@/lib/live-scope";
+import { orderStaff, parseStaffOrderCriteria } from "@/lib/staff-order";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { MarketingLanding } from "./marketing-landing";
@@ -59,7 +60,8 @@ export default async function Home() {
         // Active roster + any inactive staff that has assignments, so the grid
         // can show historical staff as columns on the months they worked.
         // computeFairness still gates on isActive && isAutoScheduled, so this does
-        // not change the schedule's fairness badges.
+        // not change the schedule's fairness badges. Column order is applied below
+        // by orderStaff(); sortOrder only feeds its "manual" criterion.
         where: { OR: [{ isActive: true }, { assignments: { some: {} } }] },
         orderBy: { sortOrder: "asc" },
         include: { availabilityRules: true, eligibleShifts: true, employmentType: true },
@@ -104,6 +106,11 @@ export default async function Home() {
   const updaterNames = canEdit
     ? await resolveUpdaterNames(assignments.map((a) => a.updatedBy))
     : new Map<string, string>();
+
+  // Left-to-right column order for the grid AND print (both consume this one
+  // array; printVisibleStaffIds only filters it). Admin-configurable in Settings
+  // → Staff column ordering; default = employment type → FTE% desc → alphabetical.
+  const orderedStaff = orderStaff(staff, parseStaffOrderCriteria(schedPrefs?.staffColumnOrder));
 
   const fairness = computeFairness({
     assignments: assignments.map((a) => ({
@@ -165,7 +172,7 @@ export default async function Home() {
         canLive={canLive}
         canAuto={canAuto}
         canViewManual={canViewManual}
-        staff={staff.map((p) => ({
+        staff={orderedStaff.map((p) => ({
           id: p.id,
           initials: p.initials,
           name: p.name,

@@ -6,6 +6,7 @@ import { getSession } from "@/lib/auth-guard";
 import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, DEFAULT_OFF_STRATEGY_ORDER } from "@/lib/schedule-requests";
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
 import { parseLiveScope } from "@/lib/live-scope";
+import { parseStaffOrderCriteria } from "@/lib/staff-order";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +16,7 @@ export default async function Settings() {
   if (error) redirect("/");
   const canEditSettings = permissions!.includes("settings:edit");
   const canEditAutoGenPriority = permissions!.includes("settings:autogen-priority");
-  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, departmentTargets, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns, autoGenFactors, autoGenProfiles] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, departmentTargets, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns, autoGenFactors, autoGenProfiles, staffRows] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
     getPayPeriods(),
@@ -35,6 +36,12 @@ export default async function Settings() {
     prisma.printAggregateColumn.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.autoGenFactor.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.autoGenPriorityProfile.findMany({ orderBy: { createdAt: "desc" } }),
+    // Active roster for the Staff column ordering section (live preview + manual mode).
+    prisma.staff.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: "asc" },
+      include: { employmentType: { select: { sortOrder: true, name: true } } },
+    }),
   ]);
 
   // Lenient read of the dept-default day-off order: drop tokens for since-deleted
@@ -209,6 +216,18 @@ export default async function Settings() {
           maxFtePercentage: c.maxFtePercentage,
           conditions: coerceConditions(c.conditions),
           conditionScope: c.conditionScope,
+        }))}
+        staffColumnOrder={parseStaffOrderCriteria(schedulingPrefsRow?.staffColumnOrder)}
+        orderableStaff={staffRows.map((p) => ({
+          id: p.id,
+          name: p.name,
+          initials: p.initials,
+          ftePercentage: p.ftePercentage,
+          isAutoScheduled: p.isAutoScheduled,
+          sortOrder: p.sortOrder,
+          createdAt: p.createdAt.toISOString(),
+          employmentType: { sortOrder: p.employmentType.sortOrder },
+          employmentTypeName: p.employmentType.name,
         }))}
         canEdit={canEditSettings}
         canEditAutoGenPriority={canEditAutoGenPriority}

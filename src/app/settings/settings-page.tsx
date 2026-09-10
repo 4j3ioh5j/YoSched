@@ -12,6 +12,7 @@ import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/l
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
 import { RecurrencePicker } from "../staff/recurrence-picker";
 import { FrequencyPicker } from "../staff/frequency-picker";
+import { DEFAULT_STAFF_ORDER, orderStaff, STAFF_ORDER_DEFAULT_DIR, type StaffOrderCriterion, type StaffOrderDir, type StaffOrderKey } from "@/lib/staff-order";
 
 const CanEditContext = createContext(true);
 function useCanEdit() { return useContext(CanEditContext); }
@@ -186,8 +187,22 @@ type Props = {
   countColumns: { id: string; label: string; shiftCodes: string[] }[];
   printColumnRules: PrintColumnRuleData[];
   printAggregateColumns: PrintAggregateColumnData[];
+  staffColumnOrder: StaffOrderCriterion[];
+  orderableStaff: OrderableStaffRow[];
   canEdit?: boolean;
   canEditAutoGenPriority?: boolean;
+};
+
+type OrderableStaffRow = {
+  id: string;
+  name: string;
+  initials: string;
+  ftePercentage: number | null;
+  isAutoScheduled: boolean;
+  sortOrder: number;
+  createdAt: string;
+  employmentType: { sortOrder: number };
+  employmentTypeName: string;
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -4086,9 +4101,362 @@ function AdditionalColumnsSection({
   );
 }
 
+// ─── Staff Column Ordering Section ──────────────────────────────────────────
+
+// Criteria available for the rules stack. "manual" is deliberately absent — it is
+// an all-or-nothing mode (the toggle above the list), never a stacked criterion.
+const STAFF_ORDER_META: Record<Exclude<StaffOrderKey, "manual">, { label: string; description: string; dirLabels: [string, string] }> = {
+  employmentType: {
+    label: "Employment type",
+    description: "Groups by employment type in its configured order (FTE before Fee Basis).",
+    dirLabels: ["FTE first", "Fee Basis first"],
+  },
+  ftePercentage: {
+    label: "FTE %",
+    description: "Full-time staff before part-time.",
+    dirLabels: ["Low → high", "High → low"],
+  },
+  alphabetical: {
+    label: "Alphabetical",
+    description: "By last name; staff without a listed last name use the letters of their initials after the first (ADh sorts as “Dh”).",
+    dirLabels: ["A → Z", "Z → A"],
+  },
+  initials: {
+    label: "Initials",
+    description: "Plain alphabetical order of the initials as shown on the grid.",
+    dirLabels: ["A → Z", "Z → A"],
+  },
+  autoScheduled: {
+    label: "Auto-scheduled",
+    description: "Staff the auto-generator schedules before manually-scheduled staff.",
+    dirLabels: ["Manual first", "Auto first"],
+  },
+  seniority: {
+    label: "Seniority",
+    description: "By the date the staff member was added to the system.",
+    dirLabels: ["Oldest first", "Newest first"],
+  },
+};
+
+const RULE_KEYS = Object.keys(STAFF_ORDER_META) as (keyof typeof STAFF_ORDER_META)[];
+
+function sameCriteria(a: StaffOrderCriterion[], b: StaffOrderCriterion[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((c, i) => c.key === b[i].key && (c.dir ?? STAFF_ORDER_DEFAULT_DIR[c.key]) === (b[i].dir ?? STAFF_ORDER_DEFAULT_DIR[b[i].key]))
+  );
+}
+
+function StaffColumnOrderSection({ initial, staff }: { initial: StaffOrderCriterion[]; staff: OrderableStaffRow[] }) {
+  const canEdit = useCanEdit();
+  const initialManual = initial[0]?.key === "manual";
+  const initialRules = initialManual ? [...DEFAULT_STAFF_ORDER] : initial;
+  const initialStaffOrder = useMemo(
+    () => orderStaff(staff, [{ key: "manual" }]).map((p) => p.id),
+    [staff],
+  );
+
+  const [mode, setMode] = useState<"rules" | "manual">(initialManual ? "manual" : "rules");
+  const [savedMode, setSavedMode] = useState(mode);
+  const [criteria, setCriteria] = useState<StaffOrderCriterion[]>(initialRules);
+  const [savedCriteria, setSavedCriteria] = useState<StaffOrderCriterion[]>(initialRules);
+  const [manualIds, setManualIds] = useState<string[]>(initialStaffOrder);
+  const [savedManualIds, setSavedManualIds] = useState<string[]>(initialStaffOrder);
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+  const dragIdx = useRef<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  const staffById = useMemo(() => new Map(staff.map((p) => [p.id, p])), [staff]);
+  const dirty =
+    mode !== savedMode ||
+    (mode === "rules"
+      ? !sameCriteria(criteria, savedCriteria)
+      : manualIds.join("|") !== savedManualIds.join("|"));
+
+  // Preview of the resulting column order for the CURRENT draft (active roster).
+  const preview = useMemo(() => {
+    if (mode === "manual") return manualIds.map((id) => staffById.get(id)).filter((p): p is OrderableStaffRow => !!p);
+    return orderStaff(staff, criteria);
+  }, [mode, manualIds, criteria, staff, staffById]);
+
+  async function putCriteria(value: StaffOrderCriterion[] | null) {
+    const res = await fetch("/api/settings/scheduling-preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ staffColumnOrder: value }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+  }
+
+  async function save() {
+    setStatus("saving");
+    setError("");
+    try {
+      if (mode === "manual") {
+        const res = await fetch("/api/staff/reorder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderedIds: manualIds }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await putCriteria([{ key: "manual" }]);
+        setSavedManualIds(manualIds);
+      } else {
+        await putCriteria(criteria);
+        setSavedCriteria(criteria);
+      }
+      setSavedMode(mode);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save");
+      setStatus("error");
+    }
+  }
+
+  function cancel() {
+    setMode(savedMode);
+    setCriteria(savedCriteria);
+    setManualIds(savedManualIds);
+    setStatus("idle");
+    setError("");
+  }
+
+  async function resetToDefault() {
+    setStatus("saving");
+    setError("");
+    try {
+      await putCriteria(null);
+      setMode("rules");
+      setSavedMode("rules");
+      setCriteria([...DEFAULT_STAFF_ORDER]);
+      setSavedCriteria([...DEFAULT_STAFF_ORDER]);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to reset");
+      setStatus("error");
+    }
+  }
+
+  function handleDragOver(e: React.DragEvent, idx: number) {
+    e.preventDefault();
+    if (dragIdx.current !== null && dragIdx.current !== idx) setDragOverIdx(idx);
+  }
+
+  function handleDrop<T>(idx: number, list: T[], setList: (v: T[]) => void) {
+    const from = dragIdx.current;
+    dragIdx.current = null;
+    setDragOverIdx(null);
+    if (status === "saving" || from === null || from === idx) return;
+    const reordered = [...list];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(idx, 0, moved);
+    setList(reordered);
+  }
+
+  function toggleDir(idx: number) {
+    setCriteria((cur) =>
+      cur.map((c, i) => {
+        if (i !== idx) return c;
+        const effective = c.dir ?? STAFF_ORDER_DEFAULT_DIR[c.key];
+        return { key: c.key, dir: (effective === "asc" ? "desc" : "asc") as StaffOrderDir };
+      }),
+    );
+  }
+
+  const unusedKeys = RULE_KEYS.filter((k) => !criteria.some((c) => c.key === k));
+  const dragDisabled = !canEdit || status === "saving";
+  const rowClass = (idx: number) =>
+    [
+      "flex items-center gap-3 bg-slate-700/30 border rounded-lg px-4 py-2 transition-colors",
+      dragOverIdx === idx ? "border-blue-500" : "border-slate-600/50",
+      dragDisabled ? "" : "cursor-grab active:cursor-grabbing",
+    ].join(" ");
+
+  return (
+    <CollapsibleSection
+      id="staff-column-order"
+      title="Staff Column Ordering"
+      description="Left-to-right order of staff columns on the schedule — applies to the on-screen grid and the printed schedule alike. Sort by stacked rules (each rule breaks ties within the one above it), or take over completely with a manual order."
+      status={status}
+      error={error}
+    >
+      {canEdit && (
+        <div className="mt-4 flex items-center gap-1 bg-slate-900/50 border border-slate-700/50 rounded-lg p-1 w-fit">
+          {(["rules", "manual"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              disabled={status === "saving"}
+              className={[
+                "px-3 py-1 rounded-md text-xs font-medium transition-colors",
+                mode === m ? "bg-slate-600 text-slate-100" : "text-slate-400 hover:text-slate-200",
+              ].join(" ")}
+            >
+              {m === "rules" ? "Sort by rules" : "Manual order"}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {mode === "rules" ? (
+        <div className="mt-4">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">
+            Sort rules — first rule is the primary sort
+          </h3>
+          <div className="space-y-1.5">
+            {criteria.map((c, idx) => {
+              const meta = STAFF_ORDER_META[c.key as keyof typeof STAFF_ORDER_META];
+              if (!meta) return null;
+              const effectiveDir = c.dir ?? STAFF_ORDER_DEFAULT_DIR[c.key];
+              return (
+                <div
+                  key={c.key}
+                  draggable={!dragDisabled}
+                  onDragStart={() => { dragIdx.current = idx; }}
+                  onDragOver={(e) => handleDragOver(e, idx)}
+                  onDrop={() => handleDrop(idx, criteria, setCriteria)}
+                  onDragEnd={() => { dragIdx.current = null; setDragOverIdx(null); }}
+                  className={rowClass(idx)}
+                >
+                  {canEdit && <span className="shrink-0 text-slate-500 select-none" title="Drag to reorder">⋮⋮</span>}
+                  <span className="shrink-0 w-6 h-6 rounded-full bg-slate-800 border border-slate-600 text-xs text-slate-300 flex items-center justify-center font-semibold">
+                    {idx + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-sm text-slate-200 font-medium">{meta.label}</span>
+                    <p className="text-xs text-slate-500 mt-0.5">{meta.description}</p>
+                  </div>
+                  {canEdit && (
+                    <>
+                      <button
+                        onClick={() => toggleDir(idx)}
+                        disabled={status === "saving"}
+                        className="px-2.5 py-1 rounded-md text-xs font-medium bg-slate-800 border border-slate-600 text-slate-300 hover:border-blue-500 transition-colors shrink-0"
+                        title="Flip direction"
+                      >
+                        {meta.dirLabels[effectiveDir === "desc" ? 1 : 0]} ⇅
+                      </button>
+                      <button
+                        onClick={() => setCriteria((cur) => cur.filter((_, i) => i !== idx))}
+                        disabled={status === "saving" || criteria.length === 1}
+                        className="px-2 py-1 rounded-md text-xs text-slate-400 hover:text-red-400 hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0"
+                        title={criteria.length === 1 ? "At least one rule is required" : "Remove rule"}
+                      >
+                        ×
+                      </button>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {canEdit && unusedKeys.length > 0 && (
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-slate-500">Add rule:</span>
+              {unusedKeys.map((k) => (
+                <button
+                  key={k}
+                  onClick={() => setCriteria((cur) => [...cur, { key: k }])}
+                  disabled={status === "saving"}
+                  className="px-2.5 py-1 rounded-md text-xs font-medium bg-slate-800 border border-slate-600 text-slate-300 hover:border-blue-500 transition-colors"
+                >
+                  + {STAFF_ORDER_META[k].label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="mt-4">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">
+            Column order — drag staff into place
+          </h3>
+          <div className="space-y-1 max-h-96 overflow-y-auto pr-1">
+            {manualIds.map((id, idx) => {
+              const p = staffById.get(id);
+              if (!p) return null;
+              return (
+                <div
+                  key={id}
+                  draggable={!dragDisabled}
+                  onDragStart={() => { dragIdx.current = idx; }}
+                  onDragOver={(e) => handleDragOver(e, idx)}
+                  onDrop={() => handleDrop(idx, manualIds, setManualIds)}
+                  onDragEnd={() => { dragIdx.current = null; setDragOverIdx(null); }}
+                  className={rowClass(idx)}
+                >
+                  {canEdit && <span className="shrink-0 text-slate-500 select-none" title="Drag to reorder">⋮⋮</span>}
+                  <span className="shrink-0 w-8 text-xs text-slate-500 text-right font-mono">{idx + 1}</span>
+                  <span className="text-sm text-slate-200 font-semibold w-12 shrink-0">{p.initials}</span>
+                  <span className="text-xs text-slate-400 truncate flex-1">{p.name !== p.initials ? p.name : ""}</span>
+                  <span className="text-xs text-slate-500 shrink-0">
+                    {p.employmentTypeName} · {((p.ftePercentage ?? 0) * 100).toFixed(0)}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-slate-500 italic">
+            Active staff only. New staff are added at the far right until you place them here.
+          </p>
+        </div>
+      )}
+
+      <div className="mt-5">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">
+          Preview (left → right)
+        </h3>
+        <div className="flex flex-wrap gap-1">
+          {preview.map((p) => (
+            <span
+              key={p.id}
+              title={`${p.name} — ${p.employmentTypeName} · ${((p.ftePercentage ?? 0) * 100).toFixed(0)}%`}
+              className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-xs text-slate-300 font-mono"
+            >
+              {p.initials}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {canEdit && (
+        <div className="mt-4 flex items-center gap-2">
+          <button
+            onClick={save}
+            disabled={!dirty || status === "saving"}
+            className="px-3 py-1.5 rounded-md text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors"
+          >
+            {status === "saving" ? "Saving…" : "Save"}
+          </button>
+          <button
+            onClick={cancel}
+            disabled={!dirty || status === "saving"}
+            className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={resetToDefault}
+            disabled={status === "saving"}
+            className="ml-auto px-3 py-1.5 rounded-md text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            title="Back to the built-in default: employment type, then FTE % high → low, then alphabetical"
+          >
+            Reset to default
+          </button>
+          {dirty && <span className="text-xs text-amber-400">Unsaved order — Save to apply.</span>}
+        </div>
+      )}
+    </CollapsibleSection>
+  );
+}
+
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, shiftCodes: availableShiftCodes, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, canEdit = true, canEditAutoGenPriority = false }: Props) {
+export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, shiftCodes: availableShiftCodes, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, staffColumnOrder, orderableStaff, canEdit = true, canEditAutoGenPriority = false }: Props) {
   const undo = useUndo();
   const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
 
@@ -4125,6 +4493,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
 
         <SectionGroup label="Printed Schedule" />
         <div className="space-y-4 mb-8 mt-3">
+          <StaffColumnOrderSection initial={staffColumnOrder} staff={orderableStaff} />
           <PrintColumnRulesSection initial={initialPrintColumnRules} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
           <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
           <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />

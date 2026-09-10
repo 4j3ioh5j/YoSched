@@ -1,9 +1,11 @@
 import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { isValidDateFormat } from "@/lib/date-format";
 import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES, validateOffStrategyOrder } from "@/lib/schedule-requests";
 import { isLiveScope, LIVE_SCOPES } from "@/lib/live-scope";
+import { validateStaffOrderCriteria } from "@/lib/staff-order";
 
 export async function GET() {
   const { error } = await getSession("settings:view");
@@ -21,7 +23,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, defaultOffStrategyOrder, defaultLiveScope } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder } = body;
 
   // Mode is STRICTLY validated on write — a bad value is rejected, never coerced to
   // the default (which would silently turn a typo into "full"). Reads stay lenient.
@@ -33,6 +35,21 @@ export async function PUT(req: NextRequest) {
   }
   if (defaultLiveScope !== undefined && !isLiveScope(defaultLiveScope)) {
     return NextResponse.json({ error: `defaultLiveScope must be one of ${LIVE_SCOPES.join(", ")}` }, { status: 400 });
+  }
+
+  // Schedule column order: strict on write like the modes above (null explicitly
+  // resets to the built-in default stack; reads stay lenient via parseStaffOrderCriteria).
+  let columnOrder: object | null | undefined;
+  if (staffColumnOrder !== undefined) {
+    if (staffColumnOrder === null) {
+      columnOrder = null;
+    } else {
+      const validated = validateStaffOrderCriteria(staffColumnOrder);
+      if ("error" in validated) {
+        return NextResponse.json({ error: validated.error }, { status: 400 });
+      }
+      columnOrder = validated.value;
+    }
   }
 
   // Department-default day-off fulfillment order: validate LEAVE:<id> tokens against
@@ -62,6 +79,7 @@ export async function PUT(req: NextRequest) {
       ...(isRequestConflictPolicy(requestConflictPolicy) && { requestConflictPolicy }),
       ...(offOrder !== undefined && { defaultOffStrategyOrder: offOrder }),
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
+      ...(columnOrder !== undefined && { staffColumnOrder: columnOrder === null ? Prisma.DbNull : columnOrder }),
     },
     create: {
       id: "default",
@@ -73,6 +91,7 @@ export async function PUT(req: NextRequest) {
       ...(isRequestConflictPolicy(requestConflictPolicy) && { requestConflictPolicy }),
       ...(offOrder !== undefined && { defaultOffStrategyOrder: offOrder }),
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
+      ...(columnOrder != null && { staffColumnOrder: columnOrder }),
     },
   });
 
