@@ -356,6 +356,34 @@ function buildRowItems(dates: string[], payPeriods: PayPeriod[]): RowItem[] {
   return items;
 }
 
+// Scrolls a grid cell fully into view inside the grid's own scroller. Can't use
+// scrollIntoView({inline:"nearest"}): the sticky Date column and sticky header
+// OVERLAY the scrollport, so "nearest" parks an edge cell underneath them (arrow-
+// navigating to the first staff column left it hidden behind the Date column),
+// and the right/bottom edges must be measured with clientWidth/Height so a
+// non-overlay scrollbar (Windows) isn't counted as visible area.
+function scrollCellIntoView(scroller: HTMLElement | null, cellKey: string) {
+  const el = document.querySelector(`[data-cell="${cellKey}"]`) as HTMLElement | null;
+  if (!el || !scroller) return;
+  const sRect = scroller.getBoundingClientRect();
+  const rect = el.getBoundingClientRect();
+  const stickyLeft = scroller.querySelector("thead th")?.getBoundingClientRect().width ?? 0;
+  const headerH = scroller.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+  const viewLeft = sRect.left + stickyLeft;
+  const viewRight = sRect.left + scroller.clientWidth;
+  const viewTop = sRect.top + headerH;
+  const viewBottom = sRect.top + scroller.clientHeight;
+  let dx = 0;
+  let dy = 0;
+  // Check the far edge first, then let the near edge win: if a cell somehow
+  // can't fit both ways, revealing its left/top edge is the useful outcome.
+  if (rect.right > viewRight) dx = rect.right - viewRight;
+  if (rect.left < viewLeft) dx = rect.left - viewLeft;
+  if (rect.bottom > viewBottom) dy = rect.bottom - viewBottom;
+  if (rect.top < viewTop) dy = rect.top - viewTop;
+  if (dx !== 0 || dy !== 0) scroller.scrollBy({ left: dx, top: dy });
+}
+
 type TooltipState = { text: string; x: number; y: number } | null;
 type SetTooltip = (t: TooltipState) => void;
 
@@ -2124,7 +2152,7 @@ export function ScheduleGrid({
           setActiveDedCol(null);
           setDedSelection(null);
           dedAnchorRef.current = null;
-          document.querySelector(`[data-cell="${newProv.id}:${newDate}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+          scrollCellIntoView(scrollRef.current, `${newProv.id}:${newDate}`);
         } else {
           // Landing on a dedicated column: clear staff selection/anchor.
           const st = dedicatedColumns[newColIdx - nStaff];
@@ -2134,7 +2162,7 @@ export function ScheduleGrid({
           setSelectionAnchor(null);
           setDedSelection(null);
           dedAnchorRef.current = null;
-          document.querySelector(`[data-cell="ded-${st.id}:${newDate}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+          scrollCellIntoView(scrollRef.current, `ded-${st.id}:${newDate}`);
         }
       }
       // Hotkey letter entry. Bare letter -> assign (unchanged). In request mode
@@ -3378,7 +3406,7 @@ export function ScheduleGrid({
   function anchorPopover(cellKey: string, text: string, variant: "reject" | "advisory") {
     const el = document.querySelector(`[data-cell="${cellKey}"]`) as HTMLElement | null;
     if (!el) { setRejectPopover(null); setPasteToast(text); return; }
-    el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    scrollCellIntoView(scrollRef.current, cellKey);
     const rect = el.getBoundingClientRect();
     const cw = rect.width, ch = rect.height, POP_W = 256;
     const below = rect.top < window.innerHeight * 0.5; // room below? else go above
