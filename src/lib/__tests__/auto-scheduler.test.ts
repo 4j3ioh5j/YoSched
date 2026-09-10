@@ -1111,6 +1111,50 @@ describe("autoSchedule", () => {
       expect(admSuggestions[0].date).toBe("2025-05-16");
     });
 
+    it("never places a min-target shift on a holiday when other days are open", () => {
+      // Veterans Day 2026 regression: PAIN/ORL per-staff minimums were the only
+      // placement path without a holiday guard, so a tight window dropped the
+      // minimum onto the closed day.
+      const ADM = makeShift("st-adm", "ADM", { schedulePriority: null });
+      const p = makeStaff("p1", "AB", {
+        eligibleShiftTypeIds: ["st-or", "st-adm", "st-off"],
+        shiftMinimumTargets: [
+          { shiftTypeId: "st-adm", minCount: 2, window: "pay_period" as const },
+        ],
+      });
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        staff: [p],
+        shiftTypes: [OR, ADM, OFF],
+        staffingRequirements: [],
+        holidays: [{ date: "2025-05-14" }], // Wednesday
+      });
+      const admDates = result.suggestions.filter((s) => s.code === "ADM").map((s) => s.date);
+      expect(admDates.length).toBe(2);
+      expect(admDates).not.toContain("2025-05-14");
+    });
+
+    it("warns instead of placing when a holiday is the only day a hard minimum fits", () => {
+      const ADM = makeShift("st-adm", "ADM", { schedulePriority: null });
+      const p = makeStaff("p1", "AB", {
+        // Only available Wednesdays — and the only Wednesday is a holiday.
+        availabilityRules: [{ type: "available" as const, strength: "rule" as const, ...wEvery(3) }],
+        eligibleShiftTypeIds: ["st-adm", "st-off"],
+        shiftMinimumTargets: [
+          { shiftTypeId: "st-adm", minCount: 1, window: "pay_period" as const },
+        ],
+      });
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 5),
+        staff: [p],
+        shiftTypes: [OR, ADM, OFF],
+        staffingRequirements: [],
+        holidays: [{ date: "2025-05-14" }],
+      });
+      expect(result.suggestions.filter((s) => s.code === "ADM")).toEqual([]);
+      expect(result.warnings.some((w) => w.includes("no available days for ADM min target"))).toBe(true);
+    });
+
     it("places a hard-minimum shift on a constrained low-FTE staff over a broadly-available full-timer, even when it exceeds their PP hours", () => {
       // ORC is 16h; LO is 0.3 FTE ⇒ PP target 12h, so a single ORC overshoots and
       // wouldBreakPPHours would normally exclude LO. But LO has an unmet hard minimum

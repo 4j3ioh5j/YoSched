@@ -1770,8 +1770,13 @@ export function autoSchedule({
         if (deficit <= 0) continue;
 
         const windowDates = dates.filter((d) => d >= bounds.start && d <= bounds.end);
+        // Holidays are excluded like every other placement pass (staffing reqs use
+        // the 0-valued holiday dayKey, standing commitments skip outright) — a
+        // per-staff minimum must never be satisfied by scheduling into a closed
+        // day. If the holiday was the only legal day, the hard-target warning
+        // below fires instead of silently placing the shift.
         const candidateDates = windowDates.filter((d) =>
-          !isAssigned(staff.id, d) && isAvailable(staff, d, st)
+          !holidaySet.has(d) && !isAssigned(staff.id, d) && isAvailable(staff, d, st)
         );
         if (candidateDates.length === 0) {
           // Soft (preference) targets bias but never warn — only hard minimums do.
