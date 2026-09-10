@@ -1,6 +1,17 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
+import { getPayPeriods } from "@/lib/pay-periods-server";
+import { isValidDateString, isValidPeriodLength, MIN_PERIOD_LENGTH_DAYS, MAX_PERIOD_LENGTH_DAYS } from "@/lib/pay-periods";
 import { NextRequest, NextResponse } from "next/server";
+
+function serialize(periods: { id: string; startDate: Date; endDate: Date; targetHours: number }[]) {
+  return periods.map((p) => ({
+    id: p.id,
+    startDate: p.startDate.toISOString().split("T")[0],
+    endDate: p.endDate.toISOString().split("T")[0],
+    targetHours: p.targetHours,
+  }));
+}
 
 export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
@@ -8,58 +19,42 @@ export async function PUT(req: NextRequest) {
   const { targetHours } = await req.json();
 
   if (targetHours !== undefined) {
+    if (typeof targetHours !== "number" || !Number.isFinite(targetHours) || targetHours <= 0) {
+      return NextResponse.json({ error: "targetHours must be a positive number" }, { status: 400 });
+    }
     await prisma.payPeriod.updateMany({
       data: { targetHours },
     });
   }
 
-  const periods = await prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } });
-  return NextResponse.json(
-    periods.map((p) => ({
-      id: p.id,
-      startDate: p.startDate.toISOString().split("T")[0],
-      endDate: p.endDate.toISOString().split("T")[0],
-      targetHours: p.targetHours,
-    })),
-  );
+  return NextResponse.json(serialize(await getPayPeriods()));
 }
 
+// Sets the pay-period ladder: an anchor date (any real period start) + period
+// length in days. Periods themselves are derived — regenerated here and
+// auto-extended on read as years roll over, so there is nothing to count.
 export async function POST(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
-  const { startDate, periodCount, targetHours } = await req.json();
+  const { anchorDate, periodLengthDays } = await req.json();
 
-  if (!startDate || !periodCount) {
-    return NextResponse.json({ error: "Missing startDate or periodCount" }, { status: 400 });
+  if (!isValidDateString(anchorDate)) {
+    return NextResponse.json({ error: "anchorDate must be a valid YYYY-MM-DD date" }, { status: 400 });
+  }
+  if (!isValidPeriodLength(periodLengthDays)) {
+    return NextResponse.json(
+      { error: `periodLengthDays must be an integer between ${MIN_PERIOD_LENGTH_DAYS} and ${MAX_PERIOD_LENGTH_DAYS}` },
+      { status: 400 },
+    );
   }
 
-  const start = new Date(startDate + "T00:00:00Z");
-  const periodsData: { startDate: Date; endDate: Date; targetHours: number }[] = [];
-  for (let i = 0; i < periodCount; i++) {
-    const ppStart = new Date(start);
-    ppStart.setDate(ppStart.getDate() + i * 14);
-    const ppEnd = new Date(ppStart);
-    ppEnd.setDate(ppEnd.getDate() + 13);
-
-    periodsData.push({
-      startDate: ppStart,
-      endDate: ppEnd,
-      targetHours: targetHours ?? 80,
-    });
-  }
-
-  const created = await prisma.$transaction(async (tx) => {
-    await tx.payPeriod.deleteMany({});
-    await tx.payPeriod.createMany({ data: periodsData });
-    return tx.payPeriod.findMany({ orderBy: { startDate: "asc" } });
+  await prisma.schedulingPreferences.upsert({
+    where: { id: "default" },
+    update: { payPeriodAnchor: new Date(anchorDate + "T00:00:00Z"), payPeriodLengthDays: periodLengthDays },
+    create: { id: "default", payPeriodAnchor: new Date(anchorDate + "T00:00:00Z"), payPeriodLengthDays: periodLengthDays },
   });
 
-  return NextResponse.json(
-    created.map((p) => ({
-      id: p.id,
-      startDate: p.startDate.toISOString().split("T")[0],
-      endDate: p.endDate.toISOString().split("T")[0],
-      targetHours: p.targetHours,
-    })),
-  );
+  // getPayPeriods sees the new ladder, mismatches the stored rows, regenerates
+  // (preserving the existing targetHours).
+  return NextResponse.json(serialize(await getPayPeriods()));
 }

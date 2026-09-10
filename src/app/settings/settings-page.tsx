@@ -9,6 +9,7 @@ import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta
 import { reconcileOrder, MAX_PROFILE_NAME_LENGTH } from "@/lib/autogen-profile";
 import { OffStrategyEditor } from "@/components/off-strategy-editor";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
+import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
 import { RecurrencePicker } from "../staff/recurrence-picker";
 import { FrequencyPicker } from "../staff/frequency-picker";
 
@@ -82,6 +83,8 @@ type SchedulingPrefs = {
   requestConflictPolicy: RequestConflictPolicy;
   defaultOffStrategyOrder: string[];
   defaultLiveScope: LiveScope;
+  payPeriodAnchor: string | null;
+  payPeriodLengthDays: number;
 };
 
 type DefaultAvailabilityRule = {
@@ -1385,11 +1388,12 @@ function formatDateStr(dateStr: string, fmt: DateFormatKey): string {
   return formatDate(d, fmt);
 }
 
-function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeriod[]; pushUndo: (a: UndoAction) => void; dateFormat: DateFormatKey }) {
+function PayPeriodsSection({ initial, initialAnchor, initialLengthDays, pushUndo, dateFormat }: { initial: PayPeriod[]; initialAnchor: string | null; initialLengthDays: number; pushUndo: (a: UndoAction) => void; dateFormat: DateFormatKey }) {
   const canEdit = useCanEdit();
   const [periods, setPeriods] = useState(initial);
-  const [startDate, setStartDate] = useState(initial[0]?.startDate ?? "2025-12-14");
-  const [periodCount, setPeriodCount] = useState(initial.length || 26);
+  const [anchorDate, setAnchorDate] = useState(initialAnchor ?? initial[0]?.startDate ?? "");
+  const [lengthDays, setLengthDays] = useState(initialLengthDays);
+  const [savedAnchor, setSavedAnchor] = useState<{ anchor: string; length: number } | null>(initialAnchor ? { anchor: initialAnchor, length: initialLengthDays } : null);
   const [baseHours, setBaseHours] = useState(initial[0]?.targetHours ?? 80);
   const [hoursStatus, setHoursStatus] = useState<SaveStatus>("idle");
   const [status, setStatus] = useState<SaveStatus>("idle");
@@ -1427,38 +1431,47 @@ function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeri
     }
   }
 
+  async function applyLadder(anchor: string, length: number): Promise<PayPeriod[]> {
+    const res = await fetch("/api/settings/pay-periods", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ anchorDate: anchor, periodLengthDays: length }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+
   async function regenerate() {
-    if (!confirm(`This will replace all ${periods.length} existing pay periods. Continue?`)) return;
-    const prevStart = periods[0]?.startDate ?? startDate;
-    const prevCount = periods.length;
-    const prevHours = periods[0]?.targetHours ?? 80;
+    if (!anchorDate) {
+      setError("Enter an anchor date (any real pay period start)");
+      setStatus("error");
+      return;
+    }
+    if (!confirm(`This will regenerate all pay periods from the ${lengthDays}-day ladder anchored at ${formatDateStr(anchorDate, dateFormat)}. Continue?`)) return;
+    const prev = savedAnchor;
     setStatus("saving");
+    setError("");
     try {
-      const res = await fetch("/api/settings/pay-periods", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startDate, periodCount, targetHours: prevHours }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      const data = await applyLadder(anchorDate, lengthDays);
       setPeriods(data);
+      setSavedAnchor({ anchor: anchorDate, length: lengthDays });
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2000);
 
-      pushUndo({
-        label: `Regenerated ${periodCount} pay periods`,
-        execute: async () => {
-          const res = await fetch("/api/settings/pay-periods", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ startDate: prevStart, periodCount: prevCount, targetHours: prevHours }),
-          });
-          const data = await res.json();
-          setPeriods(data);
-          setStartDate(prevStart);
-          setPeriodCount(prevCount);
-        },
-      });
+      // Undo can only restore a previous ladder — before the first anchor is set
+      // there is no ladder to return to, so no undo entry.
+      if (prev) {
+        pushUndo({
+          label: `Regenerated pay periods (anchor ${anchorDate}, ${lengthDays} days)`,
+          execute: async () => {
+            const data = await applyLadder(prev.anchor, prev.length);
+            setPeriods(data);
+            setAnchorDate(prev.anchor);
+            setLengthDays(prev.length);
+            setSavedAnchor(prev);
+          },
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
       setStatus("error");
@@ -1496,26 +1509,28 @@ function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeri
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
         <div>
-          <label className="text-xs text-slate-400 block mb-1">First Period Start</label>
+          <label className="text-xs text-slate-400 block mb-1">Anchor Date (any real period start)</label>
           <input
             type="date"
             disabled={!canEdit}
             className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm disabled:opacity-50"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
+            value={anchorDate}
+            onChange={(e) => setAnchorDate(e.target.value)}
           />
         </div>
         <div>
-          <label className="text-xs text-slate-400 block mb-1">Number of Periods</label>
+          <label className="text-xs text-slate-400 block mb-1">Period Length (days)</label>
           <div className="flex gap-2">
             <input
               type="number"
+              min={7}
+              max={56}
               disabled={!canEdit}
               className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm disabled:opacity-50"
-              value={periodCount}
-              onChange={(e) => setPeriodCount(parseInt(e.target.value) || 26)}
+              value={lengthDays}
+              onChange={(e) => setLengthDays(parseInt(e.target.value) || 14)}
             />
             {canEdit && (
               <button
@@ -1528,6 +1543,11 @@ function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeri
           </div>
         </div>
       </div>
+      <p className="text-xs text-slate-500 mb-4">
+        Periods extend automatically from year to year — no counting needed. Numbering restarts each year:
+        the first period starting on/after Jan 1 is that year&rsquo;s PP 1; the period straddling New
+        Year&rsquo;s is the previous year&rsquo;s last.
+      </p>
 
       <div className="border-t border-slate-700 pt-3">
         <p className="text-xs text-slate-500 mb-2">{periods.length} pay periods configured</p>
@@ -1536,13 +1556,16 @@ function PayPeriodsSection({ initial, pushUndo, dateFormat }: { initial: PayPeri
             <span className="text-slate-500 font-medium">Period</span>
             <span className="text-slate-500 font-medium">Start</span>
             <span className="text-slate-500 font-medium">End</span>
-            {periods.map((pp, i) => (
-              <>
-                <span key={`n-${pp.id}`} className="text-slate-400">PP {i + 1}</span>
-                <span key={`s-${pp.id}`} className="text-slate-300 font-mono">{formatDateStr(pp.startDate, dateFormat)}</span>
-                <span key={`e-${pp.id}`} className="text-slate-300 font-mono">{formatDateStr(pp.endDate, dateFormat)}</span>
-              </>
-            ))}
+            {periods.map((pp) => {
+              const label = payPeriodLabel(pp.startDate, periodLengthOf(pp));
+              return (
+                <Fragment key={pp.id}>
+                  <span className="text-slate-400">{label.year} PP {label.number}</span>
+                  <span className="text-slate-300 font-mono">{formatDateStr(pp.startDate, dateFormat)}</span>
+                  <span className="text-slate-300 font-mono">{formatDateStr(pp.endDate, dateFormat)}</span>
+                </Fragment>
+              );
+            })}
           </div>
         </ScrollContainer>
       </div>
@@ -4109,7 +4132,7 @@ export function SettingsPage({ shiftTypes, staffingReqs, payPeriods, holidays, d
 
         <SectionGroup label="Calendar" />
         <div className="space-y-4 mb-8 mt-3">
-          <PayPeriodsSection initial={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
+          <PayPeriodsSection initial={payPeriods} initialAnchor={schedulingPrefs.payPeriodAnchor} initialLengthDays={schedulingPrefs.payPeriodLengthDays} pushUndo={undo.push} dateFormat={dateFormat} />
           <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
         </div>
 

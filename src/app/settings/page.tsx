@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getPayPeriods } from "@/lib/pay-periods-server";
 import { SettingsPage } from "./settings-page";
 import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
@@ -17,7 +18,7 @@ export default async function Settings() {
   const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, departmentTargets, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns, autoGenFactors, autoGenProfiles] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
-    prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
+    getPayPeriods(),
     prisma.holiday.findMany({ orderBy: { date: "asc" } }),
     prisma.desirabilityWeight.findMany(),
     prisma.schedulingPreferences.findFirst(),
@@ -52,6 +53,8 @@ export default async function Settings() {
       ? parseOffStrategyOrder(schedulingPrefsRow.defaultOffStrategyOrder, leaveShiftIds)
       : [...DEFAULT_OFF_STRATEGY_ORDER],
     defaultLiveScope: parseLiveScope(schedulingPrefsRow?.defaultLiveScope),
+    payPeriodAnchor: schedulingPrefsRow?.payPeriodAnchor?.toISOString().split("T")[0] ?? null,
+    payPeriodLengthDays: schedulingPrefsRow?.payPeriodLengthDays ?? 14,
   };
 
   return (

@@ -12,6 +12,7 @@ import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { monthGridDates } from "@/lib/grid-dates";
+import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary } from "@/lib/grid-clipboard";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
@@ -322,7 +323,7 @@ function findPayPeriod(dateStr: string, payPeriods: PayPeriod[]): PayPeriod | nu
 
 type RowItem =
   | { type: "date"; date: string; isNewPP: boolean }
-  | { type: "pp-summary"; pp: PayPeriod; ppIndex: number };
+  | { type: "pp-summary"; pp: PayPeriod };
 
 function buildRowItems(dates: string[], payPeriods: PayPeriod[]): RowItem[] {
   const items: RowItem[] = [];
@@ -347,7 +348,7 @@ function buildRowItems(dates: string[], payPeriods: PayPeriod[]): RowItem[] {
       if (endedPPs.has(ppStartKey)) continue;
       if (pp.startDate > dates[dates.length - 1]) continue;
       if (date === pp.endDate || (date <= pp.endDate && (!nextDate || nextDate > pp.endDate))) {
-        items.push({ type: "pp-summary", pp, ppIndex: ppIdx });
+        items.push({ type: "pp-summary", pp });
         endedPPs.add(ppStartKey);
       }
     }
@@ -4047,7 +4048,7 @@ export function ScheduleGrid({
             {rowItems.map((item) => {
               if (item.type === "pp-summary") {
                 if (!showPPRows) return null;
-                const { pp, ppIndex } = item;
+                const { pp } = item;
                 const provHours = ppHours.get(pp.startDate);
                 return (
                   <tr key={`pp-${pp.startDate}`} className="bg-slate-800/80">
@@ -4055,7 +4056,7 @@ export function ScheduleGrid({
                       className="sticky left-0 z-[5] px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider border-r border-slate-600 whitespace-nowrap border-y border-y-indigo-500/60"
                       style={{ background: "#1a2340" }}
                     >
-                      <span className="text-indigo-400">PP {ppIndex + 1}</span>
+                      <span className="text-indigo-400">PP {payPeriodLabel(pp.startDate, periodLengthOf(pp)).number}</span>
                       <span className="text-slate-500 ml-1">+/–</span>
                     </td>
                     {visibleStaff.map((p) => {

@@ -6,6 +6,7 @@
 // returned value is plain JSON-serializable data (dates are "YYYY-MM-DD").
 
 import { prisma } from "@/lib/prisma";
+import { getPayPeriods } from "@/lib/pay-periods-server";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, type ScheduleRequestData } from "@/lib/schedule-requests";
 import { effectiveTargetsForStaff, type DepartmentShiftTarget } from "@/lib/department-targets";
@@ -15,7 +16,7 @@ import { effectiveTargetsForStaff, type DepartmentShiftTarget } from "@/lib/depa
  * any pay period that overlaps the range (so per-PP math sees whole periods).
  */
 export async function buildAutoScheduleInput(startDate: string, endDate: string): Promise<AutoScheduleInput> {
-  const allPayPeriods = await prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } });
+  const allPayPeriods = await getPayPeriods();
 
   const overlappingPPs = allPayPeriods.filter((pp) => {
     const ppStart = pp.startDate.toISOString().split("T")[0];

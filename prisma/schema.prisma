@@ -331,6 +331,8 @@ model SchedulingPreferences {
   requestConflictPolicy String  @default("reconcile") // forced-request contention: "reconcile" (tentative + first-come) | "honor-always"
   defaultOffStrategyOrder String[] @default(["ORC_ADJACENT", "ORL_PAIR"]) // dept-wide default day-off fulfillment order; admin appends LEAVE:<shiftTypeId> tokens. Seeds the My Requests widget + per-staff override.
   defaultLiveScope        String   @default("day") // default re-solve scope for auto-generate edits: "limited" | "day" | "pp" | "range" (#248). Seeds the grid's scope selector.
+  payPeriodAnchor         DateTime? @db.Date // any real period start; with payPeriodLengthDays defines the infinite period ladder (null = legacy manually-generated periods)
+  payPeriodLengthDays     Int      @default(14)
 
   @@map("scheduling_preferences")
 }

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getPayPeriods } from "@/lib/pay-periods-server";
 import { computeFairness } from "@/lib/fairness";
 import { ScheduleGrid } from "./schedule-grid";
 import { NavHeader } from "./nav-header";
@@ -67,7 +68,7 @@ export default async function Home() {
       prisma.assignment.findMany({
         include: { shiftType: true },
       }),
-      prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
+      getPayPeriods(),
       prisma.holiday.findMany({ orderBy: { date: "asc" } }),
       prisma.staffShiftOverride.findMany(),
       prisma.staffingMinimum.findMany(),

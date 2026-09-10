@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getPayPeriods } from "@/lib/pay-periods-server";
 import type { RawStatsData } from "@/lib/graph/model";
 import { DEFAULT_SPEC, decodeSpec } from "@/lib/graph/spec";
 import { DEFAULT_DATE_FORMAT } from "@/lib/date-format";
@@ -28,7 +29,7 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
       prisma.assignment.findMany({ include: { shiftType: true } }),
       prisma.holiday.findMany({ orderBy: { date: "asc" } }),
       prisma.desirabilityWeight.findMany(),
-      prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } }),
+      getPayPeriods(),
       prisma.schedulingPreferences.findFirst(),
       prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.staffEligibleShift.findMany(),
