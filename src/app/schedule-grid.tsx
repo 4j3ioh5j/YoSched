@@ -817,6 +817,27 @@ export function ScheduleGrid({
   const dragSelectMoved = useRef(false);
   const dragSelectAnchor = useRef<{ staffId: string; date: string } | null>(null);
 
+  // Distinguishing a shift+CLICK from a shift+DRAG. A shift-press starts drag mode
+  // immediately, so a Windows physical-mouse press that skids a few pixels into the
+  // neighbouring cell fires a stray drag `mouseenter` that recomputes the rectangle
+  // one cell short — and because the button is released over the neighbour, no click
+  // ever fires on the pressed cell to correct it (the reported "A1..A7 selects
+  // A1..A6"; a Mac trackpad tap doesn't skid, so it never reproduced there). We
+  // track the press point + cell and, on release, treat the gesture as a click
+  // (endpoint = the pressed cell, authoritative) when the pointer never moved beyond
+  // SHIFT_CLICK_SLOP px OR was released back over the pressed cell. A genuine drag
+  // fails both and keeps its swept selection.
+  const SHIFT_CLICK_SLOP = 10;
+  const dragDownPoint = useRef<{ x: number; y: number } | null>(null);
+  const dragDownCell = useRef<{ staffId: string; date: string } | null>(null);
+  const dragBeyondSlop = useRef(false);
+  const dedDownPoint = useRef<{ x: number; y: number } | null>(null);
+  const dedDownCell = useRef<{ shiftTypeId: string; date: string } | null>(null);
+  const dedBeyondSlop = useRef(false);
+  // Kept current each render so the once-registered mouseup listener finalizes with
+  // the latest visibleStaff/dates instead of a stale first-render closure.
+  const computeRectRef = useRef<typeof computeRectSelection | null>(null);
+
   // Undo/redo stacks — each entry is a group of changes applied together
   type UndoOp = { staffId: string; date: string; prev: AssignmentData | null; next: AssignmentData | null };
   // Tagged-union undo stack so assignments AND requests share one chronological
@@ -1511,6 +1532,7 @@ export function ScheduleGrid({
     }
     return sel;
   }
+  computeRectRef.current = computeRectSelection;
 
   function handleCellMouseDown(staffId: string, date: string, e: React.MouseEvent) {
     if (!canEdit || e.button !== 0 || !e.shiftKey) return;
@@ -1518,6 +1540,9 @@ export function ScheduleGrid({
     clearDedFocus(); // staff drag-select clears dedicated active/selection
     dragSelecting.current = true;
     dragSelectMoved.current = false;
+    dragDownPoint.current = { x: e.clientX, y: e.clientY };
+    dragDownCell.current = { staffId, date };
+    dragBeyondSlop.current = false;
     const anchor = selectionAnchor ?? { staffId, date };
     dragSelectAnchor.current = anchor;
     setSelection(computeRectSelection(anchor, { staffId, date }));
@@ -1619,6 +1644,9 @@ export function ScheduleGrid({
     e.preventDefault();
     dedDragging.current = true;
     dedDragMoved.current = false;
+    dedDownPoint.current = { x: e.clientX, y: e.clientY };
+    dedDownCell.current = { shiftTypeId, date };
+    dedBeyondSlop.current = false;
     const anchor = dedAnchorRef.current && dedAnchorRef.current.shiftTypeId === shiftTypeId
       ? dedAnchorRef.current
       : { shiftTypeId, date };
@@ -1646,14 +1674,59 @@ export function ScheduleGrid({
     setActiveRow(date);
   }
 
+  // Once the pointer travels past SHIFT_CLICK_SLOP from the press point, the gesture
+  // is a real drag; below that it stays a click (see the SHIFT_CLICK_SLOP comment).
   useEffect(() => {
-    function onMouseUp() {
+    function onMove(e: MouseEvent) {
+      if (dragSelecting.current && dragDownPoint.current) {
+        const dx = e.clientX - dragDownPoint.current.x, dy = e.clientY - dragDownPoint.current.y;
+        if (dx * dx + dy * dy > SHIFT_CLICK_SLOP * SHIFT_CLICK_SLOP) dragBeyondSlop.current = true;
+      }
+      if (dedDragging.current && dedDownPoint.current) {
+        const dx = e.clientX - dedDownPoint.current.x, dy = e.clientY - dedDownPoint.current.y;
+        if (dx * dx + dy * dy > SHIFT_CLICK_SLOP * SHIFT_CLICK_SLOP) dedBeyondSlop.current = true;
+      }
+    }
+    document.addEventListener("mousemove", onMove);
+    return () => document.removeEventListener("mousemove", onMove);
+  }, []);
+
+  useEffect(() => {
+    function onMouseUp(e: MouseEvent) {
+      const releasedCell = (e.target as HTMLElement | null)?.closest?.("[data-cell]") as HTMLElement | null;
+      const releasedKey = releasedCell?.dataset.cell ?? null;
+      // Staff shift+click finalize: endpoint = the pressed cell when the press didn't
+      // travel past slop OR was released back on the pressed cell (skid out-and-back).
+      if (dragSelecting.current && dragSelectAnchor.current && dragDownCell.current) {
+        const down = dragDownCell.current;
+        const releasedOnDown = releasedKey === `${down.staffId}:${down.date}`;
+        if (!dragBeyondSlop.current || releasedOnDown) {
+          const rect = computeRectRef.current?.(dragSelectAnchor.current, down);
+          if (rect) { setSelection(rect); dragSelectMoved.current = false; }
+        }
+      }
+      // Dedicated-column shift+click finalize (same rule, single-column date range).
+      if (dedDragging.current && dedDownCell.current) {
+        const down = dedDownCell.current;
+        const releasedOnDown = releasedKey === `ded-${down.shiftTypeId}:${down.date}`;
+        if (!dedBeyondSlop.current || releasedOnDown) {
+          const anchor = dedAnchorRef.current && dedAnchorRef.current.shiftTypeId === down.shiftTypeId
+            ? dedAnchorRef.current
+            : down;
+          const ia = dates.indexOf(anchor.date), ib = dates.indexOf(down.date);
+          if (ia >= 0 && ib >= 0) {
+            const [lo, hi] = ia <= ib ? [ia, ib] : [ib, ia];
+            setDedSelection({ shiftTypeId: down.shiftTypeId, dates: dates.slice(lo, hi + 1) });
+            dedDragMoved.current = false;
+          }
+        }
+      }
       dragSelecting.current = false;
       dedDragging.current = false;
     }
     document.addEventListener("mouseup", onMouseUp);
     return () => document.removeEventListener("mouseup", onMouseUp);
-  }, []);
+  }, [dates]);
 
   useEffect(() => {
     if (!showMonthPicker) return;
