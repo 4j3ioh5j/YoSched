@@ -7,6 +7,7 @@ import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOr
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
 import { parseLiveScope } from "@/lib/live-scope";
 import { parseShiftShareBasis } from "@/lib/shift-share";
+import { parseHolidayPolicy } from "@/lib/holiday-policy";
 import { parseStaffOrderCriteria } from "@/lib/staff-order";
 import { redirect } from "next/navigation";
 
@@ -62,6 +63,7 @@ export default async function Settings() {
       : [...DEFAULT_OFF_STRATEGY_ORDER],
     defaultLiveScope: parseLiveScope(schedulingPrefsRow?.defaultLiveScope),
     shiftShareBasis: parseShiftShareBasis(schedulingPrefsRow?.shiftShareBasis),
+    holidayPolicy: parseHolidayPolicy(schedulingPrefsRow?.holidayPolicy),
     payPeriodAnchor: schedulingPrefsRow?.payPeriodAnchor?.toISOString().split("T")[0] ?? null,
     payPeriodLengthDays: schedulingPrefsRow?.payPeriodLengthDays ?? 14,
   };

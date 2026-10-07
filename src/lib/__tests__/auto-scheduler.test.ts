@@ -2820,3 +2820,195 @@ describe("day-off fulfillment strategies (slice 2: hold + ORC_ADJACENT)", () => 
     expect(cellOf(r, "p1", X)?.code).toBe("X"); // ADM work-follower skipped → day stays off
   });
 });
+
+// ─── Holiday entitlement (handoff 740) ───
+
+describe("holiday entitlement policy", () => {
+  // Live HOL config: leave, counts toward FTE, 8h on a holiday, never auto-scheduled.
+  const HOL = makeShift("st-hol", "HOL", { isLeave: true, defaultHours: 8, defaultHoursHoliday: 8, autoSchedulable: false });
+  const AL = makeShift("st-al", "AL", { isLeave: true, autoSchedulable: false });
+  const ORL = makeShift("st-orl", "ORL", { defaultHours: 12, defaultHoursHoliday: 12, maxPerDay: 1 });
+  const ORC = makeShift("st-orc", "ORC", { defaultHours: 16, defaultHoursHoliday: 16, maxPerDay: 1 });
+  const WEEK = weekdayDates("2025-05-12", 5); // Mon 05-12 … Fri 05-16
+  const WED = "2025-05-14";
+  const THU = "2025-05-15";
+  const has = (r: AutoScheduleResult, staffId: string, date: string, code: string) =>
+    r.suggestions.some((s) => s.staffId === staffId && s.date === date && s.code === code);
+  const cellsOn = (r: AutoScheduleResult, staffId: string, date: string) =>
+    r.suggestions.filter((s) => s.staffId === staffId && s.date === date);
+  const prefs = (holidayPolicy: "entitlement" | "fill" | "none", extra: Record<string, unknown> = {}) =>
+    ({ ...defaultPrefs, holidayPolicy, ...extra });
+
+  function req(
+    o: Partial<ScheduleRequestData> & { staffId: string; startDate: string; endDate: string; kind: ScheduleRequestData["kind"] },
+  ): ScheduleRequestData {
+    return { id: `req-${o.staffId}-${o.startDate}-${o.kind}`, shiftTypeIds: [], leaveShiftTypeId: null, strength: "hard", status: "approved", ...o };
+  }
+
+  it("a full-timer already at target gets HOL on the holiday under entitlement, X under legacy fill", () => {
+    // Nov 2026 RMc/BR case: 36h of ORL already carry the staffer to a 36h target, so the
+    // hours fill skips them. Entitlement still owes them the holiday; legacy fill does not.
+    const existing = ["2025-05-12", "2025-05-13", THU].map((date) => ({ staffId: "p1", date, shiftTypeId: "st-orl", code: "ORL", isLocked: false }));
+    const base = {
+      dates: WEEK, staff: [makeStaff("p1", "AB")], shiftTypes: [OR, ORL, HOL, OFF],
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 36 }],
+      holidays: [{ date: WED }], existingAssignments: existing,
+    };
+    const ent = runSchedule({ ...base, schedulingPreferences: prefs("entitlement") });
+    expect(has(ent, "p1", WED, "HOL")).toBe(true);
+    expect(ent.suggestions.find((s) => s.staffId === "p1" && s.date === WED)?.step).toBe("holiday");
+
+    const legacy = runSchedule({ ...base, schedulingPreferences: prefs("fill") });
+    expect(has(legacy, "p1", WED, "HOL")).toBe(false);
+    expect(has(legacy, "p1", WED, "X")).toBe(true);
+  });
+
+  it("entitlement HOL counts toward the pay-period target and displaces a fill day (never a 9th day)", () => {
+    const r = runSchedule({ dates: WEEK, staff: [makeStaff("p1", "AB")], shiftTypes: [OR, HOL, OFF], holidays: [{ date: WED }], schedulingPreferences: prefs("entitlement") });
+    expect(has(r, "p1", WED, "HOL")).toBe(true);
+    // 40h target = HOL 8h + four 8h OR days; nothing over or under.
+    expect(r.suggestions.filter((s) => s.staffId === "p1" && s.code === "OR")).toHaveLength(4);
+    expect(r.warnings.filter((w) => w.includes("AB"))).toEqual([]);
+  });
+
+  it("part-timer: HOL only when the holiday falls on a day they normally work", () => {
+    const monToWed = makeStaff("p1", "AB", {
+      ftePercentage: 0.6,
+      availabilityRules: [1, 2, 3].map((d) => ({ type: "available" as const, strength: "rule" as const, ...wEvery(d) })),
+    });
+    const onWed = runSchedule({ dates: WEEK, staff: [monToWed], shiftTypes: [OR, HOL, OFF], holidays: [{ date: WED }], schedulingPreferences: prefs("entitlement") });
+    expect(has(onWed, "p1", WED, "HOL")).toBe(true);
+    expect(onWed.suggestions.filter((s) => s.staffId === "p1" && s.code === "OR")).toHaveLength(2); // 24h = HOL 8 + 2 OR
+
+    const onThu = runSchedule({ dates: WEEK, staff: [monToWed], shiftTypes: [OR, HOL, OFF], holidays: [{ date: THU }], schedulingPreferences: prefs("entitlement") });
+    expect(has(onThu, "p1", THU, "HOL")).toBe(false);
+    expect(has(onThu, "p1", THU, "X")).toBe(true);
+    expect(onThu.suggestions.filter((s) => s.staffId === "p1" && s.code === "OR")).toHaveLength(3);
+  });
+
+  it("STEP 3 never hands HOL to a staffer the scheduled-workday check rejected (fill shift ignoresWorkingDays)", () => {
+    // Codex #3298: with a fill shift that ignores working days, the legacy holiday→HOL
+    // substitution inside the hours fill would grant HOL on a Wednesday holiday to a
+    // part-timer who never works Wednesdays. Under entitlement only STEP 2.75 grants HOL.
+    const ORX = makeShift("st-or", "OR", { schedulePriority: 1, isFillShift: true, ignoresWorkingDays: true });
+    const notWed = makeStaff("p1", "AB", {
+      ftePercentage: 0.6,
+      availabilityRules: [1, 2, 4].map((d) => ({ type: "available" as const, strength: "rule" as const, ...wEvery(d) })),
+    });
+    const ent = runSchedule({ dates: WEEK, staff: [notWed], shiftTypes: [ORX, HOL, OFF], holidays: [{ date: WED }], schedulingPreferences: prefs("entitlement") });
+    expect(has(ent, "p1", WED, "HOL")).toBe(false);
+    expect(has(ent, "p1", WED, "OR")).toBe(false);
+    expect(has(ent, "p1", WED, "X")).toBe(true);
+    expect(ent.suggestions.filter((s) => s.code === "HOL")).toEqual([]);
+
+    // Legacy "fill" keeps its old behavior for comparison.
+    const legacy = runSchedule({ dates: WEEK, staff: [notWed], shiftTypes: [ORX, HOL, OFF], holidays: [{ date: WED }], schedulingPreferences: prefs("fill") });
+    expect(has(legacy, "p1", WED, "HOL")).toBe(true);
+  });
+
+  it("a staffer working the holiday keeps the work shift and gets no HOL on top", () => {
+    const r = runSchedule({
+      dates: WEEK, staff: [makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] })],
+      shiftTypes: [OR, ORC, HOL, OFF], holidays: [{ date: WED }], schedulingPreferences: prefs("entitlement"),
+      existingAssignments: [{ staffId: "p1", date: WED, shiftTypeId: "st-orc", code: "ORC", isLocked: false }],
+    });
+    expect(cellsOn(r, "p1", WED)).toEqual([]); // existing ORC untouched, nothing placed over it
+    expect(r.suggestions.filter((s) => s.code === "HOL")).toEqual([]);
+  });
+
+  it("approved leave on the holiday stays leave", () => {
+    const r = runSchedule({
+      dates: WEEK, staff: [makeStaff("p1", "AB")], shiftTypes: [OR, AL, HOL, OFF], holidays: [{ date: WED }], schedulingPreferences: prefs("entitlement"),
+      existingAssignments: [{ staffId: "p1", date: WED, shiftTypeId: "st-al", code: "AL", isLocked: false, source: "request" }],
+    });
+    expect(cellsOn(r, "p1", WED)).toEqual([]);
+    expect(r.suggestions.filter((s) => s.code === "HOL")).toEqual([]);
+  });
+
+  it("a staffer with no pay-period target (fee basis) is owed nothing", () => {
+    const r = runSchedule({ dates: WEEK, staff: [makeStaff("p1", "AB", { ftePercentage: 0 })], shiftTypes: [OR, HOL, OFF], holidays: [{ date: WED }], schedulingPreferences: prefs("entitlement") });
+    expect(has(r, "p1", WED, "HOL")).toBe(false);
+    expect(has(r, "p1", WED, "X")).toBe(true);
+  });
+
+  it("policy 'none': the engine never places HOL and the holiday is a plain day off", () => {
+    const r = runSchedule({ dates: WEEK, staff: [makeStaff("p1", "AB")], shiftTypes: [OR, HOL, OFF], holidays: [{ date: WED }], schedulingPreferences: prefs("none") });
+    expect(r.suggestions.filter((s) => s.code === "HOL")).toEqual([]);
+    expect(has(r, "p1", WED, "X")).toBe(true);
+    expect(r.suggestions.filter((s) => s.staffId === "p1" && s.code === "OR")).toHaveLength(4);
+  });
+
+  it("policy 'fill' (legacy): an under-target staffer still gets HOL when the fill lands on the holiday", () => {
+    const r = runSchedule({ dates: WEEK, staff: [makeStaff("p1", "AB")], shiftTypes: [OR, HOL, OFF], holidays: [{ date: WED }], schedulingPreferences: prefs("fill") });
+    expect(has(r, "p1", WED, "HOL")).toBe(true);
+    expect(r.suggestions.find((s) => s.staffId === "p1" && s.date === WED)?.step).toBe("fill");
+  });
+
+  it("default policy is entitlement when the preference is absent", () => {
+    const existing = ["2025-05-12", "2025-05-13", THU].map((date) => ({ staffId: "p1", date, shiftTypeId: "st-orl", code: "ORL", isLocked: false }));
+    const r = runSchedule({
+      dates: WEEK, staff: [makeStaff("p1", "AB")], shiftTypes: [OR, ORL, HOL, OFF],
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 36 }],
+      holidays: [{ date: WED }], existingAssignments: existing, schedulingPreferences: defaultPrefs,
+    });
+    expect(has(r, "p1", WED, "HOL")).toBe(true);
+  });
+
+  it("entitlement HOL does not trip the soft leave cap — fresh or persisted (no step)", () => {
+    const base = {
+      dates: WEEK, staff: [makeStaff("p1", "AB"), makeStaff("p2", "CD")], shiftTypes: [OR, AL, HOL, OFF], holidays: [{ date: WED }],
+      schedulingPreferences: prefs("entitlement", { maxLeavePerDay: 1 }),
+      scheduleRequests: [req({ staffId: "p1", startDate: WED, endDate: WED, kind: "LEAVE", leaveShiftTypeId: "st-al" })],
+    };
+    const fresh = runSchedule(base);
+    expect(has(fresh, "p2", WED, "HOL")).toBe(true);
+    expect(fresh.warnings.some((w) => w.includes("soft leave limit"))).toBe(false);
+
+    // Same schedule after saving: the HOL cell comes back as an existing assignment with no step.
+    const persisted = runSchedule({ ...base, existingAssignments: [{ staffId: "p2", date: WED, shiftTypeId: "st-hol", code: "HOL", isLocked: false, source: "auto" }] });
+    expect(persisted.warnings.some((w) => w.includes("soft leave limit"))).toBe(false);
+    expect(persisted.suggestions.filter((s) => s.code === "HOL")).toEqual([]); // kept, not re-placed
+  });
+
+  describe("request reconciliation on a holiday", () => {
+    const ONE_DAY = weekdayDates("2025-05-12", 1); // Mon, made a holiday below
+    const MON = ONE_DAY[0];
+    const pp = [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 12 }];
+    const fullReconcile = prefs("entitlement", { pendingRequestMode: "full" });
+
+    it("backfill replaces a staffer's entitlement HOL with the holiday work shift; the revoked holder is re-granted HOL", () => {
+      // SR (FTE 0.5 → 6h target) tentatively holds the ORL (12h, over cap). YA holds
+      // entitlement HOL. Reconciliation revokes SR and must be able to hand YA the ORL
+      // (reclaiming the HOL — working the holiday is the work shift, not HOL), and SR's
+      // freed holiday cell is owed HOL, not X.
+      const sr = makeStaff("sr", "SR", { ftePercentage: 0.5, eligibleShiftTypeIds: ["st-orl", "st-off"] });
+      const ya = makeStaff("ya", "YA", { eligibleShiftTypeIds: ["st-orl", "st-off"] });
+      const r = runSchedule({
+        dates: ONE_DAY, staff: [sr, ya], shiftTypes: [OR, ORL, HOL, OFF], payPeriods: pp, holidays: [{ date: MON }],
+        schedulingPreferences: fullReconcile,
+        scheduleRequests: [req({ staffId: "sr", startDate: MON, endDate: MON, kind: "REQUEST_SHIFT", shiftTypeIds: ["st-orl"], status: "pending", receivedAt: "2025-05-01T00:00:00Z" })],
+      });
+      expect(has(r, "ya", MON, "ORL")).toBe(true);
+      expect(has(r, "ya", MON, "HOL")).toBe(false);
+      expect(has(r, "sr", MON, "ORL")).toBe(false);
+      expect(has(r, "sr", MON, "HOL")).toBe(true);
+      expect(has(r, "sr", MON, "X")).toBe(false);
+      expect(r.suggestions.filter((s) => s.code === "ORL")).toHaveLength(1);
+      expect(r.suggestions.filter((s) => s.code === "HOL")).toHaveLength(1);
+      expect(cellsOn(r, "ya", MON)).toHaveLength(1);
+    });
+
+    it("a revoked tentative with no backfill leaves the holder with HOL, not X", () => {
+      const sr = makeStaff("sr", "SR", { ftePercentage: 0.5, eligibleShiftTypeIds: ["st-orl", "st-off"] });
+      const r = runSchedule({
+        dates: ONE_DAY, staff: [sr], shiftTypes: [OR, ORL, HOL, OFF], payPeriods: pp, holidays: [{ date: MON }],
+        schedulingPreferences: fullReconcile,
+        scheduleRequests: [req({ staffId: "sr", startDate: MON, endDate: MON, kind: "REQUEST_SHIFT", shiftTypeIds: ["st-orl"], status: "pending", receivedAt: "2025-05-01T00:00:00Z" })],
+      });
+      expect(r.suggestions.filter((s) => s.code === "ORL")).toEqual([]);
+      expect(has(r, "sr", MON, "HOL")).toBe(true);
+      expect(has(r, "sr", MON, "X")).toBe(false);
+      expect(r.warnings.some((w) => w.includes("deferred") && w.includes("SR"))).toBe(true);
+    });
+  });
+});

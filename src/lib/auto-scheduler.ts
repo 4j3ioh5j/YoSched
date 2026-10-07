@@ -5,6 +5,7 @@ import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumT
 import { foldRequestsForDate, detectRequestConflicts, coversDate, parseOffStrategyOrder, LEAVE_STRATEGY_PREFIX, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode, type RequestConflictPolicy } from "./schedule-requests";
 import { matchesWhen, standingToWhen } from "./recurrence";
 import { type ShiftShareBasis } from "./shift-share";
+import { type HolidayPolicy } from "./holiday-policy";
 
 export type ScheduleStaff = {
   id: string;
@@ -152,6 +153,7 @@ type SchedulingPreferences = {
   maxLeavePerDay?: number; // soft cap on staff away per day; 0/undefined = no cap (warn-only)
   requestConflictPolicy?: RequestConflictPolicy; // forced-request contention resolution; default "reconcile"
   shiftShareBasis?: ShiftShareBasis; // split of a scheduled shift's slots across eligible staff: "fte" (default) | "head"
+  holidayPolicy?: HolidayPolicy; // who is owed HOL on a holiday: "entitlement" (default) | "fill" (legacy) | "none"
 };
 
 export type Suggestion = {
@@ -1855,6 +1857,52 @@ export function autoSchedule({
     }
   }
 
+  // ── STEP 2.75: Holiday entitlement (scheduled-workday rule) ──
+  // Under holidayPolicy "entitlement" (default; see src/lib/holiday-policy.ts) a
+  // holiday is OWED to every staffer for whom it falls on a day they normally work
+  // — standard holiday-pay practice (handoff 740). It runs AFTER coverage / standing
+  // commitments / min-target so a work shift already on the holiday (CALL, ORC, ICU…)
+  // wins and the staffer gets no HOL on top, and BEFORE the STEP 3 hours fill so the
+  // HOL hours are on the grid when fill sizes its days: HOL counts toward the
+  // pay-period target and displaces a fill day — it is never a 9th day on top.
+  //
+  // Deliberately NOT routed through isAvailable(): HOL is leave, not work, so a
+  // request-OFF hold, follow rules, maxPerDay and the rolling max must not block
+  // it. "Normally scheduled" is the staffer's availability on the actual date
+  // (evaluateAvailability), so an alternating-week rule is honored rather than the
+  // weekday superset. Anything already on the cell — approved leave, a manual or
+  // locked entry — stays (isAssigned). A 0 target (fee-basis) is owed nothing.
+  //
+  // Under "fill" nothing happens here (legacy: HOL only when the hours fill lands on
+  // the holiday). Under "none" the engine never places HOL at all (STEP 3 also skips
+  // holidays), so a holiday is a plain day off.
+  const holidayPolicy: HolidayPolicy = schedulingPreferences.holidayPolicy ?? "entitlement";
+  const holShift = holidayPolicy === "none"
+    ? null
+    : shiftTypes.find((st) => st.code === "HOL" && st.countsTowardFte) ?? null;
+
+  // Idempotent (every occupied cell is skipped), so it is called again after request
+  // reconciliation: a holiday cell freed by a revoked tentative request is re-granted
+  // HOL instead of falling to X in STEP 4. Reconciliation may also RECLAIM an
+  // entitlement HOL for holiday work (its backfill treats step "holiday" like a fill
+  // day) — working the holiday means the work shift, not HOL.
+  function grantHolidayEntitlement(): void {
+    if (holidayPolicy !== "entitlement" || !holShift) return;
+    for (const date of dates) {
+      if (!holidaySet.has(date)) continue;
+      const pp = findPPForDate(date);
+      if (!pp) continue;
+      for (const staff of activeStaff) {
+        if (pp.targetHours * staff.ftePercentage <= 0) continue;
+        if (isAssigned(staff.id, date)) continue;
+        const avail = evaluateAvailability(staff.availabilityRules, date, payPeriods, (pid, d) => isAssigned(pid, d));
+        if (!avail.available) continue;
+        assign(staff.id, date, holShift, "Holiday entitlement (normally scheduled day)", "holiday", 0.9);
+      }
+    }
+  }
+  grantHolidayEntitlement();
+
   // ── STEP 3: Fill shift to hit FTE hour targets (day-off clustering) ──
 
   // Records why STEP 3 couldn't lift a staff to target (key `staffId:ppStart` →
@@ -1862,8 +1910,6 @@ export function autoSchedule({
   // max-shift cap). The post-repair audit reads this so a residual shortfall is
   // reported with its real cause AND reflects the final (post-repair) state.
   const fillShortfallCause = new Map<string, string>();
-
-  const holShift = shiftTypes.find((st) => st.code === "HOL" && st.countsTowardFte) ?? null;
 
   if (fillShift) {
     const sortedPPs = [...payPeriods]
@@ -1999,8 +2045,13 @@ export function autoSchedule({
         const hoursPerDay = fillWe > 0 ? Math.min(fillWd, fillWe) : fillWd;
         const hoursNeeded = target - currentHours;
 
+        // Only the legacy "fill" policy lets a fill day land on a holiday (where it
+        // becomes HOL below). Under "entitlement" HOL is owed by STEP 2.75's
+        // scheduled-workday check alone — a fill shift that ignoresWorkingDays would
+        // otherwise hand HOL to a staffer that check rejected (Codex #3298). Under
+        // "none" no HOL exists at all. Either way fill work never lands on a closed day.
         const availableDates = ppDates.filter((d) =>
-          isAvailable(staff, d, fillShift)
+          isAvailable(staff, d, fillShift) && (holidayPolicy === "fill" || !holidaySet.has(d))
         );
 
         // Hour-deviation warnings are deferred to the post-repair audit so they
@@ -2069,7 +2120,7 @@ export function autoSchedule({
         let cappedByMax = false;
         for (const date of fillDates) {
           if (hours >= target) break;
-          const shift = holidaySet.has(date) && holShift ? holShift : fillShift;
+          const shift = holidayPolicy === "fill" && holidaySet.has(date) && holShift ? holShift : fillShift;
           // Rolling max is date-dependent — skip a capped date, keep trying later
           // ones. A residual shortfall is reported by the post-repair audit.
           if (isAtMaximum(staff, shift, date)) { cappedByMax = true; continue; }
@@ -2102,7 +2153,9 @@ export function autoSchedule({
   // to swap a tentative cell's shift to another staff, reconciliation would never see
   // it — silently bypassing first-come ordering and the PP-cap revoke/backfill. The
   // repair therefore leaves tentative cells alone; reconcileRequests() resolves them.
-  const NON_SWAPPABLE_STEPS = new Set(["request-leave", "request-shift", "request-tentative", "standing", "follower", "off"]);
+  // "holiday" (STEP 2.75 entitlement HOL) is leave, so isSwappableCell already rejects
+  // it via isLeave; listed here so the intent survives a HOL config change.
+  const NON_SWAPPABLE_STEPS = new Set(["request-leave", "request-shift", "request-tentative", "standing", "follower", "off", "holiday"]);
 
   function isSwappableCell(cell: { shiftTypeId: string; locked: boolean; noCount?: boolean; step?: string }): boolean {
     if (cell.locked || cell.noCount || !cell.step || NON_SWAPPABLE_STEPS.has(cell.step)) return false;
@@ -2379,9 +2432,12 @@ export function autoSchedule({
     // A discretionary day-filling cell (STEP 3 "fill") the staff holds on `date`. It's
     // reclaimable: backfill may convert it to the scarce requested shift (e.g. a YA OR
     // fill day → the ORL they needed to hit target). Locked / follower / off cells aren't.
+    // An entitlement HOL (STEP 2.75, step "holiday") is reclaimable the same way:
+    // working the holiday means the work shift, not HOL (handoff 740, decision 3).
+    const RECLAIMABLE_STEPS = new Set(["fill", "holiday"]);
     function fillCellAt(staffId: string, date: string) {
       const c = grid.get(`${staffId}:${date}`);
-      return c && c.step === "fill" && !c.locked && !c.noCount ? c : null;
+      return c && c.step !== undefined && RECLAIMABLE_STEPS.has(c.step) && !c.locked && !c.noCount ? c : null;
     }
 
     // Can `p` legally take `st` on `date`, treating a reclaimable fill cell as free?
@@ -2398,10 +2454,11 @@ export function autoSchedule({
     function releaseFill(staffId: string, date: string) {
       const fc = fillCellAt(staffId, date);
       if (!fc) return;
+      const step = fc.step!;
       grid.delete(`${staffId}:${date}`);
-      const idx = suggestions.findIndex((s) => s.staffId === staffId && s.date === date && s.code === fc.code && s.step === "fill");
+      const idx = suggestions.findIndex((s) => s.staffId === staffId && s.date === date && s.code === fc.code && s.step === step);
       if (idx >= 0) suggestions.splice(idx, 1);
-      byStep["fill"] = Math.max(0, (byStep["fill"] ?? 0) - 1);
+      byStep[step] = Math.max(0, (byStep[step] ?? 0) - 1);
     }
 
     // Best backfill for a freed (st, date) slot: conflict-free claimants by first-come,
@@ -2497,6 +2554,8 @@ export function autoSchedule({
   }
   if (reconcilePolicy === "reconcile" && tentativeMeta.size > 0) {
     reconcileRequests();
+    // A holiday cell a revoked tentative request just vacated is still owed HOL.
+    grantHolidayEntitlement();
   }
 
   // ── Post-repair hours audit ──
@@ -2648,7 +2707,11 @@ export function autoSchedule({
       for (const [date] of requestAwayByDate) {
         let awayTotal = 0;
         for (const [k, v] of grid.entries()) {
-          if (k.endsWith(`:${date}`) && isAwayShift(v.shiftTypeId)) awayTotal++;
+          // HOL is holiday pay, not an absence the cap is meant to limit — on a
+          // holiday it would otherwise count every staffer. Keyed on the SHIFT, not
+          // the placing step: a persisted HOL (existingAssignments carry no step)
+          // must read the same on a re-run / Live re-solve as a fresh one.
+          if (k.endsWith(`:${date}`) && isAwayShift(v.shiftTypeId) && v.code !== "HOL") awayTotal++;
         }
         if (awayTotal > maxLeavePerDay) {
           warnings.push(`${date}: ${awayTotal} staff away exceeds the soft leave limit of ${maxLeavePerDay} (honoring away requests)`);

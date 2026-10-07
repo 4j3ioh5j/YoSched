@@ -6,6 +6,7 @@ import { isValidDateFormat } from "@/lib/date-format";
 import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES, validateOffStrategyOrder } from "@/lib/schedule-requests";
 import { isLiveScope, LIVE_SCOPES } from "@/lib/live-scope";
 import { isShiftShareBasis, SHIFT_SHARE_BASES } from "@/lib/shift-share";
+import { isHolidayPolicy, HOLIDAY_POLICIES } from "@/lib/holiday-policy";
 import { validateStaffOrderCriteria } from "@/lib/staff-order";
 
 export async function GET() {
@@ -24,7 +25,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy } = body;
 
   // Mode is STRICTLY validated on write — a bad value is rejected, never coerced to
   // the default (which would silently turn a typo into "full"). Reads stay lenient.
@@ -39,6 +40,9 @@ export async function PUT(req: NextRequest) {
   }
   if (shiftShareBasis !== undefined && !isShiftShareBasis(shiftShareBasis)) {
     return NextResponse.json({ error: `shiftShareBasis must be one of ${SHIFT_SHARE_BASES.join(", ")}` }, { status: 400 });
+  }
+  if (holidayPolicy !== undefined && !isHolidayPolicy(holidayPolicy)) {
+    return NextResponse.json({ error: `holidayPolicy must be one of ${HOLIDAY_POLICIES.join(", ")}` }, { status: 400 });
   }
 
   // Schedule column order: strict on write like the modes above (null explicitly
@@ -84,6 +88,7 @@ export async function PUT(req: NextRequest) {
       ...(offOrder !== undefined && { defaultOffStrategyOrder: offOrder }),
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
       ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
+      ...(isHolidayPolicy(holidayPolicy) && { holidayPolicy }),
       ...(columnOrder !== undefined && { staffColumnOrder: columnOrder === null ? Prisma.DbNull : columnOrder }),
     },
     create: {
@@ -97,6 +102,7 @@ export async function PUT(req: NextRequest) {
       ...(offOrder !== undefined && { defaultOffStrategyOrder: offOrder }),
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
       ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
+      ...(isHolidayPolicy(holidayPolicy) && { holidayPolicy }),
       ...(columnOrder != null && { staffColumnOrder: columnOrder }),
     },
   });

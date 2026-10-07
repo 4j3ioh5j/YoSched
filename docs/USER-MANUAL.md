@@ -466,6 +466,14 @@ Admins set two policies in **Settings → Scheduling Preferences**:
   *Equal per person*. Shifts a staffer already holds in the window (requests, manual
   entries) count toward their share. Hard per-staff limits and requests always rank
   above the share.
+- **Holiday pay (HOL):** who the auto-scheduler gives HOL on a holiday. *Scheduled
+  workday* (the default) — anyone normally scheduled on the holiday's weekday gets HOL;
+  it counts toward their pay-period hours and replaces a work day, never adds one. Staff
+  already working the holiday (CALL, ORC…) keep their shift; approved leave stays leave;
+  staff with no pay-period target (fee basis) get nothing. *Hours fill only* — the older
+  behavior: HOL appears only when the hours fill happens to land on the holiday, so a
+  staffer already at target gets X. *None* — the engine never places HOL. Hours per HOL
+  come from the HOL shift type's holiday hours.
 
 ---
 
@@ -687,6 +695,7 @@ menu; **Save Staffing Rules** to apply.
   strength.
 - **Conflicting shift requests** — Reconcile (first-come) / Honor always.
 - **Scheduled shift share** — Proportional to FTE / Equal per person.
+- **Holiday pay (HOL)** — Scheduled workday / Hours fill only / None.
 - **Default day-off fulfillment order** — a reorderable list of strategies (e.g., ORC
   adjacent, ORL pair, then specific leave types) the engine tries in order.
 

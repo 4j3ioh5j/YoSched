@@ -6,6 +6,7 @@ import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKe
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
 import { SHIFT_SHARE_BASES, type ShiftShareBasis } from "@/lib/shift-share";
+import { HOLIDAY_POLICIES, type HolidayPolicy } from "@/lib/holiday-policy";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
 import { reconcileOrder, MAX_PROFILE_NAME_LENGTH } from "@/lib/autogen-profile";
 import { OffStrategyEditor } from "@/components/off-strategy-editor";
@@ -86,6 +87,7 @@ type SchedulingPrefs = {
   defaultOffStrategyOrder: string[];
   defaultLiveScope: LiveScope;
   shiftShareBasis: ShiftShareBasis;
+  holidayPolicy: HolidayPolicy;
   payPeriodAnchor: string | null;
   payPeriodLengthDays: number;
 };
@@ -2652,6 +2654,32 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
     }
   }
 
+  const [holidayStatus, setHolidayStatus] = useState<SaveStatus>("idle");
+  async function saveHolidayPolicy(value: HolidayPolicy) {
+    const prev = prefs.holidayPolicy;
+    setPrefs((p) => ({ ...p, holidayPolicy: value }));
+    setHolidayStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ holidayPolicy: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setHolidayStatus("saved");
+      setTimeout(() => setHolidayStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, holidayPolicy: prev }));
+      setHolidayStatus("error");
+    }
+  }
+
+  const HOLIDAY_LABELS: Record<HolidayPolicy, { label: string; hint: string }> = {
+    entitlement: { label: "Scheduled workday", hint: "Anyone normally scheduled on the holiday's weekday gets HOL; it counts toward pay-period hours and replaces a work day. Staff working the holiday keep their shift" },
+    fill: { label: "Hours fill only", hint: "HOL only when the hours fill happens to land on the holiday; staff already at target get X" },
+    none: { label: "None", hint: "The auto-scheduler never places HOL; a holiday is a plain day off" },
+  };
+
   const SHARE_LABELS: Record<ShiftShareBasis, { label: string; hint: string }> = {
     fte: { label: "Proportional to FTE", hint: "A 0.5 FTE carries half as many CALL/ORC/ORL slots as a 1.0 FTE; matches the FTE-normalized equity report" },
     head: { label: "Equal per person", hint: "Every eligible staffer takes the same number of slots regardless of FTE" },
@@ -2848,6 +2876,36 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
               >
                 <span className="text-sm font-medium">{SHARE_LABELS[basis].label}</span>
                 <span className="text-[11px] text-slate-500 mt-0.5">{SHARE_LABELS[basis].hint}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-slate-700/50">
+          <div className="text-sm font-medium text-slate-200">Holiday pay (HOL)</div>
+          <div className="text-xs text-slate-400">
+            Who the auto-scheduler gives HOL on a holiday. Approved leave, manual entries and work shifts already on the holiday are never replaced; staff with no pay-period target (fee basis) get nothing. Hours per HOL come from the HOL shift type&apos;s holiday hours.
+            {holidayStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
+            {holidayStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
+            {holidayStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
+          </div>
+          <div className="grid grid-cols-3 gap-2 mt-3">
+            {HOLIDAY_POLICIES.map((policy) => (
+              <button
+                key={policy}
+                onClick={() => canEdit && saveHolidayPolicy(policy)}
+                disabled={!canEdit}
+                title={HOLIDAY_LABELS[policy].hint}
+                className={[
+                  "flex flex-col items-start px-3 py-2 rounded-lg border text-left transition-colors",
+                  prefs.holidayPolicy === policy
+                    ? "bg-blue-600/20 border-blue-500 text-blue-300"
+                    : "bg-slate-700/30 border-slate-600/50 text-slate-300 hover:border-slate-500",
+                  !canEdit ? "opacity-60 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                <span className="text-sm font-medium">{HOLIDAY_LABELS[policy].label}</span>
+                <span className="text-[11px] text-slate-500 mt-0.5">{HOLIDAY_LABELS[policy].hint}</span>
               </button>
             ))}
           </div>
