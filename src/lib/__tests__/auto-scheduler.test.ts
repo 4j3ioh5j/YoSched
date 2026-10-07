@@ -2382,6 +2382,125 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
     ).toBe(true);
   });
 
+  describe("scheduled shift share (seeding, FTE basis, long-shift fit)", () => {
+    // 8h shift (same as fill) so the long-shift fit tiebreak is inert and only the
+    // share count + gap tiebreak decide.
+    const CALL8 = makeShift("st-call", "CALL", { defaultHours: 8, schedulePriority: 2, autoSchedulable: true });
+    const ORC16 = makeShift("st-orc", "ORC", { defaultHours: 16, schedulePriority: 2, autoSchedulable: true });
+    const elig = (...ids: string[]) => ({ eligibleShiftTypeIds: ["st-or", "st-off", ...ids] });
+
+    it("seeds the per-run count from same-shift cells already in the window", () => {
+      // p1 already holds a CALL on Mon (e.g. an approved request). Two more CALL
+      // slots (Tue, Wed) must go to p2 and p3 — NOT hand p1 a fresh share as if
+      // the Monday cell didn't exist.
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 3), // Mon..Wed
+        staff: [makeStaff("p1", "AB", elig("st-call")), makeStaff("p2", "CD", elig("st-call")), makeStaff("p3", "EF", elig("st-call"))],
+        shiftTypes: [OR, CALL8, OFF],
+        existingAssignments: [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-call", code: "CALL", isLocked: true }],
+        payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
+        staffingRequirements: [2, 3].map((d) => ({ shiftCode: "CALL", dayKey: String(d), minCount: 1 })),
+      });
+      const calls = result.suggestions.filter((s) => s.code === "CALL");
+      expect(calls.map((s) => s.staffId).sort()).toEqual(["p2", "p3"]);
+    });
+
+    it("seeds a weekend-paired shift in the engine's own unit: a Sat+Sun pair counts ONCE", () => {
+      // The weekend branch calls recordAssignment once per weekend (Saturday only).
+      // p1 already holds a full CALL weekend (two cells). Seeding must count that
+      // as 1, not 2 — otherwise with 3 staff and 3 more weekends p1 would be
+      // skipped for the 4th weekend as if already double-loaded.
+      const CALLW = makeShift("st-call", "CALL", { defaultHours: 8, schedulePriority: 2, autoSchedulable: true, weekendPaired: true });
+      const everyDay = [0, 1, 2, 3, 4, 5, 6].map((d) => ({ type: "available" as const, strength: "rule" as const, ...wEvery(d) }));
+      const dates: string[] = [];
+      const cur = new Date("2025-05-10T12:00:00"); // Sat
+      while (dates.length < 23) { // through Sun 2025-06-01: four weekends
+        dates.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`);
+        cur.setDate(cur.getDate() + 1);
+      }
+      const mk = (id: string, ini: string) => makeStaff(id, ini, { ...elig("st-call"), availabilityRules: everyDay });
+      const result = runSchedule({
+        dates,
+        staff: [mk("p1", "AB"), mk("p2", "CD"), mk("p3", "EF")],
+        shiftTypes: [OR, CALLW, OFF],
+        existingAssignments: [
+          { staffId: "p1", date: "2025-05-10", shiftTypeId: "st-call", code: "CALL", isLocked: true },
+          { staffId: "p1", date: "2025-05-11", shiftTypeId: "st-call", code: "CALL", isLocked: true },
+        ],
+        payPeriods: [
+          { startDate: "2025-04-27", endDate: "2025-05-10", targetHours: 80 },
+          { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 },
+          { startDate: "2025-05-25", endDate: "2025-06-07", targetHours: 80 },
+        ],
+        staffingRequirements: [{ shiftCode: "CALL", dayKey: "6", minCount: 1 }, { shiftCode: "CALL", dayKey: "0", minCount: 1 }],
+      });
+      const sats = result.suggestions.filter((s) => s.code === "CALL" && new Date(s.date + "T12:00:00").getDay() === 6);
+      const weekendsBy = (id: string) => sats.filter((s) => s.staffId === id).length;
+      // Three generated weekends: p2 and p3 take one each (p1 is seeded at 1), then
+      // the fourth returns to p1 — everyone ends at one weekend apiece.
+      expect(sats).toHaveLength(3);
+      expect(weekendsBy("p1")).toBe(1);
+      expect(weekendsBy("p2")).toBe(1);
+      expect(weekendsBy("p3")).toBe(1);
+    });
+
+    it("shiftShareBasis 'fte' splits slots in proportion to FTE; 'head' splits per person", () => {
+      const staff = () => [
+        makeStaff("p1", "AB", elig("st-call")),
+        makeStaff("p2", "CD", { ...elig("st-call"), ftePercentage: 0.5 }),
+      ];
+      const common = {
+        dates: weekdayDates("2025-05-12", 10), // two Mon..Fri weeks, one PP
+        shiftTypes: [OR, CALL8, OFF],
+        payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
+        staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "CALL", dayKey: String(d), minCount: 1 })),
+      };
+      const count = (r: AutoScheduleResult, id: string) => r.suggestions.filter((s) => s.code === "CALL" && s.staffId === id).length;
+
+      const fte = runSchedule({ ...common, staff: staff(), schedulingPreferences: { ...defaultPrefs, shiftShareBasis: "fte" } });
+      expect(count(fte, "p1")).toBe(6);
+      expect(count(fte, "p2")).toBe(4);
+
+      const head = runSchedule({ ...common, staff: staff(), schedulingPreferences: { ...defaultPrefs, shiftShareBasis: "head" } });
+      expect(count(head, "p1")).toBe(5);
+      expect(count(head, "p2")).toBe(5);
+
+      // Default (unset) is FTE-proportional.
+      const dflt = runSchedule({ ...common, staff: staff() });
+      expect(count(dflt, "p1")).toBe(6);
+    });
+
+    it("a long shift goes to the equally-shared candidate with the MOST room to target", () => {
+      // Both 1.0 FTE, target 80. p2 is pre-loaded with 8h; p1 is empty. Under the
+      // old absolute-distance fit p2 won (|80-24| < |80-16|); the empty staffer
+      // must win now. Neither has a divisibility need (both remainders are 8h
+      // multiples), so this exercises the "most room" tier alone.
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 2), // Mon, Tue
+        staff: [makeStaff("p1", "AB", elig("st-orc")), makeStaff("p2", "CD", elig("st-orc"))],
+        shiftTypes: [OR, ORC16, OFF],
+        existingAssignments: [{ staffId: "p2", date: "2025-05-12", shiftTypeId: "st-or", code: "OR", isLocked: true }],
+        payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
+        staffingRequirements: [{ shiftCode: "ORC", dayKey: "2", minCount: 1 }],
+      });
+      const orc = result.suggestions.find((s) => s.code === "ORC");
+      expect(orc?.staffId).toBe("p1");
+    });
+
+    it("a part-timer does not outrank an empty full-timer for a long shift just by having a small target", () => {
+      // 0.2 FTE (target 16): the old fit scored 16h ORC as a perfect 0 for them and
+      // 64 for the empty full-timer. Same share count (both 0) → most room → p1.
+      const result = runSchedule({
+        dates: weekdayDates("2025-05-12", 1),
+        staff: [makeStaff("p1", "AB", elig("st-orc")), makeStaff("p2", "CD", { ...elig("st-orc"), ftePercentage: 0.2 })],
+        shiftTypes: [OR, ORC16, OFF],
+        payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
+        staffingRequirements: [{ shiftCode: "ORC", dayKey: "1", minCount: 1 }],
+      });
+      expect(result.suggestions.find((s) => s.code === "ORC")?.staffId).toBe("p1");
+    });
+  });
+
   it("routes a scarce long shift to whoever it brings closest to target (Option B)", () => {
     // p2 already has 24h locked this PP (target 36 → needs exactly one 12h ORL).
     // p1 has 0h. The single ORL slot must go to p2 (best fit), not p1.

@@ -10,6 +10,7 @@ import { getPayPeriods } from "@/lib/pay-periods-server";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, type ScheduleRequestData } from "@/lib/schedule-requests";
 import { effectiveTargetsForStaff, type DepartmentShiftTarget } from "@/lib/department-targets";
+import { parseShiftShareBasis } from "@/lib/shift-share";
 
 /**
  * Assemble the engine input for [startDate, endDate], expanded outward to cover
@@ -331,6 +332,7 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       pendingRequestMode: parsePendingRequestMode(schedulingPrefsRow?.pendingRequestMode),
       maxLeavePerDay: schedulingPrefsRow?.maxLeavePerDay ?? 0,
       requestConflictPolicy: parseRequestConflictPolicy(schedulingPrefsRow?.requestConflictPolicy),
+      shiftShareBasis: parseShiftShareBasis(schedulingPrefsRow?.shiftShareBasis),
     },
     equityFactors: equityFactors.map((f) => ({
       factorType: f.factorType,

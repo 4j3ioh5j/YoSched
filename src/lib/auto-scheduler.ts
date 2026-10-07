@@ -4,6 +4,7 @@ import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter } from "./f
 import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, isAtRollingMaximum, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
 import { foldRequestsForDate, detectRequestConflicts, coversDate, parseOffStrategyOrder, LEAVE_STRATEGY_PREFIX, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode, type RequestConflictPolicy } from "./schedule-requests";
 import { matchesWhen, standingToWhen } from "./recurrence";
+import { type ShiftShareBasis } from "./shift-share";
 
 export type ScheduleStaff = {
   id: string;
@@ -150,6 +151,7 @@ type SchedulingPreferences = {
   pendingRequestMode?: PendingRequestMode; // how to treat PENDING requests; default "off"
   maxLeavePerDay?: number; // soft cap on staff away per day; 0/undefined = no cap (warn-only)
   requestConflictPolicy?: RequestConflictPolicy; // forced-request contention resolution; default "reconcile"
+  shiftShareBasis?: ShiftShareBasis; // split of a scheduled shift's slots across eligible staff: "fte" (default) | "head"
 };
 
 export type Suggestion = {
@@ -1349,7 +1351,19 @@ export function autoSchedule({
   // multiple staff have the same count — it never causes one person to absorb
   // all the burden just because they're historically underloaded.
   //
-  // Sort priority: fewest-in-this-run → longest-gap-since-last → fewest-historical
+  // "Evenly" is per the department's shiftShareBasis: "fte" divides each staff's
+  // run count by their FTE before comparing (a 0.5 FTE carries half the slots of a
+  // 1.0 FTE); "head" compares raw counts. The run count is SEEDED from cells of the
+  // same shift already in the window (approved/pending requests, manual entries,
+  // a prior run's spill) so a staffer who already holds one isn't handed a full
+  // extra share as if they held none.
+  //
+  // Sort priority: fewest-in-this-run (share-weighted) → long-shift fit →
+  // longest-gap-since-last → fewest-historical
+  const shareBasis: ShiftShareBasis = schedulingPreferences.shiftShareBasis ?? "fte";
+  function shareWeight(p: ScheduleStaff): number {
+    return shareBasis === "fte" && p.ftePercentage > 0 ? p.ftePercentage : 1;
+  }
 
   const scheduledShifts = shiftTypes
     .filter((st) => st.autoSchedulable && st.schedulePriority != null && !st.isFillShift && !st.isOffShift)
@@ -1372,28 +1386,63 @@ export function autoSchedule({
     const runCount = new Map<string, number>();
     const lastRunDate = new Map<string, string>();
     for (const p of eligible) runCount.set(p.id, 0);
+    // Seed from counting cells of this shift already on the grid (STEP 1 requests,
+    // manual/locked entries, prior-run spill inside the window). Must use the SAME
+    // unit as recordAssignment below: for a weekend-paired shift the engine counts
+    // a Sat+Sun pair ONCE (recordAssignment runs for the Saturday only), so a
+    // Sunday cell whose Saturday holds the same shift for the same staff is the
+    // second half of an already-counted pair and is skipped. A lone Sunday, a
+    // holiday or a weekday cell each count one, matching the holiday/bridge passes.
+    for (const [k, v] of grid.entries()) {
+      if (v.code !== st.code || v.noCount) continue;
+      const sep = k.indexOf(":");
+      const staffId = k.slice(0, sep);
+      const date = k.slice(sep + 1);
+      if (!runCount.has(staffId) || !dateSet.has(date)) continue;
+      if (st.weekendPaired && getDow(date) === 0) {
+        const satCell = getCell(staffId, prevDate(date));
+        if (satCell && satCell.code === st.code && !satCell.noCount) continue;
+      }
+      runCount.set(staffId, (runCount.get(staffId) ?? 0) + 1);
+      const last = lastRunDate.get(staffId);
+      if (!last || date > last) lastRunDate.set(staffId, date);
+    }
+    function shareCount(p: ScheduleStaff): number {
+      return (runCount.get(p.id) ?? 0) / shareWeight(p);
+    }
 
     function pickStaff(pool: ScheduleStaff[], date?: string): ScheduleStaff {
-      // Option B: for shifts longer than the fill shift, prefer the staff whose
-      // resulting PP hours land closest to their target (best fit), so scarce
-      // long shifts (e.g. ORL=12h) go to whoever needs the extra hours to reach
-      // target — not merely whoever is next in the even-distribution rotation.
-      // This is ranked BELOW every hard/soft min/max + request signal AND below
-      // even distribution (it only breaks ties among equally-distributed
-      // candidates), so it can never concentrate a long shift on one person —
-      // preserving the Slice-2 ORC even-distribution guarantee. Gated to long
-      // shifts. It's the secondary lever; STEP 3b's repair pass is the guarantee.
+      // Option B (long-shift fit): for shifts longer than the fill shift, break
+      // ties among equally-shared candidates by who the long shift serves best.
+      // Two tiers, lower key wins:
+      //   1. DIVISIBILITY NEED — staff whose remaining hours to target can't be
+      //      reached with fill-shift days alone (e.g. 36h left, 8h fill → needs a
+      //      12h ORL) come first, closest-to-target among them. This is the lever
+      //      the ORL pairing/repair passes rely on.
+      //   2. Everyone else by MOST ROOM to target (signed: projected − target, so
+      //      an overshoot sorts last). This replaces the old absolute-distance
+      //      |target − projected|, which ranked an EMPTY full-timer (0/80 → 64)
+      //      behind every part-timer (0/16 → 0) and every staffer pre-loaded with
+      //      manual hours — the ORC under-distribution of veteran full-timers.
+      // Ranked BELOW every hard/soft min/max + request signal AND below the share
+      // count, so it never concentrates a long shift on one person. Gated to long
+      // shifts. STEP 3b's repair pass remains the guarantee.
       const fillHrsForFit = fillShift ? fillShift.defaultHours : 0;
       let fitMap: Map<string, number> | null = null;
       if (date && fillHrsForFit > 0 && st.defaultHours > fillHrsForFit) {
         const pp = findPPForDate(date);
         if (pp) {
           fitMap = new Map();
+          const NEED_TIER = -1e9;
           for (const p of pool) {
             const target = pp.targetHours * p.ftePercentage;
             if (target <= 0) { fitMap.set(p.id, Infinity); continue; }
-            const projected = ppHoursForStaff(p.id, pp) + getShiftHours(p.id, st, overrideMap, dayTypeOf(date, holidaySet));
-            fitMap.set(p.id, Math.abs(target - projected));
+            const current = ppHoursForStaff(p.id, pp);
+            const projected = current + getShiftHours(p.id, st, overrideMap, dayTypeOf(date, holidaySet));
+            const remaining = target - current;
+            const fillMultiple = Math.round(remaining / fillHrsForFit) * fillHrsForFit;
+            const needsLong = remaining > 0 && Math.abs(remaining - fillMultiple) > 1e-9;
+            fitMap.set(p.id, needsLong ? NEED_TIER + Math.abs(target - projected) : projected - target);
           }
         }
       }
@@ -1420,11 +1469,11 @@ export function autoSchedule({
           const biasB = requestBias(b.id, date, st);
           if (biasA !== biasB) return biasB - biasA;
         }
-        const countDiff = (runCount.get(a.id) ?? 0) - (runCount.get(b.id) ?? 0);
-        if (countDiff !== 0) return countDiff;
-        // Option B best-fit (long shifts only): among equally-distributed
-        // candidates, prefer whoever's post-assignment hours land closest to
-        // target. Subordinate to even distribution so it never concentrates.
+        const countDiff = shareCount(a) - shareCount(b);
+        if (Math.abs(countDiff) > 1e-9) return countDiff;
+        // Option B long-shift fit (see fitMap above): among equally-shared
+        // candidates, divisibility need first, then most room to target.
+        // Subordinate to the share count so it never concentrates.
         if (fitMap) {
           const fitA = fitMap.get(a.id) ?? Infinity;
           const fitB = fitMap.get(b.id) ?? Infinity;

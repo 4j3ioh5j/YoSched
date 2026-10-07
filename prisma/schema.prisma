@@ -334,6 +334,7 @@ model SchedulingPreferences {
   payPeriodAnchor         DateTime? @db.Date // any real period start; with payPeriodLengthDays defines the infinite period ladder (null = legacy manually-generated periods)
   payPeriodLengthDays     Int      @default(14)
   staffColumnOrder        Json?    // ordered criteria stack for schedule column order, [{key, dir?}] (see src/lib/staff-order.ts); null = default (employmentType → ftePercentage desc → alphabetical)
+  shiftShareBasis         String   @default("fte") // auto-scheduler split of a scheduled shift's slots across eligible staff: "fte" (proportional to FTE) | "head" (equal per person) — see src/lib/shift-share.ts
 
   @@map("scheduling_preferences")
 }

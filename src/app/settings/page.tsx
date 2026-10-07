@@ -6,6 +6,7 @@ import { getSession } from "@/lib/auth-guard";
 import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, DEFAULT_OFF_STRATEGY_ORDER } from "@/lib/schedule-requests";
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
 import { parseLiveScope } from "@/lib/live-scope";
+import { parseShiftShareBasis } from "@/lib/shift-share";
 import { parseStaffOrderCriteria } from "@/lib/staff-order";
 import { redirect } from "next/navigation";
 
@@ -60,6 +61,7 @@ export default async function Settings() {
       ? parseOffStrategyOrder(schedulingPrefsRow.defaultOffStrategyOrder, leaveShiftIds)
       : [...DEFAULT_OFF_STRATEGY_ORDER],
     defaultLiveScope: parseLiveScope(schedulingPrefsRow?.defaultLiveScope),
+    shiftShareBasis: parseShiftShareBasis(schedulingPrefsRow?.shiftShareBasis),
     payPeriodAnchor: schedulingPrefsRow?.payPeriodAnchor?.toISOString().split("T")[0] ?? null,
     payPeriodLengthDays: schedulingPrefsRow?.payPeriodLengthDays ?? 14,
   };

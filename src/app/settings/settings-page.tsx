@@ -5,6 +5,7 @@ import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
+import { SHIFT_SHARE_BASES, type ShiftShareBasis } from "@/lib/shift-share";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
 import { reconcileOrder, MAX_PROFILE_NAME_LENGTH } from "@/lib/autogen-profile";
 import { OffStrategyEditor } from "@/components/off-strategy-editor";
@@ -84,6 +85,7 @@ type SchedulingPrefs = {
   requestConflictPolicy: RequestConflictPolicy;
   defaultOffStrategyOrder: string[];
   defaultLiveScope: LiveScope;
+  shiftShareBasis: ShiftShareBasis;
   payPeriodAnchor: string | null;
   payPeriodLengthDays: number;
 };
@@ -2630,6 +2632,31 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
     }
   }
 
+  const [shareStatus, setShareStatus] = useState<SaveStatus>("idle");
+  async function saveShareBasis(value: ShiftShareBasis) {
+    const prev = prefs.shiftShareBasis;
+    setPrefs((p) => ({ ...p, shiftShareBasis: value }));
+    setShareStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shiftShareBasis: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setShareStatus("saved");
+      setTimeout(() => setShareStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, shiftShareBasis: prev }));
+      setShareStatus("error");
+    }
+  }
+
+  const SHARE_LABELS: Record<ShiftShareBasis, { label: string; hint: string }> = {
+    fte: { label: "Proportional to FTE", hint: "A 0.5 FTE carries half as many CALL/ORC/ORL slots as a 1.0 FTE; matches the FTE-normalized equity report" },
+    head: { label: "Equal per person", hint: "Every eligible staffer takes the same number of slots regardless of FTE" },
+  };
+
   const POLICY_LABELS: Record<RequestConflictPolicy, { label: string; hint: string }> = {
     reconcile: { label: "Reconcile (first-come)", hint: "Place requests tentatively; grant each only if conflict-free, earliest request wins a contended slot" },
     "honor-always": { label: "Honor always", hint: "Force every requested shift first and keep it, even past the staffer's hour cap" },
@@ -2791,6 +2818,36 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
               >
                 <span className="text-sm font-medium">{MODE_LABELS[mode].label}</span>
                 <span className="text-[11px] text-slate-500 mt-0.5">{MODE_LABELS[mode].hint}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-slate-700/50">
+          <div className="text-sm font-medium text-slate-200">Scheduled shift share</div>
+          <div className="text-xs text-slate-400">
+            How the auto-scheduler splits a scheduled shift&apos;s slots (CALL, ORC, ORL…) across eligible staff within a run. Shifts a staffer already holds in the window (requests, manual entries) count toward their share. Hard per-staff limits and requests always rank above this.
+            {shareStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
+            {shareStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
+            {shareStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
+          </div>
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            {SHIFT_SHARE_BASES.map((basis) => (
+              <button
+                key={basis}
+                onClick={() => canEdit && saveShareBasis(basis)}
+                disabled={!canEdit}
+                title={SHARE_LABELS[basis].hint}
+                className={[
+                  "flex flex-col items-start px-3 py-2 rounded-lg border text-left transition-colors",
+                  prefs.shiftShareBasis === basis
+                    ? "bg-blue-600/20 border-blue-500 text-blue-300"
+                    : "bg-slate-700/30 border-slate-600/50 text-slate-300 hover:border-slate-500",
+                  !canEdit ? "opacity-60 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                <span className="text-sm font-medium">{SHARE_LABELS[basis].label}</span>
+                <span className="text-[11px] text-slate-500 mt-0.5">{SHARE_LABELS[basis].hint}</span>
               </button>
             ))}
           </div>

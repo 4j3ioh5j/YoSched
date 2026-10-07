@@ -5,6 +5,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { isValidDateFormat } from "@/lib/date-format";
 import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES, validateOffStrategyOrder } from "@/lib/schedule-requests";
 import { isLiveScope, LIVE_SCOPES } from "@/lib/live-scope";
+import { isShiftShareBasis, SHIFT_SHARE_BASES } from "@/lib/shift-share";
 import { validateStaffOrderCriteria } from "@/lib/staff-order";
 
 export async function GET() {
@@ -23,7 +24,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis } = body;
 
   // Mode is STRICTLY validated on write — a bad value is rejected, never coerced to
   // the default (which would silently turn a typo into "full"). Reads stay lenient.
@@ -35,6 +36,9 @@ export async function PUT(req: NextRequest) {
   }
   if (defaultLiveScope !== undefined && !isLiveScope(defaultLiveScope)) {
     return NextResponse.json({ error: `defaultLiveScope must be one of ${LIVE_SCOPES.join(", ")}` }, { status: 400 });
+  }
+  if (shiftShareBasis !== undefined && !isShiftShareBasis(shiftShareBasis)) {
+    return NextResponse.json({ error: `shiftShareBasis must be one of ${SHIFT_SHARE_BASES.join(", ")}` }, { status: 400 });
   }
 
   // Schedule column order: strict on write like the modes above (null explicitly
@@ -79,6 +83,7 @@ export async function PUT(req: NextRequest) {
       ...(isRequestConflictPolicy(requestConflictPolicy) && { requestConflictPolicy }),
       ...(offOrder !== undefined && { defaultOffStrategyOrder: offOrder }),
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
+      ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
       ...(columnOrder !== undefined && { staffColumnOrder: columnOrder === null ? Prisma.DbNull : columnOrder }),
     },
     create: {
@@ -91,6 +96,7 @@ export async function PUT(req: NextRequest) {
       ...(isRequestConflictPolicy(requestConflictPolicy) && { requestConflictPolicy }),
       ...(offOrder !== undefined && { defaultOffStrategyOrder: offOrder }),
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
+      ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
       ...(columnOrder != null && { staffColumnOrder: columnOrder }),
     },
   });

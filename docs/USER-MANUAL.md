@@ -460,6 +460,12 @@ Admins set two policies in **Settings → Scheduling Preferences**:
   only if conflict-free, earliest request wins a contested slot — or *Honor always* —
   force every requested shift and keep it. Human-approved placements are never revoked
   either way.
+- **Scheduled shift share:** how the slots of a scheduled shift (CALL, ORC, ORL…) are
+  split across eligible staff within a run — *Proportional to FTE* (a 0.5 FTE carries
+  half as many as a 1.0 FTE; the default, matching the FTE-normalized equity report) or
+  *Equal per person*. Shifts a staffer already holds in the window (requests, manual
+  entries) count toward their share. Hard per-staff limits and requests always rank
+  above the share.
 
 ---
 
@@ -680,6 +686,7 @@ menu; **Save Staffing Rules** to apply.
 - **Pending requests in the auto-schedule** — Only approved / As preferences / Full
   strength.
 - **Conflicting shift requests** — Reconcile (first-come) / Honor always.
+- **Scheduled shift share** — Proportional to FTE / Equal per person.
 - **Default day-off fulfillment order** — a reorderable list of strategies (e.g., ORC
   adjacent, ORL pair, then specific leave types) the engine tries in order.
 
