@@ -105,6 +105,7 @@ export default async function Settings() {
           shiftCode: r.shiftCode,
           dayKey: r.dayKey,
           minCount: r.minCount,
+          preferredCount: r.preferredCount,
         }))}
         payPeriods={payPeriods.map((pp) => ({
           id: pp.id,

@@ -321,6 +321,7 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       shiftCode: sr.shiftCode,
       dayKey: sr.dayKey,
       minCount: sr.minCount,
+      preferredCount: sr.preferredCount,
     })),
     schedulingPreferences: {
       prefer3DayWeekends: schedulingPrefsRow?.prefer3DayWeekends ?? true,

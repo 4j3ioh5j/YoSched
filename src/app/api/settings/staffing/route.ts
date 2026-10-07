@@ -6,12 +6,18 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { requirements, columns } = await req.json() as {
-    requirements: { shiftCode: string; dayKey: string; minCount: number }[];
+    requirements: { shiftCode: string; dayKey: string; minCount: number; preferredCount?: number }[];
     columns: string[];
   };
 
   if (!requirements || !columns) {
     return NextResponse.json({ error: "Missing data" }, { status: 400 });
+  }
+  const isCount = (v: unknown) => Number.isInteger(v) && (v as number) >= 0;
+  for (const r of requirements) {
+    if (!isCount(r.minCount) || (r.preferredCount !== undefined && !isCount(r.preferredCount))) {
+      return NextResponse.json({ error: "Counts must be whole numbers ≥ 0" }, { status: 400 });
+    }
   }
 
   // Remove columns that are no longer tracked
@@ -23,8 +29,8 @@ export async function PUT(req: NextRequest) {
   for (const req of requirements) {
     await prisma.staffingRequirement.upsert({
       where: { shiftCode_dayKey: { shiftCode: req.shiftCode, dayKey: req.dayKey } },
-      update: { minCount: req.minCount },
-      create: req,
+      update: { minCount: req.minCount, preferredCount: req.preferredCount ?? 0 },
+      create: { shiftCode: req.shiftCode, dayKey: req.dayKey, minCount: req.minCount, preferredCount: req.preferredCount ?? 0 },
     });
   }
 
@@ -37,5 +43,6 @@ export async function PUT(req: NextRequest) {
     shiftCode: r.shiftCode,
     dayKey: r.dayKey,
     minCount: r.minCount,
+    preferredCount: r.preferredCount,
   })));
 }

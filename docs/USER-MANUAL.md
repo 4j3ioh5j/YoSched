@@ -676,10 +676,26 @@ days plus advanced rules). Delete is allowed only when no staff use the type.
 
 ### 10.3 Staffing Rules
 
-*Minimum staff per shift type per day of the week.* A grid of days (Mon–Sun plus a
-**Holiday** row) × shift codes; each cell is the minimum required count. The
-auto-generator always satisfies these first. Add/replace/remove columns via the header
-menu; **Save Staffing Rules** to apply.
+*Minimum and preferred staff per shift type per day of the week.* A grid of days
+(Mon–Sun plus a **Holiday** row) × shift codes; each shift has two cells per day:
+
+- **Min** — the required count. The auto-generator always satisfies these first, and
+  the grid's daily staffing alert fires below it.
+- **Pref** — the *safe* headcount (0 = no preference). Set this on the hours-fill shift
+  (OR) to even out daily headcount: when the auto-generator has a free day off to place,
+  it spends it on a day already at or above the preferred count before touching a
+  lighter day. Above the threshold, 3-/4-day-weekend and sequential-off preferences
+  decide as usual; if every day is short, the day off goes to the least-short day.
+  Example: min 4, pref 6 — at 4 one sick call breaks the day, so free days off are
+  steered away from days that would otherwise sit at 4 or 5.
+
+Days off are never created or removed by this — only the free ones move, and hours,
+requests and follow rules are untouched. When a preferred count is set, the minimum
+check for choosing a free day off looks at the *projected* headcount (staff already
+placed plus those still to be scheduled) rather than the running count, so staff
+scheduled early can place their days off deliberately instead of at the end of the
+pay period. Add/replace/remove columns via the
+header menu; **Save Staffing Rules** to apply.
 
 ### 10.4 Scheduling Preferences
 

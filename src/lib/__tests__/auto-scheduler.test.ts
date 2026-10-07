@@ -2643,6 +2643,95 @@ describe("autoSchedule — seeded candidates (Slice 4b)", () => {
 
 });
 
+describe("day balance — preferredCount on the fill shift (handoff #743)", () => {
+  // One week Mon–Fri, PP target 40h. p1 is 0.6 FTE → 24h = 3 of 5 days → TWO free
+  // days off; p2 and p3 are 1.0 FTE → all 5 days, no discretion. Long-weekend prefs
+  // ON so p1's free X days want Mon + Fri. Projections (excluding p1): every day 2
+  // until a locked ADM pulls p2/p3 away from OR on a date.
+  const ADM = makeShift("st-adm", "ADM", { countsTowardFte: true });
+  const week = weekdayDates("2025-05-12", 5); // Mon 05-12 … Fri 05-16
+  const prefsLongWeekend = { ...defaultPrefs, prefer3DayWeekends: true, threeDayWeekendWeight: 5, preferSequentialOff: true, sequentialOffWeight: 2 };
+  type Req = { shiftCode: string; dayKey: string; minCount: number; preferredCount?: number };
+  type Existing = { staffId: string; date: string; shiftTypeId: string; code: string; isLocked: boolean };
+  const base = (staffingRequirements: Req[], existing: Existing[] = []) => ({
+    dates: week,
+    staff: [makeStaff("p1", "AB", { ftePercentage: 0.6 }), makeStaff("p2", "CD"), makeStaff("p3", "EF")],
+    shiftTypes: [OR, ADM, OFF],
+    existingAssignments: existing,
+    payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
+    holidays: [],
+    desirabilityWeights: [],
+    standingCommitments: [],
+    staffOverrides: [],
+    dayPreferences: [],
+    historicalAssignments: [],
+    staffingRequirements,
+    schedulingPreferences: prefsLongWeekend,
+    equityFactors: [],
+    followRules: [],
+  });
+  // minCount stays 0: the existing hard gate ("can't take off a day whose CURRENT
+  // count is below the minimum") would otherwise block every off day for the first
+  // staffer processed. This block tests the preferred tier in isolation.
+  const weekReqs = (preferredCount: number): Req[] => ["1", "2", "3", "4", "5"].map((d) => ({ shiftCode: "OR", dayKey: d, minCount: 0, preferredCount }));
+  // p2 away from OR on Friday (locked ADM) → Friday projects to 1 (p3 only).
+  const p2FriAdm: Existing = { staffId: "p2", date: "2025-05-16", shiftTypeId: "st-adm", code: "ADM", isLocked: true };
+  const cellOf = (r: AutoScheduleResult, staffId: string, date: string) =>
+    r.suggestions.filter((s) => s.staffId === staffId && s.date === date).map((s) => s.code).pop();
+  const offDays = (r: AutoScheduleResult) => week.filter((d) => cellOf(r, "p1", d) === "X");
+
+  it("baseline (no preferred count): the free X days take Mon + Fri even though Friday is light", () => {
+    const r = autoSchedule(base([], [p2FriAdm]));
+    expect(offDays(r)).toEqual(["2025-05-12", "2025-05-16"]);
+  });
+
+  it("steers a free X away from a day projected below the preferred count", () => {
+    const r = autoSchedule(base(weekReqs(2), [p2FriAdm]));
+    // Friday projects to 1 (< 2) → p1 works Friday; Monday still projects to 2 and
+    // keeps its 3-day weekend; the second X clusters onto Tuesday.
+    expect(cellOf(r, "p1", "2025-05-16")).toBe("OR");
+    expect(offDays(r)).toEqual(["2025-05-12", "2025-05-13"]);
+  });
+
+  it("when every day is short, the X days go to the least-short days (long weekend loses)", () => {
+    // p3 away Thursday too → Thu and Fri project to 1, Mon–Wed to 2; preferred 3 → all short.
+    const p3ThuAdm: Existing = { staffId: "p3", date: "2025-05-15", shiftTypeId: "st-adm", code: "ADM", isLocked: true };
+    const r = autoSchedule(base(weekReqs(3), [p2FriAdm, p3ThuAdm]));
+    expect(cellOf(r, "p1", "2025-05-15")).toBe("OR");
+    expect(cellOf(r, "p1", "2025-05-16")).toBe("OR");
+    expect(offDays(r).length).toBe(2);
+  });
+
+  it("with a preferred count set, the minimum gate reads the PROJECTED count, so the first staffer can still choose", () => {
+    // Legacy gate: running count 0 < min 1 on every day → no off-day combo is
+    // feasible for p1 (processed first) → fallback works Mon–Wed and leaves Thu+Fri
+    // as unchosen tail X. With preferred set, projection (2 on Mon–Thu, 1 on Fri)
+    // clears the minimum and the tier steers the X days to Mon + Tue.
+    const legacy = autoSchedule(base(["1", "2", "3", "4", "5"].map((d) => ({ shiftCode: "OR", dayKey: d, minCount: 1 })), [p2FriAdm]));
+    expect(offDays(legacy)).toEqual(["2025-05-15", "2025-05-16"]);
+    const r = autoSchedule(base(["1", "2", "3", "4", "5"].map((d) => ({ shiftCode: "OR", dayKey: d, minCount: 1, preferredCount: 2 })), [p2FriAdm]));
+    expect(offDays(r)).toEqual(["2025-05-12", "2025-05-13"]);
+  });
+
+  it("a preferred count the light day already meets changes nothing (long weekend kept)", () => {
+    const r = autoSchedule(base(weekReqs(1), [p2FriAdm]));
+    expect(offDays(r)).toEqual(["2025-05-12", "2025-05-16"]);
+  });
+
+  it("preferredCount 0 is byte-identical to the legacy output", () => {
+    const key = (r: AutoScheduleResult) => r.suggestions.map((s) => `${s.staffId}|${s.date}|${s.code}`).sort().join(";");
+    const legacy = autoSchedule(base([], [p2FriAdm]));
+    const zero = autoSchedule(base(weekReqs(0), [p2FriAdm]));
+    expect(key(zero)).toBe(key(legacy));
+  });
+
+  it("never creates or removes a day off — p1 still works exactly 3 days, on target", () => {
+    const r = autoSchedule(base(weekReqs(2), [p2FriAdm]));
+    expect(week.filter((d) => cellOf(r, "p1", d) === "OR").length).toBe(3);
+    expect(r.warnings.filter((w) => /\bAB\b/.test(w) && /hrs|hours/.test(w))).toEqual([]);
+  });
+});
+
 describe("autoScheduleCandidates (Slice 4b)", () => {
   const placementKey = (r: AutoScheduleResult) =>
     r.suggestions.map((s) => `${s.staffId}|${s.date}|${s.shiftTypeId}`).sort().join(";");

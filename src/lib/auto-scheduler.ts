@@ -140,6 +140,10 @@ type StaffingRequirement = {
   shiftCode: string;
   dayKey: string;
   minCount: number;
+  // Preferred (safe) headcount — the day-balance threshold for the fill shift
+  // (handoff #743). A discretionary day off avoids dates whose projected fill
+  // count would fall below this. 0 / undefined = no preference.
+  preferredCount?: number;
 };
 
 type SchedulingPreferences = {
@@ -1938,6 +1942,40 @@ export function autoSchedule({
       return fillReqsByDay.get(dayKey) ?? 0;
     }
 
+    // Day balance (handoff #743). `preferredCount` on the fill shift's staffing
+    // requirement is the SAFE headcount (e.g. min 4 / preferred 6: at 4 one sick
+    // call breaks the day). Off-day combos are ranked in two tiers: first by the
+    // total shortfall below the preferred count across the chosen off days
+    // (lower is better), then by the existing long-weekend / sequential score.
+    // So a free X lands on a light day only when no day that can spare it is
+    // available; above the threshold long weekends win as before. No preferred
+    // count anywhere ⇒ tier 1 is 0 for every combo ⇒ byte-identical legacy output.
+    const fillPreferredByDay = new Map<string, number>();
+    for (const sr of staffingRequirements) {
+      if (sr.shiftCode === fillShift.code && (sr.preferredCount ?? 0) > 0) {
+        fillPreferredByDay.set(sr.dayKey, sr.preferredCount!);
+      }
+    }
+    const dayBalanceActive = fillPreferredByDay.size > 0;
+    function fillPreferredOnDate(date: string): number {
+      const dayKey = holidaySet.has(date) ? "holiday" : String(getDow(date));
+      return fillPreferredByDay.get(dayKey) ?? 0;
+    }
+    const fillFraction = (p: ScheduleStaff, pp: PayPeriod, avail: number): number => {
+      // Share of `p`'s available days the hours fill will consume (same sizing
+      // as the main loop) — the expected contribution of a not-yet-processed
+      // staffer to each of their available dates.
+      const target = pp.targetHours * p.ftePercentage;
+      if (target <= 0 || avail <= 0) return 0;
+      const hours = ppHoursForStaff(p.id, pp);
+      if (hours >= target) return 0;
+      const wd = getShiftHours(p.id, fillShift!, overrideMap, "weekday");
+      const we = getShiftHours(p.id, fillShift!, overrideMap, "weekend");
+      const perDay = we > 0 ? Math.min(wd, we) : wd;
+      if (perDay <= 0) return 0;
+      return Math.min(1, Math.ceil((target - hours) / perDay) / avail);
+    };
+
     function scoreOffDays(offDays: Set<string>, allWorkdaysInPP: string[], staffWorkingDays: number[]): number {
       if (offDays.size === 0) return 0;
 
@@ -2026,7 +2064,8 @@ export function autoSchedule({
         .map((id) => activeStaff.find((p) => p.id === id)!)
         .filter(Boolean);
 
-      for (const staff of sortedStaff) {
+      for (let si = 0; si < sortedStaff.length; si++) {
+        const staff = sortedStaff[si];
         const target = pp.targetHours * staff.ftePercentage;
         if (target <= 0) continue;
 
@@ -2077,9 +2116,46 @@ export function autoSchedule({
         if (daysOff > 0 && daysOff < availableDates.length) {
           const indices = availableDates.map((_, i) => i);
           let bestOffIndices: number[] = [];
+          let bestShortfall = Infinity;
           let bestScore = -Infinity;
           let bestTie = 0;
           let comboCount = 0;
+
+          // Projected fill-shift headcount per candidate date EXCLUDING this
+          // staffer: bodies already on the fill shift + the expected share of
+          // every not-yet-processed staffer who could still work the date. The
+          // shortfall of taking `date` off is how far that projection sits
+          // below the preferred count (this staffer working would add 1).
+          const projected = new Map<string, number>();
+          if (dayBalanceActive) {
+            for (const d of availableDates) projected.set(d, fillStaffedCount(d));
+            for (let qi = si + 1; qi < sortedStaff.length; qi++) {
+              const q = sortedStaff[qi];
+              const qAvail = ppDates.filter((d) =>
+                isAvailable(q, d, fillShift) && (holidayPolicy === "fill" || !holidaySet.has(d))
+              );
+              const frac = fillFraction(q, pp, qAvail.length);
+              if (frac <= 0) continue;
+              for (const d of qAvail) if (projected.has(d)) projected.set(d, projected.get(d)! + frac);
+            }
+          }
+          const offShortfall = (offSet: Set<string>): number => {
+            if (!dayBalanceActive) return 0;
+            let s = 0;
+            for (const d of offSet) s += Math.max(0, Math.max(fillPreferredOnDate(d), fillRequiredOnDate(d)) - (projected.get(d) ?? 0));
+            return Math.round(s * 1e6) / 1e6; // float-noise guard so equal sums tie
+          };
+
+          // Minimum gate. Legacy: a day whose RUNNING fill count is below its
+          // minimum can't be taken off — which, since STEP 2 skips the fill shift,
+          // blocks EVERY off day for the first staff processed (count 0 < min) and
+          // dumps their free X at the tail of the PP via the fallback below. With a
+          // preferred count configured the gate reads the PROJECTED count instead
+          // (bodies placed + expected share of staff still to be processed), so the
+          // minimum stays protected while early staff can place their days off
+          // deliberately. Legacy semantics are untouched when no preferred count is set.
+          const gateCount = (date: string): number =>
+            dayBalanceActive ? (projected.get(date) ?? fillStaffedCount(date)) : fillStaffedCount(date);
 
           for (const offIndices of combinations(indices, daysOff)) {
             comboCount++;
@@ -2087,7 +2163,7 @@ export function autoSchedule({
             for (const idx of offIndices) {
               const date = availableDates[idx];
               const required = fillRequiredOnDate(date);
-              if (required > 0 && fillStaffedCount(date) < required) {
+              if (required > 0 && gateCount(date) < required) {
                 feasible = false;
                 break;
               }
@@ -2095,13 +2171,15 @@ export function autoSchedule({
             if (!feasible) continue;
 
             const offSet = new Set<string>(offIndices.map((i: number) => availableDates[i]));
+            const shortfall = offShortfall(offSet);
             const score = scoreOffDays(offSet, availableDates, getBaseWorkDays(staff.availabilityRules))
               + softOffBonus(staff.id, offSet);
-            if (score > bestScore) {
+            if (shortfall < bestShortfall || (shortfall === bestShortfall && score > bestScore)) {
+              bestShortfall = shortfall;
               bestScore = score;
               bestOffIndices = offIndices;
               bestTie = seedNum ? seedTie(`${staff.id}|${offIndices.map((i) => availableDates[i]).join(",")}`) : 0;
-            } else if (seedNum && score === bestScore && bestOffIndices.length > 0) {
+            } else if (seedNum && shortfall === bestShortfall && score === bestScore && bestOffIndices.length > 0) {
               // Seeded tiebreak (Slice 4b): among equally-scored off-day combos,
               // the lower hash wins. seed 0 never enters this branch.
               const tie = seedTie(`${staff.id}|${offIndices.map((i) => availableDates[i]).join(",")}`);

@@ -53,6 +53,7 @@ type StaffingReq = {
   shiftCode: string;
   dayKey: string;
   minCount: number;
+  preferredCount: number;
 };
 
 type PayPeriod = {
@@ -1136,6 +1137,13 @@ function StaffingSection({
     for (const r of initial) map[`${r.shiftCode}:${r.dayKey}`] = r.minCount;
     return map;
   });
+  // Preferred (safe) headcount per cell — the auto-scheduler's day-balance
+  // threshold. 0 = no preference.
+  const [prefGrid, setPrefGrid] = useState(() => {
+    const map: Record<string, number> = {};
+    for (const r of initial) map[`${r.shiftCode}:${r.dayKey}`] = r.preferredCount ?? 0;
+    return map;
+  });
 
   const [columns, setColumns] = useState(() => {
     const codes = [...new Set(initial.map((r) => r.shiftCode))];
@@ -1187,39 +1195,48 @@ function StaffingSection({
     setColumns((prev) => [...prev, code]);
     for (const day of DAY_KEYS) {
       setGrid((prev) => ({ ...prev, [`${code}:${day}`]: 0 }));
+      setPrefGrid((prev) => ({ ...prev, [`${code}:${day}`]: 0 }));
     }
     setShowAddPicker(false);
   }
 
   function swapColumn(oldCode: string, newCode: string) {
     setColumns((prev) => prev.map((c) => c === oldCode ? newCode : c));
-    setGrid((prev) => {
+    const move = (prev: Record<string, number>) => {
       const next = { ...prev };
       for (const day of DAY_KEYS) {
         next[`${newCode}:${day}`] = next[`${oldCode}:${day}`] ?? 0;
         delete next[`${oldCode}:${day}`];
       }
       return next;
-    });
+    };
+    setGrid(move);
+    setPrefGrid(move);
     setEditingCol(null);
   }
 
   function removeColumn(code: string) {
     setColumns((prev) => prev.filter((c) => c !== code));
-    setGrid((prev) => {
+    const drop = (prev: Record<string, number>) => {
       const next = { ...prev };
       for (const day of DAY_KEYS) delete next[`${code}:${day}`];
       return next;
-    });
+    };
+    setGrid(drop);
+    setPrefGrid(drop);
     setEditingCol(null);
   }
 
   function updateCell(shiftCode: string, dayKey: string, value: number) {
     setGrid((prev) => ({ ...prev, [`${shiftCode}:${dayKey}`]: value }));
   }
+  function updatePrefCell(shiftCode: string, dayKey: string, value: number) {
+    setPrefGrid((prev) => ({ ...prev, [`${shiftCode}:${dayKey}`]: value }));
+  }
 
   async function save() {
     const prevGrid = { ...grid };
+    const prevPrefGrid = { ...prefGrid };
     const prevColumns = [...columns];
     setStatus("saving");
     try {
@@ -1228,6 +1245,7 @@ function StaffingSection({
           shiftCode: code,
           dayKey: day,
           minCount: grid[`${code}:${day}`] ?? 0,
+          preferredCount: prefGrid[`${code}:${day}`] ?? 0,
         })),
       );
 
@@ -1248,6 +1266,7 @@ function StaffingSection({
               shiftCode: code,
               dayKey: day,
               minCount: prevGrid[`${code}:${day}`] ?? 0,
+              preferredCount: prevPrefGrid[`${code}:${day}`] ?? 0,
             })),
           );
           await fetch("/api/settings/staffing", {
@@ -1256,6 +1275,7 @@ function StaffingSection({
             body: JSON.stringify({ requirements: oldReqs, columns: prevColumns }),
           });
           setGrid(prevGrid);
+          setPrefGrid(prevPrefGrid);
           setColumns(prevColumns);
         },
       });
@@ -1269,7 +1289,7 @@ function StaffingSection({
     <CollapsibleSection
       id="staffing-rules"
       title="Staffing Rules"
-      description="Minimum staff per shift type per day of the week"
+      description="Minimum and preferred staff per shift type per day of the week. Minimum is always filled first. Preferred is the safe headcount: the auto-scheduler spends free days off on days already at or above it before touching a lighter day (0 = no preference)."
       status={status}
       error={error}
     >
@@ -1283,7 +1303,7 @@ function StaffingSection({
                 const st = shiftTypes.find((s) => s.code === code);
                 const isEditing = editingCol === code;
                 return (
-                  <th key={code} className="py-2 px-2 text-center w-16 relative">
+                  <th key={code} colSpan={2} className="py-2 px-2 text-center relative">
                     <button
                       onClick={() => canEdit && setEditingCol(isEditing ? null : code)}
                       className={`px-2 py-1 text-xs font-bold font-mono rounded transition-colors ${canEdit ? "hover:brightness-125" : ""}`}
@@ -1331,6 +1351,16 @@ function StaffingSection({
                 </th>
               )}
             </tr>
+            <tr>
+              <th />
+              {columns.map((code) => (
+                <Fragment key={`${code}:sub`}>
+                  <th className="pb-1 px-1 text-[10px] uppercase tracking-wider text-slate-500 font-medium text-center" title="Minimum — always filled first">Min</th>
+                  <th className="pb-1 px-1 text-[10px] uppercase tracking-wider text-slate-500 font-medium text-center" title="Preferred (safe) headcount — free days off avoid days below this">Pref</th>
+                </Fragment>
+              ))}
+              {canEdit && <th />}
+            </tr>
           </thead>
           <tbody className="divide-y divide-slate-700/50">
             {DAY_KEYS.map((day) => {
@@ -1348,16 +1378,30 @@ function StaffingSection({
                     {DAY_LABELS[day]}
                   </td>
                   {columns.map((code) => (
-                    <td key={`${code}:${day}`} className="py-1.5 px-2 text-center">
-                      <input
-                        type="number"
-                        min={0}
-                        disabled={!canEdit}
-                        className="w-12 bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-sm text-center font-mono disabled:opacity-50"
-                        value={grid[`${code}:${day}`] ?? 0}
-                        onChange={(e) => updateCell(code, day, parseInt(e.target.value) || 0)}
-                      />
-                    </td>
+                    <Fragment key={`${code}:${day}`}>
+                      <td className="py-1.5 pl-2 pr-1 text-center">
+                        <input
+                          type="number"
+                          min={0}
+                          disabled={!canEdit}
+                          aria-label={`${code} ${DAY_LABELS[day]} minimum`}
+                          className="w-12 bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-sm text-center font-mono disabled:opacity-50"
+                          value={grid[`${code}:${day}`] ?? 0}
+                          onChange={(e) => updateCell(code, day, parseInt(e.target.value) || 0)}
+                        />
+                      </td>
+                      <td className="py-1.5 pl-1 pr-2 text-center">
+                        <input
+                          type="number"
+                          min={0}
+                          disabled={!canEdit}
+                          aria-label={`${code} ${DAY_LABELS[day]} preferred`}
+                          className="w-12 bg-slate-700/60 border border-slate-600/70 rounded px-1.5 py-1 text-sm text-center font-mono text-slate-300 disabled:opacity-50"
+                          value={prefGrid[`${code}:${day}`] ?? 0}
+                          onChange={(e) => updatePrefCell(code, day, parseInt(e.target.value) || 0)}
+                        />
+                      </td>
+                    </Fragment>
                   ))}
                   <td />
                 </tr>

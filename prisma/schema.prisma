@@ -266,6 +266,7 @@ model StaffingRequirement {
   shiftCode String
   dayKey    String // "0"=Sun, "1"=Mon, ..., "6"=Sat, "holiday"
   minCount  Int    @default(0)
+  preferredCount Int @default(0) // auto-scheduler day-balance threshold: a free day off avoids dates whose projected count would fall below this; 0 = no preference
 
   @@unique([shiftCode, dayKey])
   @@map("staffing_requirements")
