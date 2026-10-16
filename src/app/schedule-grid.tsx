@@ -4151,8 +4151,13 @@ export function ScheduleGrid({
                 if (!showPPRows) return null;
                 const { pp } = item;
                 const provHours = ppHours.get(pp.startDate);
+                // Screen-only: PP +/- totals never print. The printed schedule is
+                // exactly one calendar month on one page, and an extra summary row
+                // per pay period pushed it onto a second sheet (31 day rows are sized
+                // to fill the page). data-print-hide collapses the row in @media print
+                // regardless of the on-screen toggle state at the time of printing.
                 return (
-                  <tr key={`pp-${pp.startDate}`} className="bg-slate-800/80">
+                  <tr key={`pp-${pp.startDate}`} data-print-hide className="bg-slate-800/80">
                     <td
                       className="sticky left-0 z-[5] px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider border-r border-slate-600 whitespace-nowrap border-y border-y-indigo-500/60"
                       style={{ background: "#1a2340" }}

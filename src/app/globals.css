@@ -277,12 +277,8 @@ input[type="checkbox"]:disabled {
     display: none !important;
   }
 
-  /* PP summary rows */
-  tr[class*="bg-slate-800/80"] td {
-    background: #e2e8f0 !important;
-    border-color: #94a3b8 !important;
-    color: #1e293b !important;
-  }
+  /* PP summary (+/-) rows never print — they carry data-print-hide (see the grid),
+     so the printout is always exactly one calendar month on one page. */
 
   /* Date column styling — bold (day-of-week + date) for print legibility. Slightly
      smaller font so the full "Mon Jun 16" label fits without truncating. */
