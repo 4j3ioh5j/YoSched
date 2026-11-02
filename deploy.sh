@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-STAGING_HOST="david@dph-devbox-yosched-staging"
+# devenv's name for the staging VM. YOSCHED_STAGING_SSH replaces it with full ssh
+# target args (e.g. "-o HostKeyAlias=yosched-staging <vm-tailscale-ip>") while that name
+# does not resolve. The old dph-devbox-yosched-staging host is gone (SSD rebuild).
+STAGING_HOST="yosched-staging"
+read -r -a STAGING_SSH <<< "${YOSCHED_STAGING_SSH:-$STAGING_HOST}"
 DEPLOY_DIR="YoSched"
 SERVICE_NAME="yosched-app"
 
@@ -12,7 +16,7 @@ echo "==> Pushing to GitHub..."
 git push
 
 echo "==> Deploying on staging..."
-ssh "$STAGING_HOST" "bash -s" << 'REMOTE'
+ssh "${STAGING_SSH[@]}" "bash -s" << 'REMOTE'
 set -euo pipefail
 cd ~/YoSched
 

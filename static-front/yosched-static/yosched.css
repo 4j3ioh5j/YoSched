@@ -1,0 +1,179 @@
+/* YoSched static front page (landing + privacy), served by YoLogiq's Pages
+   assets so it stays up when the app origin is down. Mirrors
+   src/app/marketing-landing.tsx and src/app/privacy/page.tsx in the YoSched repo.
+   Fits CSP style-src 'self': no inline styles anywhere, no web fonts, no
+   third-party requests. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration: none; }
+
+.wrap { max-width: 72rem; margin: 0 auto; width: 100%; padding: 0 1.5rem; }
+
+/* ---------- Landing ---------- */
+
+.landing {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  color: #f1f5f9;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+}
+
+.backdrop {
+  position: fixed;
+  inset: -60px 0 0 -60px;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(99, 179, 237, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99, 179, 237, 0.03) 1px, transparent 1px);
+  background-size: 60px 60px;
+  animation: drift 20s linear infinite;
+}
+
+@keyframes drift {
+  0% { transform: translate(0, 0); }
+  100% { transform: translate(60px, 60px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop { animation: none; }
+}
+
+.topbar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 1.25rem;
+  padding-bottom: 1.25rem;
+}
+
+.brand { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.025em; }
+.brand-yo { color: #fff; }
+.accent { color: #63b3ed; }
+
+.btn {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #fff;
+  background: rgba(14, 165, 233, 0.8);
+  border-radius: 0.25rem;
+  transition: background-color 0.15s;
+}
+.btn:hover, .btn:focus-visible { background: #0ea5e9; }
+
+.main { position: relative; z-index: 1; flex: 1; }
+
+.hero { text-align: center; padding: 4rem 0 3.5rem; }
+
+.hero h1 {
+  margin: 0;
+  font-size: 3rem;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  text-shadow: 0 0 40px rgba(99, 179, 237, 0.3);
+}
+
+.lede {
+  margin: 1.5rem auto 0;
+  max-width: 42rem;
+  font-size: 1.125rem;
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.features {
+  display: grid;
+  gap: 1.25rem;
+  padding-bottom: 5rem;
+}
+
+.card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 0.5rem;
+  padding: 1.5rem;
+}
+
+.card h2 { margin: 0; font-size: 1.125rem; font-weight: 600; color: #fff; }
+
+.card p {
+  margin: 0.5rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.625;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.footer {
+  position: relative;
+  z-index: 1;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.footer .wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-top: 1.5rem;
+  padding-bottom: 1.5rem;
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.footer nav { display: flex; align-items: center; gap: 1.25rem; }
+.footer nav a { transition: color 0.15s; }
+.footer nav a:hover, .footer nav a:focus-visible { color: rgba(255, 255, 255, 0.7); }
+
+@media (min-width: 640px) {
+  .hero h1 { font-size: 3.75rem; }
+  .lede { font-size: 1.25rem; }
+  .features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .footer .wrap { flex-direction: row; }
+}
+
+@media (min-width: 1024px) {
+  .features { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* ---------- Privacy ---------- */
+
+.privacy {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.privacy .wrap { max-width: 42rem; padding-top: 4rem; padding-bottom: 4rem; }
+
+.back { font-size: 0.875rem; color: #38bdf8; }
+.back:hover, .back:focus-visible { color: #7dd3fc; }
+
+.privacy h1 { margin: 1.5rem 0 0; font-size: 1.875rem; font-weight: 700; color: #fff; }
+
+.privacy .intro { margin: 0.5rem 0 0; font-size: 0.875rem; color: #94a3b8; }
+
+.policy { margin-top: 2rem; font-size: 0.875rem; line-height: 1.625; color: #cbd5e1; }
+.policy section + section { margin-top: 1.5rem; }
+.policy h2 { margin: 0; font-size: 1.125rem; font-weight: 600; color: #fff; }
+.policy p { margin: 0.25rem 0 0; }
