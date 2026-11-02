@@ -191,3 +191,24 @@ top specialty — never overwrite an already-correct ICU.
 
 Diagnostic/throwaway scripts lived in `_scratch/` (gitignored) — recreate from
 the rules above if needed.
+
+## 11. Rebuilding an empty DB from the repo
+
+Used after the 2026-11 SSD loss. Run on the VM from `~/YoSched`, after `npx prisma migrate deploy`,
+each step as `npx tsx prisma/<script>`, in this order. The correction seeds check for the exact
+state the earlier steps leave, so the order matters.
+
+1. `seed.ts`: config and the May-2026 roster. Prints a one-time bootstrap admin password, so send
+   its output to an owner-only log, never to chat.
+2. `seed-historical.ts`: the initial Jan–Jul 2026 import (no May), which has the known column shift.
+3. `seed-may.ts`: May 2026.
+4. `seed-restore-roster-renames.ts`: the roster changes made through the app between May and June
+   (STa→ST, CWr→CW, PREOP→PRE, plus AD and MF).
+5. `seed-historical-import.ts`: 2022–2025.
+6. `seed-icu-backfill.ts`, then `seed-icu-shift-repair.ts`.
+7. `seed-reimport-2026-grid.ts`, then `seed-reimport-2026-other-card.ts`.
+8. `seed-fix-mislocated-icu.ts`.
+9. `pnpm backfill:manual-permission`.
+
+Not recoverable from the repo: other configuration done through the app after May (staff names, FTE,
+eligibility edits, and so on), and everything from Aug 2026 on. Those come from David's files.
