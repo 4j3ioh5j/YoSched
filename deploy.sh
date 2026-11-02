@@ -52,7 +52,7 @@ echo "--- backfill group permissions"
 pnpm backfill:manual-permission
 
 echo "--- restart service"
-systemctl --user restart yosched-app
+sudo -n systemctl restart yosched-app
 sleep 3
 
 echo "--- verify"
@@ -62,7 +62,7 @@ echo "--- verify"
 ROOT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/login)
 if [ "$ROOT_STATUS" != "404" ]; then
   echo "==> WARNING: bare /login returned $ROOT_STATUS (expected 404) — basePath may not have taken effect"
-  systemctl --user status yosched-app | head -10
+  systemctl status yosched-app --no-pager | head -10
   exit 1
 fi
 STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/yosched/login)
@@ -70,7 +70,7 @@ if [ "$STATUS" = "200" ]; then
   echo "==> Deploy successful (bare /login 404s, /yosched/login returns 200)"
 else
   echo "==> WARNING: /yosched/login returned $STATUS"
-  systemctl --user status yosched-app | head -10
+  systemctl status yosched-app --no-pager | head -10
   exit 1
 fi
 REMOTE

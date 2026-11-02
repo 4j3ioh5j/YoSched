@@ -1,0 +1,25 @@
+# System unit for the YoSched app on yosched-staging.
+# Installed at /etc/systemd/system/yosched-app.service (a system unit, not a
+# ~/.config/systemd/user unit, so DevBox's nightly backup captures it and the
+# EnvironmentFile= paths it names). Install / update:
+#   sudo install -m 0644 ops/yosched-app.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now yosched-app
+# secrets.env holds AUTH_SECRET and TOTP_ENCRYPTION_KEY: keep it 0600, owned by david.
+[Unit]
+Description=YoSched (Next.js standalone)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=david
+Group=david
+WorkingDirectory=/home/david/YoSched/.next/standalone
+EnvironmentFile=/home/david/YoSched/.env
+EnvironmentFile=/home/david/.config/yosched/secrets.env
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
