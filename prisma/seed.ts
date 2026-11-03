@@ -19,8 +19,8 @@ async function main() {
     { code: "ADM",    name: "Administrative",         defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#f59e0b", sortOrder: 4 },
     { code: "PREOP",  name: "Pre-op Clinic",          defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#10b981", sortOrder: 5 },
     { code: "PAIN",   name: "Pain Service",           defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#ef4444", sortOrder: 7 },
-    { code: "ICU",    name: "Intensive Care",          defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#dc2626", sortOrder: 8 },
-    { code: "CARD",   name: "Cardiac",                defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#e11d48", sortOrder: 9 },
+    { code: "ICU",    name: "Intensive Care",          defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#dc2626", sortOrder: 8, dedicatedColumn: true },
+    { code: "CARD",   name: "Cardiac",                defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#e11d48", sortOrder: 9, dedicatedColumn: true },
     { code: "CALL",   name: "Weekend Call",            defaultHours: 0,  countsTowardFte: false, isLeave: false, isPaid: false, category: "work",  color: "#14b8a6", printBackgroundColor: "#abcde2", sortOrder: 10, schedulePriority: 10, weekendPaired: true, holidayWeekendPaired: true, ignoresWorkingDays: true, noConsecutiveGroup: "call-late", maxPerDay: 1, boldOnSchedule: true },
     { code: "QA",     name: "Quality Assurance",       defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#0ea5e9", sortOrder: 11 },
     { code: "TEL",    name: "Telehealth",              defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#06b6d4", sortOrder: 12 },
@@ -58,6 +58,35 @@ async function main() {
     create: { name: "Fee Basis", defaultIsAutoScheduled: false, defaultFtePercentage: 0, sortOrder: 1 },
   });
   console.log("Seeded 2 employment types");
+
+  // --- Printed schedule: fee-basis staff print in the "Other" column ---
+  // Decision from handoff 149-yosched-other-print-column-deployed.md: fee-basis staff
+  // collapse into one OTHER column on the printout (their initials per scheduled day,
+  // no individual columns). The aggregate-column system (handoff 161) expresses this
+  // as an EXCLUDE print rule for Fee Basis plus the "Other" catch-all column, which
+  // lists everyone without an individual column.
+  // Defaults only: each is created only while its table is EMPTY. Settings saves
+  // delete and recreate rows with new ids, so an id-keyed upsert would re-add a
+  // default the admin had edited or disabled. Empty table = never configured.
+  if ((await prisma.printColumnRule.count()) === 0) {
+    await prisma.printColumnRule.create({
+      data: {
+        id: "printrule_fee_basis_default",
+        label: "Fee basis prints in Other",
+        sortOrder: 0,
+        enabled: true,
+        mode: "exclude",
+        employmentTypeIds: [feeBasisType.id],
+      },
+    });
+  }
+  // The add_print_aggregate_columns migration already inserts this row on a fresh DB.
+  if ((await prisma.printAggregateColumn.count()) === 0) {
+    await prisma.printAggregateColumn.create({
+      data: { id: "aggcol_other_default", label: "Other", sortOrder: 0, enabled: true, suppressMembers: false, isOther: true },
+    });
+  }
+  console.log("Seeded default print column rule (Fee Basis -> Other)");
 
   // --- Staff ---
   // Fee basis staff are ineligible for ORC, CALL, ORL
