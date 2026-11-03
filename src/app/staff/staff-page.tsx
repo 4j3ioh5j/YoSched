@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useEscape } from "@/lib/use-escape";
 import type { StaffLoginStatus } from "@/lib/staff-login-status";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen, standingToWhen } from "@/lib/recurrence";
@@ -23,14 +24,14 @@ function LoginStatusBadge({ status }: { status: StaffLoginStatus }) {
     <span className="inline-flex items-center gap-1.5">
       <span className={`text-[10px] px-1.5 py-0.5 rounded ${s.cls}`}>{s.label}</span>
       {status !== "active" && (
-        <a
+        <Link
           href="/users"
           onClick={(e) => e.stopPropagation()}
           className="text-[10px] text-blue-400 hover:underline"
           title="Manage logins on the Users page"
         >
           manage →
-        </a>
+        </Link>
       )}
     </span>
   );
