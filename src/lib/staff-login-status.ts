@@ -20,3 +20,12 @@ export const STAFF_LOGIN_STATUS_LABEL: Record<StaffLoginStatus, string> = {
   disabled: "Disabled",
   active: "Active",
 };
+
+/** Same status from the client-side login shape (/api/users rows carry the derived
+ *  `loginComplete` instead of the hash). Used by the staff page to keep each badge live
+ *  after linking/unlinking in the edit window. */
+export function staffLoginStatusFromClient(login: { isActive: boolean; loginComplete: boolean } | null): StaffLoginStatus {
+  if (!login) return "none";
+  if (!login.loginComplete) return "needs_setup";
+  return login.isActive ? "active" : "disabled";
+}

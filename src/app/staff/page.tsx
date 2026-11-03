@@ -4,18 +4,22 @@ import { NavHeader } from "../nav-header";
 import { getSession } from "@/lib/auth-guard";
 import { staffLoginStatus } from "@/lib/staff-login-status";
 import { redirect } from "next/navigation";
+import { USER_SELECT, toClientUser } from "@/lib/user-view";
 
 export const dynamic = "force-dynamic";
 
 export default async function Staff() {
   const { error, permissions } = await getSession("staff:view");
   if (error) redirect("/");
+  // Linking logins to staff is a users:edit action (Admin / Super User). Only they get the
+  // login list (names + emails) and the link controls; everyone else sees the badge.
+  const canEditUsers = permissions!.includes("users:edit");
   const [staff, employmentTypes, allShiftTypes] = await Promise.all([
     prisma.staff.findMany({
       orderBy: { sortOrder: "asc" },
       include: {
         employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true, shiftOverrides: true,
-        loginUser: { select: { isActive: true, email: true, passwordHash: true } },
+        loginUser: { select: { id: true, isActive: true, email: true, passwordHash: true } },
       },
     }),
     prisma.employmentType.findMany({
@@ -24,6 +28,10 @@ export default async function Staff() {
     }),
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
+  const rawLogins = canEditUsers ? await prisma.user.findMany({ select: USER_SELECT, orderBy: { name: "asc" } }) : [];
+  const logins = rawLogins.map(toClientUser).map((u) => ({
+    id: u.id, name: u.name, email: u.email, staffId: u.staffId, isActive: u.isActive, loginComplete: u.loginComplete, isShell: u.isShell,
+  }));
 
   return (
     <main className="flex flex-col h-dvh">
@@ -31,10 +39,13 @@ export default async function Staff() {
 
       <StaffPage
         canEdit={permissions!.includes("staff:edit")}
+        canEditUsers={canEditUsers}
+        logins={logins}
         staff={staff.map((p) => ({
           id: p.id,
           name: p.name,
           loginStatus: staffLoginStatus(p.loginUser),
+          loginUserId: p.loginUser?.id ?? null,
           initials: p.initials,
           employmentTypeId: p.employmentTypeId,
           employmentTypeName: p.employmentType.name,

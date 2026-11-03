@@ -8,10 +8,9 @@
 // TOTP) do NOT pass through here; they can't change who can administer.
 
 import { prisma } from "./prisma";
-import { needsStaffLogin } from "./staff-login-backfill";
+import { detachAction, type DetachAction } from "./staff-login-link";
 import {
   type AdminUser,
-  hasUsersEdit,
   leavesNoActiveAdmin,
   withUserRemoved,
   withUserPatched,
@@ -70,78 +69,50 @@ export async function assertUsersAdminSurvives(change: UsersAdminChange): Promis
   if (leavesNoActiveAdmin(after)) throw new AdminGuardError();
 }
 
-// --- Staff-driven login provisioning & side-effects (slice 2b) ---
+// --- Staff-driven login side-effects ---
 //
-// These let staff lifecycle (create / deactivate / hard-delete) manage the PAIRED login
-// without ever touching an administrator's login — admin logins are managed only from
-// /users. Because non-admin changes can't shrink the admin set, the admin-skip is itself
-// the invariant protection here (no assertUsersAdminSurvives needed).
+// Logins are created ON DEMAND (from /users, or the staff page's "Create login" link);
+// staff are no longer given an automatic shell login. When a staff member is deactivated
+// or deleted, or an admin unlinks a login, the link is removed by detachLoginForStaff:
+// a never-completed shell (no email, no password) is deleted; any real login only has its
+// staffId cleared — its credentials, active state, group, 2FA and saved views are kept.
+// Neither branch can shrink the active-administrator set: detach changes no isActive or
+// group, and a shell can never be active (activation requires email + password).
 
-type LinkedLogin = { id: string; isActive: boolean; group: { permissions: string[] } | null };
+type TxClient = Pick<typeof prisma, "user" | "savedGraphView">;
 
-async function findLinkedLogin(staffId: string): Promise<LinkedLogin | null> {
-  return prisma.user.findUnique({
+/** Remove the link between a staff member and its login (Rules 2 + 4). Pass the caller's
+ *  transaction client so the staff mutation and the login cleanup commit together.
+ *  Returns what happened. */
+export async function detachLoginForStaff(staffId: string, db: TxClient = prisma): Promise<DetachAction> {
+  const login = await db.user.findUnique({
     where: { staffId },
-    select: { id: true, isActive: true, group: { select: { permissions: true } } },
+    select: { id: true, email: true, passwordHash: true },
   });
+  return applyDetach(login, db);
 }
 
-function isAdminLogin(u: LinkedLogin): boolean {
-  return hasUsersEdit({ id: u.id, isActive: u.isActive, groupPermissions: u.group?.permissions ?? [] });
-}
-
-/** Create the disabled, credential-less shell login that pairs with a newly created
- *  active staff member (Staff group; admin completes email+password + activates later).
- *  Accepts a transaction client so the caller can pair the login atomically with the
- *  staff insert (defaults to the shared `prisma` when run standalone). */
-export async function provisionStaffLogin(
-  staffId: string,
-  name: string,
-  db: Pick<typeof prisma, "user" | "group"> = prisma,
-): Promise<void> {
-  const staffGroup = await db.group.findUnique({ where: { name: "Staff" }, select: { id: true } });
-  // Every user must belong to a group (groupId is NOT NULL) — refuse to provision rather
-  // than create an orphaned login if the seeded "Staff" group is somehow missing.
-  if (!staffGroup) throw new Error('Cannot provision a staff login: the "Staff" group is missing — run the seed.');
-  await db.user.create({
-    data: { staffId, name, email: null, passwordHash: null, isActive: false, groupId: staffGroup.id },
+/** Unlink a specific login from its staff member (the /users "— none —" choice). Same
+ *  semantics as detachLoginForStaff. */
+export async function unlinkLogin(userId: string, db: TxClient = prisma): Promise<DetachAction> {
+  const login = await db.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, passwordHash: true, staffId: true },
   });
+  if (!login || !login.staffId) return "none"; // already unlinked: nothing to do
+  return applyDetach(login, db);
 }
 
-/** Self-heal the "every active staff has a login" invariant for a single staff member.
- *  Eager provisioning only fires at staff CREATE and in the one-time backfill (which skips
- *  inactive staff), so a staff row that entered another way — imported/seeded directly, or
- *  inactive when the backfill ran and reactivated later — can be active with no paired
- *  login and (since the manual /users link field was removed) no way to get one. Called on
- *  the staff PUT path: if the staff is active and has no login, provision the disabled
- *  shell now so the admin can complete it from /users. No-op if inactive or already linked;
- *  idempotent. Does NOT enable the login — activation stays a deliberate /users action. */
-export async function ensureStaffLogin(staffId: string): Promise<void> {
-  const staff = await prisma.staff.findUnique({ where: { id: staffId }, select: { name: true, isActive: true } });
-  if (!staff) return;
-  const existing = await prisma.user.findUnique({ where: { staffId }, select: { id: true } });
-  if (!needsStaffLogin(staff.isActive, existing !== null)) return;
-  await provisionStaffLogin(staffId, staff.name);
-}
-
-/** Staff deactivated → RESET its linked login to a bare, disabled shell (disabled, no
- *  email, no password), but NEVER an administrator's. The row is kept; combined with the
- *  /users hide-filter (isHiddenStaffLogin) the login disappears from the list until the
- *  staff member is reactivated, at which point it re-surfaces as a "Needs setup" shell. */
-export async function resetLoginForStaff(staffId: string): Promise<void> {
-  const user = await findLinkedLogin(staffId);
-  if (!user) return;
-  if (isAdminLogin(user)) return; // admin logins are decoupled from staff active-state
-  await prisma.user.update({ where: { id: user.id }, data: { isActive: false, email: null, passwordHash: null } });
-}
-
-/** Staff hard-deleted → delete its linked shell login, but leave an administrator's
- *  intact (the staff delete will null out the link via onDelete: SetNull). Reuses the
- *  /users deletion cleanup for the user's private saved graph views. */
-export async function deleteLoginForStaff(staffId: string): Promise<void> {
-  const user = await findLinkedLogin(staffId);
-  if (!user) return;
-  if (isAdminLogin(user)) return;
-  await prisma.savedGraphView.deleteMany({ where: { ownerId: user.id, isShared: false } });
-  await prisma.user.delete({ where: { id: user.id } });
+async function applyDetach(
+  login: { id: string; email: string | null; passwordHash: string | null } | null,
+  db: TxClient,
+): Promise<DetachAction> {
+  const action = detachAction(login);
+  if (action === "delete") {
+    await db.savedGraphView.deleteMany({ where: { ownerId: login!.id, isShared: false } });
+    await db.user.delete({ where: { id: login!.id } });
+  } else if (action === "detach") {
+    await db.user.update({ where: { id: login!.id }, data: { staffId: null } });
+  }
+  return action;
 }

@@ -18,7 +18,7 @@ export type ShellUserSpec = {
 
 /** The rule for whether a single staff member needs a shell login provisioned: active,
  *  and not already backing a login. The one source of truth shared by the batch backfill
- *  planner below and the per-staff self-heal (`ensureStaffLogin` in user-lifecycle.ts),
+ *  planner below and the former per-staff self-heal (removed: logins are now created on demand),
  *  so reactivation/import healing and the original backfill can never drift apart. */
 export function needsStaffLogin(isActive: boolean, hasLinkedLogin: boolean): boolean {
   return isActive && !hasLinkedLogin;

@@ -5,6 +5,7 @@ import { useEscape } from "@/lib/use-escape";
 import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { canManageGroupLevel } from "@/lib/permissions";
 import { sortUsers, type UserSort, type UserSortColumn } from "@/lib/users-sort";
+import { linkOptionsForLogin, type LinkOptionStaff } from "@/lib/staff-login-link";
 import { GroupsSection } from "../settings/groups-section";
 
 type LoginLogEntry = {
@@ -28,6 +29,7 @@ type User = {
   staff?: { id: string; name: string; initials: string } | null;
   isActive: boolean;
   loginComplete: boolean; // has both email + password (server-derived; gate 3 of activation)
+  isShell?: boolean; // has neither email nor password (server-derived; unlinking deletes it)
   totpEnabled?: boolean;
   createdAt: string | Date;
 };
@@ -51,6 +53,10 @@ export function UsersPage({
   currentUserId,
   currentGroupLevel,
   groups,
+  staff,
+  hiddenTakenStaffIds,
+  initialCreateStaffId,
+  initialEditUserId,
   canEditUsers,
   canViewGroups,
   canEditGroups,
@@ -63,6 +69,10 @@ export function UsersPage({
   currentUserId: string;
   currentGroupLevel: number;
   groups: GroupOption[];
+  staff: LinkOptionStaff[];
+  hiddenTakenStaffIds: string[];
+  initialCreateStaffId: string | null;
+  initialEditUserId: string | null;
   canEditUsers: boolean;
   canViewGroups: boolean;
   canEditGroups: boolean;
@@ -76,17 +86,49 @@ export function UsersPage({
   const assignableGroups = groups.filter((g) => canManageGroupLevel(currentGroupLevel, g.level));
   const defaultGroupId = assignableGroups.find((g) => g.name === "Staff")?.id ?? assignableGroups[0]?.id ?? "";
 
+  function canManageUser(user: User): boolean {
+    if (!canEditUsers) return false;
+    if (user.id === currentUserId) return false;
+    // Every user has a group, so their level is just the group's level.
+    const userLevel = user.group?.level ?? 0;
+    // At-or-below your level is manageable (peers included); only strictly-higher is not.
+    return canManageGroupLevel(currentGroupLevel, userLevel);
+  }
+
+  const emptyForm = { email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId, staffId: "" };
+  // Deep links from the Staff page, read once into the initial state: ?edit=<userId> opens
+  // that login's editor; ?create=<staffId> opens New User for that staff member (name
+  // prefilled, staff preselected) if it is active and has no login yet.
+  const [deepLink] = useState(() => {
+    if (!canEditUsers) return null;
+    if (initialEditUserId) {
+      const u = initialUsers.find((x) => x.id === initialEditUserId);
+      if (!u || !canManageUser(u)) return null;
+      return {
+        editingId: u.id,
+        form: { ...emptyForm, email: u.email ?? "", name: u.name, groupId: u.groupId ?? defaultGroupId, staffId: u.staffId ?? "" },
+      };
+    }
+    if (initialCreateStaffId) {
+      const st = staff.find((x) => x.id === initialCreateStaffId);
+      const taken = new Set([...hiddenTakenStaffIds, ...initialUsers.map((u) => u.staffId).filter(Boolean)]);
+      if (!st || !st.isActive || taken.has(st.id)) return null;
+      return { editingId: null, form: { ...emptyForm, name: st.name, staffId: st.id } };
+    }
+    return null;
+  });
+
   const [users, setUsers] = useState(initialUsers);
   const [sort, setSort] = useState<UserSort | null>(initialSort);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId });
+  const [showForm, setShowForm] = useState(deepLink !== null);
+  const [editingId, setEditingId] = useState<string | null>(deepLink?.editingId ?? null);
+  const [form, setForm] = useState(deepLink?.form ?? emptyForm);
   const [error, setError] = useState("");
   const [trustDays, setTrustDays] = useState(initialTrustDays);
   const [savingTrust, setSavingTrust] = useState(false);
 
   const resetForm = useCallback(() => {
-    setForm({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId });
+    setForm({ email: "", name: "", password: "", confirmPassword: "", groupId: defaultGroupId, staffId: "" });
     setShowForm(false);
     setEditingId(null);
     setError("");
@@ -104,15 +146,28 @@ export function UsersPage({
     const endpoint = "/api/users";
 
     if (editingId) {
-      const body: Record<string, string> = { id: editingId, email: form.email, name: form.name, groupId: form.groupId };
+      const original = users.find((u) => u.id === editingId);
+      const body: Record<string, string | null> = { id: editingId, email: form.email, name: form.name, groupId: form.groupId };
       if (form.password) body.password = form.password;
+      const originalStaffId = original?.staffId ?? "";
+      if (form.staffId !== originalStaffId) {
+        body.staffId = form.staffId || null;
+        // Rule 4: unlinking a never-completed login (no email, no password) deletes it —
+        // unless this same save gives it an email or a password.
+        if (!form.staffId && original?.isShell && !form.email && !form.password) {
+          if (!confirm("This empty login (no email, no password) will be deleted when it is unlinked. Continue?")) return;
+        }
+      }
       const res = await fetch(endpoint, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) { setError((await res.json()).error); return; }
       const updated = await res.json();
-      setUsers((prev) => prev.map((u) => (u.id === editingId ? updated : u)));
+      if (updated.deleted) setUsers((prev) => prev.filter((u) => u.id !== editingId));
+      else setUsers((prev) => prev.map((u) => (u.id === editingId ? updated : u)));
     } else {
       if (!form.password) { setError("Password required for new users"); return; }
-      const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      const { staffId, ...rest } = form;
+      const payload = staffId ? { ...rest, staffId } : rest;
+      const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!res.ok) { setError((await res.json()).error); return; }
       const created = await res.json();
       setUsers((prev) => [...prev, created]);
@@ -127,9 +182,8 @@ export function UsersPage({
     setUsers((prev) => prev.filter((u) => u.id !== id));
   }
 
-  // Staff-linked logins can't be deleted — they're reset to a bare shell instead
-  // (disabled, no email, no password). The staff member stays in the system; the login
-  // is removed only by deactivating/deleting the staff member.
+  // Staff-linked logins can't be deleted (Rule 5) — unlink them first (Edit → Linked
+  // staff → none), or Reset them to a bare shell (disabled, no email, no password).
   async function handleReset(id: string) {
     if (!confirm("Reset this staff login? This disables it and clears the email + password. The staff member stays in the system.")) return;
     const res = await fetch("/api/users/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
@@ -156,19 +210,27 @@ export function UsersPage({
   }
 
   function startEdit(user: User) {
-    setForm({ email: user.email ?? "", name: user.name, password: "", confirmPassword: "", groupId: user.groupId ?? defaultGroupId });
+    setForm({ email: user.email ?? "", name: user.name, password: "", confirmPassword: "", groupId: user.groupId ?? defaultGroupId, staffId: user.staffId ?? "" });
     setEditingId(user.id);
     setShowForm(true);
   }
 
-  function canManageUser(user: User): boolean {
-    if (!canEditUsers) return false;
-    if (user.id === currentUserId) return false;
-    // Every user has a group, so their level is just the group's level.
-    const userLevel = user.group?.level ?? 0;
-    // At-or-below your level is manageable (peers included); only strictly-higher is not.
-    return canManageGroupLevel(currentGroupLevel, userLevel);
-  }
+  // "Linked staff" choices: active staff with no login, plus this login's own staff member.
+  const takenStaffIds = new Set<string>([
+    ...hiddenTakenStaffIds,
+    ...users.map((u) => u.staffId).filter((x): x is string => !!x),
+  ]);
+  const editingStaffId = editingId ? users.find((u) => u.id === editingId)?.staffId ?? null : null;
+  const staffLinkOptions = linkOptionsForLogin(staff, takenStaffIds, editingStaffId);
+
+  // Deep links are consumed into the initial state above; drop the query afterwards so a
+  // reload doesn't reopen the form.
+  useEffect(() => {
+    if (initialEditUserId || initialCreateStaffId) {
+      try { window.history.replaceState(null, "", window.location.pathname); } catch { /* cosmetic only */ }
+    }
+  }, [initialEditUserId, initialCreateStaffId]);
+
 
   // Persist the chosen sort to this login's server-side prefs, debounced so a flurry of
   // header clicks coalesces into a single PUT carrying the final state (avoids a slow
@@ -276,6 +338,20 @@ export function UsersPage({
                   <option key={g.id} value={g.id}>{g.name}</option>
                 ))}
               </select>
+              <label className="col-span-2 flex items-center gap-2 text-xs text-slate-400">
+                <span className="w-24 shrink-0">Linked staff</span>
+                <select
+                  value={form.staffId}
+                  onChange={(e) => setForm({ ...form, staffId: e.target.value })}
+                  aria-label="Linked staff"
+                  className="flex-1 px-3 py-2 bg-slate-900 border border-slate-700 rounded text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">— none —</option>
+                  {staffLinkOptions.map((o) => (
+                    <option key={o.id} value={o.id}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
             </div>
             {error && <p className="text-sm text-red-400">{error}</p>}
             <div className="flex gap-2">

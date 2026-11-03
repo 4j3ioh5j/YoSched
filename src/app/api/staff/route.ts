@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { provisionStaffLogin, resetLoginForStaff, deleteLoginForStaff, ensureStaffLogin } from "@/lib/user-lifecycle";
+import { detachLoginForStaff } from "@/lib/user-lifecycle";
 import { ruleToWhen, whenToColumns, standingToWhen, normalizeAnyDay } from "@/lib/recurrence";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -69,9 +69,14 @@ export async function PUT(req: NextRequest) {
       },
     });
 
-    if (data.name) {
-      // Staff.name is canonical — keep the linked login's name in sync (slice 2b).
-      await tx.user.updateMany({ where: { staffId: id }, data: { name: data.name } });
+    // Login and staff names are independent (a login "David" can be linked to staff "DH"),
+    // so a staff rename no longer touches the linked login.
+
+    // Deactivated → remove the link in the SAME transaction: a never-completed shell login
+    // is deleted, a real login only loses its staffId (it keeps working; administrators
+    // included). Reactivation never creates a login — logins are created on demand.
+    if (data.isActive === false) {
+      await detachLoginForStaff(id, tx);
     }
 
     if (Array.isArray(eligibleShiftTypeIds)) {
@@ -176,21 +181,6 @@ export async function PUT(req: NextRequest) {
     }
   });
 
-  // Keep the paired login in step with the staff active-state.
-  // - Deactivated → reset the login to a disabled, credential-less shell (never an
-  //   admin's); the /users hide-filter drops it from the list.
-  // - Otherwise (active, including reactivation) → ensure a shell login EXISTS. Normal
-  //   staff already have one from create-time, but imported/seeded staff and staff that
-  //   were inactive when the one-time backfill ran have none and no other way to get one;
-  //   ensureStaffLogin provisions the disabled shell so it re-surfaces as "Needs setup".
-  //   It does NOT enable the login — reactivation still requires a deliberate /users
-  //   activation (email + password + Active toggle).
-  if (data.isActive === false) {
-    await resetLoginForStaff(id);
-  } else {
-    await ensureStaffLogin(id);
-  }
-
   const result = await prisma.staff.findUnique({
     where: { id },
     include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true, shiftOverrides: true },
@@ -214,9 +204,8 @@ export async function POST(req: NextRequest) {
   }
 
   const maxSort = await prisma.staff.aggregate({ _max: { sortOrder: true } });
-  // Create the staff member and its paired, disabled shell login atomically — the
-  // "every active staff has a login" invariant (slice 2b) must not be left half-applied
-  // if provisioning fails after the staff row is committed.
+  // No login is created here: logins are created on demand (the staff page's "Create
+  // login" link, or /users), and linked from either side.
   const created = await prisma.$transaction(async (tx) => {
     const staff = await tx.staff.create({
       data: {
@@ -231,7 +220,6 @@ export async function POST(req: NextRequest) {
       },
       include: { employmentType: true },
     });
-    await provisionStaffLogin(staff.id, staff.name, tx);
     return staff;
   });
 
@@ -282,12 +270,19 @@ export async function DELETE(req: NextRequest) {
 
   const assignmentCount = await prisma.assignment.count({ where: { staffId: id } });
   if (assignmentCount > 0) {
-    await prisma.staff.update({ where: { id }, data: { isActive: false } });
-    await resetLoginForStaff(id); // reset the paired login to a bare shell (never an admin's)
+    // Soft delete (history exists): deactivate + remove the login link atomically.
+    await prisma.$transaction(async (tx) => {
+      await tx.staff.update({ where: { id }, data: { isActive: false } });
+      await detachLoginForStaff(id, tx);
+    });
     return NextResponse.json({ ok: true, deactivated: true });
   }
 
-  await deleteLoginForStaff(id); // before the staff delete — onDelete:SetNull would orphan the link
-  await prisma.staff.delete({ where: { id } });
+  // Hard delete: remove the link first (a shell is deleted, a real login is kept and
+  // unlinked) and the staff row in one transaction.
+  await prisma.$transaction(async (tx) => {
+    await detachLoginForStaff(id, tx);
+    await tx.staff.delete({ where: { id } });
+  });
   return NextResponse.json({ ok: true, deleted: true });
 }

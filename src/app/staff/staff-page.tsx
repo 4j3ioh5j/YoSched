@@ -3,14 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useEscape } from "@/lib/use-escape";
-import type { StaffLoginStatus } from "@/lib/staff-login-status";
+import { staffLoginStatusFromClient, type StaffLoginStatus } from "@/lib/staff-login-status";
+import { loginOptionsForStaff } from "@/lib/staff-login-link";
+import { initSavedActive, applySavedActive, canLinkLogin, type SavedActiveEvent } from "@/lib/staff-saved-active";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen, standingToWhen } from "@/lib/recurrence";
 import { RecurrencePicker } from "./recurrence-picker";
 import { FrequencyPicker } from "./frequency-picker";
 import { describeFrequency, type ShiftMinTarget } from "@/lib/shift-eligibility";
 
-// Read-only login-setup badge shown per staff row. Activation/credentials are managed
-// on /users (deep-link); editing here only changes scheduling attributes.
+// Login-setup badge shown per staff row. Credentials/activation are managed on /users
+// (deep links below, for users:edit only); the link itself can also be changed in the
+// staff edit window ("Login").
 const LOGIN_STATUS_STYLE: Record<StaffLoginStatus, { label: string; cls: string }> = {
   active: { label: "Active", cls: "bg-emerald-700/40 text-emerald-300" },
   disabled: { label: "Disabled", cls: "bg-slate-600/40 text-slate-300" },
@@ -18,22 +21,102 @@ const LOGIN_STATUS_STYLE: Record<StaffLoginStatus, { label: string; cls: string 
   none: { label: "No login", cls: "bg-red-900/40 text-red-300" },
 };
 
-function LoginStatusBadge({ status }: { status: StaffLoginStatus }) {
+function LoginStatusBadge({ status, staffId, staffActive, loginUserId, canEditUsers }: {
+  status: StaffLoginStatus;
+  staffId: string;
+  staffActive: boolean;
+  loginUserId: string | null;
+  canEditUsers: boolean;
+}) {
   const s = LOGIN_STATUS_STYLE[status];
+  let link: { href: string; label: string; title: string } | null = null;
+  if (canEditUsers && status === "none" && staffActive) {
+    link = { href: `/users?create=${encodeURIComponent(staffId)}`, label: "Create login", title: "Create a login for this staff member" };
+  } else if (canEditUsers && status !== "active" && status !== "none" && loginUserId) {
+    link = { href: `/users?edit=${encodeURIComponent(loginUserId)}`, label: "manage →", title: "Manage this login on the Users page" };
+  }
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={`text-[10px] px-1.5 py-0.5 rounded ${s.cls}`}>{s.label}</span>
-      {status !== "active" && (
+      {link && (
         <Link
-          href="/users"
+          href={link.href}
           onClick={(e) => e.stopPropagation()}
           className="text-[10px] text-blue-400 hover:underline"
-          title="Manage logins on the Users page"
+          title={link.title}
         >
-          manage →
+          {link.label}
         </Link>
       )}
     </span>
+  );
+}
+
+type LoginRow = { id: string; name: string; email: string | null; staffId: string | null; isActive: boolean; loginComplete: boolean; isShell: boolean };
+
+async function putUserLink(id: string, staffId: string | null): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string }> {
+  const res = await fetch("/api/users", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, staffId }) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, error: (body as { error?: string }).error ?? `Request failed (${res.status})` };
+  return { ok: true, body };
+}
+
+/** The staff edit window's "Login" row: link, change or unlink this staff member's login.
+ *  Applies immediately (independent of the staff Save/Cancel). Rule 1: a login already
+ *  linked elsewhere is never offered. Changing A→B unlinks A first, then links B. */
+function LoginLinkRow({ staffId, staffActive, logins, onChange }: {
+  staffId: string;
+  staffActive: boolean;
+  logins: LoginRow[];
+  onChange: (next: LoginRow[]) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const current = logins.find((u) => u.staffId === staffId) ?? null;
+  const options = loginOptionsForStaff(logins, staffId);
+
+  async function choose(nextId: string) {
+    setErr("");
+    if ((current?.id ?? "") === nextId) return;
+    if (current?.isShell && !confirm(`${current.name}'s login is empty (no email, no password) and will be deleted when it is unlinked. Continue?`)) return;
+    setBusy(true);
+    let rows = logins;
+    try {
+      if (current) {
+        const r = await putUserLink(current.id, null);
+        if (!r.ok) { setErr(r.error); return; }
+        rows = r.body.deleted ? rows.filter((u) => u.id !== current.id) : rows.map((u) => (u.id === current.id ? { ...u, staffId: null } : u));
+        onChange(rows);
+      }
+      if (nextId) {
+        const r = await putUserLink(nextId, staffId);
+        if (!r.ok) { setErr(r.error); return; }
+        rows = rows.map((u) => (u.id === nextId ? { ...u, staffId } : u));
+        onChange(rows);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <FieldRow label="Login" description={staffActive ? "The user account this staff member signs in with (applies immediately)" : "Activate this staff member to link a login"}>
+      <div className="flex flex-col items-end gap-1">
+        <select
+          aria-label="Login"
+          className="w-56 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50"
+          value={current?.id ?? ""}
+          disabled={busy || (!staffActive && !current)}
+          onChange={(e) => choose(e.target.value)}
+        >
+          <option value="">— none —</option>
+          {options.map((o) => (
+            <option key={o.id} value={o.id} disabled={!staffActive && o.id !== current?.id}>{o.label}</option>
+          ))}
+        </select>
+        {err && <span className="text-xs text-red-400 max-w-56 text-right">{err}</span>}
+      </div>
+    </FieldRow>
   );
 }
 
@@ -95,6 +178,7 @@ type Staff = {
   id: string;
   name: string;
   loginStatus: StaffLoginStatus;
+  loginUserId: string | null;
   initials: string;
   employmentTypeId: string;
   employmentTypeName: string;
@@ -141,6 +225,8 @@ type ShiftTypeInfo = {
 
 type Props = {
   canEdit: boolean;
+  canEditUsers: boolean;
+  logins: LoginRow[];
   staff: Staff[];
   employmentTypes: EmploymentType[];
   allShiftTypes: ShiftTypeInfo[];
@@ -842,8 +928,24 @@ function StandingCommitmentsEditor({
   );
 }
 
-export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTypes }: Props) {
+export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff: initial, employmentTypes, allShiftTypes }: Props) {
   const [staff, setStaff] = useState(initial);
+  // Live login list (users:edit only). Badges derive from it so a link change in the edit
+  // window shows at once and isn't undone by the staff Cancel/Undo (which restore rows).
+  const [logins, setLogins] = useState<LoginRow[]>(initialLogins);
+  // Last SAVED active state per staff member (not the page-load props, not the draft).
+  const [savedActive, setSavedActive] = useState(() => initSavedActive(initial));
+  const markSaved = (e: SavedActiveEvent) => setSavedActive((cur) => applySavedActive(cur, e));
+  function loginFor(p: Staff): { status: StaffLoginStatus; loginUserId: string | null } {
+    if (!canEditUsers) return { status: p.loginStatus, loginUserId: p.loginUserId };
+    const u = logins.find((l) => l.staffId === p.id) ?? null;
+    return { status: staffLoginStatusFromClient(u), loginUserId: u?.id ?? null };
+  }
+  // Mirror the server's Rule 2 locally after a staff deactivate/delete: a real login is
+  // unlinked, a never-completed shell is deleted.
+  function detachLocal(staffId: string) {
+    setLogins((cur) => cur.filter((u) => !(u.staffId === staffId && u.isShell)).map((u) => (u.staffId === staffId ? { ...u, staffId: null } : u)));
+  }
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
@@ -923,6 +1025,8 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
         return;
       }
       setEditingId(null);
+      markSaved({ kind: "saved", id: member.id, isActive: member.isActive });
+      if (prev?.isActive && !member.isActive) detachLocal(member.id);
       if (prev) {
         pushUndo({
           label: `Updated ${member.initials}`,
@@ -933,6 +1037,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
               body: JSON.stringify(prev),
             });
             setStaff((cur) => cur.map((p) => p.id === prev.id ? prev : p));
+            markSaved({ kind: "saved", id: prev.id, isActive: prev.isActive });
           },
         });
       }
@@ -955,6 +1060,8 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
       });
       if (!res.ok) return;
       const result = await res.json();
+      detachLocal(id);
+      markSaved(result.deactivated ? { kind: "deactivated", id } : { kind: "removed", id });
       if (result.deactivated) {
         setStaff((prev) => prev.map((p) => p.id === id ? { ...p, isActive: false } : p));
       } else {
@@ -972,6 +1079,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
               body: JSON.stringify({ ...member, isActive: true }),
             });
             setStaff((cur) => cur.map((p) => p.id === id ? { ...p, isActive: true } : p));
+            markSaved({ kind: "saved", id, isActive: true });
           } else {
             const res = await fetch("/api/staff", {
               method: "POST",
@@ -980,6 +1088,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
             });
             const created = await res.json();
             setStaff((cur) => [...cur, { ...member, id: created.id }].sort((a, b) => a.sortOrder - b.sortOrder));
+            markSaved({ kind: "added", id: created.id, isActive: !!created.isActive });
           }
         },
       });
@@ -1002,7 +1111,8 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
       const newProv: Staff = {
         id: created.id,
         name: created.name,
-        loginStatus: "needs_setup", // POST auto-provisions a fresh disabled shell
+        loginStatus: "none", // logins are created on demand ("Create login")
+        loginUserId: null,
         initials: created.initials,
         employmentTypeId: created.employmentTypeId,
         employmentTypeName: created.employmentType?.name ?? defaultType?.name ?? "",
@@ -1031,6 +1141,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
         sortOrder: created.sortOrder,
       };
       setStaff((prev) => [...prev, newProv]);
+      markSaved({ kind: "added", id: created.id, isActive: !!created.isActive });
       setEditingId(created.id);
 
       pushUndo({
@@ -1042,6 +1153,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
             body: JSON.stringify({ id: created.id }),
           });
           setStaff((cur) => cur.filter((p) => p.id !== created.id));
+          markSaved({ kind: "removed", id: created.id });
         },
       });
     } finally {
@@ -1206,7 +1318,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
                         </span>
                       </td>
                       <td className="py-2 px-3 text-center">
-                        <LoginStatusBadge status={p.loginStatus} />
+                        <LoginStatusBadge {...loginFor(p)} staffId={p.id} staffActive={p.isActive} canEditUsers={canEditUsers} />
                       </td>
                     </tr>
                   );
@@ -1223,7 +1335,7 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
                     <td className="py-2 px-3 text-center"><span className="text-xs text-slate-600">—</span></td>
                     <td className="py-2 px-3"><div className="flex gap-0.5 justify-center">{DAY_INDICES.map((d) => (<span key={d} className="w-5 h-5 text-[10px] rounded font-medium flex items-center justify-center bg-slate-700/30 text-slate-700">{DAY_SHORT[d]}</span>))}</div></td>
                     <td className="py-2 px-3 text-center text-slate-600">—</td>
-                    <td className="py-2 px-3 text-center"><LoginStatusBadge status={p.loginStatus} /></td>
+                    <td className="py-2 px-3 text-center"><LoginStatusBadge {...loginFor(p)} staffId={p.id} staffActive={p.isActive} canEditUsers={canEditUsers} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -1306,6 +1418,14 @@ export function StaffPage({ canEdit, staff: initial, employmentTypes, allShiftTy
               <FieldRow label="Auto-schedule" description="Include this person in the auto-scheduler">
                 <input type="checkbox" checked={ep.isAutoScheduled} onChange={(e) => updateField(ep.id, "isAutoScheduled", e.target.checked)} className="rounded border-slate-600 w-4 h-4" />
               </FieldRow>
+              {canEditUsers && (
+                <LoginLinkRow
+                  staffId={ep.id}
+                  staffActive={canLinkLogin(savedActive, ep.id, ep.isActive)}
+                  logins={logins}
+                  onChange={setLogins}
+                />
+              )}
             </div>
 
             <div className="px-6 py-4 border-t border-slate-700">

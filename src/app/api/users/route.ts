@@ -1,11 +1,46 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { validatePassword } from "@/lib/password";
-import { assertUsersAdminSurvives, AdminGuardError } from "@/lib/user-lifecycle";
+import { assertUsersAdminSurvives, AdminGuardError, unlinkLogin } from "@/lib/user-lifecycle";
+import { parseStaffIdField, checkLinkTarget, isStaffIdUniqueViolation, linkTakenMessage, type LinkCheck } from "@/lib/staff-login-link";
+import { Prisma } from "@/generated/prisma/client";
 import { USER_SELECT, toClientUser, isHiddenStaffLogin } from "@/lib/user-view";
 import { canManageGroupLevel } from "@/lib/permissions";
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
+
+type Tx = Prisma.TransactionClient;
+
+/** Raised inside a transaction to abort it with an HTTP error. */
+class LinkError extends Error {
+  constructor(public check: Extract<LinkCheck, { ok: false }>) {
+    super(check.error);
+  }
+}
+
+/** Rule 1: validate linking `userId` (null = a new login) to `staffId` inside the tx. */
+async function assertLinkable(tx: Tx, staffId: string, userId: string | null) {
+  const staff = await tx.staff.findUnique({ where: { id: staffId }, select: { id: true, initials: true, isActive: true } });
+  const holder = await tx.user.findUnique({ where: { staffId }, select: { id: true, name: true } });
+  const check = checkLinkTarget(staff, holder, userId);
+  if (!check.ok) throw new LinkError(check);
+}
+
+/** Map write errors to JSON: link conflicts (incl. the unique-index race) and email clashes. */
+async function linkConflictResponse(e: unknown, staffId: string | null): Promise<NextResponse | null> {
+  if (e instanceof LinkError) return NextResponse.json({ error: e.check.error }, { status: e.check.status });
+  if (isStaffIdUniqueViolation(e) && staffId) {
+    // Lost a race with another link of the same staff member: report who holds it now.
+    const staff = await prisma.staff.findUnique({ where: { id: staffId }, select: { initials: true } });
+    const holder = await prisma.user.findUnique({ where: { staffId }, select: { name: true } });
+    const error = staff && holder ? linkTakenMessage(staff.initials, holder.name) : "That staff member is already linked to another login";
+    return NextResponse.json({ error }, { status: 409 });
+  }
+  if (e && typeof e === "object" && (e as { code?: unknown }).code === "P2002") {
+    return NextResponse.json({ error: "Email already in use" }, { status: 409 });
+  }
+  return null;
+}
 
 export async function GET() {
   const { error } = await getSession("users:view");
@@ -15,8 +50,8 @@ export async function GET() {
     select: USER_SELECT,
     orderBy: { createdAt: "asc" },
   });
-  // Hide logins belonging to deactivated staff — they've been reset to bare shells and
-  // re-appear only if the staff member is reactivated (see resetLoginForStaff).
+  // Hide non-admin logins still linked to an INACTIVE staff member (legacy rows from the
+  // old reset-on-deactivate lifecycle; deactivation now unlinks instead).
   return NextResponse.json(users.filter((u) => !isHiddenStaffLogin(u)).map(toClientUser));
 }
 
@@ -24,7 +59,10 @@ export async function POST(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
-  const { email, name, password, groupId } = await req.json();
+  const { email, name, password, groupId, staffId: rawStaffId } = await req.json();
+  const staffField = parseStaffIdField(rawStaffId);
+  if (staffField.kind === "invalid") return NextResponse.json({ error: "Invalid staffId" }, { status: 400 });
+  const linkStaffId = staffField.kind === "link" ? staffField.staffId : null;
   if (!email || !name || !password) {
     return NextResponse.json({ error: "Email, name, and password required" }, { status: 400 });
   }
@@ -53,25 +91,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No group specified and the default "Staff" group is missing' }, { status: 400 });
   }
   const passwordHash = await hash(password, 12);
-  const user = await prisma.user.create({
-    data: { email, name, passwordHash, groupId: finalGroupId },
-    select: USER_SELECT,
-  });
-
-  return NextResponse.json(toClientUser(user));
+  try {
+    const user = await prisma.$transaction(async (tx) => {
+      if (linkStaffId) await assertLinkable(tx, linkStaffId, null);
+      return tx.user.create({
+        data: { email, name, passwordHash, groupId: finalGroupId, ...(linkStaffId ? { staffId: linkStaffId } : {}) },
+        select: USER_SELECT,
+      });
+    });
+    return NextResponse.json(toClientUser(user));
+  } catch (e) {
+    const res = await linkConflictResponse(e, linkStaffId);
+    if (res) return res;
+    throw e;
+  }
 }
 
 export async function PUT(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
-  const { id, email, name, password, groupId, isActive } = await req.json();
+  const { id, email, name, password, groupId, isActive, staffId: rawStaffId } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+  const staffField = parseStaffIdField(rawStaffId);
+  if (staffField.kind === "invalid") return NextResponse.json({ error: "Invalid staffId" }, { status: 400 });
 
   const targetUser = await prisma.user.findUnique({
     where: { id },
     select: { email: true, passwordHash: true, group: { select: { level: true } } },
   });
+  if (!targetUser) return NextResponse.json({ error: "User not found" }, { status: 404 });
   if (targetUser && !canManageGroupLevel(result.groupLevel, targetUser.group.level)) {
     return NextResponse.json({ error: "Cannot edit a user above your group level" }, { status: 403 });
   }
@@ -121,13 +170,28 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  const user = await prisma.user.update({
-    where: { id },
-    data,
-    select: USER_SELECT,
-  });
-
-  return NextResponse.json(toClientUser(user));
+  const linkStaffId = staffField.kind === "link" ? staffField.staffId : null;
+  try {
+    const out = await prisma.$transaction(async (tx) => {
+      if (linkStaffId) {
+        await assertLinkable(tx, linkStaffId, id);
+        data.staffId = linkStaffId;
+      }
+      const updated = await tx.user.update({ where: { id }, data, select: USER_SELECT });
+      if (staffField.kind !== "unlink") return { user: updated };
+      // Rule 4: unlink AFTER the field update, so a shell that was just given an email or
+      // password in this same save counts as a real login and is detached, not deleted.
+      const action = await unlinkLogin(id, tx);
+      if (action === "delete") return { deleted: true as const };
+      return { user: await tx.user.findUniqueOrThrow({ where: { id }, select: USER_SELECT }) };
+    });
+    if ("deleted" in out) return NextResponse.json({ deleted: true, id });
+    return NextResponse.json(toClientUser(out.user));
+  } catch (e) {
+    const res = await linkConflictResponse(e, linkStaffId);
+    if (res) return res;
+    throw e;
+  }
 }
 
 export async function DELETE(req: NextRequest) {
@@ -145,11 +209,10 @@ export async function DELETE(req: NextRequest) {
     where: { id },
     select: { staffId: true, group: { select: { level: true } } },
   });
-  // Staff-linked logins are subordinate to the staff record and can NEVER be deleted here
-  // — use Reset, or deactivate/delete the staff member (which resets/deletes the login).
+  // Rule 5: a staff-linked login can't be deleted here — unlink it first (or use Reset).
   if (targetUser?.staffId) {
     return NextResponse.json(
-      { error: "This login belongs to a staff member and can't be deleted. Use Reset, or deactivate/delete the staff member." },
+      { error: "This login is linked to a staff member and can't be deleted. Unlink it first, or use Reset." },
       { status: 400 },
     );
   }

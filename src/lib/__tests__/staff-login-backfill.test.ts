@@ -39,7 +39,7 @@ describe("planStaffLoginShells", () => {
 });
 
 describe("needsStaffLogin", () => {
-  // The single-staff predicate behind ensureStaffLogin's self-heal. The reactivation bug
+  // The single-staff predicate (formerly behind the per-staff self-heal). The reactivation bug
   // was that this decision was never evaluated outside create/backfill, so imported staff
   // (and inactive-at-backfill staff later reactivated) stayed active with no login.
   it("provisions when active and not yet linked to a login", () => {

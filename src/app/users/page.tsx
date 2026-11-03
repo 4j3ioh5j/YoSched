@@ -8,11 +8,13 @@ import { UsersPage } from "./users-page";
 
 export const dynamic = "force-dynamic";
 
-export default async function Page() {
+export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const result = await getSession("users:view");
   if (result.error) redirect("/");
+  const sp = await searchParams;
+  const one = (v: string | string[] | undefined) => (typeof v === "string" && v ? v : null);
 
-  const [rawUsers, prefs, groups, me] = await Promise.all([
+  const [rawUsers, prefs, groups, me, staff] = await Promise.all([
     prisma.user.findMany({
       select: USER_SELECT,
       orderBy: { createdAt: "asc" },
@@ -26,6 +28,7 @@ export default async function Page() {
       where: { id: result.userId! },
       select: { uiPreferences: true },
     }),
+    prisma.staff.findMany({ select: { id: true, name: true, initials: true, isActive: true } }),
   ]);
 
   // Per-login persisted sort for the users table (parsed defensively — junk/missing → null,
@@ -39,6 +42,8 @@ export default async function Page() {
   // Same shape + filtering as GET /api/users: hide deactivated-staff logins and strip
   // the password hash (toClientUser derives loginComplete; the hash never reaches the client).
   const users = rawUsers.filter((u) => !isHiddenStaffLogin(u)).map(toClientUser);
+  // Staff ids held by logins that are hidden above — still taken for the link dropdown.
+  const hiddenTakenStaffIds = rawUsers.filter((u) => isHiddenStaffLogin(u) && u.staffId).map((u) => u.staffId!);
 
   return (
     <>
@@ -49,6 +54,10 @@ export default async function Page() {
         currentUserId={result.userId!}
         currentGroupLevel={result.groupLevel!}
         groups={groups}
+        staff={staff}
+        hiddenTakenStaffIds={hiddenTakenStaffIds}
+        initialCreateStaffId={one(sp.create)}
+        initialEditUserId={one(sp.edit)}
         canEditUsers={result.permissions!.includes("users:edit")}
         canViewGroups={result.permissions!.includes("groups:view")}
         canEditGroups={result.permissions!.includes("groups:edit")}

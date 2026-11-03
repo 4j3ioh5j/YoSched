@@ -14,11 +14,12 @@ export const USER_SELECT = {
   staff: { select: { id: true, name: true, initials: true, isActive: true } },
 } as const;
 
-/** Strip passwordHash and add a derived `loginComplete` (has both email + password) —
- *  the activation gate the /users UI uses. The hash never leaves the server. */
+/** Strip passwordHash and add derived `loginComplete` (has both email + password — the
+ *  activation gate) and `isShell` (has neither — unlinking it deletes it, Rule 4). The
+ *  hash never leaves the server. */
 export function toClientUser<T extends { email: string | null; passwordHash: string | null }>(u: T) {
   const { passwordHash, ...rest } = u;
-  return { ...rest, loginComplete: !!u.email && !!passwordHash };
+  return { ...rest, loginComplete: !!u.email && !!passwordHash, isShell: !u.email && !passwordHash };
 }
 
 /** A staff-linked login whose staff member is INACTIVE is hidden from /users: the
