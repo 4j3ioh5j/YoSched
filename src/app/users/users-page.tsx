@@ -134,6 +134,9 @@ export function UsersPage({
   // Every open/close/switch of the form invalidates in-flight Generate requests, so a late
   // response can't show one user's password in another user's form.
   const [genGuard] = useState(createRequestGuard);
+  // One Generate at a time: overlapping requests could save in reverse order, leaving the
+  // server on a password that isn't the one shown.
+  const [generating, setGenerating] = useState(false);
   const [trustDays, setTrustDays] = useState(initialTrustDays);
   const [savingTrust, setSavingTrust] = useState(false);
 
@@ -160,14 +163,25 @@ export function UsersPage({
     const targetId = editingId;
     const target = users.find((u) => u.id === targetId);
     if (!confirm(`Replace ${target?.name ?? "this user"}'s password with a new generated one now? Their current password stops working.`)) return;
+    if (generating) return;
+    setGenerating(true);
     const ticket = genGuard.begin();
-    const res = await fetch("/api/users/generate-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: targetId }),
-      cache: "no-store",
-    });
-    const body = await res.json().catch(() => ({}));
+    let res: Response;
+    let body: { password?: string; hasEmail?: boolean; error?: string } = {};
+    try {
+      res = await fetch("/api/users/generate-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: targetId }),
+        cache: "no-store",
+      });
+      body = await res.json().catch(() => ({}));
+    } catch {
+      setGenerating(false);
+      if (genGuard.isCurrent(ticket)) setError("Could not reach the server. The password may or may not have changed; generate again to be sure.");
+      return;
+    }
+    setGenerating(false);
     if (res.ok) {
       // The server saved it either way: keep the row honest for the TARGET user.
       setUsers((prev) => prev.map((u) => (u.id === targetId
@@ -180,7 +194,7 @@ export function UsersPage({
       return;
     }
     if (!res.ok) { setError(body.error ?? "Could not generate a password"); return; }
-    setGenerated({ password: body.password, saved: true });
+    setGenerated({ password: body.password ?? "", saved: true });
     setCopied(false);
     setForm((f) => ({ ...f, password: "", confirmPassword: "" }));
   }
@@ -406,10 +420,11 @@ export function UsersPage({
                 <button
                   type="button"
                   onClick={handleGenerate}
-                  className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
+                  disabled={generating}
+                  className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors disabled:opacity-50"
                   title={editingId ? "Set a new random password now (they choose their own at next sign-in)" : "Fill in a random password (they choose their own at first sign-in)"}
                 >
-                  Generate password
+                  {generating ? "Generating..." : "Generate password"}
                 </button>
                 <span className="text-xs text-slate-500">They&#39;ll be asked to choose their own at sign-in.</span>
               </div>
