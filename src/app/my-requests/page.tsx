@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { NavHeader } from "../nav-header";
-import { getSession } from "@/lib/auth-guard";
+import { getPageSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { MyRequestsPage } from "./my-requests-page";
 import { resolveOffStrategyOrder } from "@/lib/schedule-requests";
@@ -8,7 +8,7 @@ import { resolveOffStrategyOrder } from "@/lib/schedule-requests";
 export const dynamic = "force-dynamic";
 
 export default async function MyRequests() {
-  const result = await getSession("requests:self");
+  const result = await getPageSession("requests:self");
   if (result.error) redirect("/login");
 
   // Has the permission but no linked staff yet — show a friendly notice.

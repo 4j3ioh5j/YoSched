@@ -4,7 +4,7 @@ import { computeFairness } from "@/lib/fairness";
 import { ScheduleGrid } from "./schedule-grid";
 import { NavHeader } from "./nav-header";
 import { EditorPresenceBanner } from "./editor-presence-banner";
-import { getSession } from "@/lib/auth-guard";
+import { getPageSession } from "@/lib/auth-guard";
 import { resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { isRequestVisibleToViewer } from "@/lib/schedule-requests";
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
@@ -32,7 +32,7 @@ export default async function Home() {
   const session = await auth();
   if (!session?.user) return <MarketingLanding />;
 
-  const { error, permissions, staffId } = await getSession("schedule:view");
+  const { error, permissions, staffId } = await getPageSession("schedule:view");
   if (error) redirect("/login");
   const canEdit = permissions!.includes("schedule:edit");
   // Viewing OTHER staff's requests requires requests:view. Users without it (e.g.

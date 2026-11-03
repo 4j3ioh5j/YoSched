@@ -6,7 +6,7 @@ import { generateSecret, generateURI, verifySync } from "otplib";
 import * as QRCode from "qrcode";
 
 export async function GET() {
-  const { error, session } = await getSession();
+  const { error, session } = await getSession(undefined, { allowPendingPasswordChange: true }); // /account 2FA
   if (error) return error;
 
   const secret = generateSecret();
@@ -17,7 +17,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { error, session } = await getSession();
+  const { error, session } = await getSession(undefined, { allowPendingPasswordChange: true }); // /account 2FA
   if (error) return error;
 
   const { secret, code } = await req.json();
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE() {
-  const { error, session } = await getSession();
+  const { error, session } = await getSession(undefined, { allowPendingPasswordChange: true }); // /account 2FA
   if (error) return error;
 
   await prisma.user.update({

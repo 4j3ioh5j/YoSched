@@ -12,14 +12,19 @@ export default async function Page() {
 
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { id: true, email: true, name: true, totpEnabled: true, group: { select: { name: true } } },
+    select: { id: true, email: true, name: true, totpEnabled: true, mustChangePassword: true, group: { select: { name: true } } },
   });
   if (!user) redirect("/login");
 
   return (
     <>
       <NavHeader />
-      <AccountPage user={{ ...user, groupName: user.group?.name }} />
+      <AccountPage
+        user={{ ...user, groupName: user.group?.name }}
+        // The DB decides whether a change is pending; the token's copy can be stale either way.
+        mustChangePassword={user.mustChangePassword}
+        tokenSaysPending={(session.user as { mustChangePassword?: boolean }).mustChangePassword === true}
+      />
     </>
   );
 }

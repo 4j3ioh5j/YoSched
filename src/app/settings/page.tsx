@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getPayPeriods } from "@/lib/pay-periods-server";
 import { SettingsPage } from "./settings-page";
 import { NavHeader } from "../nav-header";
-import { getSession } from "@/lib/auth-guard";
+import { getPageSession } from "@/lib/auth-guard";
 import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, DEFAULT_OFF_STRATEGY_ORDER } from "@/lib/schedule-requests";
 import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
 import { parseLiveScope } from "@/lib/live-scope";
@@ -14,7 +14,7 @@ import { redirect } from "next/navigation";
 export const dynamic = "force-dynamic";
 
 export default async function Settings() {
-  const { error, permissions } = await getSession("settings:view");
+  const { error, permissions } = await getPageSession("settings:view");
   if (error) redirect("/");
   const canEditSettings = permissions!.includes("settings:edit");
   const canEditAutoGenPriority = permissions!.includes("settings:autogen-priority");

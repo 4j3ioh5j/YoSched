@@ -9,7 +9,7 @@ import { hasUsersEdit } from "./user-admin-safety";
 // derive `loginComplete`; never returned to the client).
 export const USER_SELECT = {
   id: true, email: true, name: true, groupId: true, staffId: true, isActive: true, totpEnabled: true, createdAt: true,
-  passwordHash: true,
+  passwordHash: true, mustChangePassword: true,
   group: { select: { name: true, level: true, permissions: true } },
   staff: { select: { id: true, name: true, initials: true, isActive: true } },
 } as const;

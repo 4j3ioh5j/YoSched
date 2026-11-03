@@ -6,6 +6,7 @@ import { parseStaffIdField, checkLinkTarget, isStaffIdUniqueViolation, linkTaken
 import { Prisma } from "@/generated/prisma/client";
 import { USER_SELECT, toClientUser, isHiddenStaffLogin } from "@/lib/user-view";
 import { canManageGroupLevel } from "@/lib/permissions";
+import { mustChangeAfterAdminSet } from "@/lib/must-change-password";
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
 
@@ -95,7 +96,8 @@ export async function POST(req: NextRequest) {
     const user = await prisma.$transaction(async (tx) => {
       if (linkStaffId) await assertLinkable(tx, linkStaffId, null);
       return tx.user.create({
-        data: { email, name, passwordHash, groupId: finalGroupId, ...(linkStaffId ? { staffId: linkStaffId } : {}) },
+        // An admin-chosen password: the new person must replace it at first sign-in.
+        data: { email, name, passwordHash, mustChangePassword: true, groupId: finalGroupId, ...(linkStaffId ? { staffId: linkStaffId } : {}) },
         select: USER_SELECT,
       });
     });
@@ -143,6 +145,8 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: `Password requirements: ${errors.join(", ")}` }, { status: 400 });
     }
     data.passwordHash = await hash(password, 12);
+    // Someone else's password set by an admin must be replaced at their next sign-in.
+    data.mustChangePassword = mustChangeAfterAdminSet(id, result.userId);
   }
 
   // Gate 3 of activation: a login may only be enabled once it has both an email and a

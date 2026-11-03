@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { getSession } from "@/lib/auth-guard";
+import { getPageSession } from "@/lib/auth-guard";
 import { USER_SELECT, toClientUser, isHiddenStaffLogin } from "@/lib/user-view";
 import { parseUserSort } from "@/lib/users-sort";
 import { redirect } from "next/navigation";
@@ -9,7 +9,7 @@ import { UsersPage } from "./users-page";
 export const dynamic = "force-dynamic";
 
 export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const result = await getSession("users:view");
+  const result = await getPageSession("users:view");
   if (result.error) redirect("/");
   const sp = await searchParams;
   const one = (v: string | string[] | undefined) => (typeof v === "string" && v ? v : null);

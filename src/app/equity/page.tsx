@@ -5,7 +5,7 @@ import { DEFAULT_SPEC, decodeSpec } from "@/lib/graph/spec";
 import { DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { EquityPage } from "./equity-page";
 import { NavHeader } from "../nav-header";
-import { getSession } from "@/lib/auth-guard";
+import { getPageSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +19,7 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
   // raw per-date assignment list to the browser for client-side recompute, which
   // is the schedule itself. Do not drop schedule:view here without moving the
   // raw-data computation back to the server (see docs/statistics-revamp-plan.md).
-  const session = await getSession(["statistics:view", "schedule:view"]);
+  const session = await getPageSession(["statistics:view", "schedule:view"]);
   if (session.error) redirect("/");
   const canManageViews = session.permissions.includes("statistics:manage");
   const [staff, shiftTypes, assignments, holidays, desirabilityWeights, payPeriods, schedPrefs, equityFactors, eligibilities, overrides] =

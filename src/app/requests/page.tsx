@@ -1,13 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { NavHeader } from "../nav-header";
-import { getSession } from "@/lib/auth-guard";
+import { getPageSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { RequestsPage } from "./requests-page";
 
 export const dynamic = "force-dynamic";
 
 export default async function Requests() {
-  const { error, permissions } = await getSession("requests:view");
+  const { error, permissions } = await getPageSession("requests:view");
   if (error) redirect("/login");
   const canEdit = permissions!.includes("schedule:edit");
 

@@ -5,7 +5,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { compare, hash } from "bcryptjs";
 
 export async function PUT(req: NextRequest) {
-  const { error, session } = await getSession();
+  // Exempt from the forced-change gate: this IS the change.
+  const { error, session } = await getSession(undefined, { allowPendingPasswordChange: true });
   if (error) return error;
 
   const { currentPassword, newPassword } = await req.json();
@@ -30,10 +31,16 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: `Password requirements: ${errors.join(", ")}` }, { status: 400 });
   }
 
+  if (newPassword === currentPassword) {
+    return NextResponse.json({ error: "Choose a new password that is different from the current one" }, { status: 400 });
+  }
+
   const passwordHash = await hash(newPassword, 12);
+  // Setting your own password clears a pending forced change. The client then signs out,
+  // so no session token keeps the old flag.
   await prisma.user.update({
     where: { id: user.id },
-    data: { passwordHash },
+    data: { passwordHash, mustChangePassword: false },
   });
 
   return NextResponse.json({ ok: true });

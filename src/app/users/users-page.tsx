@@ -6,6 +6,8 @@ import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-
 import { canManageGroupLevel } from "@/lib/permissions";
 import { sortUsers, type UserSort, type UserSortColumn } from "@/lib/users-sort";
 import { linkOptionsForLogin, type LinkOptionStaff } from "@/lib/staff-login-link";
+import { generatePassword, browserRandomInt } from "@/lib/generate-password";
+import { createRequestGuard } from "@/lib/request-guard";
 import { GroupsSection } from "../settings/groups-section";
 
 type LoginLogEntry = {
@@ -30,6 +32,7 @@ type User = {
   isActive: boolean;
   loginComplete: boolean; // has both email + password (server-derived; gate 3 of activation)
   isShell?: boolean; // has neither email nor password (server-derived; unlinking deletes it)
+  mustChangePassword?: boolean; // admin-set/generated password not yet replaced by the person
   totpEnabled?: boolean;
   createdAt: string | Date;
 };
@@ -124,6 +127,13 @@ export function UsersPage({
   const [editingId, setEditingId] = useState<string | null>(deepLink?.editingId ?? null);
   const [form, setForm] = useState(deepLink?.form ?? emptyForm);
   const [error, setError] = useState("");
+  // A generated password, shown ONCE in the form until it closes (never stored client-side
+  // beyond this state). `saved` = already written to the server (existing login).
+  const [generated, setGenerated] = useState<{ password: string; saved: boolean } | null>(null);
+  const [copied, setCopied] = useState(false);
+  // Every open/close/switch of the form invalidates in-flight Generate requests, so a late
+  // response can't show one user's password in another user's form.
+  const [genGuard] = useState(createRequestGuard);
   const [trustDays, setTrustDays] = useState(initialTrustDays);
   const [savingTrust, setSavingTrust] = useState(false);
 
@@ -132,7 +142,58 @@ export function UsersPage({
     setShowForm(false);
     setEditingId(null);
     setError("");
-  }, [defaultGroupId]);
+    setGenerated(null);
+    setCopied(false);
+    genGuard.invalidate(null);
+  }, [defaultGroupId, genGuard]);
+
+  async function handleGenerate() {
+    setError("");
+    setCopied(false);
+    if (!editingId) {
+      // New login: fill both fields; the server hashes it and flags the change on Create.
+      const password = generatePassword(browserRandomInt);
+      setForm((f) => ({ ...f, password, confirmPassword: password }));
+      setGenerated({ password, saved: false });
+      return;
+    }
+    const targetId = editingId;
+    const target = users.find((u) => u.id === targetId);
+    if (!confirm(`Replace ${target?.name ?? "this user"}'s password with a new generated one now? Their current password stops working.`)) return;
+    const ticket = genGuard.begin();
+    const res = await fetch("/api/users/generate-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: targetId }),
+      cache: "no-store",
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) {
+      // The server saved it either way: keep the row honest for the TARGET user.
+      setUsers((prev) => prev.map((u) => (u.id === targetId
+        ? { ...u, mustChangePassword: true, isShell: false, loginComplete: !!body.hasEmail }
+        : u)));
+    }
+    // Only show the result in the form that asked for it (same editor session, latest click).
+    if (!genGuard.isCurrent(ticket)) {
+      if (res.ok) alert(`A new password was set for ${target?.name ?? "that user"}, but its form was closed, so it isn't shown. Generate again from their form to get one you can copy.`);
+      return;
+    }
+    if (!res.ok) { setError(body.error ?? "Could not generate a password"); return; }
+    setGenerated({ password: body.password, saved: true });
+    setCopied(false);
+    setForm((f) => ({ ...f, password: "", confirmPassword: "" }));
+  }
+
+  async function copyGenerated() {
+    if (!generated) return;
+    try {
+      await navigator.clipboard.writeText(generated.password);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
   useEscape(resetForm);
 
   async function handleSave() {
@@ -213,6 +274,9 @@ export function UsersPage({
     setForm({ email: user.email ?? "", name: user.name, password: "", confirmPassword: "", groupId: user.groupId ?? defaultGroupId, staffId: user.staffId ?? "" });
     setEditingId(user.id);
     setShowForm(true);
+    setGenerated(null);
+    setCopied(false);
+    genGuard.invalidate(user.id);
   }
 
   // "Linked staff" choices: active staff with no login, plus this login's own staff member.
@@ -338,6 +402,38 @@ export function UsersPage({
                   <option key={g.id} value={g.id}>{g.name}</option>
                 ))}
               </select>
+              <div className="col-span-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleGenerate}
+                  className="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
+                  title={editingId ? "Set a new random password now (they choose their own at next sign-in)" : "Fill in a random password (they choose their own at first sign-in)"}
+                >
+                  Generate password
+                </button>
+                <span className="text-xs text-slate-500">They&#39;ll be asked to choose their own at sign-in.</span>
+              </div>
+              {generated && (
+                <div className="col-span-2 rounded border border-emerald-800 bg-emerald-950/40 p-3 space-y-2">
+                  <p className="text-xs text-emerald-300">
+                    {generated.saved
+                      ? "New password saved. Copy it now — it won't be shown again."
+                      : "Password filled in. Copy it now — it's saved when you press Create."}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={generated.password}
+                      aria-label="Generated password"
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="flex-1 px-3 py-1.5 bg-slate-900 border border-slate-700 rounded font-mono text-sm text-slate-100"
+                    />
+                    <button type="button" onClick={copyGenerated} className="px-2.5 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 rounded transition-colors">
+                      {copied ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                </div>
+              )}
               <label className="col-span-2 flex items-center gap-2 text-xs text-slate-400">
                 <span className="w-24 shrink-0">Linked staff</span>
                 <select
@@ -434,7 +530,17 @@ export function UsersPage({
               const manageable = canManageUser(user);
               return (
                 <tr key={user.id} className={`border-b border-slate-800/50 hover:bg-slate-800/30 ${!user.isActive ? "opacity-50" : ""}`}>
-                  <td className="py-2.5 px-3 truncate">{user.name}</td>
+                  <td className="py-2.5 px-3 truncate">
+                    {user.name}
+                    {user.mustChangePassword && (
+                      <span
+                        title="Using a password set by an administrator; they must choose their own at next sign-in"
+                        className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-amber-900/40 text-amber-400"
+                      >
+                        temp password
+                      </span>
+                    )}
+                  </td>
                   <td className="py-2.5 px-3 text-slate-400 truncate">{user.email ?? <span className="italic text-slate-600">no email</span>}</td>
                   <td className="py-2.5 px-3">
                     <span className={`inline-block w-[88px] text-center text-xs py-0.5 rounded ${GROUP_BADGE[gName] || "bg-slate-600 text-slate-300"}`}>

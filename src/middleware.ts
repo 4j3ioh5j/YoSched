@@ -3,6 +3,7 @@ import { authConfig } from "@/lib/auth.config";
 import { BASE_PATH } from "@/lib/base-path";
 import { CSP_RESPONSE_HEADER, buildCsp, generateNonce } from "@/lib/csp";
 import { NextResponse } from "next/server";
+import { shouldRedirectToPasswordChange, ACCOUNT_PATH, MUST_CHANGE_QUERY } from "@/lib/must-change-password";
 
 const { auth } = NextAuth(authConfig);
 
@@ -48,6 +49,16 @@ export default auth((req) => {
     // callbackUrl is basePath-relative; the client router re-adds basePath on push.
     loginUrl.searchParams.set("callbackUrl", path);
     const redirect = NextResponse.redirect(loginUrl);
+    if (csp) redirect.headers.set(CSP_RESPONSE_HEADER, csp.policy);
+    return redirect;
+  }
+
+  // Forced password change (pages only; APIs get a JSON 403 from getSession).
+  const mustChange = (req.auth?.user as { mustChangePassword?: boolean } | undefined)?.mustChangePassword === true;
+  if (req.auth && shouldRedirectToPasswordChange(path, mustChange, PUBLIC_PATHS)) {
+    const accountUrl = new URL(`${BASE_PATH}${ACCOUNT_PATH}`, req.nextUrl.origin);
+    accountUrl.searchParams.set(MUST_CHANGE_QUERY, "1");
+    const redirect = NextResponse.redirect(accountUrl);
     if (csp) redirect.headers.set(CSP_RESPONSE_HEADER, csp.policy);
     return redirect;
   }

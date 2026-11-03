@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import { signOut } from "next-auth/react";
 import { useEscape } from "@/lib/use-escape";
+import { BASE_PATH } from "@/lib/base-path";
 
 type User = {
   id: string;
@@ -18,7 +20,13 @@ const GROUP_BADGE: Record<string, string> = {
   Staff: "bg-slate-600 text-slate-300",
 };
 
-export function AccountPage({ user }: { user: User }) {
+export function AccountPage({ user, mustChangePassword = false, tokenSaysPending = false }: {
+  user: User;
+  /** An admin set or generated this password; the person must choose their own now. */
+  mustChangePassword?: boolean;
+  /** The session token still carries the flag although the DB has cleared it. */
+  tokenSaysPending?: boolean;
+}) {
   const [totpEnabled, setTotpEnabled] = useState(user.totpEnabled);
   const [setupState, setSetupState] = useState<"idle" | "scanning" | "verifying">("idle");
   const [qrCode, setQrCode] = useState("");
@@ -63,6 +71,16 @@ export function AccountPage({ user }: { user: User }) {
     setPwForm({ current: "", new_: "", confirm: "" });
     setPwSuccess(true);
     setPwLoading(false);
+    // After a forced change, sign out so the next sign-in gets a token without the flag.
+    if (mustChangePassword || tokenSaysPending) await signOutTo("changed");
+  }
+
+  async function signOutTo(reason: "changed" | "relogin") {
+    try {
+      await signOut({ redirect: false });
+    } finally {
+      window.location.href = `${BASE_PATH}/login?${reason}=1`;
+    }
   }
 
   async function startSetup() {
@@ -131,6 +149,24 @@ export function AccountPage({ user }: { user: User }) {
     <main className="flex-1 p-6 bg-slate-950 text-slate-100">
       <div className="max-w-lg mx-auto space-y-8">
         <h1 className="text-xl font-bold">Account</h1>
+
+        {mustChangePassword && (
+          <div role="alert" className="rounded border border-amber-700 bg-amber-900/30 p-4 text-sm text-amber-200 space-y-1">
+            <p className="font-medium">Please choose your own password</p>
+            <p className="text-amber-300/80">
+              Your password was set by an administrator. Enter it as your current password below, then choose a new one.
+              You&#39;ll be asked to sign in again with the new password.
+            </p>
+          </div>
+        )}
+        {!mustChangePassword && tokenSaysPending && (
+          <div role="alert" className="rounded border border-slate-600 bg-slate-800 p-4 text-sm text-slate-300 flex items-center justify-between gap-3">
+            <span>Your password has already been changed. Sign in again to continue.</span>
+            <button onClick={() => signOutTo("relogin")} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 rounded transition-colors">
+              Sign in again
+            </button>
+          </div>
+        )}
 
         <section className="bg-slate-800 rounded border border-slate-700 p-4 space-y-3">
           <h2 className="text-sm font-medium text-slate-300">Profile</h2>

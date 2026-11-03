@@ -81,6 +81,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           id: user.id, email: user.email, name: user.name, totpVerifiedAt,
           groupId: user.groupId, groupName: user.group?.name, groupLevel: user.group?.level,
           permissions: user.group?.permissions ?? [],
+          mustChangePassword: user.mustChangePassword,
         };
       },
     }),

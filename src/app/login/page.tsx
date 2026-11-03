@@ -8,6 +8,11 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") || "/";
+  const notice = searchParams.get("changed") === "1"
+    ? "Password changed. Sign in with your new password."
+    : searchParams.get("relogin") === "1"
+      ? "Please sign in again."
+      : "";
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<"credentials" | "totp">("credentials");
@@ -174,6 +179,7 @@ function LoginForm() {
                 className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-400/50 focus:border-transparent backdrop-blur-sm"
               />
             </div>
+            {notice && !error && <p className="text-sm text-emerald-300">{notice}</p>}
             {error && <p className="text-sm text-red-400">{error}</p>}
             <div className="pt-6">
               <button

@@ -49,6 +49,9 @@ export const authConfig: NextAuthConfig = {
         token.groupName = u.groupName;
         token.groupLevel = u.groupLevel;
         token.permissions = u.permissions;
+        // Drives the middleware's page redirect to /account. Set at sign-in only; the DB
+        // flag (getSession) is authoritative, and the client signs out after the change.
+        token.mustChangePassword = (user as { mustChangePassword?: boolean }).mustChangePassword === true;
       }
       return token;
     },
@@ -60,6 +63,7 @@ export const authConfig: NextAuthConfig = {
         (session.user as { groupName?: string }).groupName = token.groupName as string | undefined;
         (session.user as { groupLevel?: number }).groupLevel = token.groupLevel as number | undefined;
         (session.user as { permissions?: string[] }).permissions = token.permissions as string[] | undefined;
+        (session.user as { mustChangePassword?: boolean }).mustChangePassword = token.mustChangePassword === true;
       }
       return session;
     },

@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { StaffPage } from "./staff-page";
 import { NavHeader } from "../nav-header";
-import { getSession } from "@/lib/auth-guard";
+import { getPageSession } from "@/lib/auth-guard";
 import { staffLoginStatus } from "@/lib/staff-login-status";
 import { redirect } from "next/navigation";
 import { USER_SELECT, toClientUser } from "@/lib/user-view";
@@ -9,7 +9,7 @@ import { USER_SELECT, toClientUser } from "@/lib/user-view";
 export const dynamic = "force-dynamic";
 
 export default async function Staff() {
-  const { error, permissions } = await getSession("staff:view");
+  const { error, permissions } = await getPageSession("staff:view");
   if (error) redirect("/");
   // Linking logins to staff is a users:edit action (Admin / Super User). Only they get the
   // login list (names + emails) and the link controls; everyone else sees the badge.
