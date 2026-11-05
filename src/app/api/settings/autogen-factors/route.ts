@@ -1,13 +1,15 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { validateFactorOrder } from "@/lib/autogen-factor-order";
+import { validateHoursPolicies, HOURS_POLICY_KEYS } from "@/lib/autogen-hours-policy";
 import { NextRequest, NextResponse } from "next/server";
 
 // Auto-generation objective priority (#252, Slice 1). The negotiable factors are a
 // fixed catalog seeded by migration; Slice 1 only lets an admin REORDER them (no
 // add/remove/disable yet). GET returns them in precedence order; PUT accepts the new
-// order and rewrites sortOrder. Reordering only affects how schedules are GRADED
-// (multi-option selection + Live expansion), not yet how the builder places shifts.
+// order and rewrites sortOrder; it may also carry `policies` ({ overHours?, underHours? } →
+// prohibited | discouraged | allowed), the pay-period hours policy on those two rows.
+// An order-only body leaves the policies untouched.
 
 export async function GET() {
   const { error } = await getSession("settings:view");
@@ -22,7 +24,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:autogen-priority");
   if (error) return error;
 
-  const body = (await req.json().catch(() => null)) as { order?: unknown } | null;
+  const body = (await req.json().catch(() => null)) as { order?: unknown; policies?: unknown } | null;
 
   const existing = await prisma.autoGenFactor.findMany({ orderBy: { sortOrder: "asc" } });
   const existingKeys = existing.map((f) => f.key);
@@ -32,11 +34,27 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: result.error, expected: existingKeys }, { status: 400 });
   }
 
+  const policies = validateHoursPolicies(body?.policies);
+  if (!policies.ok) {
+    return NextResponse.json({ error: policies.error }, { status: 400 });
+  }
+  for (const k of Object.keys(policies.policies)) {
+    if (!existingKeys.includes(k)) {
+      return NextResponse.json({ error: `policies: factor "${k}" does not exist` }, { status: 400 });
+    }
+  }
+
   const byKey = new Map(existing.map((f) => [f.key, f]));
   await prisma.$transaction(
-    result.order.map((key, i) =>
-      prisma.autoGenFactor.update({ where: { id: byKey.get(key)!.id }, data: { sortOrder: i } }),
-    ),
+    result.order.map((key, i) => {
+      const policy = (HOURS_POLICY_KEYS as readonly string[]).includes(key)
+        ? policies.policies[key as (typeof HOURS_POLICY_KEYS)[number]]
+        : undefined;
+      return prisma.autoGenFactor.update({
+        where: { id: byKey.get(key)!.id },
+        data: policy !== undefined ? { sortOrder: i, hoursPolicy: policy } : { sortOrder: i },
+      });
+    }),
   );
 
   const updated = await prisma.autoGenFactor.findMany({ orderBy: { sortOrder: "asc" } });

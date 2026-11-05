@@ -8,6 +8,7 @@ import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope
 import { SHIFT_SHARE_BASES, type ShiftShareBasis } from "@/lib/shift-share";
 import { HOLIDAY_POLICIES, type HolidayPolicy } from "@/lib/holiday-policy";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
+import { HOURS_POLICIES, HOURS_POLICY_KEYS, parseHoursPolicy, isHoursPolicyKey, type HoursPolicy } from "@/lib/autogen-hours-policy";
 import { reconcileOrder, MAX_PROFILE_NAME_LENGTH } from "@/lib/autogen-profile";
 import { OffStrategyEditor } from "@/components/off-strategy-editor";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
@@ -2014,6 +2015,7 @@ type AutoGenFactorData = {
   sortOrder: number;
   enabled: boolean;
   hardness: string;
+  hoursPolicy: HoursPolicy; // meaningful only on overHours / underHours
 };
 
 type AutoGenProfileData = {
@@ -2026,6 +2028,16 @@ type AutoGenProfileData = {
 
 const sameOrder = (a: AutoGenFactorData[], b: AutoGenFactorData[]) =>
   a.length === b.length && a.every((f, i) => f.key === b[i].key);
+
+// Same pay-period hours policies on the two hours rows (order-independent).
+const samePolicies = (a: AutoGenFactorData[], b: AutoGenFactorData[]) =>
+  HOURS_POLICY_KEYS.every((k) => a.find((f) => f.key === k)?.hoursPolicy === b.find((f) => f.key === k)?.hoursPolicy);
+
+const HOURS_POLICY_LABELS: Record<HoursPolicy, { label: string; hint: string }> = {
+  prohibited: { label: "Prohibited", hint: "Never crossed, wherever it sits in the list; a gap it causes is flagged instead. If both hours rows are Prohibited and they collide, the higher one wins." },
+  discouraged: { label: "Discouraged", hint: "Anything ranked above it may push past it; each time is flagged." },
+  allowed: { label: "Allowed", hint: "Doesn't block anything." },
+};
 
 // Format a save stamp as `YYYY-MM-DD HH:mm` in 24-hour local time (project rule: never AM/PM).
 function formatProfileStamp(iso: string): string {
@@ -2067,7 +2079,11 @@ function AutoGenPrioritySection({
   const [profileName, setProfileName] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
 
-  const dirty = !sameOrder(factors, savedFactors);
+  const dirty = !sameOrder(factors, savedFactors) || !samePolicies(factors, savedFactors);
+
+  function setPolicy(key: string, policy: HoursPolicy) {
+    setFactors((prev) => prev.map((f) => (f.key === key ? { ...f, hoursPolicy: policy } : f)));
+  }
 
   function metaFor(f: AutoGenFactorData): FactorMeta {
     return FACTOR_META[f.key] ?? { label: f.label, description: "" };
@@ -2082,10 +2098,16 @@ function AutoGenPrioritySection({
       const res = await fetch("/api/settings/autogen-factors", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order: factors.map((f) => f.key) }),
+        body: JSON.stringify({
+          order: factors.map((f) => f.key),
+          policies: Object.fromEntries(
+            factors.filter((f) => isHoursPolicyKey(f.key)).map((f) => [f.key, f.hoursPolicy]),
+          ),
+        }),
       });
       if (!res.ok) throw new Error(await res.text());
-      const saved: AutoGenFactorData[] = await res.json();
+      const saved: AutoGenFactorData[] = ((await res.json()) as (Omit<AutoGenFactorData, "hoursPolicy"> & { hoursPolicy: unknown })[])
+        .map((f) => ({ ...f, hoursPolicy: parseHoursPolicy(f.hoursPolicy) }));
       setFactors(saved);
       setSavedFactors(saved);
       setStatus("saved");
@@ -2105,6 +2127,7 @@ function AutoGenPrioritySection({
   // Apply a saved profile into the DRAFT only (staged) — the admin still has to Save to
   // activate it. reconcileOrder keeps this safe if the factor catalog has since changed.
   function applyProfile(p: AutoGenProfileData) {
+    // Profiles snapshot the ORDER only; the hours policies in the draft are kept as they are.
     const order = reconcileOrder(p.order, factors.map((f) => f.key));
     const byKey = new Map(factors.map((f) => [f.key, f]));
     setFactors(order.map((k) => byKey.get(k)!));
@@ -2229,10 +2252,34 @@ function AutoGenPrioritySection({
                 <span className="shrink-0 w-6 h-6 rounded-full bg-slate-800 border border-slate-600 text-xs text-slate-300 flex items-center justify-center font-semibold mt-[1px]">
                   {idx + 1}
                 </span>
-                <div className="min-w-0">
-                  <span className="text-sm text-slate-200 font-medium">{meta.label}</span>
+                <div className="min-w-0 flex-1">
+                  <span className="text-sm text-slate-200 font-medium">
+                    {isHoursPolicyKey(f.key) && f.hoursPolicy === "prohibited" && (
+                      <span className="mr-1" title="Prohibited — never crossed, wherever it sits">🔒</span>
+                    )}
+                    {meta.label}
+                  </span>
                   {meta.description && <p className="text-xs text-slate-500 mt-0.5">{meta.description}</p>}
+                  {isHoursPolicyKey(f.key) && (
+                    <p className="text-xs text-slate-400 mt-0.5">{HOURS_POLICY_LABELS[f.hoursPolicy].hint}</p>
+                  )}
                 </div>
+                {isHoursPolicyKey(f.key) && (
+                  <select
+                    value={f.hoursPolicy}
+                    disabled={!canEdit || status === "saving"}
+                    onChange={(e) => setPolicy(f.key, parseHoursPolicy(e.target.value))}
+                    // Keep a drag from starting on the control.
+                    onMouseDown={(e) => e.stopPropagation()}
+                    draggable={false}
+                    aria-label={`${meta.label} policy`}
+                    className="shrink-0 px-2 py-1 rounded-md text-xs bg-slate-900/60 border border-slate-600 text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                  >
+                    {HOURS_POLICIES.map((p) => (
+                      <option key={p} value={p}>{HOURS_POLICY_LABELS[p].label}</option>
+                    ))}
+                  </select>
+                )}
               </div>
             );
           })}
@@ -2254,7 +2301,7 @@ function AutoGenPrioritySection({
             >
               Cancel
             </button>
-            {dirty && <span className="text-xs text-amber-400">Unsaved order — Save to apply.</span>}
+            {dirty && <span className="text-xs text-amber-400">Unsaved changes — Save to apply.</span>}
           </div>
         )}
       </div>

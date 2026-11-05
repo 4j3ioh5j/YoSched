@@ -6,6 +6,7 @@ import { foldRequestsForDate, detectRequestConflicts, coversDate, parseOffStrate
 import { matchesWhen, standingToWhen } from "./recurrence";
 import { type ShiftShareBasis } from "./shift-share";
 import { type HolidayPolicy } from "./holiday-policy";
+import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
 
 export type ScheduleStaff = {
   id: string;
@@ -229,7 +230,8 @@ export function compareScheduleQuality(a: ScheduleQuality, b: ScheduleQuality): 
 // entry per AutoGenFactor row; the engine reorders `rank[]` to match. Optional on the
 // input — when absent or invalid the engine uses DEFAULT_FACTOR_ORDER, so default
 // output is byte-for-byte unchanged from the pre-config hardcoded behavior.
-export type AutoGenFactorConfig = { key: string; sortOrder: number; enabled: boolean };
+// `hoursPolicy` (optional; only meaningful on overHours / underHours) — see autogen-hours-policy.ts.
+export type AutoGenFactorConfig = { key: string; sortOrder: number; enabled: boolean; hoursPolicy?: HoursPolicy };
 
 // The canonical lexicographic order — also the fallback. Each key maps to one of the
 // already-computed breakdown terms in buildRankFromConfig. Slice 2a split the old
@@ -259,15 +261,29 @@ export const DEFAULT_FACTOR_ORDER = [
 // slip through and reorder the known factors instead of falling back (Codex #1761).
 export function effectiveFactorKeys(config: AutoGenFactorConfig[] | undefined): string[] {
   const known: readonly string[] = DEFAULT_FACTOR_ORDER;
+  let order: string[] = [...known];
   if (config && config.length) {
     const keys = new Set(config.map((f) => f.key));
     const valid =
       config.length === known.length &&
       keys.size === config.length &&
       config.every((f) => f.enabled && known.includes(f.key));
-    if (valid) return [...config].sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.key);
+    if (valid) order = [...config].sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.key);
   }
-  return [...known];
+  return withProhibitedHoursFirst(order, config);
+}
+
+// A Prohibited pay-period hours row is never crossed wherever it sits, so for grading
+// and every rank comparison it moves to the FRONT (above hard limits and coverage),
+// keeping the relative order of the two hours rows when both are Prohibited (then the
+// higher one wins a collision between them). Policies are read by key, so they apply
+// even when the order itself fell back to the default.
+function withProhibitedHoursFirst(order: string[], config: AutoGenFactorConfig[] | undefined): string[] {
+  const prohibited = new Set(
+    (config ?? []).filter((f) => (f.key === "overHours" || f.key === "underHours") && parseHoursPolicy(f.hoursPolicy) === "prohibited").map((f) => f.key),
+  );
+  if (prohibited.size === 0) return order;
+  return [...order.filter((k) => prohibited.has(k)), ...order.filter((k) => !prohibited.has(k))];
 }
 
 // Build the lexicographic rank vector from the configured factor order. `terms` holds
@@ -1077,7 +1093,39 @@ export function autoSchedule({
   // protected). An admin flips either trade by ranking coverage higher.
   const factorKeys2b = effectiveFactorKeys(factorOrder);
   const coverageRank2b = factorKeys2b.indexOf("coverage");
-  const coverageBeatsOverHours = coverageRank2b < factorKeys2b.indexOf("overHours");
+  // Pay-period hours policy per hours row (autogen-hours-policy.ts). Read by key from the
+  // config even when the ORDER falls back to default — a policy is not an ordering.
+  const overHoursPolicy: HoursPolicy = parseHoursPolicy(factorOrder?.find((f) => f.key === "overHours")?.hoursPolicy);
+  const underHoursPolicy: HoursPolicy = parseHoursPolicy(factorOrder?.find((f) => f.key === "underHours")?.hoursPolicy);
+  // May factor `a` push past hours row `b`? Allowed → always; Prohibited → never (wherever
+  // it ranks); Discouraged → only when `a` ranks above `b`. With NULL policies (=discouraged)
+  // this is exactly the pre-policy rank comparison.
+  function beatsHoursRow(a: string, b: "overHours" | "underHours"): boolean {
+    const policy = b === "overHours" ? overHoursPolicy : underHoursPolicy;
+    if (policy === "allowed") return true;
+    if (policy === "prohibited") return false;
+    return factorKeys2b.indexOf(a) < factorKeys2b.indexOf(b);
+  }
+  // When going over and going under conflict (keeping a cell pushes over; dropping it leaves
+  // under), is landing UNDER the worse outcome? Prohibited beats discouraged beats allowed;
+  // equal policies → the higher-ranked row is the one to protect.
+  function underIsWorseThanOver(): boolean {
+    const weight = (p: HoursPolicy) => (p === "prohibited" ? 2 : p === "discouraged" ? 1 : 0);
+    const wu = weight(underHoursPolicy);
+    const wo = weight(overHoursPolicy);
+    if (wu !== wo) return wu > wo;
+    if (wu === 0) return false; // both allowed → neither blocks; keep the pre-policy behavior
+    return factorKeys2b.indexOf("underHours") < factorKeys2b.indexOf("overHours");
+  }
+  const coverageBeatsOverHours = beatsHoursRow("coverage", "overHours");
+  // A staffer's HARD per-staff minimum target overrides the pay-period cap only when hard
+  // limits may push past over-target (default order: yes, unchanged).
+  const hardMinBeatsOverHours = beatsHoursRow("hardLimits", "overHours");
+  // May the last fill day overshoot the target (shifts come in whole lengths)? Always, as
+  // before, unless over-target is Prohibited — then only a Prohibited under-target ranked
+  // above it can force the overshoot.
+  const fillMayOvershoot = overHoursPolicy !== "prohibited" ||
+    (underHoursPolicy === "prohibited" && factorKeys2b.indexOf("underHours") < factorKeys2b.indexOf("overHours"));
   const coverageBeatsHardLimits = coverageRank2b < factorKeys2b.indexOf("hardLimits");
 
   // Slice 2b coverage-fill FALLBACK gate — consulted only when the hours-clean tier is
@@ -1094,10 +1142,61 @@ export function autoSchedule({
   // (Codex #1793: the earlier "under-reach never waived" wording was wrong — excluding it
   // would strand coverage AND worsen underHours.) Hard MIN is handled in tier1 via
   // hasUnmetMinimum. With the default order this reduces to exactly `isAvailable(p,…)`.
+  // Would placing `st` on every date of `group` push `p` over target in any pay period?
+  function pairWouldExceed(p: ScheduleStaff, group: string[], st: ScheduleShiftType): boolean {
+    if (!st.countsTowardFte) return false;
+    const addByPP = new Map<PayPeriod, number>();
+    for (const d of group) {
+      const pp = findPPForDate(d);
+      if (!pp) continue;
+      addByPP.set(pp, (addByPP.get(pp) ?? 0) + getShiftHours(p.id, st, overrideMap, dayTypeOf(d, holidaySet)));
+    }
+    for (const [pp, add] of addByPP) {
+      const target = pp.targetHours * p.ftePercentage;
+      if (target > 0 && ppHoursForStaff(p.id, pp) + add > target) return true;
+    }
+    return false;
+  }
+
+  // Tier-1 staffing gate: hours-clean, or a hard per-staff minimum that may override the
+  // cap (never past an over-target hard limits may not cross).
+  function hoursOkOrHardMin(p: ScheduleStaff, date: string, st: ScheduleShiftType): boolean {
+    const block = ppHoursBlock(p.id, date, st);
+    if (block === null) return true;
+    if (!hasUnmetMinimum(p, st, date)) return false;
+    return block !== "over" || hardMinBeatsOverHours;
+  }
+
   function canFillCoverageOverLimits(p: ScheduleStaff, date: string, st: ScheduleShiftType): boolean {
     if (!isAvailable(p, date, st, { ignoreHardMax: coverageBeatsHardLimits && hasUnmetCoverageMinimum(date, st) })) return false;
-    if (!coverageBeatsOverHours && ppHoursBlock(p.id, date, st) === "over") return false;
+    const block = ppHoursBlock(p.id, date, st);
+    if (!coverageBeatsOverHours && block === "over") return false;
+    // An under-target coverage cannot push past (Prohibited, or Discouraged and ranked above
+    // coverage): refuse a placement that CREATES an avoidable shortfall — the staffer could
+    // still reach target with ordinary days now, but not after this shift (+ its follower
+    // day). A shortfall that exists either way stays placeable (covering reduces it).
+    if (block === "under-reach" && !beatsHoursRow("coverage", "underHours") && canStillReachTarget(p, date)) return false;
     return true;
+  }
+
+  // Could `p` still reach the pay-period target of `date`'s period with the open days left,
+  // before anything more is placed? (Same capacity estimate as ppHoursBlock's under-reach.)
+  function canStillReachTarget(p: ScheduleStaff, date: string): boolean {
+    const pp = findPPForDate(date);
+    if (!pp || !fillShift) return true;
+    const target = pp.targetHours * p.ftePercentage;
+    const current = ppHoursForStaff(p.id, pp);
+    if (target <= 0 || current >= target) return true;
+    const reachableHrs = maxReachableDailyHours(p, shiftTypes, overrideMap);
+    const perDayHrs = reachableHrs > 0 ? reachableHrs : maxShiftHours(p.id, fillShift, overrideMap);
+    let availDays = 0;
+    const cur = new Date(pp.startDate + "T12:00:00");
+    const end = new Date(pp.endDate + "T12:00:00");
+    while (cur <= end) {
+      if (isAvailable(p, toDateStr(cur), fillShift)) availDays++;
+      cur.setDate(cur.getDate() + 1);
+    }
+    return current + availDays * perDayHrs >= target;
   }
 
   function findPPForDate(date: string): PayPeriod | null {
@@ -1516,16 +1615,19 @@ export function autoSchedule({
         const sunCount = countCoverage(st.code, sun);
         if (satCount >= satRequired && sunCount >= sunRequired) continue;
 
+        // The pair lands as a unit, so when over-target may not be crossed (policy/rank)
+        // its COMBINED hours must fit — the per-day checks below only see one day.
+        const pairOk = (p: ScheduleStaff) => coverageBeatsOverHours || !pairWouldExceed(p, [sat, sun], st);
         const available = eligible.filter(
           (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
             isAvailable(p, sat, st) && isAvailable(p, sun, st) &&
-            !wouldBreakPPHours(p.id, sat, st)
+            !wouldBreakPPHours(p.id, sat, st) && pairOk(p)
         );
 
         if (available.length === 0) {
           const fallback = eligible.filter(
             (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
-              canFillCoverageOverLimits(p, sat, st) && canFillCoverageOverLimits(p, sun, st)
+              canFillCoverageOverLimits(p, sat, st) && canFillCoverageOverLimits(p, sun, st) && pairOk(p)
           );
           if (fallback.length === 0) {
             warnings.push(`No eligible ${st.code} staff for ${sat}/${sun}`);
@@ -1536,7 +1638,7 @@ export function autoSchedule({
 
         const pool = available.length > 0 ? available : eligible.filter(
           (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
-            canFillCoverageOverLimits(p, sat, st) && canFillCoverageOverLimits(p, sun, st)
+            canFillCoverageOverLimits(p, sat, st) && canFillCoverageOverLimits(p, sun, st) && pairOk(p)
         );
         if (pool.length === 0) continue;
         const chosen = pickStaff(pool, sat);
@@ -1677,11 +1779,13 @@ export function autoSchedule({
               // pre-check stays conservative and never overfills a staffer.
               const perDayHrs = maxShiftHours(p.id, st, overrideMap);
               const groupHrs = pairingFactor * perDayHrs;
-              return !(target > 0 && ppHoursForStaff(p.id, pp) + groupHrs > target) || hasUnmetMinimum(p, st, remainDates[0]);
+              return !(target > 0 && ppHoursForStaff(p.id, pp) + groupHrs > target) || (hardMinBeatsOverHours && hasUnmetMinimum(p, st, remainDates[0]));
             });
 
             let placed = false;
-            for (const tier of [fits, hostable]) {
+            // The any-hostable fallback ignores hours, so it's only open when coverage may
+            // push past over-target (policy + rank); otherwise only `fits` may host.
+            for (const tier of coverageBeatsOverHours ? [fits, hostable] : [fits]) {
               let poolList = [...tier];
               while (poolList.length > 0) {
                 const chosen = pickStaff(poolList, remainDates[0]);
@@ -1713,7 +1817,7 @@ export function autoSchedule({
           // post-repair audit then flags) rather than dropping required coverage.
           const leftoverDates = ppNeedDates.filter((d) => !usedDates.has(d));
           for (const date of leftoverDates) {
-            let available = eligible.filter((p) => isAvailable(p, date, st) && (!wouldBreakPPHours(p.id, date, st) || hasUnmetMinimum(p, st, date)));
+            let available = eligible.filter((p) => isAvailable(p, date, st) && hoursOkOrHardMin(p, date, st));
             if (available.length === 0) available = eligible.filter((p) => canFillCoverageOverLimits(p, date, st));
             if (available.length === 0) {
               warnings.push(`No eligible ${st.code} staff for ${date} (unpaired remainder) in PP ${pp.startDate}`);
@@ -1737,8 +1841,7 @@ export function autoSchedule({
 
           const needed = required - current;
           let available = eligible.filter(
-            (p) => isAvailable(p, date, st) &&
-              (!wouldBreakPPHours(p.id, date, st) || hasUnmetMinimum(p, st, date))
+            (p) => isAvailable(p, date, st) && hoursOkOrHardMin(p, date, st)
           );
           if (available.length === 0) {
             available = eligible.filter((p) => canFillCoverageOverLimits(p, date, st));
@@ -1850,7 +1953,11 @@ export function autoSchedule({
           // Soft (preference) targets respect pay-period hour protection — a
           // preference biases the mix but must never push a staffer past their
           // hours. Hard minimums intentionally override the cap (hasUnmetMinimum).
-          if (!targetIsHard(target) && wouldBreakPPHours(staff.id, candidate, st)) continue;
+          // Even a hard minimum stops at a Prohibited (or higher-ranked) over-target.
+          const minBlock = ppHoursBlock(staff.id, candidate, st);
+          // Over-target Allowed never blocks a preference either.
+          if (!targetIsHard(target) && minBlock !== null && !(minBlock === "over" && overHoursPolicy === "allowed")) continue;
+          if (minBlock === "over" && !hardMinBeatsOverHours) continue;
           assign(
             staff.id, candidate, st,
             `${st.code} (min target: ${target.minCount}/${target.window === "pay_period" ? "PP" : target.window})`,
@@ -2203,6 +2310,8 @@ export function autoSchedule({
           // ones. A residual shortfall is reported by the post-repair audit.
           if (isAtMaximum(staff, shift, date)) { cappedByMax = true; continue; }
           const shiftHrs = getShiftHours(staff.id, shift, overrideMap, dayTypeOf(date, holidaySet));
+          // A whole fill shift may overshoot the target; not when over-target is Prohibited.
+          if (!fillMayOvershoot && shift.countsTowardFte && hours + shiftHrs > target) continue;
           assign(staff.id, date, shift,
             `${shift.code} to fill hours (${hours}/${target}hrs)`,
             "fill", 0.6);
@@ -2346,6 +2455,9 @@ export function autoSchedule({
               const devBn = devB - hB + hBnew;
               const gain = (Math.abs(devA) + Math.abs(devB)) - (Math.abs(devAn) + Math.abs(devBn));
               if (gain <= 0) continue;
+              // A Prohibited side is never made worse for either staffer, even for a net gain.
+              if (overHoursPolicy === "prohibited" && (devAn > Math.max(0, devA) || devBn > Math.max(0, devB))) continue;
+              if (underHoursPolicy === "prohibited" && (-devAn > Math.max(0, -devA) || -devBn > Math.max(0, -devB))) continue;
               // Cheap reject before legality: only consider if it could beat best.
               if (best && gain < best.gain) continue;
               if (!canHoldForSwap(A.staff, B.st, date, ppRangesAll)) continue;
@@ -2478,6 +2590,235 @@ export function autoSchedule({
     repairPayPeriodHours();
   }
 
+  // ── Coverage repair by one-level rearrangement ──
+  // Auto-generation may always rearrange to make the schedule work. When a daily minimum
+  // is still unmet late in the run (e.g. a revoked request freed a slot after STEP 3 had
+  // already filled everyone's days), a staffer may take the slot if the ONLY obstacles are
+  // engine-placed discretionary cells:
+  //   • on the slot day: a fill cell, or a holiday-entitlement HOL (working the holiday
+  //     replaces HOL on that same day — HOL is never released anywhere else);
+  //   • on the day before / after: a fill cell the follow rules forbid next to the slot's
+  //     shift, or (day after) the day the shift's each_day follower needs.
+  // The whole move — release, place the shift, its each_day follower, refill released hours
+  // on open days of the same pay period — is first TRIED on the live state and rolled back;
+  // it is committed (and re-verified) only if it raises the slot's coverage, leaves every
+  // released day's own minimum met, and crosses no hours line the policy protects. Never
+  // touches manual, locked, imported, request, leave, follower or follower-source cells.
+  // Shifts with an each_run follower (e.g. CALL→ADM) and weekend-paired slots are not
+  // repaired here (one-day moves would break those units). One level only.
+  function isOpenCell(staffId: string, date: string): boolean {
+    const c = grid.get(`${staffId}:${date}`);
+    return !c || isFillableOffCell(c);
+  }
+  function releasableCellAt(staffId: string, date: string, allowHoliday: boolean) {
+    const c = grid.get(`${staffId}:${date}`);
+    if (!c || c.locked || c.noCount || c.step === undefined) return null;
+    if (c.step !== "fill" && !(allowHoliday && c.step === "holiday")) return null;
+    if (followerBySource.has(c.shiftTypeId)) return null;
+    return c;
+  }
+  // Remove a cell the engine placed in THIS run (grid + its suggestion + step stat).
+  function releaseEngineCell(staffId: string, date: string) {
+    const c = grid.get(`${staffId}:${date}`);
+    if (!c) return;
+    grid.delete(`${staffId}:${date}`);
+    const idx = suggestions.findIndex((x) => x.staffId === staffId && x.date === date && x.shiftTypeId === c.shiftTypeId && x.step === c.step);
+    if (idx >= 0) suggestions.splice(idx, 1);
+    if (c.step) byStep[c.step] = Math.max(0, (byStep[c.step] ?? 0) - 1);
+  }
+
+  type EngineSnapshot = {
+    sug: Suggestion[];
+    steps: Record<string, number>;
+    warn: number;
+    cells: [string, ReturnType<typeof grid.get>][];
+  };
+  function snapshotFor(staffIds: string | string[], extraDates: string[]): EngineSnapshot {
+    const ids = Array.isArray(staffIds) ? staffIds : [staffIds];
+    const keys = new Set(ids.flatMap((id) => [...dates, ...extraDates].map((d) => `${id}:${d}`)));
+    return { sug: suggestions.slice(), steps: { ...byStep }, warn: warnings.length, cells: [...keys].map((k) => [k, grid.get(k)]) };
+  }
+  function restoreSnapshot(snap: EngineSnapshot) {
+    suggestions.length = 0;
+    suggestions.push(...snap.sug);
+    for (const k of Object.keys(byStep)) delete byStep[k];
+    Object.assign(byStep, snap.steps);
+    warnings.length = snap.warn;
+    for (const [k, v] of snap.cells) { if (v) grid.set(k, v); else grid.delete(k); }
+  }
+
+  type RearrangePlan = {
+    staff: ScheduleStaff;
+    release: string[]; // dates whose discretionary cell is released
+    refill: string[]; // dates that received a fill shift back
+    over: boolean; // the move pushed the staffer further over target (only where coverage may)
+  };
+
+  // Which cells `p` must give up to take `st` on `date`, or null if a protected cell is in the way.
+  function releasesNeeded(p: ScheduleStaff, date: string, st: ScheduleShiftType): string[] | null {
+    const release: string[] = [];
+    if (!isOpenCell(p.id, date)) {
+      if (!releasableCellAt(p.id, date, true)) return null;
+      release.push(date);
+    }
+    const follower = followerBySource.get(st.id);
+    const nd = nextDate(date);
+    const nextCell = getCell(p.id, nd);
+    if (nextCell) {
+      const nst = stById.get(nextCell.shiftTypeId);
+      const conflicts = !!nst && !isShiftAllowedAfter(followMap, st.id, nextCell.shiftTypeId, nst.isOffShift);
+      const followerWantsDay = follower?.scope === "each_day" && dateSet.has(nd) && nextCell.shiftTypeId !== follower.follower.id;
+      if (conflicts || followerWantsDay) {
+        if (releasableCellAt(p.id, nd, false)) release.push(nd);
+        else if (conflicts) return null;
+      }
+    }
+    const pd = prevDate(date);
+    const prevCell = getCell(p.id, pd);
+    if (prevCell && !isShiftAllowedAfter(followMap, prevCell.shiftTypeId, st.id, st.isOffShift)) {
+      if (!releasableCellAt(p.id, pd, false)) return null;
+      release.push(pd);
+    }
+    return release;
+  }
+
+  // Perform the move on the live state. Returns the plan if every guarantee holds; the
+  // caller rolls back (trial) or keeps it (commit).
+  function performRearrange(
+    p: ScheduleStaff, date: string, st: ScheduleShiftType, release: string[], reason: string,
+    step = "repair", confidence = 0.85,
+  ): RearrangePlan | null {
+    const pp = findPPForDate(date);
+    const target = pp ? pp.targetHours * p.ftePercentage : 0;
+    const before = pp ? ppHoursForStaff(p.id, pp) : 0;
+    const coverageBefore = countCoverage(st.code, date);
+    const releasedCells = release.map((d) => ({ d, c: grid.get(`${p.id}:${d}`)! }));
+    for (const d of release) releaseEngineCell(p.id, d);
+    if (!isAvailable(p, date, st)) return null;
+    assign(p.id, date, st, reason, step, confidence);
+    placeEachDayFollower(p.id, date, st);
+    const refill: string[] = [];
+    if (pp && fillShift && target > 0) {
+      for (const d of dates) {
+        if (ppHoursForStaff(p.id, pp) >= target) break;
+        if (d < pp.startDate || d > pp.endDate || d === date || release.includes(d)) continue;
+        if (!isOpenCell(p.id, d) || holidaySet.has(d)) continue;
+        if (!eligibleShiftSets.get(p.id)?.has(fillShift.id) || !isAvailable(p, d, fillShift)) continue;
+        const add = getShiftHours(p.id, fillShift, overrideMap, dayTypeOf(d, holidaySet));
+        if (!fillMayOvershoot && fillShift.countsTowardFte && ppHoursForStaff(p.id, pp) + add > target) continue;
+        assign(p.id, d, fillShift, `Refill after rearranging for ${st.code} on ${date}`, "fill", 0.8);
+        refill.push(d);
+      }
+    }
+    // Guarantees.
+    if (grid.get(`${p.id}:${date}`)?.shiftTypeId !== st.id) return null;
+    if (countCoverage(st.code, date) <= coverageBefore) return null;
+    for (const { d, c } of releasedCells) {
+      const rst = stById.get(c.shiftTypeId);
+      if (rst && countCoverage(rst.code, d) < getRequiredCount(rst, d)) return null; // would open a gap there
+    }
+    const follower = followerBySource.get(st.id);
+    if (follower?.scope === "each_day" && dateSet.has(nextDate(date))) {
+      const fc = grid.get(`${p.id}:${nextDate(date)}`);
+      if (fc && fc.shiftTypeId !== follower.follower.id && !isFillableOffCell(fc)) return null;
+    }
+    let over = false;
+    if (pp && target > 0) {
+      const after = ppHoursForStaff(p.id, pp);
+      const worseOver = Math.max(0, after - target) > Math.max(0, before - target);
+      const worseUnder = Math.max(0, target - after) > Math.max(0, target - before);
+      if (worseOver && !coverageBeatsOverHours) return null;
+      if (worseUnder && !beatsHoursRow("coverage", "underHours")) return null;
+      over = worseOver;
+    }
+    return { staff: p, release, refill, over };
+  }
+
+  function tryRearrange(p: ScheduleStaff, date: string, st: ScheduleShiftType): RearrangePlan | null {
+    const release = releasesNeeded(p, date, st);
+    if (!release) return null;
+    const snap = snapshotFor(p.id, [prevDate(date), nextDate(date)]);
+    try {
+      return performRearrange(p, date, st, release, "trial");
+    } finally {
+      restoreSnapshot(snap);
+    }
+  }
+
+  // Commit the best plan; re-verified on the real state, rolled back if anything differs.
+  function commitRearrange(plan: RearrangePlan, date: string, st: ScheduleShiftType, reason: string): RearrangePlan | null {
+    const snap = snapshotFor(plan.staff.id, [prevDate(date), nextDate(date)]);
+    const done = performRearrange(plan.staff, date, st, plan.release, reason);
+    if (!done) { restoreSnapshot(snap); return null; }
+    return done;
+  }
+
+  // Best rearrangement for an unmet (st, date) slot: least disruption first (not over
+  // target, fewest released then refilled cells), then neediest hours, then id.
+  function bestRearrange(st: ScheduleShiftType, date: string, excludeId?: string): RearrangePlan | null {
+    if (followerBySource.get(st.id)?.scope === "each_run") return null; // run followers not maintained here
+    // A weekend-paired shift is placed as a Sat+Sun unit; a one-day repair would split it.
+    if (st.weekendPaired && (isWeekend(date) || (st.holidayWeekendPaired && holidaySet.has(date)))) return null;
+    const pp = findPPForDate(date);
+    const plans: { plan: RearrangePlan; deficit: number }[] = [];
+    for (const p of eligibleStaff(st, date)) {
+      if (p.id === excludeId) continue;
+      const plan = tryRearrange(p, date, st);
+      if (plan) plans.push({ plan, deficit: pp ? pp.targetHours * p.ftePercentage - ppHoursForStaff(p.id, pp) : 0 });
+    }
+    plans.sort((a, b) =>
+      Number(a.plan.over) - Number(b.plan.over)
+      || a.plan.release.length - b.plan.release.length
+      || a.plan.refill.length - b.plan.refill.length
+      || b.deficit - a.deficit
+      || a.plan.staff.id.localeCompare(b.plan.staff.id),
+    );
+    return plans[0]?.plan ?? null;
+  }
+
+  // Find and commit the best move for (st, date); null when none holds.
+  function rearrangeFor(st: ScheduleShiftType, date: string, reason: string, excludeId?: string): RearrangePlan | null {
+    const plan = bestRearrange(st, date, excludeId);
+    return plan ? commitRearrange(plan, date, st, reason) : null;
+  }
+
+  // Give `p` the freed (st, date) slot under the same guarantees as a rearrangement:
+  // release only discretionary cells, place the each_day follower, refill released hours,
+  // and keep it only if no released day's minimum opens and no protected hours line is
+  // crossed. Rolled back (null) otherwise. Used by reconciliation's direct backfill.
+  function placeGuarded(p: ScheduleStaff, date: string, st: ScheduleShiftType, reason: string, step: string, confidence: number): RearrangePlan | null {
+    const release = releasesNeeded(p, date, st);
+    if (!release) return null;
+    const snap = snapshotFor(p.id, [prevDate(date), nextDate(date)]);
+    const done = performRearrange(p, date, st, release, reason, step, confidence);
+    if (!done) { restoreSnapshot(snap); return null; }
+    return done;
+  }
+
+  function describeRearrange(plan: RearrangePlan, date: string, st: ScheduleShiftType): string {
+    const parts = [`${plan.staff.initials} takes ${st.code} on ${date}`];
+    if (plan.release.length) parts.push(`moved discretionary day(s) ${plan.release.join(", ")}`);
+    if (plan.refill.length) parts.push(`refilled ${plan.refill.join(", ")}`);
+    if (plan.over) parts.push("over pay-period target");
+    return parts.join("; ");
+  }
+
+  // Fill every still-unmet daily minimum of the scheduled shifts (schedule-priority order)
+  // by rearrangement. Runs after reconciliation, before the shortfall audit. Each commit
+  // strictly raises one slot's coverage and never lowers another minimum, so it terminates.
+  function repairCoverageByRearrange() {
+    for (const st of scheduledShifts) {
+      for (const date of dates) {
+        let guard = 0;
+        while (hasUnmetCoverageMinimum(date, st) && guard++ < 50) {
+          const plan = rearrangeFor(st, date, `Coverage repair: ${st.code} minimum (rearranged)`);
+          if (!plan) break;
+          warnings.push(`${date}: ${st.code} minimum met by rearranging — ${describeRearrange(plan, date, st)}`);
+        }
+      }
+    }
+  }
+
   // ── Request reconciliation (tentative → confirm / revoke + backfill) ──
   // (#221 Slice 2) Forced REQUEST_SHIFTs were placed TENTATIVELY in STEP 0b so the
   // plan could build around them. Now that coverage and hours are settled, confirm
@@ -2528,21 +2869,11 @@ export function autoSchedule({
       return ok;
     }
 
-    // Drop a reclaimable fill cell (grid + suggestion + stat) so its slot can be reused.
-    function releaseFill(staffId: string, date: string) {
-      const fc = fillCellAt(staffId, date);
-      if (!fc) return;
-      const step = fc.step!;
-      grid.delete(`${staffId}:${date}`);
-      const idx = suggestions.findIndex((s) => s.staffId === staffId && s.date === date && s.code === fc.code && s.step === step);
-      if (idx >= 0) suggestions.splice(idx, 1);
-      byStep[step] = Math.max(0, (byStep[step] ?? 0) - 1);
-    }
 
     // Best backfill for a freed (st, date) slot: conflict-free claimants by first-come,
     // then the neediest non-claimant by remaining PP hours. excludeId = deferred holder.
     // Returns null when nothing can legally take the slot (Slice 1a then flags it).
-    function pickBackfill(st: ScheduleShiftType, date: string, excludeId: string): ScheduleStaff | null {
+    function backfillCandidates(st: ScheduleShiftType, date: string, excludeId: string): ScheduleStaff[] {
       const recvByStaff = new Map<string, string>();
       for (const c of claimantsBySlot.get(`${st.id}:${date}`) ?? []) {
         const cur = recvByStaff.get(c.staffId);
@@ -2550,7 +2881,6 @@ export function autoSchedule({
       }
       const pp = findPPForDate(date);
       const cands = eligibleStaff(st, date).filter((p) => p.id !== excludeId && canTake(p, date, st));
-      if (cands.length === 0) return null;
       cands.sort((a, b) => {
         const ra = recvByStaff.get(a.id);
         const rb = recvByStaff.get(b.id);
@@ -2561,7 +2891,20 @@ export function autoSchedule({
         if (defA !== defB) return defB - defA; // neediest hours first
         return a.id.localeCompare(b.id);
       });
-      return cands[0];
+      return cands;
+    }
+
+    function refillHolder(p: ScheduleStaff, pp: PayPeriod, target: number, freed: string) {
+      if (!fillShift || target <= 0) return;
+      const order = [freed, ...dates.filter((d) => d !== freed)];
+      for (const d of order) {
+        if (ppHoursForStaff(p.id, pp) >= target) break;
+        if (d < pp.startDate || d > pp.endDate || !isOpenCell(p.id, d) || holidaySet.has(d)) continue;
+        if (!eligibleShiftSets.get(p.id)?.has(fillShift.id) || !isAvailable(p, d, fillShift)) continue;
+        const add = getShiftHours(p.id, fillShift, overrideMap, dayTypeOf(d, holidaySet));
+        if (!fillMayOvershoot && fillShift.countsTowardFte && ppHoursForStaff(p.id, pp) + add > target) continue;
+        assign(p.id, d, fillShift, "Refill after giving up a requested shift", "fill", 0.8);
+      }
     }
 
     // Snapshot the tentative cells, then process by first-come so an earlier request
@@ -2588,13 +2931,26 @@ export function autoSchedule({
       const holder = activeStaff.find((p) => p.id === t.staffId);
       if (!pp || !holder) continue; // can't reason → leave placed
 
-      // Over the requester's PP-hours cap WITH this cell? (cap is inviolable)
+      // Over the requester's PP-hours target WITH this cell?
       const target = pp.targetHours * holder.ftePercentage;
-      const holderOverCap = t.st.countsTowardFte && target > 0 && ppHoursForStaff(t.staffId, pp) > target;
+      const hoursWith = ppHoursForStaff(t.staffId, pp);
+      const holderOverCap = t.st.countsTowardFte && target > 0 && hoursWith > target;
 
       // Temporarily free the slot so challenger / backfill legality (incl. maxPerDay)
       // evaluates as if the holder weren't occupying it.
       grid.delete(key);
+
+      // The department's hours policy decides whether over-target revokes the request
+      // (it used to be an inviolable cap). Keep it when requests may push past over-target,
+      // or when revoking would leave the holder UNDER target and landing under is the worse
+      // outcome. Nothing refills the holder after reconciliation, so the hours without the
+      // cell are exactly what revoking leaves them with.
+      const hoursWithout = ppHoursForStaff(t.staffId, pp);
+      const keepOverTarget = holderOverCap && (
+        beatsHoursRow("requests", "overHours") ||
+        (hoursWithout < target && underIsWorseThanOver())
+      );
+      const overBlocks = holderOverCap && !keepOverTarget;
 
       // An EARLIER conflict-free claimant who should take the slot ahead of the holder.
       let challenger: ScheduleStaff | null = null;
@@ -2604,13 +2960,27 @@ export function autoSchedule({
       for (const c of sorted) {
         if (c.staffId === t.staffId || !(c.receivedAt < t.receivedAt)) continue;
         const cand = activeStaff.find((p) => p.id === c.staffId);
-        if (cand && canTake(cand, t.date, t.st)) { challenger = cand; break; }
+        // The challenger must be able to COMMIT the slot under the same guarantees the
+        // backfill applies (placeGuarded); a trial that fails leaves the holder in place.
+        if (cand && canTake(cand, t.date, t.st) && tryRearrange(cand, t.date, t.st)) { challenger = cand; break; }
       }
 
-      if (!holderOverCap && !challenger) {
+      if (!overBlocks && !challenger) {
         grid.set(key, cell); // rightful holder → confirm (restore)
+        if (holderOverCap) {
+          warnings.push(
+            `${holder.initials}: over target — ${hoursWith}/${target}hrs (+${hoursWith - target}) in PP ${pp.startDate} to honor ${t.st.code} request on ${t.date}` +
+            (hoursWithout < target ? ` (revoking it would leave ${hoursWithout}/${target}hrs, under target)` : ""),
+          );
+        }
         continue;
       }
+
+      // A first-come transfer (not an hours-driven revoke) must leave the holder whole too:
+      // snapshot both staffers so the whole transfer can be undone.
+      const transferSnap = challenger && !overBlocks
+        ? snapshotFor([t.staffId, challenger.id], [prevDate(t.date), nextDate(t.date)])
+        : null;
 
       // Holder loses the slot: drop its suggestion, then award to the best claimant.
       const idx = suggestions.findIndex(
@@ -2619,11 +2989,34 @@ export function autoSchedule({
       if (idx >= 0) suggestions.splice(idx, 1);
       byStep["request-tentative"] = Math.max(0, (byStep["request-tentative"] ?? 0) - 1);
 
-      const chosen = pickBackfill(t.st, t.date, t.staffId);
-      const reason = holderOverCap ? "over pay-period hour cap" : "later than an earlier request";
-      if (chosen) {
-        releaseFill(chosen.id, t.date); // reclaim the chosen staff's fill day, if any
-        assign(chosen.id, t.date, t.st, `Reconciliation: ${t.st.code} re-homed (first-come / hour need)`, "fill", 0.9);
+      // Backfill in first-come / hour-need order, each attempt transactional (placeGuarded):
+      // the first candidate whose move keeps every guarantee takes the slot.
+      let chosen: ScheduleStaff | null = null;
+      for (const cand of backfillCandidates(t.st, t.date, t.staffId)) {
+        if (placeGuarded(cand, t.date, t.st, `Reconciliation: ${t.st.code} re-homed (first-come / hour need)`, "fill", 0.9)) { chosen = cand; break; }
+      }
+      // Give the holder back the hours the lost cell carried: ordinary fill on open days of
+      // the period (the freed day first), never past target unless fill may overshoot.
+      refillHolder(holder, pp, target, t.date);
+      if (transferSnap) {
+        const after = ppHoursForStaff(t.staffId, pp);
+        const worseUnder = Math.max(0, target - after) > Math.max(0, target - hoursWith);
+        if (!chosen || (worseUnder && underHoursPolicy === "prohibited")) {
+          // The transfer would leave the holder under a protected target → undo it all.
+          restoreSnapshot(transferSnap);
+          grid.set(key, cell);
+          continue;
+        }
+      }
+      const reason = overBlocks ? "over pay-period hour cap" : "later than an earlier request";
+      // Nobody can take the slot as the grid stands, but it's a required minimum →
+      // rearrange discretionary days to cover it.
+      const rearranged = !chosen && hasUnmetCoverageMinimum(t.date, t.st)
+        ? rearrangeFor(t.st, t.date, `Reconciliation: ${t.st.code} re-homed by rearranging`, t.staffId)
+        : null;
+      if (rearranged) {
+        warnings.push(`${t.date}: deferred ${holder.initials}'s ${t.st.code} request (${reason}) — ${describeRearrange(rearranged, t.date, t.st)}`);
+      } else if (chosen) {
         warnings.push(`${t.date}: deferred ${holder.initials}'s ${t.st.code} request (${reason}) — slot granted to ${chosen.initials}`);
       } else {
         warnings.push(`${t.date}: deferred ${holder.initials}'s ${t.st.code} request (${reason}) — no eligible backfill, slot left open`);
@@ -2635,6 +3028,8 @@ export function autoSchedule({
     // A holiday cell a revoked tentative request just vacated is still owed HOL.
     grantHolidayEntitlement();
   }
+  // Any daily minimum still unmet (whatever the cause) gets one-level rearrangement.
+  if (fillShift) repairCoverageByRearrange();
 
   // ── Post-repair hours audit ──
   // Emit one warning per residual nonzero PP-hour deviation, AFTER the repair so
@@ -2931,8 +3326,13 @@ export function autoScheduleCandidates(
 
   // The hard terms in the configured order (validated-or-default), the prefix the floor
   // compares lexicographically. With the default order this is ["hardLimits","coverage"].
+  // A Prohibited hours row is a hard term too (it was moved to the front of the order).
+  const prohibitedHours = new Set(
+    (input.factorOrder ?? []).filter((f) => (f.key === "overHours" || f.key === "underHours") && parseHoursPolicy(f.hoursPolicy) === "prohibited").map((f) => f.key),
+  );
   const hardPrefix = effectiveFactorKeys(input.factorOrder).filter(
-    (k): k is "coverage" | "hardLimits" => k === "coverage" || k === "hardLimits",
+    (k): k is "coverage" | "hardLimits" | "overHours" | "underHours" =>
+      k === "coverage" || k === "hardLimits" || prohibitedHours.has(k),
   );
   const worseOnHardPrefix = (cand: ScheduleQuality, base: ScheduleQuality): boolean => {
     for (const k of hardPrefix) {

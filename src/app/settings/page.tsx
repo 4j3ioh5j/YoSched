@@ -9,6 +9,7 @@ import { parseLiveScope } from "@/lib/live-scope";
 import { parseShiftShareBasis } from "@/lib/shift-share";
 import { parseHolidayPolicy } from "@/lib/holiday-policy";
 import { parseStaffOrderCriteria } from "@/lib/staff-order";
+import { parseHoursPolicy } from "@/lib/autogen-hours-policy";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -172,6 +173,7 @@ export default async function Settings() {
           sortOrder: f.sortOrder,
           enabled: f.enabled,
           hardness: f.hardness,
+          hoursPolicy: parseHoursPolicy(f.hoursPolicy),
         }))}
         autoGenProfiles={autoGenProfiles.map((p) => ({
           id: p.id,

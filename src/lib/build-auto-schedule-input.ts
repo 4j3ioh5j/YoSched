@@ -10,6 +10,7 @@ import { getPayPeriods } from "@/lib/pay-periods-server";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, type ScheduleRequestData } from "@/lib/schedule-requests";
 import { effectiveTargetsForStaff, type DepartmentShiftTarget } from "@/lib/department-targets";
+import { parseHoursPolicy } from "@/lib/autogen-hours-policy";
 import { parseShiftShareBasis } from "@/lib/shift-share";
 import { parseHolidayPolicy } from "@/lib/holiday-policy";
 
@@ -375,6 +376,7 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       key: f.key,
       sortOrder: f.sortOrder,
       enabled: f.enabled,
+      hoursPolicy: parseHoursPolicy(f.hoursPolicy),
     })),
   };
 }

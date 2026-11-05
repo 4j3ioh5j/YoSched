@@ -2150,8 +2150,22 @@ describe("autoSchedule — Slice 2b coverage trades (builder)", () => {
     expect(reqOn(overHoursCase(undefined), "2025-05-12")).toBe(1);
   });
 
-  it("overHours ranked above coverage: leaves the shift short rather than exceed hours", () => {
-    expect(reqOn(overHoursCase(OVERHOURS_ABOVE_COVERAGE), "2025-05-12")).toBe(0);
+  it("overHours ranked above coverage: STEP 2 won't push the staffer over to cover", () => {
+    // STEP 2 leaves REQ short; STEP 3's whole FILL shift then overshoots the 4h target
+    // anyway (8h, over-target is only Discouraged). The coverage repair swaps that FILL for
+    // the REQ — hours unchanged (8/4 either way), coverage met — so the minimum ends up
+    // covered without making hours any worse.
+    const r = overHoursCase(OVERHOURS_ABOVE_COVERAGE);
+    expect(reqOn(r, "2025-05-12")).toBe(1);
+    expect(r.suggestions.some((x) => x.shiftTypeId === "st-fill" && x.date === "2025-05-12")).toBe(false);
+  });
+
+  it("over-target Prohibited: leaves the shift short and never overshoots with a fill either", () => {
+    const ord = OVERHOURS_ABOVE_COVERAGE.map((f) => (f.key === "overHours" ? { ...f, hoursPolicy: "prohibited" as const } : f));
+    const r = overHoursCase(ord);
+    expect(reqOn(r, "2025-05-12")).toBe(0);
+    expect(r.suggestions.some((x) => x.shiftTypeId === "st-fill" && x.date === "2025-05-12")).toBe(false);
+    expect(r.warnings.some((w) => w.includes("REQ below its required minimum"))).toBe(true);
   });
 
   // coverage ↔ hardLimits: target is reachable (8h), so no hours block — the only barrier

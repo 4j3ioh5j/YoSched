@@ -402,6 +402,11 @@ model AutoGenFactor {
   // others are "soft". (`weight` was intentionally omitted until the Slice 3 tier/group
   // model needs it — Codex #1752.)
   hardness  String  @default("soft")
+  // Pay-period hours policy, meaningful only on overHours / underHours: "prohibited" |
+  // "discouraged" | "allowed" (validated in app code, autogen-hours-policy.ts). NULL ⇒
+  // "discouraged" (the factor's rank decides). Prohibited = never crossed wherever it
+  // ranks; Allowed = never blocks a placement.
+  hoursPolicy String?
 
   @@map("autogen_factors")
 }
