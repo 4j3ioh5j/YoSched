@@ -86,7 +86,6 @@ model ShiftType {
   holidayWeekendPaired Boolean @default(false) // when weekendPaired, also assign the same person to an adjacent holiday (Fri before / Mon after) for a 3-day holiday weekend
   ignoresWorkingDays Boolean  @default(false)
   noConsecutiveGroup String?
-  maxPerDay          Int? // DEPRECATED — no longer read or written; superseded by staffing_requirements.maxCount. Dropped in a follow-up migration.
   autoSchedulable    Boolean  @default(false)
   hotkey             String?
   dedicatedColumn    Boolean  @default(false)
@@ -268,7 +267,7 @@ model StaffingRequirement {
   dayKey    String // "0"=Sun, "1"=Mon, ..., "6"=Sat, "holiday"
   minCount  Int    @default(0)
   preferredCount Int @default(0) // auto-scheduler day-balance threshold: a free day off avoids dates whose projected count would fall below this; 0 = no preference
-  maxCount  Int?   // most staff on this shift that day ("Max" in Staffing Rules); NULL = no limit, 0 = none. Replaces shift_types.maxPerDay (src/lib/day-cap.ts)
+  maxCount  Int?   // most staff on this shift that day ("Max" in Staffing Rules); NULL = no limit, 0 = none. Replaced shift_types.maxPerDay (src/lib/day-cap.ts)
 
   @@unique([shiftCode, dayKey])
   @@map("staffing_requirements")

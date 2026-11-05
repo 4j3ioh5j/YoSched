@@ -84,7 +84,6 @@ async function run(tx: Prisma.TransactionClient, log: (s: string) => void) {
     if (AUTO_ON.includes(t.code)) set("autoSchedulable", true);
     if (FTE_COUNTING_LEAVE.includes(t.code)) set("countsTowardFte", true);
     if (t.code in HOTKEYS) set("hotkey", HOTKEYS[t.code]);
-    if (MAX_ONE_PER_DAY.includes(t.code)) set("maxPerDay", 1);
     for (const [k, v] of Object.entries(HOURS[t.code] ?? {})) set(k as "defaultHours", v);
     if (notes.length) { await tx.shiftType.update({ where: { id: t.id }, data }); log(`shift ${t.code}: ${notes.join(", ")}`); }
   }
@@ -112,6 +111,17 @@ async function run(tx: Prisma.TransactionClient, log: (s: string) => void) {
   }
 
   // ---- staffing rules ----
+  // At most one of these per day (Staffing Rules "Max", every day key incl. holidays;
+  // formerly shift_types.maxPerDay).
+  for (const code of MAX_ONE_PER_DAY) {
+    for (const dayKey of ["0", "1", "2", "3", "4", "5", "6", "holiday"]) {
+      const ex = await tx.staffingRequirement.findUnique({ where: { shiftCode_dayKey: { shiftCode: code, dayKey } } });
+      if (ex?.maxCount === 1) continue;
+      if (ex) await tx.staffingRequirement.update({ where: { id: ex.id }, data: { maxCount: 1 } });
+      else await tx.staffingRequirement.create({ data: { shiftCode: code, dayKey, minCount: 0, maxCount: 1 } });
+      log(`staffing max ${code} day ${dayKey}: ${ex?.maxCount ?? "none"} → 1`);
+    }
+  }
   for (const m of MINIMUMS) {
     need(m.code);
     const ex = await tx.staffingRequirement.findUnique({ where: { shiftCode_dayKey: { shiftCode: m.code, dayKey: m.dayKey } } });
