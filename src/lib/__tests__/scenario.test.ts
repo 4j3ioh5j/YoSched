@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForRing, freesForScope, type ScenarioPin, type ScenarioFree } from "../scenario";
 import { type AutoScheduleInput, type ScheduleStaff, type ScheduleShiftType } from "../auto-scheduler";
 import { whenToColumns, legacyPatternToWhen } from "../recurrence";
+import { withDayCaps, type TestShift } from "./test-day-caps";
 
 // ─── fixtures (mirrors auto-scheduler.test.ts) ───
 
@@ -25,7 +26,7 @@ function makeStaff(id: string, initials: string, overrides: Partial<ScheduleStaf
   };
 }
 
-function makeShift(id: string, code: string, overrides: Partial<ScheduleShiftType> = {}): ScheduleShiftType {
+function makeShift(id: string, code: string, overrides: Partial<TestShift> = {}): TestShift {
   return {
     id,
     code,
@@ -43,7 +44,6 @@ function makeShift(id: string, code: string, overrides: Partial<ScheduleShiftTyp
     weekendPaired: false,
     holidayWeekendPaired: false,
     ignoresWorkingDays: false,
-    maxPerDay: null,
     category: "clinical",
     autoSchedulable: true,
     ...overrides,
@@ -65,7 +65,7 @@ const defaultPrefs = {
 const DATES = ["2025-05-12", "2025-05-13", "2025-05-14", "2025-05-15", "2025-05-16"]; // Mon–Fri
 
 function makeInput(overrides: Partial<AutoScheduleInput> = {}): AutoScheduleInput {
-  return {
+  return withDayCaps({
     dates: DATES,
     staff: [makeStaff("p1", "AB"), makeStaff("p2", "CD")],
     shiftTypes: [OR, OFF],
@@ -82,7 +82,7 @@ function makeInput(overrides: Partial<AutoScheduleInput> = {}): AutoScheduleInpu
     equityFactors: [],
     followRules: [],
     ...overrides,
-  };
+  });
 }
 
 const lockedOR = (staffId: string, date: string) => ({
@@ -565,5 +565,32 @@ describe("applyScenarioExpanding — expand only as far as coverage needs (#248 
     const out = applyScenarioExpanding(input, pins, [], new Set(["2025-05-12"]), new Set(["p1:2025-05-12"]), "range");
     expect(out.applied).toBe(false);
     expect(out.changes).toEqual([]);
+  });
+});
+
+describe("applyScenario — per-day Max from Staffing Rules", () => {
+  // No test-only maxPerDay here: the caps come straight from staffingRequirements.maxCount.
+  const ORC = makeShift("st-orc", "ORC");
+  const elig = { eligibleShiftTypeIds: ["st-or", "st-off", "st-orc"] };
+  const input = (date: string) => makeInput({
+    shiftTypes: [OR, OFF, ORC],
+    staff: [makeStaff("p1", "AB", elig), makeStaff("p2", "CD", elig)],
+    existingAssignments: [{ staffId: "p1", date, shiftTypeId: "st-orc", code: "ORC", isLocked: true }],
+    staffingRequirements: [
+      { shiftCode: "ORC", dayKey: "1", minCount: 0, maxCount: 2 },
+      { shiftCode: "ORC", dayKey: "2", minCount: 0, maxCount: 1 },
+    ],
+  });
+
+  it("refuses a second ORC on Tuesday (Max 1)", () => {
+    const out = applyScenario(input("2025-05-13"), [{ staffId: "p2", date: "2025-05-13", shiftTypeId: "st-orc" }], []);
+    expect(out.applied).toBe(false);
+    expect(out.rejected[0]).toMatchObject({ staffId: "p2", reason: "day-full" });
+  });
+
+  it("allows a second ORC on Monday (Max 2)", () => {
+    const out = applyScenario(input("2025-05-12"), [{ staffId: "p2", date: "2025-05-12", shiftTypeId: "st-orc" }], []);
+    expect(out.applied).toBe(true);
+    expect(cellAt(out.grid, "p2", "2025-05-12")).toBe("st-orc");
   });
 });

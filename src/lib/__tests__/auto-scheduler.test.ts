@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { daysBetween, bestSpread, autoSchedule, autoScheduleCandidates, fnv1a, maxReachableDailyHours, getShiftHours, resolveShiftHourOverride, compareScheduleQuality, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult, type ShiftHourOverride, type ScheduleQuality } from "../auto-scheduler";
 import { type ScheduleRequestData } from "../schedule-requests";
+import { withDayCaps, type TestShift } from "./test-day-caps";
 import { whenToColumns, legacyPatternToWhen, standingToWhen } from "../recurrence";
 
 // ─── helpers ───
@@ -29,7 +30,7 @@ function makeStaff(id: string, initials: string, overrides: Partial<ScheduleStaf
   };
 }
 
-function makeShift(id: string, code: string, overrides: Partial<ScheduleShiftType> = {}): ScheduleShiftType {
+function makeShift(id: string, code: string, overrides: Partial<TestShift> = {}): TestShift {
   return {
     id,
     code,
@@ -47,7 +48,6 @@ function makeShift(id: string, code: string, overrides: Partial<ScheduleShiftTyp
     weekendPaired: false,
     holidayWeekendPaired: false,
     ignoresWorkingDays: false,
-    maxPerDay: null,
     category: "clinical",
 
     autoSchedulable: true,
@@ -84,7 +84,7 @@ function weekdayDates(startDate: string, count: number): string[] {
 }
 
 function runSchedule(overrides: Record<string, unknown> = {}): AutoScheduleResult {
-  return autoSchedule({
+  return autoSchedule(withDayCaps({
     dates: weekdayDates("2025-05-12", 5),
     staff: [makeStaff("p1", "AB"), makeStaff("p2", "CD")],
     shiftTypes: [OR, OFF],
@@ -101,7 +101,7 @@ function runSchedule(overrides: Record<string, unknown> = {}): AutoScheduleResul
     equityFactors: [],
     followRules: [],
     ...overrides,
-  });
+  } as Parameters<typeof autoSchedule>[0]));
 }
 
 // ─── daysBetween ───

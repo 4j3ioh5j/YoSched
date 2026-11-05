@@ -262,7 +262,6 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       weekendPaired: st.weekendPaired,
       holidayWeekendPaired: st.holidayWeekendPaired,
       ignoresWorkingDays: st.ignoresWorkingDays,
-      maxPerDay: st.maxPerDay,
       category: st.category,
       autoSchedulable: st.autoSchedulable,
     })),
@@ -323,6 +322,7 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       dayKey: sr.dayKey,
       minCount: sr.minCount,
       preferredCount: sr.preferredCount,
+      maxCount: sr.maxCount,
     })),
     schedulingPreferences: {
       prefer3DayWeekends: schedulingPrefsRow?.prefer3DayWeekends ?? true,

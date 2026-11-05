@@ -1,8 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { autoSchedule, effectiveFactorKeys, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult, type AutoGenFactorConfig } from "../auto-scheduler";
+import { autoSchedule as autoScheduleRaw, effectiveFactorKeys, type ScheduleStaff, type ScheduleShiftType, type AutoScheduleResult, type AutoGenFactorConfig } from "../auto-scheduler";
 import { type ScheduleRequestData } from "../schedule-requests";
+import { withDayCaps, type TestShift } from "./test-day-caps";
 import { whenToColumns, legacyPatternToWhen } from "../recurrence";
 import { validateHoursPolicies, parseHoursPolicy, isHoursPolicy } from "../autogen-hours-policy";
+
+// Fixtures declare per-day caps inline (test-only maxPerDay); the engine reads Staffing Rules Max.
+const autoSchedule = (input: Parameters<typeof autoScheduleRaw>[0]) => autoScheduleRaw(withDayCaps(input));
 
 // Pay-period hours policy (prohibited / discouraged / allowed) + coverage repair by
 // rearrangement. The fixture mirrors the January 2027 case: a 0.4-FTE requester with two
@@ -21,12 +25,12 @@ function staff(id: string, initials: string, o: Partial<ScheduleStaff> = {}): Sc
     ...o,
   };
 }
-function shift(id: string, code: string, o: Partial<ScheduleShiftType> = {}): ScheduleShiftType {
+function shift(id: string, code: string, o: Partial<TestShift> = {}): TestShift {
   return {
     id, code, name: code, defaultHours: 8, defaultHoursWeekend: 0, defaultHoursHoliday: 0,
     countsTowardFte: true, countsAsHolidayWork: true, isLeave: false, isOffShift: false, isFillShift: false,
     sortOrder: 0, schedulePriority: null, weekendPaired: false, holidayWeekendPaired: false,
-    ignoresWorkingDays: false, maxPerDay: null, category: "clinical", autoSchedulable: true,
+    ignoresWorkingDays: false, category: "clinical", autoSchedulable: true,
     ...o,
   };
 }

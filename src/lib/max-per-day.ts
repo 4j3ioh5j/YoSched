@@ -1,7 +1,8 @@
 /**
- * Per-day shift cap (ShiftType.maxPerDay) enforcement for MANUAL edit paths.
+ * Per-day shift cap (Staffing Rules "Max", resolved per date by src/lib/day-cap.ts)
+ * enforcement for MANUAL edit paths.
  *
- * The auto-scheduler already honours maxPerDay (auto-scheduler.ts canAssign), but
+ * The auto-scheduler already honours the cap (auto-scheduler.ts isAvailable), but
  * the MANUAL grid edit paths — picker, keyboard hotkey, drag/swap, paste, and
  * dedicated-column (ICU/CARD) entry — historically bypassed it, letting a scheduler
  * place e.g. two ORC, two ORL, or two ICU on the same date with no warning. This
@@ -18,7 +19,7 @@ export type DayCapCell = { staffId: string; date: string; shiftTypeId: string };
 
 /**
  * Given the cells an edit proposes to assign, the current grid, and a per-shift
- * cap accessor, return the subset of `proposed` cells that would exceed a shift
+ * (shift, date) cap accessor, return the subset of `proposed` cells that would exceed a shift
  * type's per-day cap (so the caller can reject exactly those, or — atomically —
  * the whole edit if any is returned).
  *
@@ -39,7 +40,7 @@ export type DayCapCell = { staffId: string; date: string; shiftTypeId: string };
 export function dayCapViolations(
   proposed: readonly DayCapCell[],
   current: readonly DayCapCell[],
-  maxPerDayOf: (shiftTypeId: string) => number | null | undefined,
+  capOf: (shiftTypeId: string, date: string) => number | null | undefined,
 ): DayCapCell[] {
   // staffId -> set of dates a proposed cell overwrites (so we skip them in current).
   const proposedAt = new Map<string, Set<string>>();
@@ -66,7 +67,7 @@ export function dayCapViolations(
 
   const violations: DayCapCell[] = [];
   for (const p of proposed) {
-    const cap = maxPerDayOf(p.shiftTypeId);
+    const cap = capOf(p.shiftTypeId, p.date);
     if (cap == null) continue; // uncapped shift
     if (countOf(p.date, p.shiftTypeId) >= cap) {
       violations.push(p); // a rejected cell does NOT count toward the cap

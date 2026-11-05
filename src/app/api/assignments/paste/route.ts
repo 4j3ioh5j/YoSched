@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { dayCapViolations } from "@/lib/max-per-day";
+import { loadDayCaps } from "@/lib/day-cap-db";
 import { NextRequest, NextResponse } from "next/server";
 
 // Paste write path for the schedule grid: a block of already-resolved cells, each with
@@ -44,11 +45,10 @@ export async function PUT(req: NextRequest) {
   // Reject unknown shift type ids up front — otherwise one bad id (e.g. a stale client)
   // would abort the whole transaction with an opaque FK error.
   const ids = [...new Set(cells.map((c) => c.shiftTypeId))];
-  const known = await prisma.shiftType.findMany({ where: { id: { in: ids } }, select: { id: true, maxPerDay: true } });
+  const known = await prisma.shiftType.findMany({ where: { id: { in: ids } }, select: { id: true } });
   if (known.length !== ids.length) {
     return NextResponse.json({ error: "Unknown shift type" }, { status: 400 });
   }
-  const maxPerDayById = new Map(known.map((s) => [s.id, s.maxPerDay] as const));
 
   // Server is the source of truth on locks — filter locked targets out (expected, not a
   // failure), so they never enter the transaction.
@@ -64,12 +64,13 @@ export async function PUT(req: NextRequest) {
   const unlocked = cells.filter((c) => !lockedKeys.has(`${c.staffId}:${c.date}`));
   const skippedLocked = cells.length - unlocked.length;
 
-  // Per-day cap: drop cells that would push a capped shift past maxPerDay on its
+  // Per-day cap: drop cells that would push a capped shift past its cap on its
   // date (counting the date's CURRENT holders of that shift plus already-accepted
   // cells in this paste). Skipped like locked cells; the client restores their prior
   // value from the reconcile. `existing` only covers the pasted cells' own keys, so
   // count the full current roster of each capped shift on the affected dates.
-  const cappedIds = [...maxPerDayById].filter(([, m]) => m != null).map(([id]) => id);
+  const caps = await loadDayCaps(unlocked.map((c) => c.date));
+  const cappedIds = [...new Set(unlocked.filter((c) => caps.capOf(c.shiftTypeId, c.date) != null).map((c) => c.shiftTypeId))];
   let toApply = unlocked;
   let skippedDayCap = 0;
   if (cappedIds.length > 0) {
@@ -79,7 +80,7 @@ export async function PUT(req: NextRequest) {
       select: { staffId: true, date: true, shiftTypeId: true },
     });
     const current = rosters.map((r) => ({ staffId: r.staffId, date: r.date.toISOString().split("T")[0], shiftTypeId: r.shiftTypeId }));
-    const violations = dayCapViolations(unlocked, current, (id) => maxPerDayById.get(id) ?? null);
+    const violations = dayCapViolations(unlocked, current, caps.capOf);
     if (violations.length > 0) {
       const capKeys = new Set(violations.map((v) => `${v.staffId}:${v.date}`));
       toApply = unlocked.filter((c) => !capKeys.has(`${c.staffId}:${c.date}`));

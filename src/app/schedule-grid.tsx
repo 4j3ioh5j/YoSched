@@ -17,6 +17,7 @@ import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary } from "@/lib/grid-clipboard";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { dayCapViolations, type DayCapCell } from "@/lib/max-per-day";
+import { buildDayCapLookup, dayKeyLabel, dayKeyOf } from "@/lib/day-cap";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, keysToRequestIntent, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory, type RequestKind, type RequestStrength, type RequestStatus } from "@/lib/schedule-requests";
@@ -139,10 +140,6 @@ type ShiftType = {
   defaultHoursWeekend: number; // 0 = does not accrue weekend hours
   defaultHoursHoliday: number; // 0 = does not accrue holiday hours; holiday wins over weekend
   countsTowardFte: boolean;
-  // Max times this shift may appear on one date (null = no limit). Mirrors the
-  // auto-scheduler cap; enforced on manual edits so e.g. only one ORC/ORL/ICU
-  // lands per day.
-  maxPerDay?: number | null;
   hotkey?: string | null;
   dedicatedColumn?: boolean;
   boldOnSchedule?: boolean;
@@ -180,6 +177,9 @@ type StaffingReq = {
   shiftCode: string;
   dayKey: string;
   minCount: number;
+  // Most staff on the shift that day (Staffing Rules "Max"); null = no limit. Enforced
+  // on manual edits via dayCapOf so e.g. only one ORC/ORL/ICU lands per day.
+  maxCount?: number | null;
 };
 
 type FairnessDeviation = {
@@ -1143,6 +1143,11 @@ export function ScheduleGrid({
   }, [staffOverrides]);
 
   const holidaySet = useMemo(() => new Set(holidays.map((h) => h.date)), [holidays]);
+  // Per-day cap for (shift, date) — Staffing Rules "Max", holiday row on holidays.
+  const dayCapOf = useMemo(
+    () => buildDayCapLookup(staffingReqs, shiftTypes, holidays.map((h) => h.date)),
+    [staffingReqs, shiftTypes, holidays],
+  );
   const holidayNames = useMemo(() => {
     const map = new Map<string, string>();
     for (const h of holidays) map.set(h.date, h.name);
@@ -1807,8 +1812,9 @@ export function ScheduleGrid({
     // are the intended holders. Refuse the whole entry if it names more than the
     // shift's per-day cap allows (e.g. two names in a max-one ICU/CARD column),
     // anchoring the same red-border + popover on the first over-cap staff's cell.
-    if (st.maxPerDay != null && resolved.length > st.maxPerDay) {
-      const over = resolved[st.maxPerDay];
+    const dedicatedCap = dayCapOf(shiftTypeId, date);
+    if (dedicatedCap != null && resolved.length > dedicatedCap) {
+      const over = resolved[dedicatedCap];
       setLiveReject([]);
       showRejectAt([{ staffId: over.id, date, shiftTypeId, reason: "day-full" }]);
       return;
@@ -3454,9 +3460,9 @@ export function ScheduleGrid({
       return `${who}'s ${code} on ${day} was set manually and can't be changed in auto-generate${more}`;
     // Per-day cap: this date already holds the max allowed of this shift.
     if (r.reason === "day-full") {
-      const cap = shiftTypeMap.get(r.shiftTypeId)?.maxPerDay ?? 1;
-      const limit = cap === 1 ? `Only one ${code}` : `Only ${cap} ${code}`;
-      return `${limit} allowed per day — ${day} is already full${more}`;
+      const cap = dayCapOf(r.shiftTypeId, r.date) ?? 0;
+      const limit = cap === 0 ? `No ${code}` : cap === 1 ? `Only one ${code}` : `Only ${cap} ${code}`;
+      return `${limit} allowed ${dayKeyLabel(dayKeyOf(r.date, holidaySet))} — ${day} is already full${more}`;
     }
     const why =
       r.reason === "ineligible" ? `isn't eligible for ${code}` :
@@ -3493,7 +3499,7 @@ export function ScheduleGrid({
 
   // Per-day cap guard for NORMAL-mode edits (the engine + Live mode enforce their
   // own caps elsewhere). If applying `proposed` would place more than a shift's
-  // maxPerDay on a date — e.g. a second ORC/ORL/CARD/ICU — refuse the WHOLE edit
+  // per-day cap on a date — e.g. a second ORC/ORL/CARD/ICU — refuse the WHOLE edit
   // with the same red-border + popover used for other prohibited actions, anchored
   // on the first offending cell, and return true so the caller bails out before any
   // optimistic update or write. Counts against the current saved grid, MINUS any
@@ -3504,7 +3510,7 @@ export function ScheduleGrid({
     const current: DayCapCell[] = localAssignments
       .filter((a) => !freedKeys.has(`${a.staffId}:${a.date}`))
       .map((a) => ({ staffId: a.staffId, date: a.date, shiftTypeId: a.shiftTypeId }));
-    const violations = dayCapViolations(proposed, current, (id) => shiftTypeMap.get(id)?.maxPerDay ?? null);
+    const violations = dayCapViolations(proposed, current, dayCapOf);
     if (violations.length === 0) return false;
     setLiveReject([]);
     showRejectAt(violations.map((v) => ({ ...v, reason: "day-full" as const })));

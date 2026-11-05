@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
+import { loadDayCaps } from "@/lib/day-cap-db";
 
 // Paste into a DEDICATED column (ICU/CARD): set each day's roster for one shift type.
 // The unit is a per-date GROUP { addStaffIds, removeStaffIds }, and the server enforces
@@ -56,8 +57,9 @@ export async function PUT(req: NextRequest) {
     groups.push({ date, addStaffIds, removeStaffIds });
   }
 
-  const st = await prisma.shiftType.findUnique({ where: { id: shiftTypeId }, select: { id: true, code: true, maxPerDay: true } });
+  const st = await prisma.shiftType.findUnique({ where: { id: shiftTypeId }, select: { id: true, code: true } });
   if (!st) return NextResponse.json({ error: "Unknown shift type" }, { status: 400 });
+  const caps = await loadDayCaps(groups.map((g) => g.date));
 
   // Fetch current state for every involved cell once.
   const involved = groups.flatMap((g) =>
@@ -73,9 +75,9 @@ export async function PUT(req: NextRequest) {
 
   // Per-day cap: a dedicated column (ICU/CARD) may be capped at one holder per day.
   // Compute each date's full CURRENT roster for this shift so we can reject a group
-  // whose resulting roster (current − removes + adds) would exceed maxPerDay.
+  // whose resulting roster (current − removes + adds) would exceed that day's cap.
   const rosterByDate = new Map<string, Set<string>>();
-  if (st.maxPerDay != null) {
+  if (groups.some((g) => caps.capOf(shiftTypeId, g.date) != null)) {
     const dates = [...new Set(groups.map((g) => g.date))].map(asUtcDate);
     const holders = await prisma.assignment.findMany({ where: { date: { in: dates }, shiftTypeId }, select: { staffId: true, date: true } });
     for (const h of holders) {
@@ -101,11 +103,12 @@ export async function PUT(req: NextRequest) {
       continue;
     }
     // Per-day cap: would the resulting roster (current − removes + adds) overflow?
-    if (st.maxPerDay != null) {
+    const cap = caps.capOf(shiftTypeId, g.date);
+    if (cap != null) {
       const roster = new Set(rosterByDate.get(g.date) ?? []);
       for (const id of g.removeStaffIds) roster.delete(id);
       for (const id of g.addStaffIds) roster.add(id);
-      if (roster.size > st.maxPerDay) {
+      if (roster.size > cap) {
         skippedGroups.push({ date: g.date, reason: "day-full" });
         continue;
       }

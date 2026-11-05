@@ -95,7 +95,6 @@ export default async function Settings() {
           weekendPaired: st.weekendPaired,
           holidayWeekendPaired: st.holidayWeekendPaired,
           ignoresWorkingDays: st.ignoresWorkingDays,
-          maxPerDay: st.maxPerDay,
           autoSchedulable: st.autoSchedulable,
           hotkey: st.hotkey,
           dedicatedColumn: st.dedicatedColumn,
@@ -107,6 +106,7 @@ export default async function Settings() {
           dayKey: r.dayKey,
           minCount: r.minCount,
           preferredCount: r.preferredCount,
+          maxCount: r.maxCount,
         }))}
         payPeriods={payPeriods.map((pp) => ({
           id: pp.id,

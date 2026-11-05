@@ -12,7 +12,7 @@ const EDITABLE_FIELDS = [
   "countsTowardFte", "countsAsHolidayWork",
   "isLeave", "isPaid", "category", "color", "printBackgroundColor", "sortOrder",
   "schedulePriority", "isOffShift", "isFillShift", "weekendPaired", "holidayWeekendPaired",
-  "ignoresWorkingDays", "maxPerDay", "autoSchedulable", "hotkey", "dedicatedColumn",
+  "ignoresWorkingDays", "autoSchedulable", "hotkey", "dedicatedColumn",
   "boldOnSchedule",
 ] as const;
 
@@ -37,6 +37,31 @@ export async function PUT(req: NextRequest) {
   }
   if (Object.keys(updateData).length === 0) {
     return NextResponse.json({ error: "No editable fields provided" }, { status: 400 });
+  }
+
+  // The per-day maximum now lives in Staffing Rules ("Max"); an old client's
+  // `maxPerDay` is ignored (not in EDITABLE_FIELDS).
+  //
+  // Staffing Rules rows are keyed by shift CODE, so a rename carries them along in the
+  // same transaction (min / preferred / max survive). If rows for the new code already
+  // exist (left over from a deleted shift), refuse rather than merge or drop rules.
+  const newCode = typeof updateData.code === "string" ? updateData.code : null;
+  const current = await prisma.shiftType.findUnique({ where: { id }, select: { code: true } });
+  if (!current) return NextResponse.json({ error: "Shift type not found" }, { status: 404 });
+  if (newCode && newCode !== current.code) {
+    const clash = await prisma.staffingRequirement.count({ where: { shiftCode: newCode } });
+    if (clash > 0) {
+      return NextResponse.json(
+        { error: `Staffing Rules already has a column for ${newCode}. Remove it there first.`, reason: "staffing-code-clash" },
+        { status: 409 },
+      );
+    }
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.shiftType.update({ where: { id }, data: updateData });
+      await tx.staffingRequirement.updateMany({ where: { shiftCode: current.code }, data: { shiftCode: newCode } });
+      return u;
+    });
+    return NextResponse.json(updated);
   }
 
   const updated = await prisma.shiftType.update({ where: { id }, data: updateData });
@@ -74,7 +99,6 @@ export async function POST(req: NextRequest) {
       weekendPaired: data.weekendPaired ?? false,
       holidayWeekendPaired: data.holidayWeekendPaired ?? false,
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
-      maxPerDay: data.maxPerDay ?? null,
       autoSchedulable: data.autoSchedulable ?? false,
       hotkey: data.hotkey ?? null,
       dedicatedColumn: data.dedicatedColumn ?? false,

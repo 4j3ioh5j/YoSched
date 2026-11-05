@@ -14,14 +14,14 @@ async function main() {
   // --- Shift Types ---
   const shiftTypes = [
     { code: "OR",     name: "Operating Room",       defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#3b82f6", sortOrder: 1, isFillShift: true, schedulePriority: 100 },
-    { code: "ORC",    name: "OR Call",               defaultHours: 16, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#8b5cf6", printBackgroundColor: "#abcde2", sortOrder: 2, schedulePriority: 20, noConsecutiveGroup: "call-late", maxPerDay: 1, boldOnSchedule: true },
-    { code: "ORL",    name: "OR Late",               defaultHours: 12, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#6366f1", printBackgroundColor: "#cae4aa", sortOrder: 3, schedulePriority: 30, noConsecutiveGroup: "call-late", maxPerDay: 1, boldOnSchedule: true },
+    { code: "ORC",    name: "OR Call",               defaultHours: 16, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#8b5cf6", printBackgroundColor: "#abcde2", sortOrder: 2, schedulePriority: 20, noConsecutiveGroup: "call-late", boldOnSchedule: true },
+    { code: "ORL",    name: "OR Late",               defaultHours: 12, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#6366f1", printBackgroundColor: "#cae4aa", sortOrder: 3, schedulePriority: 30, noConsecutiveGroup: "call-late", boldOnSchedule: true },
     { code: "ADM",    name: "Administrative",         defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#f59e0b", sortOrder: 4 },
     { code: "PREOP",  name: "Pre-op Clinic",          defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#10b981", sortOrder: 5 },
     { code: "PAIN",   name: "Pain Service",           defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#ef4444", sortOrder: 7 },
     { code: "ICU",    name: "Intensive Care",          defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#dc2626", sortOrder: 8, dedicatedColumn: true },
     { code: "CARD",   name: "Cardiac",                defaultHours: 10, countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#e11d48", sortOrder: 9, dedicatedColumn: true },
-    { code: "CALL",   name: "Weekend Call",            defaultHours: 0,  countsTowardFte: false, isLeave: false, isPaid: false, category: "work",  color: "#14b8a6", printBackgroundColor: "#abcde2", sortOrder: 10, schedulePriority: 10, weekendPaired: true, holidayWeekendPaired: true, ignoresWorkingDays: true, noConsecutiveGroup: "call-late", maxPerDay: 1, boldOnSchedule: true },
+    { code: "CALL",   name: "Weekend Call",            defaultHours: 0,  countsTowardFte: false, isLeave: false, isPaid: false, category: "work",  color: "#14b8a6", printBackgroundColor: "#abcde2", sortOrder: 10, schedulePriority: 10, weekendPaired: true, holidayWeekendPaired: true, ignoresWorkingDays: true, noConsecutiveGroup: "call-late", boldOnSchedule: true },
     { code: "QA",     name: "Quality Assurance",       defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#0ea5e9", sortOrder: 11 },
     { code: "TEL",    name: "Telehealth",              defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#06b6d4", sortOrder: 12 },
     { code: "UCLA",   name: "UCLA Rotation",           defaultHours: 8,  countsTowardFte: true,  isLeave: false, isPaid: true,  category: "work",  color: "#2563eb", sortOrder: 13 },
@@ -313,11 +313,14 @@ async function main() {
   staffReqs.push({ shiftCode: "ORL", dayKey: "holiday", minCount: 0 });
   staffReqs.push({ shiftCode: "CALL", dayKey: "holiday", minCount: 1 });
 
+  // Per-day Max (Staffing Rules): at most one ORC, ORL and CALL on any day, holidays included.
+  const MAX_ONE_PER_DAY = new Set(["ORC", "ORL", "CALL"]);
   for (const req of staffReqs) {
+    const row = { ...req, maxCount: MAX_ONE_PER_DAY.has(req.shiftCode) ? 1 : null };
     await prisma.staffingRequirement.upsert({
       where: { shiftCode_dayKey: { shiftCode: req.shiftCode, dayKey: req.dayKey } },
-      update: req,
-      create: req,
+      update: row,
+      create: row,
     });
   }
   console.log(`Seeded ${staffReqs.length} staffing requirements`);

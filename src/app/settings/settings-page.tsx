@@ -41,7 +41,6 @@ type ShiftType = {
   weekendPaired: boolean;
   holidayWeekendPaired: boolean;
   ignoresWorkingDays: boolean;
-  maxPerDay: number | null;
   autoSchedulable: boolean;
   hotkey: string | null;
   dedicatedColumn: boolean;
@@ -55,6 +54,7 @@ type StaffingReq = {
   dayKey: string;
   minCount: number;
   preferredCount: number;
+  maxCount: number | null;
 };
 
 type PayPeriod = {
@@ -814,7 +814,6 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules, initialRequi
         weekendPaired: created.weekendPaired ?? false,
         holidayWeekendPaired: created.holidayWeekendPaired ?? false,
         ignoresWorkingDays: created.ignoresWorkingDays ?? false,
-        maxPerDay: created.maxPerDay ?? null,
         autoSchedulable: created.autoSchedulable ?? false,
         hotkey: created.hotkey ?? null,
         dedicatedColumn: created.dedicatedColumn ?? false,
@@ -1067,9 +1066,6 @@ function ShiftTypesSection({ initial, pushUndo, initialFollowRules, initialRequi
               <FieldRow label="Dedicated column" description="Add a column on the schedule (left of the count columns) showing the initials of whoever is covering this shift each day. This is in addition to the normal shift display in the grid.">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.dedicatedColumn} onChange={(e) => updateField(editingShift.id, "dedicatedColumn", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
-<FieldRow label="Maximum per day" description="Limit how many staff can be assigned this shift on the same day. Set to 1 if only one person should do this shift per day. Leave blank for no limit.">
-                <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.maxPerDay ?? ""} placeholder="No limit" onChange={(e) => updateField(editingShift.id, "maxPerDay", e.target.value ? parseInt(e.target.value) : null)} />
-              </FieldRow>
             </div>
 
             <div className="flex items-center justify-between px-6 py-4 border-t border-slate-700">
@@ -1146,6 +1142,24 @@ function StaffingSection({
     return map;
   });
 
+  // Most staff on the shift that day; null = no limit.
+  const [maxGrid, setMaxGrid] = useState(() => {
+    const map: Record<string, number | null> = {};
+    for (const r of initial) map[`${r.shiftCode}:${r.dayKey}`] = r.maxCount ?? null;
+    return map;
+  });
+  // The table as last SAVED (not page-load props): a column the user removed since is
+  // sent as `removedColumns` (only explicit removals delete rows), and Undo restores it.
+  type SavedStaffing = { columns: string[]; min: Record<string, number>; pref: Record<string, number>; max: Record<string, number | null> };
+  const [saved, setSaved] = useState<SavedStaffing>(() => {
+    const min: Record<string, number> = {}, pref: Record<string, number> = {}, max: Record<string, number | null> = {};
+    for (const r of initial) {
+      const k = `${r.shiftCode}:${r.dayKey}`;
+      min[k] = r.minCount; pref[k] = r.preferredCount ?? 0; max[k] = r.maxCount ?? null;
+    }
+    return { columns: [...new Set(initial.map((r) => r.shiftCode))], min, pref, max };
+  });
+
   const [columns, setColumns] = useState(() => {
     const codes = [...new Set(initial.map((r) => r.shiftCode))];
     if (codes.length === 0) {
@@ -1197,34 +1211,37 @@ function StaffingSection({
     for (const day of DAY_KEYS) {
       setGrid((prev) => ({ ...prev, [`${code}:${day}`]: 0 }));
       setPrefGrid((prev) => ({ ...prev, [`${code}:${day}`]: 0 }));
+      setMaxGrid((prev) => ({ ...prev, [`${code}:${day}`]: null }));
     }
     setShowAddPicker(false);
   }
 
   function swapColumn(oldCode: string, newCode: string) {
     setColumns((prev) => prev.map((c) => c === oldCode ? newCode : c));
-    const move = (prev: Record<string, number>) => {
+    const move = <T,>(empty: T) => (prev: Record<string, T>) => {
       const next = { ...prev };
       for (const day of DAY_KEYS) {
-        next[`${newCode}:${day}`] = next[`${oldCode}:${day}`] ?? 0;
+        next[`${newCode}:${day}`] = next[`${oldCode}:${day}`] ?? empty;
         delete next[`${oldCode}:${day}`];
       }
       return next;
     };
-    setGrid(move);
-    setPrefGrid(move);
+    setGrid(move<number>(0));
+    setPrefGrid(move<number>(0));
+    setMaxGrid(move<number | null>(null));
     setEditingCol(null);
   }
 
   function removeColumn(code: string) {
     setColumns((prev) => prev.filter((c) => c !== code));
-    const drop = (prev: Record<string, number>) => {
+    const drop = <T,>(prev: Record<string, T>) => {
       const next = { ...prev };
       for (const day of DAY_KEYS) delete next[`${code}:${day}`];
       return next;
     };
     setGrid(drop);
     setPrefGrid(drop);
+    setMaxGrid(drop);
     setEditingCol(null);
   }
 
@@ -1234,11 +1251,14 @@ function StaffingSection({
   function updatePrefCell(shiftCode: string, dayKey: string, value: number) {
     setPrefGrid((prev) => ({ ...prev, [`${shiftCode}:${dayKey}`]: value }));
   }
+  function updateMaxCell(shiftCode: string, dayKey: string, raw: string) {
+    const n = parseInt(raw);
+    setMaxGrid((prev) => ({ ...prev, [`${shiftCode}:${dayKey}`]: raw.trim() === "" || Number.isNaN(n) ? null : Math.max(0, n) }));
+  }
 
   async function save() {
-    const prevGrid = { ...grid };
-    const prevPrefGrid = { ...prefGrid };
-    const prevColumns = [...columns];
+    const before = saved;
+    const after: SavedStaffing = { columns: [...columns], min: { ...grid }, pref: { ...prefGrid }, max: { ...maxGrid } };
     setStatus("saving");
     try {
       const requirements = columns.flatMap((code) =>
@@ -1247,37 +1267,49 @@ function StaffingSection({
           dayKey: day,
           minCount: grid[`${code}:${day}`] ?? 0,
           preferredCount: prefGrid[`${code}:${day}`] ?? 0,
+          maxCount: maxGrid[`${code}:${day}`] ?? null,
         })),
       );
+      const removedColumns = before.columns.filter((c) => !columns.includes(c));
 
       const res = await fetch("/api/settings/staffing", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requirements, columns }),
+        body: JSON.stringify({ requirements, columns, removedColumns }),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? `Save failed (${res.status})`);
+      }
+      setSaved(after);
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2000);
 
       pushUndo({
         label: "Updated staffing rules",
         execute: async () => {
-          const oldReqs = prevColumns.flatMap((code) =>
+          // Undo restores the table as saved BEFORE this save (values and columns);
+          // columns this save added are removed explicitly.
+          const oldReqs = before.columns.flatMap((code) =>
             DAY_KEYS.map((day) => ({
               shiftCode: code,
               dayKey: day,
-              minCount: prevGrid[`${code}:${day}`] ?? 0,
-              preferredCount: prevPrefGrid[`${code}:${day}`] ?? 0,
+              minCount: before.min[`${code}:${day}`] ?? 0,
+              preferredCount: before.pref[`${code}:${day}`] ?? 0,
+              maxCount: before.max[`${code}:${day}`] ?? null,
             })),
           );
-          await fetch("/api/settings/staffing", {
+          const res = await fetch("/api/settings/staffing", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ requirements: oldReqs, columns: prevColumns }),
+            body: JSON.stringify({ requirements: oldReqs, columns: before.columns, removedColumns: after.columns.filter((c) => !before.columns.includes(c)) }),
           });
-          setGrid(prevGrid);
-          setPrefGrid(prevPrefGrid);
-          setColumns(prevColumns);
+          if (!res.ok) throw new Error(`Undo failed (${res.status})`);
+          setGrid(before.min);
+          setPrefGrid(before.pref);
+          setMaxGrid(before.max);
+          setColumns(before.columns);
+          setSaved(before);
         },
       });
     } catch (e) {
@@ -1290,7 +1322,7 @@ function StaffingSection({
     <CollapsibleSection
       id="staffing-rules"
       title="Staffing Rules"
-      description="Minimum and preferred staff per shift type per day of the week. Minimum is always filled first. Preferred is the safe headcount: the auto-scheduler spends free days off on days already at or above it before touching a lighter day (0 = no preference)."
+      description="Minimum, preferred and maximum staff per shift type per day of the week. Minimum is always filled first. Preferred is the safe headcount: the auto-scheduler spends free days off on days already at or above it before touching a lighter day (0 = no preference). Maximum is never exceeded, by the auto-scheduler or by hand (blank = no limit; removing a shift's column removes its limits too)."
       status={status}
       error={error}
     >
@@ -1304,7 +1336,7 @@ function StaffingSection({
                 const st = shiftTypes.find((s) => s.code === code);
                 const isEditing = editingCol === code;
                 return (
-                  <th key={code} colSpan={2} className="py-2 px-2 text-center relative">
+                  <th key={code} colSpan={3} className="py-2 px-2 text-center relative">
                     <button
                       onClick={() => canEdit && setEditingCol(isEditing ? null : code)}
                       className={`px-2 py-1 text-xs font-bold font-mono rounded transition-colors ${canEdit ? "hover:brightness-125" : ""}`}
@@ -1358,6 +1390,7 @@ function StaffingSection({
                 <Fragment key={`${code}:sub`}>
                   <th className="pb-1 px-1 text-[10px] uppercase tracking-wider text-slate-500 font-medium text-center" title="Minimum — always filled first">Min</th>
                   <th className="pb-1 px-1 text-[10px] uppercase tracking-wider text-slate-500 font-medium text-center" title="Preferred (safe) headcount — free days off avoid days below this">Pref</th>
+                  <th className="pb-1 px-1 text-[10px] uppercase tracking-wider text-slate-500 font-medium text-center" title="Maximum — never more than this many on the shift that day. Blank = no limit">Max</th>
                 </Fragment>
               ))}
               {canEdit && <th />}
@@ -1391,7 +1424,7 @@ function StaffingSection({
                           onChange={(e) => updateCell(code, day, parseInt(e.target.value) || 0)}
                         />
                       </td>
-                      <td className="py-1.5 pl-1 pr-2 text-center">
+                      <td className="py-1.5 px-1 text-center">
                         <input
                           type="number"
                           min={0}
@@ -1400,6 +1433,19 @@ function StaffingSection({
                           className="w-12 bg-slate-700/60 border border-slate-600/70 rounded px-1.5 py-1 text-sm text-center font-mono text-slate-300 disabled:opacity-50"
                           value={prefGrid[`${code}:${day}`] ?? 0}
                           onChange={(e) => updatePrefCell(code, day, parseInt(e.target.value) || 0)}
+                        />
+                      </td>
+                      <td className="py-1.5 pl-1 pr-2 text-center">
+                        <input
+                          type="number"
+                          min={0}
+                          disabled={!canEdit}
+                          aria-label={`${code} ${DAY_LABELS[day]} maximum`}
+                          placeholder="–"
+                          title="Blank = no limit"
+                          className="w-12 bg-slate-700/60 border border-slate-600/70 rounded px-1.5 py-1 text-sm text-center font-mono text-slate-300 placeholder:text-slate-500 disabled:opacity-50"
+                          value={maxGrid[`${code}:${day}`] ?? ""}
+                          onChange={(e) => updateMaxCell(code, day, e.target.value)}
                         />
                       </td>
                     </Fragment>

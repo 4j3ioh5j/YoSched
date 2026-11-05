@@ -27,6 +27,7 @@ import { evaluateAvailability, type PayPeriodRange } from "./availability";
 import { evaluateShiftEligibility } from "./shift-eligibility";
 import { foldRequestsForDate, type PendingRequestMode, type ScheduleRequestData } from "./schedule-requests";
 import { dayCapViolations } from "./max-per-day";
+import { buildDayCapLookup } from "./day-cap";
 
 // A cell the edit forces into place (locked, the engine must honor it).
 export type ScenarioPin = { staffId: string; date: string; shiftTypeId: string };
@@ -50,7 +51,7 @@ export type ScenarioPinRejection = {
   shiftTypeId: string;
   // "manual-locked" is raised by the Live UI (not the engine): a user edit that
   // targets a hand-placed cell is refused so auto-generate can't overwrite/move it.
-  // "day-full" means the pin would exceed the shift type's per-day cap (maxPerDay)
+  // "day-full" means the pin would exceed the shift's per-day cap (Staffing Rules Max)
   // — e.g. a second ORC/ORL/ICU on a date that already has its one allowed.
   reason: "ineligible" | "unavailable" | "request-blocked" | "unknown-staff" | "unknown-shift" | "manual-locked" | "day-full";
 };
@@ -184,18 +185,19 @@ export function applyScenario(
     if (legality !== "ok") rejected.push({ ...pin, reason: legality });
   }
 
-  // Per-day caps (maxPerDay) — historically deferred from pinHardLegality because
+  // Per-day caps (Staffing Rules Max, per date) — historically deferred from pinHardLegality because
   // they need the whole-day grid, not just the single staff. Count against the
   // baseline grid MINUS the cells this edit frees (an emptied cell no longer holds
   // its shift), with each pin REPLACING any cell at its key (dayCapViolations
   // handles overwrite + same-batch dedup). A pin that would exceed its shift's cap
   // is hard-rejected just like an illegal pin, so the edit snaps back. The engine
-  // itself already honors maxPerDay, so only a user PIN can introduce a violation.
+  // itself already honors the cap, so only a user PIN can introduce a violation.
   const freedKeys = new Set(frees.map((f) => keyOf(f.staffId, f.date)));
   const capCurrent = input.existingAssignments
     .filter((a) => !freedKeys.has(keyOf(a.staffId, a.date)))
     .map((a) => ({ staffId: a.staffId, date: a.date, shiftTypeId: a.shiftTypeId }));
-  for (const v of dayCapViolations(pins, capCurrent, (id) => stById.get(id)?.maxPerDay ?? null)) {
+  const capOf = buildDayCapLookup(input.staffingRequirements, input.shiftTypes, input.holidays.map((h) => h.date));
+  for (const v of dayCapViolations(pins, capCurrent, capOf)) {
     rejected.push({ ...v, reason: "day-full" });
   }
 

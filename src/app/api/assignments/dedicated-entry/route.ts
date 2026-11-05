@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
+import { loadDayCaps } from "@/lib/day-cap-db";
 
 // Atomic ROSTER edit for a single dedicated column (ICU/CARD) on ONE date: set who
 // holds the shift by passing the staff to add and the staff to remove. Unlike the
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Nothing to do" }, { status: 400 });
   }
 
-  const st = await prisma.shiftType.findUnique({ where: { id: shiftTypeId }, select: { id: true, code: true, maxPerDay: true } });
+  const st = await prisma.shiftType.findUnique({ where: { id: shiftTypeId }, select: { id: true, code: true } });
   if (!st) return NextResponse.json({ error: "Unknown shift type" }, { status: 400 });
 
   const day = asUtcDate(date);
@@ -69,16 +70,13 @@ export async function POST(req: NextRequest) {
   }
 
   // Per-day cap on the RESULTING roster (current holders − removes + adds).
-  if (st.maxPerDay != null) {
+  const caps = await loadDayCaps([date]);
+  const cap = caps.capOf(shiftTypeId, date);
+  if (cap != null) {
     const roster = new Set(holders.map((h) => h.staffId));
     for (const id of removeStaffIds) roster.delete(id);
     for (const id of addStaffIds) roster.add(id);
-    if (roster.size > st.maxPerDay) {
-      return NextResponse.json(
-        { error: `Only ${st.maxPerDay} ${st.code} allowed per day`, reason: "day-full", code: st.code, maxPerDay: st.maxPerDay },
-        { status: 409 },
-      );
-    }
+    if (roster.size > cap) return caps.dayFull(shiftTypeId, date);
   }
 
   const actorName = userId ? (await resolveUpdaterNames([userId])).get(userId) ?? null : null;

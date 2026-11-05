@@ -1,6 +1,7 @@
 import { computeFairness, type FairnessSummary, type EquityFactor } from "./fairness";
 import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule, type PayPeriodRange } from "./availability";
 import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
+import { buildDayCapLookup } from "./day-cap";
 import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, isAtRollingMaximum, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
 import { foldRequestsForDate, detectRequestConflicts, coversDate, parseOffStrategyOrder, LEAVE_STRATEGY_PREFIX, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode, type RequestConflictPolicy } from "./schedule-requests";
 import { matchesWhen, standingToWhen } from "./recurrence";
@@ -38,7 +39,6 @@ export type ScheduleShiftType = {
   weekendPaired: boolean;
   holidayWeekendPaired: boolean;
   ignoresWorkingDays: boolean;
-  maxPerDay: number | null;
   category: string;
 
   autoSchedulable: boolean;
@@ -145,6 +145,9 @@ type StaffingRequirement = {
   // (handoff #743). A discretionary day off avoids dates whose projected fill
   // count would fall below this. 0 / undefined = no preference.
   preferredCount?: number;
+  // Most staff on this shift that day ("Max" in Staffing Rules); null/undefined = no
+  // limit. Resolved per date by src/lib/day-cap.ts (holiday row on holidays).
+  maxCount?: number | null;
 };
 
 type SchedulingPreferences = {
@@ -737,6 +740,9 @@ export function autoSchedule({
     prefMap.set(`${dp.staffId}:${dp.dayOfWeek}`, dp.preference);
   }
 
+  // Per-day caps (Staffing Rules "Max") — the same resolver the manual edit paths use.
+  const capOf = buildDayCapLookup(staffingRequirements, shiftTypes, holidays.map((h) => h.date));
+
   // Build staffing requirements lookup: shiftCode → Map<dayKey, minCount>
   const reqsByShift = new Map<string, Map<string, number>>();
   for (const sr of staffingRequirements) {
@@ -803,7 +809,7 @@ export function autoSchedule({
   // `ignoreHardMax` (Slice 2b-2) waives ONLY the hard per-staff rolling-MAX gate so a
   // coverage minimum can be filled by exceeding a hard max when coverage is ranked above
   // hardLimits. Every other gate — eligibility, availability, follow rules, the per-day
-  // cap (maxPerDay), one-shift-per-day — still applies. Hard MIN is not an availability
+  // cap (Staffing Rules Max), one-shift-per-day — still applies. Hard MIN is not an availability
   // gate (it lives in the objective/floor), so only the MAX needs a waiver (Codex #1779).
   function isAvailable(staff: ScheduleStaff, date: string, st: ScheduleShiftType, opts?: { ignoreHardMax?: boolean }): boolean {
     if (isAssigned(staff.id, date)) return false;
@@ -834,7 +840,7 @@ export function autoSchedule({
       const nextSt = stById.get(next.shiftTypeId);
       if (nextSt && !isShiftAllowedAfter(followMap, st.id, next.shiftTypeId, nextSt.isOffShift)) return false;
     }
-    if (st.maxPerDay != null && countAssigned(st.code, date) >= st.maxPerDay) return false;
+    if (dayFull(st, date)) return false;
     if (!opts?.ignoreHardMax && isAtMaximum(staff, st, date)) return false;
     return true;
   }
@@ -888,6 +894,7 @@ export function autoSchedule({
     const avail = evaluateAvailability(member.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
     if (!avail.available) { warn("staff unavailable"); return; }
     if (holidaySet.has(next) && isWorkFollower) { warn("holiday"); return; }
+    if (dayFull(spec.follower, next)) { warn(`Max for ${spec.follower.code} that day already reached`); return; }
     assign(staffId, next, spec.follower, `Required follower after ${sourceShift.code}`, "follower", 0.95, !spec.countsTowardTargets);
   }
 
@@ -1058,7 +1065,15 @@ export function autoSchedule({
   }
 
   // Physical count of `code` cells on `date`, INCLUDING non-counting followers —
-  // use for per-day caps (maxPerDay), where a follower still occupies a slot.
+  // use for per-day caps (Staffing Rules Max), where a follower still occupies a slot.
+  // Staffing Rules "Max" for this shift on this date is already reached (counts
+  // physical cells, non-counting followers included). Every work placement path
+  // checks it: isAvailable, the coverage loop, standing commitments, followers.
+  function dayFull(st: ScheduleShiftType, date: string): boolean {
+    const cap = capOf(st.id, date);
+    return cap != null && countAssigned(st.code, date) >= cap;
+  }
+
   function countAssigned(code: string, date: string): number {
     let count = 0;
     for (const [k, v] of grid.entries()) {
@@ -1437,6 +1452,10 @@ export function autoSchedule({
       // An approved hard OFF / NEGATE_SHIFT request overrides a standing
       // commitment (this path doesn't flow through isAvailable).
       if (requestBlocksWork(sc.staffId, date, st)) continue;
+      if (dayFull(st, date)) {
+        warnings.push(`${member.initials}: standing ${st.code} not placed on ${date} (Max for ${st.code} that day already reached)`);
+        continue;
+      }
 
       assign(
         sc.staffId,
@@ -1862,6 +1881,9 @@ export function autoSchedule({
 
           for (let i = 0; i < needed; i++) {
             if (pool.length === 0) break;
+            // `available` was checked before any of these placements: re-check the
+            // day's Max (Staffing Rules) so a minimum above it can't overfill the day.
+            if (dayFull(st, date)) break;
             const chosen = pickStaff([...pool], date);
 
             assign(
@@ -1978,7 +2000,7 @@ export function autoSchedule({
   // pay-period target and displaces a fill day — it is never a 9th day on top.
   //
   // Deliberately NOT routed through isAvailable(): HOL is leave, not work, so a
-  // request-OFF hold, follow rules, maxPerDay and the rolling max must not block
+  // request-OFF hold, follow rules, the per-day Max and the rolling max must not block
   // it. "Normally scheduled" is the staffer's availability on the actual date
   // (evaluateAvailability), so an alternating-week rule is honored rather than the
   // weekday superset. Anything already on the cell — approved leave, a manual or
@@ -2936,7 +2958,7 @@ export function autoSchedule({
       const hoursWith = ppHoursForStaff(t.staffId, pp);
       const holderOverCap = t.st.countsTowardFte && target > 0 && hoursWith > target;
 
-      // Temporarily free the slot so challenger / backfill legality (incl. maxPerDay)
+      // Temporarily free the slot so challenger / backfill legality (incl. the per-day Max)
       // evaluates as if the holder weren't occupying it.
       grid.delete(key);
 
