@@ -1,37 +1,27 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { deriveCountColumnCodes } from "@/lib/count-columns";
+import { STALE_CLIENT } from "@/lib/stale-client";
 
+// Read: rows linked by shift id, with the shifts' CURRENT codes derived alongside.
 export async function GET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
 
-  const columns = await prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } });
-  return NextResponse.json(columns);
+  const [columns, shiftTypes] = await Promise.all([
+    prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.shiftType.findMany({ select: { id: true, code: true } }),
+  ]);
+  return NextResponse.json(deriveCountColumnCodes(columns, shiftTypes));
 }
 
-export async function PUT(req: NextRequest) {
+// Write moved to PUT /api/settings/count-columns/by-shift-id (ids only). The only callers
+// of THIS path are Settings tabs on a pre-slice bundle, which name shifts by code; a
+// renamed-and-reused code can name the wrong shift, so nothing is written — the tab
+// reloads. (Refusal stub; removed in a later slice.)
+export async function PUT() {
   const { error } = await getSession("settings:edit");
   if (error) return error;
-
-  const { columns } = await req.json();
-  if (!Array.isArray(columns)) {
-    return NextResponse.json({ error: "columns must be an array" }, { status: 400 });
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.countColumn.deleteMany();
-    if (columns.length > 0) {
-      await tx.countColumn.createMany({
-        data: columns.map((col: { label: string; shiftCodes: string[] }, i: number) => ({
-          label: col.label,
-          shiftCodes: col.shiftCodes,
-          sortOrder: i,
-        })),
-      });
-    }
-  });
-
-  const result = await prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } });
-  return NextResponse.json(result);
+  return NextResponse.json(STALE_CLIENT, { status: 409 });
 }

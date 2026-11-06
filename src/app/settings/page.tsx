@@ -202,7 +202,7 @@ export default async function Settings() {
         countColumns={countColumns.map((c) => ({
           id: c.id,
           label: c.label,
-          shiftCodes: c.shiftCodes,
+          shiftTypeIds: c.shiftTypeIds,
         }))}
         printColumnRules={printColumnRules.map((r) => ({
           id: r.id,

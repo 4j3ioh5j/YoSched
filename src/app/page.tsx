@@ -266,7 +266,7 @@ export default async function Home() {
         }))}
         countColumns={countColumns.map((c) => ({
           label: c.label,
-          shiftCodes: c.shiftCodes,
+          shiftTypeIds: c.shiftTypeIds,
         }))}
         printColumnRules={printColumnRules.map((r) => ({
           enabled: r.enabled,

@@ -4,7 +4,7 @@
 // Pure (no DB/React): used by the server loaders, the API route and the Settings section.
 
 import type { EquityFactor } from "@/lib/fairness";
-import { STALE_CLIENT } from "@/lib/stale-client";
+import { saveErrorMessage } from "@/lib/stale-client";
 
 export type EquityFactorRow = {
   factorType: string;
@@ -48,17 +48,7 @@ export function buildEquityFactorsSave(
   };
 }
 
-/** The message for a failed save. 404/405 = the server has no such route (it predates this
- *  slice) → reload; otherwise the server's own `error` text when it sent one. */
-export function equitySaveErrorMessage(status: number, bodyText: string): string {
-  if (status === 404 || status === 405) return STALE_CLIENT.error;
-  try {
-    const parsed = JSON.parse(bodyText) as { error?: unknown };
-    if (parsed && typeof parsed.error === "string" && parsed.error) return parsed.error;
-  } catch {
-    // not JSON — fall through to the raw text
-  }
-  return bodyText || `Save failed (${status})`;
-}
+/** The message for a failed save (shared rule: 404/405 → reload; else the server's `error`). */
+export const equitySaveErrorMessage = saveErrorMessage;
 
 export type { EquityFactor };

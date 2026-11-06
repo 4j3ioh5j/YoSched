@@ -15,6 +15,7 @@ import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
+import { countColumnTotals } from "@/lib/count-columns";
 import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary } from "@/lib/grid-clipboard";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { dayCapViolations, type DayCapCell } from "@/lib/max-per-day";
@@ -237,7 +238,7 @@ type Props = {
     perShift: Record<string, number>;
   };
   followRules?: FollowRuleRow[];
-  countColumns?: { label: string; shiftCodes: string[] }[];
+  countColumns?: { label: string; shiftTypeIds: string[] }[];
   printColumnRules?: PrintRule[];
   printAggregateColumns?: AggregateColumn[];
   dateFormat?: string;
@@ -1263,23 +1264,12 @@ export function ScheduleGrid({
     return map;
   }, [dates, staff, effectiveAssignmentMap, shiftTypeMap, holidaySet, staffingMins, staffingReqs]);
 
-  const columnCounts = useMemo(() => {
-    return countColumns.map((col) => {
-      const codeSet = new Set(col.shiftCodes);
-      const counts: Record<string, number> = {};
-      for (const date of dates) {
-        let count = 0;
-        for (const p of staff) {
-          const key = `${p.id}:${date}`;
-          const a = effectiveAssignmentMap.get(key);
-          const code = a?.code;
-          if (code && codeSet.has(code)) count++;
-        }
-        counts[date] = count;
-      }
-      return counts;
-    });
-  }, [dates, staff, effectiveAssignmentMap, countColumns]);
+  // Count columns name their shifts by id, so count the cells' shiftTypeId (saved grid and
+  // Live what-if both carry it) — a renamed shift keeps counting.
+  const columnCounts = useMemo(
+    () => countColumnTotals(countColumns, dates, staff.map((p) => p.id), (pid, date) => effectiveAssignmentMap.get(`${pid}:${date}`)?.shiftTypeId),
+    [dates, staff, effectiveAssignmentMap, countColumns],
+  );
 
   // Shift types flagged for a dedicated column, in sort order. Each gets its own
   // column (left of the count columns) listing the initials of whoever covers

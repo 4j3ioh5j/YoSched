@@ -32,7 +32,8 @@ vi.mock("@/lib/prisma", () => {
   };
   const staffingRequirement = { count: async () => db.staffingRows };
   const assignment = { count: async () => db.assignments };
-  const client = { equityFactor, shiftType, staffingRequirement, assignment };
+  const countColumn = { count: async () => 0 }; // no count columns in these scenarios (slice 3 has its own test)
+  const client = { equityFactor, shiftType, staffingRequirement, assignment, countColumn };
   return {
     prisma: {
       ...client,

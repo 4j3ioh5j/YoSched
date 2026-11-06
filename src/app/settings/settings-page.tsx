@@ -6,6 +6,7 @@ import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKe
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
 import { EQUITY_FACTORS_SAVE_URL, buildEquityFactorsSave, equitySaveErrorMessage } from "@/lib/equity-factors";
+import { COUNT_COLUMNS_SAVE_URL, buildCountColumnsSave, countColumnsSaveErrorMessage } from "@/lib/count-columns";
 import { SHIFT_SHARE_BASES, type ShiftShareBasis } from "@/lib/shift-share";
 import { HOLIDAY_POLICIES, type HolidayPolicy } from "@/lib/holiday-policy";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
@@ -192,7 +193,7 @@ type Props = {
   shiftCodes: string[];
   followRules: FollowRuleData[];
   requiredFollowers: RequiredFollowerData[];
-  countColumns: { id: string; label: string; shiftCodes: string[] }[];
+  countColumns: { id: string; label: string; shiftTypeIds: string[] }[];
   printColumnRules: PrintColumnRuleData[];
   printAggregateColumns: PrintAggregateColumnData[];
   staffColumnOrder: StaffOrderCriterion[];
@@ -3822,30 +3823,41 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
 
 // ─── Count Columns Section ──────────────────────────────────────────────────
 
-function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; label: string; shiftCodes: string[] }[]; shiftTypes: ShiftType[] }) {
+function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; label: string; shiftTypeIds: string[] }[]; shiftTypes: ShiftType[] }) {
   const canEdit = useCanEdit();
-  const [columns, setColumns] = useState(initial.map((c) => ({ label: c.label, shiftCodes: [...c.shiftCodes] })));
+  // Columns name their shifts by id; the chip text is the shift's CURRENT code from the
+  // page's shared shift list, so a rename shows here at once.
+  const [columns, setColumns] = useState(initial.map((c) => ({ label: c.label, shiftTypeIds: [...c.shiftTypeIds] })));
   const [status, setStatus] = useState<SaveStatus>("idle");
-  const allCodes = shiftTypes.filter((st) => !st.isOffShift).map((st) => st.code);
+  const [error, setError] = useState("");
+  const pickable = shiftTypes.filter((st) => !st.isOffShift);
+  const codeOf = (id: string) => shiftTypes.find((st) => st.id === id)?.code ?? "?";
 
   async function save() {
     setStatus("saving");
+    setError("");
     try {
-      const res = await fetch("/api/settings/count-columns", {
+      // Ids only — codes never travel in a write (a server could resolve a renamed-and-reused
+      // code to the wrong shift). A pre-slice server has no such route and answers 404: the
+      // message asks for a reload, nothing changes.
+      const res = await fetch(COUNT_COLUMNS_SAVE_URL, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ columns }),
+        body: JSON.stringify(buildCountColumnsSave(columns)),
       });
-      if (!res.ok) throw new Error("Save failed");
+      if (!res.ok) throw new Error(countColumnsSaveErrorMessage(res.status, await res.text()));
+      const saved = (await res.json()) as { label: string; shiftTypeIds: string[] }[];
+      setColumns(saved.map((c) => ({ label: c.label, shiftTypeIds: [...c.shiftTypeIds] })));
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2000);
-    } catch {
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
       setStatus("error");
     }
   }
 
   function addColumn() {
-    setColumns([...columns, { label: "", shiftCodes: [] }]);
+    setColumns([...columns, { label: "", shiftTypeIds: [] }]);
   }
 
   function removeColumn(idx: number) {
@@ -3856,12 +3868,12 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
     setColumns(columns.map((c, i) => (i === idx ? { ...c, label } : c)));
   }
 
-  function addCode(idx: number, code: string) {
-    setColumns(columns.map((c, i) => (i === idx ? { ...c, shiftCodes: [...c.shiftCodes, code] } : c)));
+  function addShift(idx: number, shiftTypeId: string) {
+    setColumns(columns.map((c, i) => (i === idx && !c.shiftTypeIds.includes(shiftTypeId) ? { ...c, shiftTypeIds: [...c.shiftTypeIds, shiftTypeId] } : c)));
   }
 
-  function removeCode(idx: number, code: string) {
-    setColumns(columns.map((c, i) => (i === idx ? { ...c, shiftCodes: c.shiftCodes.filter((sc) => sc !== code) } : c)));
+  function removeShift(idx: number, shiftTypeId: string) {
+    setColumns(columns.map((c, i) => (i === idx ? { ...c, shiftTypeIds: c.shiftTypeIds.filter((id) => id !== shiftTypeId) } : c)));
   }
 
   return (
@@ -3870,6 +3882,7 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
       title="Count Columns on Printed Schedule"
       description="Define columns that count staff per day on the schedule grid."
       status={status}
+      error={error}
     >
 
       <div className="space-y-3">
@@ -3889,21 +3902,21 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-slate-500 w-14">Shifts:</span>
-                {col.shiftCodes.map((code) => (
-                  <span key={code} className="inline-flex items-center gap-0.5 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-xs border border-slate-600">
-                    {code}
-                    {canEdit && <button onClick={() => removeCode(idx, code)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>}
+                {col.shiftTypeIds.map((id) => (
+                  <span key={id} className="inline-flex items-center gap-0.5 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-xs border border-slate-600">
+                    {codeOf(id)}
+                    {canEdit && <button onClick={() => removeShift(idx, id)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>}
                   </span>
                 ))}
                 {canEdit && (
                   <select
                     value=""
-                    onChange={(e) => { if (e.target.value) addCode(idx, e.target.value); }}
+                    onChange={(e) => { if (e.target.value) addShift(idx, e.target.value); }}
                     className="bg-slate-700 text-slate-400 rounded px-1 py-0.5 text-xs border border-slate-600"
                   >
                     <option value="">+ add</option>
-                    {allCodes.filter((c) => !col.shiftCodes.includes(c)).map((c) => (
-                      <option key={c} value={c}>{c}</option>
+                    {pickable.filter((st) => !col.shiftTypeIds.includes(st.id)).map((st) => (
+                      <option key={st.id} value={st.id}>{st.code}</option>
                     ))}
                   </select>
                 )}

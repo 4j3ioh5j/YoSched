@@ -141,6 +141,14 @@ export async function DELETE(req: NextRequest) {
       { status: 409 },
     );
   }
+  const countColumns = await prisma.countColumn.count({ where: { shiftTypeIds: { has: id } } });
+  if (countColumns > 0) {
+    const st = await prisma.shiftType.findUnique({ where: { id }, select: { code: true } });
+    return NextResponse.json(
+      { error: `Cannot delete: Count Columns has a column using ${st?.code ?? "this shift"}. Remove it there first.`, reason: "count-column-linked" },
+      { status: 409 },
+    );
+  }
 
   await prisma.shiftType.delete({ where: { id } });
   return NextResponse.json({ ok: true });
