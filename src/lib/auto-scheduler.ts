@@ -4,7 +4,7 @@ import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter } from "./f
 import { buildDayCapLookup } from "./day-cap";
 import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, isAtRollingMaximum, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
 import { foldRequestsForDate, detectRequestConflicts, coversDate, parseOffStrategyOrder, LEAVE_STRATEGY_PREFIX, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode, type RequestConflictPolicy } from "./schedule-requests";
-import { matchesWhen, standingToWhen } from "./recurrence";
+import { matchesWhen, standingToWhen, ruleToWhen } from "./recurrence";
 import { type ShiftShareBasis } from "./shift-share";
 import { type HolidayPolicy } from "./holiday-policy";
 import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
@@ -2681,6 +2681,76 @@ export function autoSchedule({
     if (c.step) byStep[c.step] = Math.max(0, (byStep[c.step] ?? 0) - 1);
   }
 
+  function recheckConditionalRules() {
+    const owners = activeStaff.filter((p) => p.availabilityRules.some((r) => r.conditionStaffId && r.conditionType));
+    if (owners.length === 0) return;
+    const HUMAN_STEPS = new Set(["request-leave", "request-shift", "request-tentative"]);
+    const nameOf = (id: string) => staff.find((p) => p.id === id)?.initials ?? "another staff member";
+    // The conditional rules that apply on `date` and currently say "unavailable" (a rule
+    // granting availability whose condition fails, or a ban whose condition holds).
+    const describe = (p: ScheduleStaff, date: string) => {
+      const parts = new Set<string>();
+      for (const r of p.availabilityRules) {
+        if (!r.conditionStaffId || !r.conditionType) continue;
+        if (!matchesWhen(ruleToWhen(r), date, payPeriods)) continue;
+        parts.add(`'only when ${nameOf(r.conditionStaffId)} is ${r.conditionType === "working" ? "" : "not "}working'`);
+      }
+      return [...parts].join(" / ") || "availability rule";
+    };
+    // The engine cell of `p` on `date` that its conditional rules reject now, or null.
+    const brokenCell = (p: ScheduleStaff, date: string) => {
+      const cell = grid.get(`${p.id}:${date}`);
+      if (!cell || cell.step === undefined || cell.locked || HUMAN_STEPS.has(cell.step)) return null;
+      if (isAwayShift(cell.shiftTypeId)) return null;
+      const st = stById.get(cell.shiftTypeId);
+      if (!st || st.ignoresWorkingDays) return null;
+      if (evaluateAvailability(p.availabilityRules, date, payPeriods, (pid, d) => isWorking(pid, d)).available) return null;
+      return { cell, st };
+    };
+    // Why a broken cell must stay (null = it may be freed). Freeing makes the day X in STEP 4,
+    // so it must not split a weekend pair or break a follow rule with the day before or after.
+    const keepReason = (staffId: string, date: string, cell: NonNullable<ReturnType<typeof grid.get>>, st: ScheduleShiftType): string | null => {
+      if (cell.step === "standing") return "standing commitment";
+      if (cell.step === "follower") return "required follower";
+      if (cell.step === "holiday") return "holiday entitlement";
+      if (cell.noCount) return "does not count toward targets";
+      if (followerBySource.has(cell.shiftTypeId)) return "it has a required follower";
+      if (st.weekendPaired && (isWeekend(date) || (st.holidayWeekendPaired && holidaySet.has(date)))) return "weekend pair";
+      if (offShift) {
+        const prev = getCell(staffId, prevDate(date));
+        if (prev && !isShiftAllowedAfter(followMap, prev.shiftTypeId, offShift.id, true)) return "a day off is not allowed after the day before";
+        const next = getCell(staffId, nextDate(date));
+        const nextSt = next ? stById.get(next.shiftTypeId) : undefined;
+        if (next && nextSt && !isShiftAllowedAfter(followMap, offShift.id, next.shiftTypeId, nextSt.isOffShift)) return "the next day's shift is not allowed after a day off";
+      }
+      return null;
+    };
+    const maxPasses = dates.length * owners.length + 1;
+    for (let pass = 0; pass < maxPasses; pass++) {
+      let freed = 0;
+      for (const date of dates) {
+        for (const p of owners) {
+          const b = brokenCell(p, date);
+          if (!b || keepReason(p.id, date, b.cell, b.st) !== null) continue;
+          releaseEngineCell(p.id, date);
+          warnings.push(`${p.initials} ${date}: ${b.cell.code} removed — their rule ${describe(p, date)} no longer holds on the finished schedule`);
+          freed++;
+        }
+      }
+      if (freed === 0) break;
+    }
+    // Kept cells are reported only once nothing else will be freed, so a break a later
+    // removal healed is never warned.
+    for (const date of dates) {
+      for (const p of owners) {
+        const b = brokenCell(p, date);
+        if (!b) continue;
+        const why = keepReason(p.id, date, b.cell, b.st) ?? "not freed";
+        warnings.push(`${p.initials} ${date}: ${b.cell.code} breaks their rule ${describe(p, date)} on the finished schedule (kept: ${why})`);
+      }
+    }
+  }
+
   type EngineSnapshot = {
     sug: Suggestion[];
     steps: Record<string, number>;
@@ -3084,6 +3154,17 @@ export function autoSchedule({
   }
   // Any daily minimum still unmet (whatever the cause) gets one-level rearrangement.
   if (fillShift) repairCoverageByRearrange();
+
+  // ── Card #73: re-check conditional availability rules on the finished grid ──
+  // A rule like "AB only when CD is (not) working" is checked when AB is placed, but a
+  // later step may place CD (or free CD) and break it. evaluateAvailability reads the grid
+  // ONLY through isWorking, and every engine step except honored requests checked it before
+  // placing, so an engine cell that reads unavailable now was broken by a later change.
+  // Free the rule owner's cell when it is discretionary (STEP 4 makes it X; the audits below
+  // report and score the gap), keep standing / follower cells with a warning, and never
+  // touch human cells (locked, loaded, honored requests). Repeat until nothing is freed:
+  // freeing AB can break "EF only when AB is working". Before the audits and STEP 4.
+  recheckConditionalRules();
 
   // ── Post-repair hours audit ──
   // Emit one warning per residual nonzero PP-hour deviation, AFTER the repair so
