@@ -67,7 +67,7 @@ type StaffingMinimum = {
 };
 
 type StaffingRequirement = {
-  shiftCode: string;
+  shiftTypeId: string; // Staffing Rules are linked to the shift's id, not its code
   dayKey: string;
   minCount: number;
 };
@@ -226,22 +226,23 @@ export function checkDayStaffing({
   if (staffingReqs && staffingReqs.length > 0) {
     const dayKey = holidaySet.has(date) ? "holiday" : String(dow);
 
-    const shiftCounts = new Map<string, number>();
+    const shiftCounts = new Map<string, number>(); // by shiftTypeId
     for (const p of staff) {
       const a = assignmentMap.get(`${p.id}:${date}`);
       if (a && !isOff(a)) {
-        shiftCounts.set(a.code, (shiftCounts.get(a.code) || 0) + 1);
+        shiftCounts.set(a.shiftTypeId, (shiftCounts.get(a.shiftTypeId) || 0) + 1);
       }
     }
 
     for (const req of staffingReqs) {
       if (req.dayKey !== dayKey) continue;
       if (req.minCount <= 0) continue;
-      const actual = shiftCounts.get(req.shiftCode) || 0;
+      const actual = shiftCounts.get(req.shiftTypeId) || 0;
       if (actual < req.minCount) {
+        const code = shiftTypeMap.get(req.shiftTypeId)?.code ?? "?";
         warnings.push({
           type: actual === 0 ? "shift-count" : "understaffed",
-          message: `${actual}/${req.minCount} ${req.shiftCode} (${dayType})`,
+          message: `${actual}/${req.minCount} ${code} (${dayType})`,
         });
       }
     }

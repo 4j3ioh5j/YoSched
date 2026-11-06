@@ -255,7 +255,7 @@ describe("checkDayStaffing", () => {
 
   describe("per-shift staffing requirements", () => {
     it("warns per shift code when below requirement", () => {
-      const reqs = [{ shiftCode: "OR", dayKey: "1", minCount: 2 }];
+      const reqs = [{ shiftTypeId: "st-or", dayKey: "1", minCount: 2 }];
       const aMap = makeAssignmentMap({
         "p1:2025-05-12": { shiftTypeId: "st-or", code: "OR" },
       });
@@ -267,7 +267,7 @@ describe("checkDayStaffing", () => {
     });
 
     it("uses shift-count type when actual is 0", () => {
-      const reqs = [{ shiftCode: "OR", dayKey: "1", minCount: 1 }];
+      const reqs = [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }];
       const aMap = makeAssignmentMap({});
       const w = checkDayStaffing({
         date: "2025-05-12", staff, assignmentMap: aMap,
@@ -280,7 +280,7 @@ describe("checkDayStaffing", () => {
 
     it("uses holiday dayKey for holidays", () => {
       const hSet = new Set(["2025-05-12"]);
-      const reqs = [{ shiftCode: "OR", dayKey: "holiday", minCount: 1 }];
+      const reqs = [{ shiftTypeId: "st-or", dayKey: "holiday", minCount: 1 }];
       const aMap = makeAssignmentMap({});
       const w = checkDayStaffing({
         date: "2025-05-12", staff, assignmentMap: aMap,

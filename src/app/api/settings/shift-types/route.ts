@@ -42,27 +42,10 @@ export async function PUT(req: NextRequest) {
   // The per-day maximum now lives in Staffing Rules ("Max"); an old client's
   // `maxPerDay` is ignored (not in EDITABLE_FIELDS).
   //
-  // Staffing Rules rows are keyed by shift CODE, so a rename carries them along in the
-  // same transaction (min / preferred / max survive). If rows for the new code already
-  // exist (left over from a deleted shift), refuse rather than merge or drop rules.
-  const newCode = typeof updateData.code === "string" ? updateData.code : null;
-  const current = await prisma.shiftType.findUnique({ where: { id }, select: { code: true } });
+  // Staffing Rules rows are linked to the shift's ID, so a code rename needs no
+  // carry-over: the rows simply show the new code.
+  const current = await prisma.shiftType.findUnique({ where: { id }, select: { id: true } });
   if (!current) return NextResponse.json({ error: "Shift type not found" }, { status: 404 });
-  if (newCode && newCode !== current.code) {
-    const clash = await prisma.staffingRequirement.count({ where: { shiftCode: newCode } });
-    if (clash > 0) {
-      return NextResponse.json(
-        { error: `Staffing Rules already has a column for ${newCode}. Remove it there first.`, reason: "staffing-code-clash" },
-        { status: 409 },
-      );
-    }
-    const updated = await prisma.$transaction(async (tx) => {
-      const u = await tx.shiftType.update({ where: { id }, data: updateData });
-      await tx.staffingRequirement.updateMany({ where: { shiftCode: current.code }, data: { shiftCode: newCode } });
-      return u;
-    });
-    return NextResponse.json(updated);
-  }
 
   const updated = await prisma.shiftType.update({ where: { id }, data: updateData });
   return NextResponse.json(updated);
@@ -136,6 +119,17 @@ export async function DELETE(req: NextRequest) {
   if (assignmentCount > 0) {
     return NextResponse.json(
       { error: `Cannot delete: ${assignmentCount} assignments use this shift type` },
+      { status: 409 },
+    );
+  }
+
+  // Settings linked to the shift block its deletion rather than vanishing with it
+  // (the FK is ON DELETE RESTRICT as the backstop for any other path).
+  const staffingRows = await prisma.staffingRequirement.count({ where: { shiftTypeId: id } });
+  if (staffingRows > 0) {
+    const st = await prisma.shiftType.findUnique({ where: { id }, select: { code: true } });
+    return NextResponse.json(
+      { error: `Cannot delete: Staffing Rules has a column for ${st?.code ?? "this shift"}. Remove it there first.`, reason: "staffing-rules-linked" },
       { status: 409 },
     );
   }

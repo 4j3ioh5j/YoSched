@@ -21,7 +21,7 @@ export default async function Settings() {
   const canEditAutoGenPriority = permissions!.includes("settings:autogen-priority");
   const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, departmentTargets, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns, autoGenFactors, autoGenProfiles, staffRows] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
-    prisma.staffingRequirement.findMany({ orderBy: [{ shiftCode: "asc" }, { dayKey: "asc" }] }),
+    prisma.staffingRequirement.findMany({ orderBy: [{ shiftTypeId: "asc" }, { dayKey: "asc" }] }),
     getPayPeriods(),
     prisma.holiday.findMany({ orderBy: { date: "asc" } }),
     prisma.desirabilityWeight.findMany(),
@@ -102,7 +102,7 @@ export default async function Settings() {
         }))}
         staffingReqs={staffingReqs.map((r) => ({
           id: r.id,
-          shiftCode: r.shiftCode,
+          shiftTypeId: r.shiftTypeId,
           dayKey: r.dayKey,
           minCount: r.minCount,
           preferredCount: r.preferredCount,

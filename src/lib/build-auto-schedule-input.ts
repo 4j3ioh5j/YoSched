@@ -85,7 +85,7 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       },
       include: { shiftType: true },
     }),
-    prisma.staffingRequirement.findMany(),
+    prisma.staffingRequirement.findMany({ orderBy: [{ shiftTypeId: "asc" }, { dayKey: "asc" }] }),
     prisma.schedulingPreferences.findFirst(),
     prisma.staffEligibleShift.findMany(),
     prisma.availabilityRule.findMany(),
@@ -317,8 +317,12 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       code: shiftCodeMap.get(a.shiftTypeId) ?? "?",
       isLocked: a.isLocked,
     })),
+    // Both keys go over the wire: the engine reads shiftTypeId; a browser tab opened before
+    // the id-link deploy still runs the old bundle, which keys minimums and caps by code.
+    // The code is the shift's CURRENT one (from shift_types), never the row's compat column.
     staffingRequirements: staffingRequirements.map((sr) => ({
-      shiftCode: sr.shiftCode,
+      shiftTypeId: sr.shiftTypeId,
+      shiftCode: shiftCodeMap.get(sr.shiftTypeId) ?? "?",
       dayKey: sr.dayKey,
       minCount: sr.minCount,
       preferredCount: sr.preferredCount,

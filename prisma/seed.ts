@@ -314,11 +314,15 @@ async function main() {
   staffReqs.push({ shiftCode: "CALL", dayKey: "holiday", minCount: 1 });
 
   // Per-day Max (Staffing Rules): at most one ORC, ORL and CALL on any day, holidays included.
+  // Rows are linked to the shift's ID (the code above is only the seed's way of naming it).
   const MAX_ONE_PER_DAY = new Set(["ORC", "ORL", "CALL"]);
+  const shiftIdByCode = new Map(allShiftTypeRecords.map((st) => [st.code, st.id] as const));
   for (const req of staffReqs) {
-    const row = { ...req, maxCount: MAX_ONE_PER_DAY.has(req.shiftCode) ? 1 : null };
+    const shiftTypeId = shiftIdByCode.get(req.shiftCode);
+    if (!shiftTypeId) throw new Error(`seed: staffing requirement for unknown shift code ${req.shiftCode}`);
+    const row = { shiftTypeId, dayKey: req.dayKey, minCount: req.minCount, maxCount: MAX_ONE_PER_DAY.has(req.shiftCode) ? 1 : null };
     await prisma.staffingRequirement.upsert({
-      where: { shiftCode_dayKey: { shiftCode: req.shiftCode, dayKey: req.dayKey } },
+      where: { shiftTypeId_dayKey: { shiftTypeId, dayKey: req.dayKey } },
       update: row,
       create: row,
     });

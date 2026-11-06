@@ -125,7 +125,7 @@ describe("applyScenario — constrained re-solve", () => {
     const baseline = [lockedOR("p1", "2025-05-12")];
     const input = makeInput({
       existingAssignments: baseline,
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }],
     });
     const out = applyScenario(input, [], [{ staffId: "p1", date: "2025-05-12" }]);
 
@@ -252,7 +252,7 @@ describe("applyScenario — HYBRID breach classification", () => {
     // Require 2 OR on Monday (dow=1) but only one staff member — slot 2 can't fill.
     const input = makeInput({
       staff: [makeStaff("p1", "AB")],
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 2 }],
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 2 }],
     });
     const out = applyScenario(input, [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or" }], []);
 
@@ -348,7 +348,7 @@ describe("applyScenario — quality delta & purity", () => {
         { staffId: "p1", date: "2025-05-12", shiftTypeId: "st-or", code: "OR", isLocked: false },
         { staffId: "p2", date: "2025-05-12", shiftTypeId: "st-off", code: "X", isLocked: false },
       ],
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }],
     });
     const pin = [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-orl" }];
 
@@ -386,7 +386,7 @@ describe("cellsToCommitOnAccept — WYSIWYG Accept (Auto-generate)", () => {
     // fills the empty slots on enter (the no-pin/no-free re-solve = Auto-generate).
     const input = makeInput({
       existingAssignments: [lockedOR("p1", "2025-05-12")],
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 2 }],
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 2 }],
     });
     const saved = savedGridOf(input);
     const out = applyScenario(input, [], []);
@@ -520,7 +520,7 @@ describe("applyScenarioExpanding — expand only as far as coverage needs (#248 
     ]);
     const input = makeInput({
       existingAssignments: baseline,
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }],
     });
     const pins: ScenarioPin[] = [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-off" }];
     const pinned = new Set(["p1:2025-05-12"]);
@@ -546,7 +546,7 @@ describe("applyScenarioExpanding — expand only as far as coverage needs (#248 
     ];
     const input = makeInput({
       existingAssignments: baseline,
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }],
     });
     const pins: ScenarioPin[] = [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-off" }];
     const pinned = new Set(["p1:2025-05-12"]);
@@ -577,8 +577,8 @@ describe("applyScenario — per-day Max from Staffing Rules", () => {
     staff: [makeStaff("p1", "AB", elig), makeStaff("p2", "CD", elig)],
     existingAssignments: [{ staffId: "p1", date, shiftTypeId: "st-orc", code: "ORC", isLocked: true }],
     staffingRequirements: [
-      { shiftCode: "ORC", dayKey: "1", minCount: 0, maxCount: 2 },
-      { shiftCode: "ORC", dayKey: "2", minCount: 0, maxCount: 1 },
+      { shiftTypeId: "st-orc", dayKey: "1", minCount: 0, maxCount: 2 },
+      { shiftTypeId: "st-orc", dayKey: "2", minCount: 0, maxCount: 1 },
     ],
   });
 

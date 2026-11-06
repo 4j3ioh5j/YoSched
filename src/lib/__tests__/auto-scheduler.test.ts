@@ -290,11 +290,11 @@ describe("autoSchedule", () => {
         staff,
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
-          { shiftCode: "ORC", dayKey: "1", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "2", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "3", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "4", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "5", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "1", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "2", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "3", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "4", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "5", minCount: 1 },
         ],
       });
       const orcByStaff = new Map<string, number>();
@@ -315,7 +315,7 @@ describe("autoSchedule", () => {
       const result = runSchedule({
         staff: [makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-off"] })],
         shiftTypes: [OR, RARE, OFF],
-        staffingRequirements: [{ shiftCode: "RARE", dayKey: "1", minCount: 1 }],
+        staffingRequirements: [{ shiftTypeId: "st-rare", dayKey: "1", minCount: 1 }],
       });
       // No staff is eligible for RARE
       expect(result.warnings.some((w) => w.includes("RARE"))).toBe(true);
@@ -388,7 +388,7 @@ describe("autoSchedule", () => {
     it("does not overwrite a manually-placed day off (unlocked off-shift)", () => {
       const result = runSchedule({
         staff: [makeStaff("p1", "AB")],
-        staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }], // Monday demand
+        staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }], // Monday demand
         existingAssignments: [
           { staffId: "p1", date: "2025-05-12", shiftTypeId: "st-off", code: "X", isLocked: false, source: "manual" },
         ],
@@ -405,7 +405,7 @@ describe("autoSchedule", () => {
     it("still fills an unlocked off cell that is not manual", () => {
       const result = runSchedule({
         staff: [makeStaff("p1", "AB")],
-        staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }], // Monday demand
+        staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }], // Monday demand
         existingAssignments: [
           { staffId: "p1", date: "2025-05-12", shiftTypeId: "st-off", code: "X", isLocked: false, source: "auto" },
         ],
@@ -427,7 +427,7 @@ describe("autoSchedule", () => {
         staff,
         shiftTypes: [OR, CALL, OFF],
         staffingRequirements: [
-          { shiftCode: "CALL", dayKey: "1", minCount: 1 },
+          { shiftTypeId: "st-call", dayKey: "1", minCount: 1 },
         ],
         requiredFollowers: [
           { sourceShiftId: "st-call", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false },
@@ -522,8 +522,8 @@ describe("autoSchedule", () => {
         shiftTypes: followerShifts,
         payPeriods: pp,
         staffingRequirements: [
-          { shiftCode: "ORC", dayKey: "1", minCount: 1 }, // Monday
-          { shiftCode: "ORC", dayKey: "3", minCount: 1 }, // Wednesday
+          { shiftTypeId: "st-orc", dayKey: "1", minCount: 1 }, // Monday
+          { shiftTypeId: "st-orc", dayKey: "3", minCount: 1 }, // Wednesday
         ],
         requiredFollowers: [
           { sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false },
@@ -568,7 +568,7 @@ describe("autoSchedule", () => {
         shiftTypes: [OR, CALL, ADM_REQ, OFF],
         existingAssignments: callWeekend(),
         payPeriods: pp,
-        staffingRequirements: [{ shiftCode: "ADM", dayKey: "1", minCount: 1 }], // Monday
+        staffingRequirements: [{ shiftTypeId: "st-adm", dayKey: "1", minCount: 1 }], // Monday
         requiredFollowers: [
           { sourceShiftId: "st-call", followerShiftId: "st-adm", scope: "each_run", countsTowardTargets: false },
         ],
@@ -628,8 +628,8 @@ describe("autoSchedule", () => {
         staff,
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
-          { shiftCode: "ORC", dayKey: "6", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "0", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "6", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "0", minCount: 1 },
         ],
       });
       const orcSuggestions = result.suggestions.filter((s) => s.code === "ORC");
@@ -665,9 +665,9 @@ describe("autoSchedule", () => {
         staff: pairedHolidayStaff(),
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
-          { shiftCode: "ORC", dayKey: "holiday", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "6", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "0", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "holiday", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "6", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "0", minCount: 1 },
         ],
       });
       const orc = result.suggestions.filter((s) => s.code === "ORC");
@@ -686,9 +686,9 @@ describe("autoSchedule", () => {
         staff: pairedHolidayStaff(),
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
-          { shiftCode: "ORC", dayKey: "6", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "0", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "holiday", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "6", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "0", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "holiday", minCount: 1 },
         ],
       });
       const orc = result.suggestions.filter((s) => s.code === "ORC");
@@ -707,9 +707,9 @@ describe("autoSchedule", () => {
         staff: pairedHolidayStaff(),
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
-          { shiftCode: "ORC", dayKey: "holiday", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "6", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "0", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "holiday", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "6", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "0", minCount: 1 },
         ],
       });
       const orc = result.suggestions.filter((s) => s.code === "ORC");
@@ -779,11 +779,11 @@ describe("autoSchedule", () => {
         staff,
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
-          { shiftCode: "ORC", dayKey: "1", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "2", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "3", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "4", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "5", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "1", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "2", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "3", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "4", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "5", minCount: 1 },
         ],
       });
       // p1 has temporal rules for ORC: only Monday eligible
@@ -807,7 +807,7 @@ describe("autoSchedule", () => {
         dates: weekdayDates("2025-05-12", 5),
         staff,
         shiftTypes: [OR, ORC, OFF],
-        staffingRequirements: [{ shiftCode: "ORC", dayKey: "1", minCount: 1 }],
+        staffingRequirements: [{ shiftTypeId: "st-orc", dayKey: "1", minCount: 1 }],
       });
       // Should still assign ORC since static eligibility allows it
       const p1Orc = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORC");
@@ -832,11 +832,11 @@ describe("autoSchedule", () => {
         staff,
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
-          { shiftCode: "ORC", dayKey: "1", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "2", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "3", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "4", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "5", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "1", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "2", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "3", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "4", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "5", minCount: 1 },
         ],
       });
       const p1Orc = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORC");
@@ -857,11 +857,11 @@ describe("autoSchedule", () => {
         staff,
         shiftTypes: [OR, ORC, OFF],
         staffingRequirements: [
-          { shiftCode: "ORC", dayKey: "1", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "2", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "3", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "4", minCount: 1 },
-          { shiftCode: "ORC", dayKey: "5", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "1", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "2", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "3", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "4", minCount: 1 },
+          { shiftTypeId: "st-orc", dayKey: "5", minCount: 1 },
         ],
       });
       // 10/PP is impossible with only 5 days — should warn
@@ -871,7 +871,7 @@ describe("autoSchedule", () => {
 
   describe("soft (preference) targets — Pay-period preferences", () => {
     const ORC = makeShift("st-orc", "ORC", { schedulePriority: 1, autoSchedulable: true });
-    const orcReqs = [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "ORC", dayKey: String(d), minCount: 1 }));
+    const orcReqs = [1, 2, 3, 4, 5].map((d) => ({ shiftTypeId: "st-orc", dayKey: String(d), minCount: 1 }));
 
     it("soft min target raises NO warning when unmet (a hard one would)", () => {
       const staff = [
@@ -968,11 +968,11 @@ describe("autoSchedule", () => {
         dates: weekdayDates("2025-05-12", 5),
         staff: [p],
         staffingRequirements: [
-          { shiftCode: "OR", dayKey: "1", minCount: 1 },
-          { shiftCode: "OR", dayKey: "2", minCount: 1 },
-          { shiftCode: "OR", dayKey: "3", minCount: 1 },
-          { shiftCode: "OR", dayKey: "4", minCount: 1 },
-          { shiftCode: "OR", dayKey: "5", minCount: 1 },
+          { shiftTypeId: "st-or", dayKey: "1", minCount: 1 },
+          { shiftTypeId: "st-or", dayKey: "2", minCount: 1 },
+          { shiftTypeId: "st-or", dayKey: "3", minCount: 1 },
+          { shiftTypeId: "st-or", dayKey: "4", minCount: 1 },
+          { shiftTypeId: "st-or", dayKey: "5", minCount: 1 },
         ],
       });
       const orCount = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "OR").length;
@@ -1054,8 +1054,8 @@ describe("autoSchedule", () => {
         staff: [p],
         shiftTypes: [CALL, OFF],
         staffingRequirements: [
-          { shiftCode: "CALL", dayKey: "6", minCount: 1 },
-          { shiftCode: "CALL", dayKey: "0", minCount: 1 },
+          { shiftTypeId: "st-call", dayKey: "6", minCount: 1 },
+          { shiftTypeId: "st-call", dayKey: "0", minCount: 1 },
         ],
       });
       const callCount = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "CALL").length;
@@ -1177,7 +1177,7 @@ describe("autoSchedule", () => {
         staff,
         shiftTypes: [OR, ORC, OFF],
         payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
-        staffingRequirements: [{ shiftCode: "ORC", dayKey: "1", minCount: 1 }],
+        staffingRequirements: [{ shiftTypeId: "st-orc", dayKey: "1", minCount: 1 }],
       });
       const orc = result.suggestions.filter((s) => s.code === "ORC");
       expect(orc).toHaveLength(1);
@@ -1213,7 +1213,7 @@ describe("autoSchedule", () => {
           { staffId: "p1", date: "2025-06-06", shiftTypeId: "st-orc", code: "ORC", isLocked: true }, // PP1
         ],
         // daily ORC requirement so the scheduler actively tries to place ORC every day
-        staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "ORC", dayKey: String(d), minCount: 1 })),
+        staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftTypeId: "st-orc", dayKey: String(d), minCount: 1 })),
       });
       const orc = result.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORC");
       // count preserved: the min still gets satisfied (one new ORC placed) ...
@@ -1280,7 +1280,7 @@ describe("autoSchedule", () => {
         staff,
         shiftTypes: [OR, ORC, OFF],
         payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
-        staffingRequirements: [{ shiftCode: "ORC", dayKey: "1", minCount: 1 }],
+        staffingRequirements: [{ shiftTypeId: "st-orc", dayKey: "1", minCount: 1 }],
       });
       const orc = result.suggestions.filter((s) => s.code === "ORC");
       expect(orc).toHaveLength(1);
@@ -1540,7 +1540,7 @@ describe("autoSchedule — schedule request preferences", () => {
     const r = runSchedule({
       staff: [p1],
       shiftTypes: [OR, AL, OFF],
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }], // 2025-05-12 is a Monday (dow 1)
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }], // 2025-05-12 is a Monday (dow 1)
       scheduleRequests: [
         req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-al" }),
       ],
@@ -1553,7 +1553,7 @@ describe("autoSchedule — schedule request preferences", () => {
     const r = runSchedule({
       staff: [p1],
       shiftTypes: [OR, AL, OFF],
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }], // Monday
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }], // Monday
       scheduleRequests: [
         req({ staffId: "p1", startDate: "2025-05-12", endDate: "2025-05-12", kind: "LEAVE", leaveShiftTypeId: "st-al" }),
       ],
@@ -1575,7 +1575,7 @@ describe("autoSchedule — schedule request preferences", () => {
     const r = runSchedule({
       staff: [p1],
       shiftTypes: [OR, OFF],
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }], // Monday
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }], // Monday
     });
     expect(
       r.warnings.some(
@@ -1588,7 +1588,7 @@ describe("autoSchedule — schedule request preferences", () => {
     const r = runSchedule({
       staff: [makeStaff("p1", "AB")],
       shiftTypes: [OR, OFF],
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }], // Monday, p1 available
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }], // Monday, p1 available
     });
     expect(r.warnings.some((w) => w.includes("OR") && w.includes("below its required minimum"))).toBe(false);
   });
@@ -1767,7 +1767,7 @@ describe("autoSchedule — schedule request preferences", () => {
       staff: [p1, p2],
       shiftTypes: [ADM, OFF],
       dates: weekdayDates("2025-05-12", 1), // Monday 2025-05-12 only
-      staffingRequirements: [{ shiftCode: "ADM", dayKey: "1", minCount: 1 }], // Mon needs 1
+      staffingRequirements: [{ shiftTypeId: "st-adm", dayKey: "1", minCount: 1 }], // Mon needs 1
       ...overrides,
     });
   }
@@ -1810,7 +1810,7 @@ describe("autoSchedule — schedule request preferences", () => {
       staff: [p1, p2],
       shiftTypes: [ADM, OFF],
       dates: weekdayDates("2025-05-12", 1),
-      staffingRequirements: [{ shiftCode: "ADM", dayKey: "1", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-adm", dayKey: "1", minCount: 1 }],
       scheduleRequests: [
         req({ staffId: "p2", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT", shiftTypeIds: ["st-adm"], strength: "soft" }),
       ],
@@ -2141,7 +2141,7 @@ describe("autoSchedule — Slice 2b coverage trades (builder)", () => {
       staff: [makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-req", "st-fill", "st-off"] })],
       shiftTypes: [REQ, FILL, OFF],
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 4 }],
-      staffingRequirements: [{ shiftCode: "REQ", dayKey: "1", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-req", dayKey: "1", minCount: 1 }],
       factorOrder,
     });
   }
@@ -2179,7 +2179,7 @@ describe("autoSchedule — Slice 2b coverage trades (builder)", () => {
       })],
       shiftTypes: [REQ, FILL, OFF],
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 8 }],
-      staffingRequirements: [{ shiftCode: "REQ", dayKey: "1", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-req", dayKey: "1", minCount: 1 }],
       factorOrder,
     });
   }
@@ -2202,7 +2202,7 @@ describe("autoSchedule — Slice 2b coverage trades (builder)", () => {
       staff: [makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-req", "st-fill", "st-off"] })],
       shiftTypes: [REQ, FILL, OFF],
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
-      staffingRequirements: [{ shiftCode: "REQ", dayKey: "1", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-req", dayKey: "1", minCount: 1 }],
       factorOrder,
     });
   }
@@ -2245,7 +2245,7 @@ describe("autoSchedule — ORC distribution (Slice 2)", () => {
       // 88h/PP target makes weekday-only staff "tight" under the old flat-8h estimate
       // (8 remaining days × 8h = 64 < 72h still needed) → they were wrongly excluded.
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 88 }],
-      staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "ORC", dayKey: String(d), minCount: 1 })),
+      staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftTypeId: "st-orc", dayKey: String(d), minCount: 1 })),
       requiredFollowers: [
         { sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false },
       ],
@@ -2279,7 +2279,7 @@ describe("step 3: fill off-day feasibility (CR #939 carry-over)", () => {
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 32 }],
       // OR required on Monday — the off-day picker's first/highest-scoring candidate
       // (Mon extends the prior weekend) would vacate it; feasibility must veto that.
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }],
     });
     const orcOnMon = r.suggestions.filter((s) => s.code === "OR" && s.date === "2025-05-12");
     expect(orcOnMon).toHaveLength(1); // Monday stays staffed
@@ -2328,7 +2328,7 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
       ],
       shiftTypes: shifts,
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 44 }],
-      staffingRequirements: [1, 2, 3, 4].map((d) => ({ shiftCode: "ORL", dayKey: String(d), minCount: 1 })),
+      staffingRequirements: [1, 2, 3, 4].map((d) => ({ shiftTypeId: "st-orl", dayKey: String(d), minCount: 1 })),
     });
 
     expect(ppHours(result, "p1", shifts, "2025-05-11", "2025-05-24")).toBe(44);
@@ -2357,7 +2357,7 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
       ],
       shiftTypes: shifts,
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 44 }],
-      staffingRequirements: [1, 2, 3, 4].map((d) => ({ shiftCode: "ORL", dayKey: String(d), minCount: 1 })),
+      staffingRequirements: [1, 2, 3, 4].map((d) => ({ shiftTypeId: "st-orl", dayKey: String(d), minCount: 1 })),
       followRules: [{ sourceShiftId: "st-orl", allowedShiftId: "st-orl", allowOffShifts: false, mode: "block" }],
     });
 
@@ -2387,7 +2387,7 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
       ],
       shiftTypes: shifts,
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
-      staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "ICU", dayKey: String(d), minCount: 1 })),
+      staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftTypeId: "st-icu", dayKey: String(d), minCount: 1 })),
     });
 
     expect(ppHours(result, "p1", shifts, "2025-05-11", "2025-05-24")).toBe(50);
@@ -2413,7 +2413,7 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
         shiftTypes: [OR, CALL8, OFF],
         existingAssignments: [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-call", code: "CALL", isLocked: true }],
         payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
-        staffingRequirements: [2, 3].map((d) => ({ shiftCode: "CALL", dayKey: String(d), minCount: 1 })),
+        staffingRequirements: [2, 3].map((d) => ({ shiftTypeId: "st-call", dayKey: String(d), minCount: 1 })),
       });
       const calls = result.suggestions.filter((s) => s.code === "CALL");
       expect(calls.map((s) => s.staffId).sort()).toEqual(["p2", "p3"]);
@@ -2446,7 +2446,7 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
           { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 },
           { startDate: "2025-05-25", endDate: "2025-06-07", targetHours: 80 },
         ],
-        staffingRequirements: [{ shiftCode: "CALL", dayKey: "6", minCount: 1 }, { shiftCode: "CALL", dayKey: "0", minCount: 1 }],
+        staffingRequirements: [{ shiftTypeId: "st-call", dayKey: "6", minCount: 1 }, { shiftTypeId: "st-call", dayKey: "0", minCount: 1 }],
       });
       const sats = result.suggestions.filter((s) => s.code === "CALL" && new Date(s.date + "T12:00:00").getDay() === 6);
       const weekendsBy = (id: string) => sats.filter((s) => s.staffId === id).length;
@@ -2467,7 +2467,7 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
         dates: weekdayDates("2025-05-12", 10), // two Mon..Fri weeks, one PP
         shiftTypes: [OR, CALL8, OFF],
         payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
-        staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "CALL", dayKey: String(d), minCount: 1 })),
+        staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftTypeId: "st-call", dayKey: String(d), minCount: 1 })),
       };
       const count = (r: AutoScheduleResult, id: string) => r.suggestions.filter((s) => s.code === "CALL" && s.staffId === id).length;
 
@@ -2495,7 +2495,7 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
         shiftTypes: [OR, ORC16, OFF],
         existingAssignments: [{ staffId: "p2", date: "2025-05-12", shiftTypeId: "st-or", code: "OR", isLocked: true }],
         payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
-        staffingRequirements: [{ shiftCode: "ORC", dayKey: "2", minCount: 1 }],
+        staffingRequirements: [{ shiftTypeId: "st-orc", dayKey: "2", minCount: 1 }],
       });
       const orc = result.suggestions.find((s) => s.code === "ORC");
       expect(orc?.staffId).toBe("p1");
@@ -2509,7 +2509,7 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
         staff: [makeStaff("p1", "AB", elig("st-orc")), makeStaff("p2", "CD", { ...elig("st-orc"), ftePercentage: 0.2 })],
         shiftTypes: [OR, ORC16, OFF],
         payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
-        staffingRequirements: [{ shiftCode: "ORC", dayKey: "1", minCount: 1 }],
+        staffingRequirements: [{ shiftTypeId: "st-orc", dayKey: "1", minCount: 1 }],
       });
       expect(result.suggestions.find((s) => s.code === "ORC")?.staffId).toBe("p1");
     });
@@ -2530,7 +2530,7 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
         staffId: "p2", date, shiftTypeId: "st-or", code: "OR", isLocked: true,
       })),
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 36 }],
-      staffingRequirements: [{ shiftCode: "ORL", dayKey: "4", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-orl", dayKey: "4", minCount: 1 }],
     });
 
     const orl = result.suggestions.find((s) => s.code === "ORL");
@@ -2553,7 +2553,7 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
       ],
       shiftTypes: shifts,
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 44 }],
-      staffingRequirements: [1, 2, 3].map((d) => ({ shiftCode: "ORL", dayKey: String(d), minCount: 1 })),
+      staffingRequirements: [1, 2, 3].map((d) => ({ shiftTypeId: "st-orl", dayKey: String(d), minCount: 1 })),
       requiredFollowers: [
         { sourceShiftId: "st-orl", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false },
       ],
@@ -2591,7 +2591,7 @@ describe("autoSchedule — hour-balancing repair (STEP 3b)", () => {
       ],
       shiftTypes: shifts,
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
-      staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "ORL", dayKey: String(d), minCount: 1 })),
+      staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftTypeId: "st-orl", dayKey: String(d), minCount: 1 })),
     });
 
     let placed = 0;
@@ -2665,7 +2665,7 @@ describe("day balance — preferredCount on the fill shift (handoff #743)", () =
   const ADM = makeShift("st-adm", "ADM", { countsTowardFte: true });
   const week = weekdayDates("2025-05-12", 5); // Mon 05-12 … Fri 05-16
   const prefsLongWeekend = { ...defaultPrefs, prefer3DayWeekends: true, threeDayWeekendWeight: 5, preferSequentialOff: true, sequentialOffWeight: 2 };
-  type Req = { shiftCode: string; dayKey: string; minCount: number; preferredCount?: number };
+  type Req = { shiftTypeId: string; dayKey: string; minCount: number; preferredCount?: number };
   type Existing = { staffId: string; date: string; shiftTypeId: string; code: string; isLocked: boolean };
   const base = (staffingRequirements: Req[], existing: Existing[] = []) => ({
     dates: week,
@@ -2687,7 +2687,7 @@ describe("day balance — preferredCount on the fill shift (handoff #743)", () =
   // minCount stays 0: the existing hard gate ("can't take off a day whose CURRENT
   // count is below the minimum") would otherwise block every off day for the first
   // staffer processed. This block tests the preferred tier in isolation.
-  const weekReqs = (preferredCount: number): Req[] => ["1", "2", "3", "4", "5"].map((d) => ({ shiftCode: "OR", dayKey: d, minCount: 0, preferredCount }));
+  const weekReqs = (preferredCount: number): Req[] => ["1", "2", "3", "4", "5"].map((d) => ({ shiftTypeId: "st-or", dayKey: d, minCount: 0, preferredCount }));
   // p2 away from OR on Friday (locked ADM) → Friday projects to 1 (p3 only).
   const p2FriAdm: Existing = { staffId: "p2", date: "2025-05-16", shiftTypeId: "st-adm", code: "ADM", isLocked: true };
   const cellOf = (r: AutoScheduleResult, staffId: string, date: string) =>
@@ -2721,9 +2721,9 @@ describe("day balance — preferredCount on the fill shift (handoff #743)", () =
     // feasible for p1 (processed first) → fallback works Mon–Wed and leaves Thu+Fri
     // as unchosen tail X. With preferred set, projection (2 on Mon–Thu, 1 on Fri)
     // clears the minimum and the tier steers the X days to Mon + Tue.
-    const legacy = autoSchedule(base(["1", "2", "3", "4", "5"].map((d) => ({ shiftCode: "OR", dayKey: d, minCount: 1 })), [p2FriAdm]));
+    const legacy = autoSchedule(base(["1", "2", "3", "4", "5"].map((d) => ({ shiftTypeId: "st-or", dayKey: d, minCount: 1 })), [p2FriAdm]));
     expect(offDays(legacy)).toEqual(["2025-05-15", "2025-05-16"]);
-    const r = autoSchedule(base(["1", "2", "3", "4", "5"].map((d) => ({ shiftCode: "OR", dayKey: d, minCount: 1, preferredCount: 2 })), [p2FriAdm]));
+    const r = autoSchedule(base(["1", "2", "3", "4", "5"].map((d) => ({ shiftTypeId: "st-or", dayKey: d, minCount: 1, preferredCount: 2 })), [p2FriAdm]));
     expect(offDays(r)).toEqual(["2025-05-12", "2025-05-13"]);
   });
 
@@ -2849,7 +2849,7 @@ describe("day-off fulfillment strategies (slice 2: hold + ORC_ADJACENT)", () => 
         makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
       ],
       shiftTypes: [OR, ORC2, OFF],
-      staffingRequirements: [{ shiftCode: "ORC", dayKey: "2", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-orc", dayKey: "2", minCount: 1 }],
       requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false }],
       scheduleRequests: [dayOffReq(["ORC_ADJACENT"])],
     });
@@ -2879,7 +2879,7 @@ describe("day-off fulfillment strategies (slice 2: hold + ORC_ADJACENT)", () => 
         makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
       ],
       shiftTypes: [OR, ORC2, OFF],
-      staffingRequirements: [{ shiftCode: "ORC", dayKey: "2", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-orc", dayKey: "2", minCount: 1 }],
       requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false }],
     };
     const baseline = orcStaffOn(runSchedule(base), XPREV);
@@ -2895,7 +2895,7 @@ describe("day-off fulfillment strategies (slice 2: hold + ORC_ADJACENT)", () => 
         makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] }),
       ],
       shiftTypes: [OR, ORC2, OFF],
-      staffingRequirements: [{ shiftCode: "ORC", dayKey: "2", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-orc", dayKey: "2", minCount: 1 }],
       requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false }],
     };
     const baseline = orcStaffOn(runSchedule(base), XPREV);
@@ -2915,7 +2915,7 @@ describe("day-off fulfillment strategies (slice 2: hold + ORC_ADJACENT)", () => 
     const r = runSchedule({
       staff: [makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-call", "st-adm", "st-off"] })],
       shiftTypes: [CALL, ADM, OFF],
-      staffingRequirements: [{ shiftCode: "CALL", dayKey: "2", minCount: 1 }], // CALL on X-1 (Tue)
+      staffingRequirements: [{ shiftTypeId: "st-call", dayKey: "2", minCount: 1 }], // CALL on X-1 (Tue)
       requiredFollowers: [{ sourceShiftId: "st-call", followerShiftId: "st-adm", scope: "each_day", countsTowardTargets: false }],
       scheduleRequests: [dayOffReq(["LEAVE:al"])], // pure-off hard request on X (Wed)
     });

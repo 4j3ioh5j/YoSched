@@ -16,14 +16,18 @@ export type DayCaps = {
 export async function loadDayCaps(dates: readonly string[]): Promise<DayCaps> {
   const uniq = [...new Set(dates)];
   const [reqs, shiftTypes, hols] = await Promise.all([
-    prisma.staffingRequirement.findMany({ where: { maxCount: { not: null } }, select: { shiftCode: true, dayKey: true, maxCount: true } }),
+    prisma.staffingRequirement.findMany({
+      where: { maxCount: { not: null } },
+      select: { shiftTypeId: true, dayKey: true, maxCount: true },
+      orderBy: [{ shiftTypeId: "asc" }, { dayKey: "asc" }],
+    }),
     prisma.shiftType.findMany({ select: { id: true, code: true } }),
     uniq.length
       ? prisma.holiday.findMany({ where: { date: { in: uniq.map((d) => new Date(d + "T00:00:00Z")) } }, select: { date: true } })
       : Promise.resolve([] as { date: Date }[]),
   ]);
   const holidays = hols.map((h) => h.date.toISOString().split("T")[0]);
-  const capOf = buildDayCapLookup(reqs, shiftTypes, holidays);
+  const capOf = buildDayCapLookup(reqs, holidays);
   const codeById = new Map(shiftTypes.map((s) => [s.id, s.code] as const));
   return {
     capOf,

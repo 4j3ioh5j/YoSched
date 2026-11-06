@@ -6,8 +6,7 @@ import { dayCapViolations } from "../max-per-day";
 const MON = "2025-05-12";
 const TUE = "2025-05-13";
 const SAT = "2025-05-17";
-const SHIFTS = [{ id: "st-orc", code: "ORC" }, { id: "st-or", code: "OR" }];
-const row = (shiftCode: string, dayKey: string, maxCount: number | null) => ({ shiftCode, dayKey, maxCount });
+const row = (shiftTypeId: string, dayKey: string, maxCount: number | null) => ({ shiftTypeId, dayKey, maxCount });
 
 describe("dayKeyOf / labels", () => {
   it("uses the weekday, Sunday = 0", () => {
@@ -29,20 +28,20 @@ describe("dayKeyOf / labels", () => {
 
 describe("buildDayCapLookup", () => {
   it("no row, a NULL Max, or an unknown shift id all mean no limit", () => {
-    const capOf = buildDayCapLookup([row("ORC", "1", null)], SHIFTS, []);
+    const capOf = buildDayCapLookup([row("st-orc", "1", null)], []);
     expect(capOf("st-orc", MON)).toBeNull(); // NULL Max
     expect(capOf("st-orc", TUE)).toBeNull(); // no row
     expect(capOf("st-ghost", MON)).toBeNull(); // unknown shift
   });
 
   it("0 means none allowed (not 'no limit')", () => {
-    const capOf = buildDayCapLookup([row("ORC", "6", 0)], SHIFTS, []);
+    const capOf = buildDayCapLookup([row("st-orc", "6", 0)], []);
     expect(capOf("st-orc", SAT)).toBe(0);
     expect(dayCapViolations([{ staffId: "a", date: SAT, shiftTypeId: "st-orc" }], [], capOf)).toHaveLength(1);
   });
 
   it("differs by day: Mon 2, Sat 1", () => {
-    const capOf = buildDayCapLookup([row("ORC", "1", 2), row("ORC", "6", 1)], SHIFTS, []);
+    const capOf = buildDayCapLookup([row("st-orc", "1", 2), row("st-orc", "6", 1)], []);
     const two = (date: string) => [
       { staffId: "a", date, shiftTypeId: "st-orc" },
       { staffId: "b", date, shiftTypeId: "st-orc" },
@@ -52,15 +51,15 @@ describe("buildDayCapLookup", () => {
   });
 
   it("on a holiday the holiday Max wins over the weekday Max, both ways", () => {
-    const reqs = [row("ORC", "1", 1), row("ORC", "holiday", 3)];
-    expect(buildDayCapLookup(reqs, SHIFTS, [MON])("st-orc", MON)).toBe(3);
-    expect(buildDayCapLookup(reqs, SHIFTS, [])("st-orc", MON)).toBe(1);
+    const reqs = [row("st-orc", "1", 1), row("st-orc", "holiday", 3)];
+    expect(buildDayCapLookup(reqs, [MON])("st-orc", MON)).toBe(3);
+    expect(buildDayCapLookup(reqs, [])("st-orc", MON)).toBe(1);
     // No holiday row: a holiday Monday has no limit (it does NOT fall back to Monday's).
-    expect(buildDayCapLookup([row("ORC", "1", 1)], SHIFTS, [MON])("st-orc", MON)).toBeNull();
+    expect(buildDayCapLookup([row("st-orc", "1", 1)], [MON])("st-orc", MON)).toBeNull();
   });
 
   it("is keyed by code, so a cap on ORC never limits OR", () => {
-    const capOf = buildDayCapLookup([row("ORC", "1", 1)], SHIFTS, []);
+    const capOf = buildDayCapLookup([row("st-orc", "1", 1)], []);
     expect(capOf("st-or", MON)).toBeNull();
   });
 });
@@ -92,9 +91,9 @@ describe("auto-generate reads Staffing Rules Max per day", () => {
     desirabilityWeights: [], standingCommitments: [], staffOverrides: [], dayPreferences: [], historicalAssignments: [],
     // Want three ORC each day; Max is 2 on Mondays, 1 on Tuesdays, 0 on holidays.
     staffingRequirements: [
-      { shiftCode: "ORC", dayKey: "1", minCount: 3, maxCount: 2 },
-      { shiftCode: "ORC", dayKey: "2", minCount: 3, maxCount: 1 },
-      { shiftCode: "ORC", dayKey: "holiday", minCount: 0, maxCount: 0 },
+      { shiftTypeId: "st-orc", dayKey: "1", minCount: 3, maxCount: 2 },
+      { shiftTypeId: "st-orc", dayKey: "2", minCount: 3, maxCount: 1 },
+      { shiftTypeId: "st-orc", dayKey: "holiday", minCount: 0, maxCount: 0 },
     ],
     schedulingPreferences: {
       prefer3DayWeekends: false, prefer4DayWeekends: false, preferSequentialOff: false,
@@ -160,7 +159,7 @@ describe("Max applies to standing commitments and required followers", () => {
   it("a Monday standing ORC is not placed when Monday's ORC Max is 0, and says why", () => {
     const r = autoSchedule(base({
       standingCommitments: standing,
-      staffingRequirements: [{ shiftCode: "ORC", dayKey: "1", minCount: 0, maxCount: 0 }],
+      staffingRequirements: [{ shiftTypeId: "st-orc", dayKey: "1", minCount: 0, maxCount: 0 }],
     } as Partial<AutoScheduleInput>));
     expect(at(r, MON, "ORC")).toBe(0);
     expect(r.warnings.some((w) => w.includes("standing ORC") && w.includes("Max"))).toBe(true);
@@ -172,7 +171,7 @@ describe("Max applies to standing commitments and required followers", () => {
   });
 
   // ORC comes from Monday's coverage minimum; its follower is placed inline.
-  const orcMonMin = { shiftCode: "ORC", dayKey: "1", minCount: 1 };
+  const orcMonMin = { shiftTypeId: "st-orc", dayKey: "1", minCount: 1 };
   const follower = {
     staffingRequirements: [orcMonMin],
     requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-adm", scope: "each_day", countsTowardTargets: true }],
@@ -181,7 +180,7 @@ describe("Max applies to standing commitments and required followers", () => {
   it("a required ADM after ORC is not placed when Tuesday's ADM Max is 0, and says why", () => {
     const r = autoSchedule(base({
       ...follower,
-      staffingRequirements: [orcMonMin, { shiftCode: "ADM", dayKey: "2", minCount: 0, maxCount: 0 }],
+      staffingRequirements: [orcMonMin, { shiftTypeId: "st-adm", dayKey: "2", minCount: 0, maxCount: 0 }],
     } as Partial<AutoScheduleInput>));
     expect(at(r, MON, "ORC")).toBe(1);
     expect(at(r, TUE, "ADM")).toBe(0);

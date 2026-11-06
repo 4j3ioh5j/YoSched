@@ -108,6 +108,7 @@ model ShiftType {
   shiftMinimumTargets          ShiftMinimumTarget[]
   departmentTargets            DepartmentShiftTarget[]
   requestLeaveShifts           ScheduleRequest[] @relation("requestLeaveShift")
+  staffingRequirements         StaffingRequirement[]
 
   @@map("shift_types")
 }
@@ -262,13 +263,16 @@ model ShiftCountRule {
 }
 
 model StaffingRequirement {
-  id        String @id @default(cuid())
-  shiftCode String
+  id          String    @id @default(cuid())
+  shiftTypeId String    // the shift this column belongs to; a rename of its code changes nothing here
+  shiftType   ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Restrict) // a shift with a Staffing Rules column can't be deleted
+  shiftCode   String?   // PHASE A COMPAT ONLY — never read or written by the app; a DB trigger derives it from shiftTypeId (migration 20261106030000). Dropped in Phase B.
   dayKey    String // "0"=Sun, "1"=Mon, ..., "6"=Sat, "holiday"
   minCount  Int    @default(0)
   preferredCount Int @default(0) // auto-scheduler day-balance threshold: a free day off avoids dates whose projected count would fall below this; 0 = no preference
   maxCount  Int?   // most staff on this shift that day ("Max" in Staffing Rules); NULL = no limit, 0 = none. Replaced shift_types.maxPerDay (src/lib/day-cap.ts)
 
+  @@unique([shiftTypeId, dayKey])
   @@unique([shiftCode, dayKey])
   @@map("staffing_requirements")
 }

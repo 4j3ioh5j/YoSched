@@ -196,7 +196,7 @@ export function applyScenario(
   const capCurrent = input.existingAssignments
     .filter((a) => !freedKeys.has(keyOf(a.staffId, a.date)))
     .map((a) => ({ staffId: a.staffId, date: a.date, shiftTypeId: a.shiftTypeId }));
-  const capOf = buildDayCapLookup(input.staffingRequirements, input.shiftTypes, input.holidays.map((h) => h.date));
+  const capOf = buildDayCapLookup(input.staffingRequirements, input.holidays.map((h) => h.date));
   for (const v of dayCapViolations(pins, capCurrent, capOf)) {
     rejected.push({ ...v, reason: "day-full" });
   }

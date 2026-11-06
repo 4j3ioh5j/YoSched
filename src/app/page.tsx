@@ -75,7 +75,7 @@ export default async function Home() {
       prisma.staffShiftOverride.findMany(),
       prisma.staffingMinimum.findMany(),
       prisma.desirabilityWeight.findMany(),
-      prisma.staffingRequirement.findMany(),
+      prisma.staffingRequirement.findMany({ orderBy: [{ shiftTypeId: "asc" }, { dayKey: "asc" }] }),
       prisma.schedulingPreferences.findFirst(),
       prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
       prisma.shiftFollowRule.findMany(),
@@ -249,7 +249,7 @@ export default async function Home() {
           minimumCount: sm.minimumCount,
         }))}
         staffingReqs={staffingReqs.map((sr) => ({
-          shiftCode: sr.shiftCode,
+          shiftTypeId: sr.shiftTypeId,
           dayKey: sr.dayKey,
           minCount: sr.minCount,
           maxCount: sr.maxCount,

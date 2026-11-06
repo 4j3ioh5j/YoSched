@@ -36,6 +36,13 @@ echo "--- link static assets into standalone"
 ln -sf ../../static .next/standalone/.next/static
 ln -sf ../../public .next/standalone/public
 
+# Idempotent permission backfills — keep stored group permission arrays in sync with
+# the catalog (a new permission isn't granted to existing/locked groups otherwise).
+# Each skips groups that already have the permission, so this is safe every deploy.
+# Runs BEFORE the migration so nothing sits between the migration and the restart.
+echo "--- backfill group permissions"
+pnpm backfill:manual-permission
+
 # Run migrations LAST, immediately before restart. For a destructive
 # (column-drop) migration the still-running old process queries the old schema;
 # applying the drop only after the (slow) build — right before the (fast)
@@ -44,12 +51,6 @@ ln -sf ../../public .next/standalone/public
 # the soon-to-be-dropped columns, so building against the pre-migration DB is safe.
 echo "--- prisma migrate"
 npx prisma migrate deploy
-
-# Idempotent permission backfills — keep stored group permission arrays in sync with
-# the catalog (a new permission isn't granted to existing/locked groups otherwise).
-# Each skips groups that already have the permission, so this is safe every deploy.
-echo "--- backfill group permissions"
-pnpm backfill:manual-permission
 
 echo "--- restart service"
 sudo -n systemctl restart yosched-app

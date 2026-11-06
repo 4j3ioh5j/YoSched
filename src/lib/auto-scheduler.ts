@@ -138,7 +138,11 @@ type DayPreference = {
 };
 
 type StaffingRequirement = {
-  shiftCode: string;
+  shiftTypeId: string; // Staffing Rules are linked to the shift, not its code (a rename changes nothing)
+  // Wire compatibility only: the input bundle (GET /api/auto-schedule/inputs) also carries the
+  // shift's CURRENT code so a grid tab still running a pre-id-link engine bundle keys its
+  // minimums and caps correctly. The engine itself never reads it. Dropped in Phase B.
+  shiftCode?: string;
   dayKey: string;
   minCount: number;
   // Preferred (safe) headcount — the day-balance threshold for the fill shift
@@ -741,16 +745,16 @@ export function autoSchedule({
   }
 
   // Per-day caps (Staffing Rules "Max") — the same resolver the manual edit paths use.
-  const capOf = buildDayCapLookup(staffingRequirements, shiftTypes, holidays.map((h) => h.date));
+  const capOf = buildDayCapLookup(staffingRequirements, holidays.map((h) => h.date));
 
-  // Build staffing requirements lookup: shiftCode → Map<dayKey, minCount>
+  // Build staffing requirements lookup: shiftTypeId → Map<dayKey, minCount>
   const reqsByShift = new Map<string, Map<string, number>>();
   for (const sr of staffingRequirements) {
     if (sr.minCount <= 0) continue;
-    let dayMap = reqsByShift.get(sr.shiftCode);
+    let dayMap = reqsByShift.get(sr.shiftTypeId);
     if (!dayMap) {
       dayMap = new Map();
-      reqsByShift.set(sr.shiftCode, dayMap);
+      reqsByShift.set(sr.shiftTypeId, dayMap);
     }
     dayMap.set(sr.dayKey, sr.minCount);
   }
@@ -1058,7 +1062,7 @@ export function autoSchedule({
   }
 
   function getRequiredCount(st: ScheduleShiftType, date: string): number {
-    const dayMap = reqsByShift.get(st.code);
+    const dayMap = reqsByShift.get(st.id);
     if (!dayMap) return 0;
     const dayKey = holidaySet.has(date) ? "holiday" : String(getDow(date));
     return dayMap.get(dayKey) ?? 0;
@@ -2050,7 +2054,7 @@ export function autoSchedule({
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
     const fillReqsByDay = new Map<string, number>();
-    const fillReqs = reqsByShift.get(fillShift.code);
+    const fillReqs = reqsByShift.get(fillShift.id);
     if (fillReqs) {
       for (const [dayKey, min] of fillReqs) fillReqsByDay.set(dayKey, min);
     }
@@ -2081,7 +2085,7 @@ export function autoSchedule({
     // count anywhere ⇒ tier 1 is 0 for every combo ⇒ byte-identical legacy output.
     const fillPreferredByDay = new Map<string, number>();
     for (const sr of staffingRequirements) {
-      if (sr.shiftCode === fillShift.code && (sr.preferredCount ?? 0) > 0) {
+      if (sr.shiftTypeId === fillShift.id && (sr.preferredCount ?? 0) > 0) {
         fillPreferredByDay.set(sr.dayKey, sr.preferredCount!);
       }
     }

@@ -9,6 +9,7 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForScope, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, DEFAULT_LIVE_SCOPE, type LiveScope } from "@/lib/live-scope";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
+import { liveBundleProblem } from "@/lib/live-bundle";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { monthGridDates } from "@/lib/grid-dates";
@@ -174,7 +175,7 @@ type StaffingMin = {
 };
 
 type StaffingReq = {
-  shiftCode: string;
+  shiftTypeId: string;
   dayKey: string;
   minCount: number;
   // Most staff on the shift that day (Staffing Rules "Max"); null = no limit. Enforced
@@ -1145,8 +1146,8 @@ export function ScheduleGrid({
   const holidaySet = useMemo(() => new Set(holidays.map((h) => h.date)), [holidays]);
   // Per-day cap for (shift, date) — Staffing Rules "Max", holiday row on holidays.
   const dayCapOf = useMemo(
-    () => buildDayCapLookup(staffingReqs, shiftTypes, holidays.map((h) => h.date)),
-    [staffingReqs, shiftTypes, holidays],
+    () => buildDayCapLookup(staffingReqs, holidays.map((h) => h.date)),
+    [staffingReqs, holidays],
   );
   const holidayNames = useMemo(() => {
     const map = new Map<string, string>();
@@ -3310,7 +3311,16 @@ export function ScheduleGrid({
         console.error("Live: failed to load engine inputs", res.status);
         return;
       }
-      const bundle: AutoScheduleInput = await res.json();
+      const raw: unknown = await res.json();
+      // Version-skew guard: a bundle this build's engine cannot key on (e.g. the
+      // pre-id-link server after a rollback) must not be solved — reload instead.
+      const problem = liveBundleProblem(raw);
+      if (problem) {
+        console.error("Live: incompatible engine input bundle");
+        window.alert(problem);
+        return;
+      }
+      const bundle = raw as AutoScheduleInput;
       // Snapshot the SAVED DB grid (pre-overlay) — the Accept diff baseline, so the
       // engine's enter-time fills of empty slots are committed on Accept (WYSIWYG).
       const saved = new Map<string, string>();

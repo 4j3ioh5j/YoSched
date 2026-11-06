@@ -74,7 +74,7 @@ function run(factorOrder: AutoGenFactorConfig[] | undefined, extraLocked: Locked
     payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
     holidays: [], desirabilityWeights: [], standingCommitments: [], staffOverrides: [], dayPreferences: [],
     historicalAssignments: [],
-    staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftCode: "ORC", dayKey: String(d), minCount: 1 })),
+    staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftTypeId: "st-orc", dayKey: String(d), minCount: 1 })),
     schedulingPreferences: {
       prefer3DayWeekends: false, prefer4DayWeekends: false, preferSequentialOff: false,
       sequentialOffWeight: 1, threeDayWeekendWeight: 2, fourDayWeekendWeight: 3,
@@ -214,8 +214,8 @@ describe("coverage repair guarantees", () => {
       holidays: o.tueHoliday ? [{ date: TUE }] : [],
       desirabilityWeights: [], standingCommitments: [], staffOverrides: [], dayPreferences: [], historicalAssignments: [],
       staffingRequirements: [
-        { shiftCode: "ORC", dayKey: "1", minCount: 1 },
-        ...(o.orMinTue ? [{ shiftCode: "OR", dayKey: "2", minCount: o.orMinTue }] : []),
+        { shiftTypeId: "st-orc", dayKey: "1", minCount: 1 },
+        ...(o.orMinTue ? [{ shiftTypeId: "st-or", dayKey: "2", minCount: o.orMinTue }] : []),
       ],
       schedulingPreferences: {
         prefer3DayWeekends: false, prefer4DayWeekends: false, preferSequentialOff: false,
@@ -300,7 +300,7 @@ describe("policy reaches every placement path", () => {
       shiftTypes: [OR, CALL, OFF], existingAssignments: [],
       payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 8 }], // 0.1 FTE of 80 → 8h; the pair is 16h
       holidays: [], desirabilityWeights: [], standingCommitments: [], staffOverrides: [], dayPreferences: [], historicalAssignments: [],
-      staffingRequirements: [{ shiftCode: "CALL", dayKey: "6", minCount: 1 }, { shiftCode: "CALL", dayKey: "0", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-call", dayKey: "6", minCount: 1 }, { shiftTypeId: "st-call", dayKey: "0", minCount: 1 }],
       schedulingPreferences: { prefer3DayWeekends: false, prefer4DayWeekends: false, preferSequentialOff: false, sequentialOffWeight: 1, threeDayWeekendWeight: 2, fourDayWeekendWeight: 3 },
       equityFactors: [], followRules: [], factorOrder,
     });
@@ -371,7 +371,7 @@ describe("under-target Prohibited holds on reconciliation backfill and STEP 2", 
       ],
       shiftTypes: [OR, PM, OFF],
       existingAssignments: [{ staffId: "kz", date: "2025-05-13", shiftTypeId: "st-pm", code: "PM", isLocked: true, source: "manual" }],
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }],
       scheduleRequests: [{
         id: "req-kz", staffId: "kz", startDate: "2025-05-12", endDate: "2025-05-12", kind: "REQUEST_SHIFT",
         shiftTypeIds: ["st-pm"], leaveShiftTypeId: null, strength: "hard", status: "pending", receivedAt: "2025-04-01T00:00:00Z",
@@ -400,7 +400,7 @@ describe("under-target Prohibited holds on reconciliation backfill and STEP 2", 
         staff("aa", "AA", { ftePercentage: 0.4, eligibleShiftTypeIds: ["st-or", "st-pm", "st-off"], availabilityRules: monTueWed }),
       ],
       shiftTypes: [OR, PM, OFF],
-      staffingRequirements: [{ shiftCode: "OR", dayKey: "1", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }],
       scheduleRequests: [pmReq("aa", "2025-04-01T00:00:00Z"), pmReq("bb", "2025-04-02T00:00:00Z")],
     });
     const pm = r.suggestions.filter((x) => x.code === "PM" && x.date === "2025-05-12");
@@ -449,7 +449,7 @@ describe("under-target Prohibited holds on reconciliation backfill and STEP 2", 
     const mk = (factorOrder?: AutoGenFactorConfig[]) => base({
       staff: [staff("aa", "AA", { ftePercentage: 0.4, eligibleShiftTypeIds: ["st-or", "st-call", "st-off"], availabilityRules: monTue })],
       shiftTypes: [OR, CALL, OFF],
-      staffingRequirements: [{ shiftCode: "CALL", dayKey: "1", minCount: 1 }],
+      staffingRequirements: [{ shiftTypeId: "st-call", dayKey: "1", minCount: 1 }],
       requiredFollowers: [{ sourceShiftId: "st-call", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false }],
       factorOrder,
     });

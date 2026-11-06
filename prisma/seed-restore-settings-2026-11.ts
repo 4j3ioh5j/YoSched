@@ -115,19 +115,20 @@ async function run(tx: Prisma.TransactionClient, log: (s: string) => void) {
   // formerly shift_types.maxPerDay).
   for (const code of MAX_ONE_PER_DAY) {
     for (const dayKey of ["0", "1", "2", "3", "4", "5", "6", "holiday"]) {
-      const ex = await tx.staffingRequirement.findUnique({ where: { shiftCode_dayKey: { shiftCode: code, dayKey } } });
+      const shiftTypeId = need(code).id;
+      const ex = await tx.staffingRequirement.findUnique({ where: { shiftTypeId_dayKey: { shiftTypeId, dayKey } } });
       if (ex?.maxCount === 1) continue;
       if (ex) await tx.staffingRequirement.update({ where: { id: ex.id }, data: { maxCount: 1 } });
-      else await tx.staffingRequirement.create({ data: { shiftCode: code, dayKey, minCount: 0, maxCount: 1 } });
+      else await tx.staffingRequirement.create({ data: { shiftTypeId, dayKey, minCount: 0, maxCount: 1 } });
       log(`staffing max ${code} day ${dayKey}: ${ex?.maxCount ?? "none"} → 1`);
     }
   }
   for (const m of MINIMUMS) {
-    need(m.code);
-    const ex = await tx.staffingRequirement.findUnique({ where: { shiftCode_dayKey: { shiftCode: m.code, dayKey: m.dayKey } } });
+    const shiftTypeId = need(m.code).id;
+    const ex = await tx.staffingRequirement.findUnique({ where: { shiftTypeId_dayKey: { shiftTypeId, dayKey: m.dayKey } } });
     if (ex?.minCount === m.min) continue;
     if (ex) await tx.staffingRequirement.update({ where: { id: ex.id }, data: { minCount: m.min } });
-    else await tx.staffingRequirement.create({ data: { shiftCode: m.code, dayKey: m.dayKey, minCount: m.min } });
+    else await tx.staffingRequirement.create({ data: { shiftTypeId, dayKey: m.dayKey, minCount: m.min } });
     log(`staffing minimum ${m.code} day ${m.dayKey}: ${ex?.minCount ?? "none"} → ${m.min}`);
   }
   {
