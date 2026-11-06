@@ -75,6 +75,28 @@ export function parseRequestConflictPolicy(v: unknown): RequestConflictPolicy {
   return isRequestConflictPolicy(v) ? v : DEFAULT_REQUEST_CONFLICT_POLICY;
 }
 
+// What a HUMAN approval does when the requested shift lands on a day that is already
+// full (card #67). A maximum is never broken: the approval is honoured only if the
+// grid can be legally re-arranged (hand-placed, locked, imported and other approved
+// cells never move; every hard rule is re-checked on the exact grid that is saved).
+// Otherwise the request stays pending and is FLAGGED with a plain reason.
+//   "resolve-pp"  — re-arrange auto-placed cells on the day, then widen to the pay period
+//   "resolve-day" — re-arrange auto-placed cells on the requested day only
+//   "flag"        — never move anyone: a full day flags the request
+export type ApprovalConflictPolicy = "resolve-pp" | "resolve-day" | "flag";
+export const APPROVAL_CONFLICT_POLICIES: readonly ApprovalConflictPolicy[] = ["resolve-pp", "resolve-day", "flag"];
+export const DEFAULT_APPROVAL_CONFLICT_POLICY: ApprovalConflictPolicy = "resolve-pp";
+
+/** STRICT membership check — use to VALIDATE a user write (reject anything else 400). */
+export function isApprovalConflictPolicy(v: unknown): v is ApprovalConflictPolicy {
+  return typeof v === "string" && (APPROVAL_CONFLICT_POLICIES as readonly string[]).includes(v);
+}
+
+/** LENIENT parse for PERSISTED reads — unknown/legacy falls back to the default. */
+export function parseApprovalConflictPolicy(v: unknown): ApprovalConflictPolicy {
+  return isApprovalConflictPolicy(v) ? v : DEFAULT_APPROVAL_CONFLICT_POLICY;
+}
+
 // ---- Day-off fulfillment strategies --------------------------------------
 // A requested day off is an OUTCOME that can be manufactured several ways at
 // different cost to the staff's leave pool. `offStrategyOrder` is an ORDERED

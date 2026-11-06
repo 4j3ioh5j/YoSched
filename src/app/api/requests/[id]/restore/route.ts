@@ -1,8 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { syncRequestApprovals, placeApprovedRequestShift } from "@/lib/request-sync";
+import { syncRequestApprovals, syncRequestApprovalsAfterCommit } from "@/lib/request-sync";
+import { affectedWindow, uniqueCells, visibleWarnings } from "@/lib/request-affected-window";
+import { resolveApproval, ApprovalRetry } from "@/lib/request-approval-resolve";
 import { busyResponse, isTxTimeout } from "@/lib/day-cap-db";
-import { resolveRequestPlacement, eachDateInclusive, validateRestoreInput, type RequestKind } from "@/lib/schedule-requests";
+import { resolveRequestPlacement, eachDateInclusive, validateRestoreInput, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
+import type { Prisma } from "@/generated/prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -15,12 +18,14 @@ const at = (date: string) => new Date(date + "T00:00:00Z");
 //
 // The row is recreated with its full lifecycle state (status / approval stamp),
 // and if it was approved and resolves to a single shift, that shift is re-placed
-// — so undoing the delete of an approved request restores BOTH the request and
-// its placement, exactly like the original approve.
+// through the SAME resolve as PATCH approve (card #67): the grid is re-arranged
+// legally or the request comes back PENDING and flagged with the reason, never as
+// an approved row whose shift isn't actually placed.
 export async function PUT(req: NextRequest, { params }: Ctx) {
   const result = await getSession("schedule:edit");
   if (result.error) return result.error;
   const { id: routeId } = await params;
+  const viewer = { permissions: result.permissions!, staffId: result.staffId ?? null };
 
   const body = await req.json();
   const parsed = validateRestoreInput({ ...body, id: routeId });
@@ -43,54 +48,71 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   );
   const cells = eachDateInclusive(v.startDate, v.endDate).map((date) => ({ staffId: v.staffId, date }));
 
-  // Replay placement BEFORE creating the row, using the SAME validated path as
-  // PATCH approve. If a covered day is now locked and unsatisfied, approval
-  // can't be honoured — fall back to recreating the request as PENDING rather
-  // than minting an approved row whose shift isn't actually placed (the state
-  // PATCH refuses). Faithful when nothing is blocked.
-  let finalStatus = v.status;
-  let blockedDates: string[] = [];
-  if (v.status === "approved" && placement) {
-    let blocked: string[];
-    try {
-      ({ blocked } = await placeApprovedRequestShift(
-        { staffId: v.staffId, kind: v.kind as RequestKind, shiftTypeIds: v.shiftTypeIds, leaveShiftTypeId: v.leaveShiftTypeId, startDate: v.startDate, endDate: v.endDate },
-        placement
-      ));
-    } catch (e) {
-      // Waited too long on another writer of those days: nothing placed, nothing
-      // recreated yet — the client retries the undo.
-      if (isTxTimeout(e)) return busyResponse();
-      throw e;
-    }
-    if (blocked.length > 0) { finalStatus = "pending"; blockedDates = blocked; }
-  }
-  const approved = finalStatus === "approved";
-
-  const created = await prisma.scheduleRequest.create({
-    data: {
-      id: v.id,
-      staffId: v.staffId,
-      startDate: at(v.startDate),
-      endDate: at(v.endDate),
-      kind: v.kind,
-      shiftTypeIds: v.shiftTypeIds,
-      leaveShiftTypeId: v.leaveShiftTypeId,
-      strength: v.strength,
-      source: v.source,
-      notes: v.notes,
-      offStrategyOrder: v.offStrategyOrder,
-      status: finalStatus,
-      // Mirror PATCH's invariant: an approved single-shift request is auto
-      // (revertible when the shift is removed); approved-with-no-placement is sticky.
-      autoApproved: approved && placement != null,
-      ...(approved ? { approvedAt: v.approvedAt ? new Date(v.approvedAt) : new Date(), approvedBy: v.approvedBy ?? result.userId } : {}),
-      ...(v.receivedAt ? { receivedAt: new Date(v.receivedAt) } : {}),
-    },
+  const rowData = (approved: boolean): Prisma.ScheduleRequestUncheckedCreateInput => ({
+    id: v.id,
+    staffId: v.staffId,
+    startDate: at(v.startDate),
+    endDate: at(v.endDate),
+    kind: v.kind,
+    shiftTypeIds: v.shiftTypeIds,
+    leaveShiftTypeId: v.leaveShiftTypeId,
+    strength: v.strength,
+    source: v.source,
+    notes: v.notes,
+    offStrategyOrder: v.offStrategyOrder,
+    status: approved ? "approved" : v.status === "approved" ? "pending" : v.status,
+    // Mirror PATCH's invariant: an approved single-shift request is auto
+    // (revertible when the shift is removed); approved-with-no-placement is sticky.
+    autoApproved: approved && placement != null,
+    ...(approved ? { approvedAt: v.approvedAt ? new Date(v.approvedAt) : new Date(), approvedBy: v.approvedBy ?? result.userId } : {}),
+    ...(v.receivedAt ? { receivedAt: new Date(v.receivedAt) } : {}),
   });
 
-  // Reconcile any neighbour requests the re-placement satisfies; never re-derive this one.
-  if (approved && placement) await syncRequestApprovals(cells, result.userId, { excludeRequestId: v.id });
+  if (v.status === "approved" && placement) {
+    let resolved;
+    try {
+      resolved = await resolveApproval(
+        {
+          id: v.id,
+          staffId: v.staffId,
+          kind: v.kind as RequestKind,
+          shiftTypeIds: v.shiftTypeIds,
+          leaveShiftTypeId: v.leaveShiftTypeId,
+          startDate: v.startDate,
+          endDate: v.endDate,
+          strength: v.strength as RequestStrength,
+          offStrategyOrder: v.offStrategyOrder,
+        },
+        placement,
+        result.userId,
+        (tx, outcome) =>
+          outcome.ok
+            ? tx.scheduleRequest.create({ data: rowData(true) })
+            : tx.scheduleRequest.create({ data: { ...rowData(false), flaggedAt: new Date(), flaggedReason: outcome.reason } }),
+      );
+    } catch (e) {
+      // Waited too long on another writer of those days (or the rule windows changed
+      // under us): nothing placed, nothing recreated yet — the client retries the undo.
+      if (isTxTimeout(e) || e instanceof ApprovalRetry) return busyResponse();
+      throw e;
+    }
+    const { outcome, result: created } = resolved;
+    if (!outcome.ok) {
+      return NextResponse.json(
+        { id: created.id, status: created.status, flagged: true, flaggedReason: outcome.reason, affected: await affectedWindow(cells, viewer) },
+        { status: 201 },
+      );
+    }
+    const touched = uniqueCells([...cells, ...outcome.writes.map((w) => ({ staffId: w.staffId, date: w.date }))]);
+    // Reconcile any neighbour requests the re-placement satisfies; never re-derive this one.
+    await syncRequestApprovalsAfterCommit("PUT /api/requests/[id]/restore", touched, result.userId, { excludeRequestId: v.id });
+    return NextResponse.json(
+      { id: created.id, status: created.status, affected: await affectedWindow(touched, viewer), ripple: outcome.writes, warnings: visibleWarnings(outcome.warnings, viewer) },
+      { status: 201 },
+    );
+  }
 
-  return NextResponse.json({ id: created.id, status: created.status, ...(blockedDates.length ? { blockedDates } : {}) }, { status: 201 });
+  const created = await prisma.scheduleRequest.create({ data: rowData(v.status === "approved") });
+  if (v.status === "approved") await syncRequestApprovals(cells, result.userId, { excludeRequestId: v.id });
+  return NextResponse.json({ id: created.id, status: created.status, affected: await affectedWindow(cells, viewer) }, { status: 201 });
 }

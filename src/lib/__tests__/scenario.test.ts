@@ -594,3 +594,43 @@ describe("applyScenario — per-day Max from Staffing Rules", () => {
     expect(cellAt(out.grid, "p2", "2025-05-12")).toBe("st-orc");
   });
 });
+
+describe("applyScenario — away pins (card #67)", () => {
+  // An approved OFF/leave placement is pre-placed by the engine itself without the
+  // availability/eligibility gate (STEP 0a / 0b), so a pin flagged `away` must not be
+  // snapped back by those gates either. The per-day cap still applies to it.
+  const LEAVE = makeShift("st-leave", "AL", { isLeave: true, countsTowardFte: false, autoSchedulable: false, maxPerDay: 1 });
+
+  it("skips eligibility and availability for an away pin, not for a working pin", () => {
+    // p1 is eligible only for OR/X and available Mon–Fri; Saturday is outside their rules
+    // and AL is not in their eligibility list.
+    const input = makeInput({ shiftTypes: [OR, OFF, LEAVE], dates: [...DATES, "2025-05-17"] });
+    const working = applyScenario(input, [{ staffId: "p1", date: "2025-05-17", shiftTypeId: "st-or" }], []);
+    expect(working.applied).toBe(false);
+    expect(working.rejected[0].reason).toBe("unavailable");
+
+    const plainLeave = applyScenario(input, [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-leave" }], []);
+    expect(plainLeave.applied).toBe(false);
+    expect(plainLeave.rejected[0].reason).toBe("ineligible");
+
+    const away = applyScenario(input, [{ staffId: "p1", date: "2025-05-17", shiftTypeId: "st-leave", away: true }], []);
+    expect(away.applied).toBe(true);
+    expect(cellAt(away.grid, "p1", "2025-05-17")).toBe("st-leave");
+  });
+
+  it("still refuses an away pin over the shift's per-day Max", () => {
+    const input = makeInput({
+      shiftTypes: [OR, OFF, LEAVE],
+      existingAssignments: [{ staffId: "p2", date: "2025-05-12", shiftTypeId: "st-leave", code: "AL", isLocked: false, source: "manual" }],
+    });
+    const out = applyScenario(input, [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-leave", away: true }], []);
+    expect(out.applied).toBe(false);
+    expect(out.rejected[0]).toMatchObject({ staffId: "p1", date: "2025-05-12", reason: "day-full" });
+  });
+
+  it("an unknown staff or shift is still rejected for an away pin", () => {
+    const input = makeInput({ shiftTypes: [OR, OFF, LEAVE] });
+    expect(applyScenario(input, [{ staffId: "nobody", date: "2025-05-12", shiftTypeId: "st-leave", away: true }], []).rejected[0].reason).toBe("unknown-staff");
+    expect(applyScenario(input, [{ staffId: "p1", date: "2025-05-12", shiftTypeId: "st-nope", away: true }], []).rejected[0].reason).toBe("unknown-shift");
+  });
+});

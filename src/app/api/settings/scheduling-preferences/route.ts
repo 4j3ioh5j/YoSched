@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { isValidDateFormat } from "@/lib/date-format";
-import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES, validateOffStrategyOrder } from "@/lib/schedule-requests";
+import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES, isApprovalConflictPolicy, APPROVAL_CONFLICT_POLICIES, validateOffStrategyOrder } from "@/lib/schedule-requests";
 import { isLiveScope, LIVE_SCOPES } from "@/lib/live-scope";
 import { isShiftShareBasis, SHIFT_SHARE_BASES } from "@/lib/shift-share";
 import { isHolidayPolicy, HOLIDAY_POLICIES } from "@/lib/holiday-policy";
@@ -25,7 +25,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy } = body;
 
   // Mode is STRICTLY validated on write — a bad value is rejected, never coerced to
   // the default (which would silently turn a typo into "full"). Reads stay lenient.
@@ -34,6 +34,9 @@ export async function PUT(req: NextRequest) {
   }
   if (requestConflictPolicy !== undefined && !isRequestConflictPolicy(requestConflictPolicy)) {
     return NextResponse.json({ error: `requestConflictPolicy must be one of ${REQUEST_CONFLICT_POLICIES.join(", ")}` }, { status: 400 });
+  }
+  if (approvalConflictPolicy !== undefined && !isApprovalConflictPolicy(approvalConflictPolicy)) {
+    return NextResponse.json({ error: `approvalConflictPolicy must be one of ${APPROVAL_CONFLICT_POLICIES.join(", ")}` }, { status: 400 });
   }
   if (defaultLiveScope !== undefined && !isLiveScope(defaultLiveScope)) {
     return NextResponse.json({ error: `defaultLiveScope must be one of ${LIVE_SCOPES.join(", ")}` }, { status: 400 });
@@ -85,6 +88,7 @@ export async function PUT(req: NextRequest) {
       ...(typeof maxLeavePerDay === "number" && maxLeavePerDay >= 0 && maxLeavePerDay <= 999 && { maxLeavePerDay: Math.floor(maxLeavePerDay) }),
       ...(isPendingRequestMode(pendingRequestMode) && { pendingRequestMode }),
       ...(isRequestConflictPolicy(requestConflictPolicy) && { requestConflictPolicy }),
+      ...(isApprovalConflictPolicy(approvalConflictPolicy) && { approvalConflictPolicy }),
       ...(offOrder !== undefined && { defaultOffStrategyOrder: offOrder }),
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
       ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
@@ -99,6 +103,7 @@ export async function PUT(req: NextRequest) {
       ...(typeof dateFormat === "string" && isValidDateFormat(dateFormat) && { dateFormat }),
       ...(isPendingRequestMode(pendingRequestMode) && { pendingRequestMode }),
       ...(isRequestConflictPolicy(requestConflictPolicy) && { requestConflictPolicy }),
+      ...(isApprovalConflictPolicy(approvalConflictPolicy) && { approvalConflictPolicy }),
       ...(offOrder !== undefined && { defaultOffStrategyOrder: offOrder }),
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
       ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),

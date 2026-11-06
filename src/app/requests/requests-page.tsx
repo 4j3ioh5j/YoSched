@@ -24,6 +24,9 @@ type RequestRow = {
   approvedAt: string | null;
   approverLabel: string | null; // resolved server-side; never a raw user id
   notes: string | null;
+  // Card #67: a pending request whose approval could not be honoured without breaking a
+  // hard rule carries the server's sentence — shown as "Needs resolving".
+  flaggedReason?: string | null;
 };
 
 type Props = {
@@ -198,7 +201,14 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
         setError("Failed to update request.");
       } else {
         const updated = await res.json();
-        setRequests((rs) => rs.map((r) => (r.id === id ? { ...r, status: updated.status, approvedAt: updated.approvedAt } : r)));
+        if (updated.flagged) {
+          // Card #67: not placed — the request stays pending, marked "needs resolving".
+          const why: string = typeof updated.flaggedReason === "string" ? updated.flaggedReason : "the day is full";
+          setRequests((rs) => rs.map((r) => (r.id === id ? { ...r, status: "pending", approvedAt: null, approverLabel: null, flaggedReason: why } : r)));
+          setError(`Not approved — ${why}.`);
+          return;
+        }
+        setRequests((rs) => rs.map((r) => (r.id === id ? { ...r, status: updated.status, approvedAt: updated.approvedAt, flaggedReason: updated.flaggedReason ?? null } : r)));
         // Unapproved/reopened but a non-request shift still sits on the cell → it
         // will re-approve unless that shift is cleared. Offer the one-click fix.
         const still = updated.stillScheduled as { date: string; shiftTypeId: string; code: string }[] | undefined;
@@ -375,6 +385,12 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
                   <span className={`inline-block text-xs px-2 py-0.5 rounded border capitalize ${STATUS_BADGE[r.status]}`}>
                     {r.status}
                   </span>
+                  {r.status === "pending" && r.flaggedReason && (
+                    <>
+                      <span className="ml-1 inline-block text-xs px-2 py-0.5 rounded border bg-amber-900/30 border-amber-700/60 text-amber-300">Needs resolving</span>
+                      <span className="block text-xs text-amber-300/90 mt-0.5">{r.flaggedReason}</span>
+                    </>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-slate-400 capitalize">{r.source}</td>
                 <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{fmtDateTime(r.receivedAt)}</td>

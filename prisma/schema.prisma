@@ -324,6 +324,7 @@ model SchedulingPreferences {
   maxLeavePerDay        Int     @default(0) // soft cap on staff off per day; 0 = no cap
   pendingRequestMode    String  @default("full") // auto-scheduler handling of PENDING (unapproved) requests: "off" | "soft" | "full"
   requestConflictPolicy String  @default("reconcile") // forced-request contention: "reconcile" (tentative + first-come) | "honor-always"
+  approvalConflictPolicy String @default("resolve-pp") // approving a request on a full day (card #67): "resolve-pp" (re-arrange the day, then the pay period) | "resolve-day" | "flag" (never move anyone) — see src/lib/schedule-requests.ts
   defaultOffStrategyOrder String[] @default(["ORC_ADJACENT", "ORL_PAIR"]) // dept-wide default day-off fulfillment order; admin appends LEAVE:<shiftTypeId> tokens. Seeds the My Requests widget + per-staff override.
   defaultLiveScope        String   @default("day") // default re-solve scope for auto-generate edits: "limited" | "day" | "pp" | "range" (#248). Seeds the grid's scope selector.
   payPeriodAnchor         DateTime? @db.Date // any real period start; with payPeriodLengthDays defines the infinite period ladder (null = legacy manually-generated periods)
@@ -754,6 +755,11 @@ model ScheduleRequest {
   approvedAt   DateTime?
   approvedBy   String? // user id/initials of the approver
   notes        String?
+  // Card #67: an approval that could not be honoured without breaking a hard rule places nothing and
+  // leaves the request pending with the reason here ("Needs resolving" on the Requests page). Cleared by
+  // every status transition and by the sync auto-approve.
+  flaggedAt    DateTime?
+  flaggedReason String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

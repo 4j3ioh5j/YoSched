@@ -22,6 +22,15 @@ export type FakeVersion = {
   id: string; year: number; month: number; versionNumber: number; comment: string | null; snapshot: unknown;
   snapshotHash: string; isAutoBackup: boolean; isCurrent: boolean; createdAt: Date;
 };
+/** A schedule_requests row (the fields the approval paths read and write). */
+export type FakeRequest = {
+  id: string; staffId: string; startDate: Date; endDate: Date; kind: string; shiftTypeIds: string[];
+  leaveShiftTypeId: string | null; offStrategyOrder: string[]; strength: string; status: string; autoApproved: boolean;
+  source: string; receivedAt: Date; approvedAt: Date | null; approvedBy: string | null; notes: string | null;
+  flaggedAt: Date | null; flaggedReason: string | null;
+};
+export type FakePayPeriod = { id: string; startDate: Date; endDate: Date; targetHours: number };
+export type FakePrefs = Record<string, unknown> & { id: string };
 
 export const ymd = (d: Date): string => d.toISOString().slice(0, 10);
 export const at = (date: string): Date => new Date(date + "T00:00:00Z");
@@ -33,6 +42,11 @@ export const db = {
   rules: [] as FakeRule[],
   holidays: [] as string[],
   versions: [] as FakeVersion[],
+  requests: [] as FakeRequest[],
+  payPeriods: [] as FakePayPeriod[],
+  prefs: null as FakePrefs | null,
+  minTargets: [] as Record<string, unknown>[],
+  deptTargets: [] as Record<string, unknown>[],
   users: [{ id: "u1", name: "Pat" }] as { id: string; name: string }[],
   seq: 0,
   txSeq: 0,
@@ -44,6 +58,7 @@ export const db = {
   requestSyncThrows: false,
   reset() {
     this.rows = []; this.shifts = []; this.rules = []; this.holidays = []; this.versions = [];
+    this.requests = []; this.payPeriods = []; this.prefs = null; this.minTargets = []; this.deptTargets = [];
     this.users = [{ id: "u1", name: "Pat" }];
     this.seq = 0; this.txSeq = 0; this.log = []; this.txOpts = [];
     this.lockEnabled = true; this.failTxWith = null; this.afterLock = null; this.requestSyncThrows = false;
@@ -55,6 +70,16 @@ export const db = {
   },
   seed(rows: { staffId: string; date: string; shiftTypeId: string; isLocked?: boolean; source?: string }[]) {
     for (const r of rows) this.rows.push(mkRow({ staffId: r.staffId, date: at(r.date), shiftTypeId: r.shiftTypeId, isLocked: r.isLocked ?? false, source: r.source ?? "manual" }));
+  },
+  seedRequest(r: Omit<Partial<FakeRequest>, "startDate" | "endDate"> & { id: string; staffId: string; startDate: string; endDate: string; kind: string }): FakeRequest {
+    const row: FakeRequest = {
+      shiftTypeIds: [], leaveShiftTypeId: null, offStrategyOrder: [], strength: "hard", status: "pending", autoApproved: false,
+      source: "scheduler", receivedAt: new Date("2026-11-01T00:00:00Z"), approvedAt: null, approvedBy: null, notes: null,
+      flaggedAt: null, flaggedReason: null,
+      ...r, startDate: at(r.startDate), endDate: at(r.endDate),
+    };
+    this.requests.push(row);
+    return row;
   },
 };
 
@@ -174,6 +199,7 @@ function makeClient(tag: string, undo: Undo[] | null) {
   const shiftType = {
     findMany: async (a?: { where?: Record<string, unknown> }) => { log("shiftType.findMany"); return db.shifts.filter((s) => matches(s as unknown as Record<string, unknown>, a?.where)).map((s) => ({ ...s })); },
     findUnique: async (a: { where: { id: string } }) => { log("shiftType.findUnique"); const s = db.shifts.find((x) => x.id === a.where.id); return s ? { ...s } : null; },
+    findFirst: async (a?: { where?: Record<string, unknown> }) => { log("shiftType.findFirst"); const s = db.shifts.find((x) => matches(x as unknown as Record<string, unknown>, a?.where)); return s ? { ...s } : null; },
   };
   const staffingRequirement = {
     findMany: async (a?: { where?: Record<string, unknown> }) => { log("staffingRequirement.findMany"); return db.rules.filter((r) => matches(r as unknown as Record<string, unknown>, a?.where)).map((r) => ({ ...r })); },
@@ -186,8 +212,57 @@ function makeClient(tag: string, undo: Undo[] | null) {
     },
   };
   const scheduleRequest = {
-    findMany: async () => { log("scheduleRequest.findMany"); if (db.requestSyncThrows) throw new Error("request sync exploded"); return []; },
+    findMany: async (a?: { where?: Record<string, unknown> }) => {
+      log("scheduleRequest.findMany"); await tick();
+      if (db.requestSyncThrows) throw new Error("request sync exploded");
+      return db.requests.filter((r) => matches(r as unknown as Record<string, unknown>, a?.where)).map((r) => ({ ...r }));
+    },
+    findUnique: async (a: { where: { id: string } }) => { log("scheduleRequest.findUnique"); await tick(); const r = db.requests.find((x) => x.id === a.where.id); return r ? { ...r } : null; },
+    update: async (a: { where: { id: string }; data: Partial<FakeRequest> }) => {
+      log("scheduleRequest.update"); await tick();
+      const r = db.requests.find((x) => x.id === a.where.id);
+      if (!r) throw Object.assign(new Error("Record to update not found"), { code: "P2025" });
+      const before = { ...r };
+      Object.assign(r, a.data);
+      undo?.push(() => Object.assign(r, before));
+      return { ...r };
+    },
+    create: async (a: { data: Partial<FakeRequest> & { id?: string; staffId: string; startDate: Date; endDate: Date; kind: string } }) => {
+      log("scheduleRequest.create"); await tick();
+      const row: FakeRequest = {
+        id: a.data.id ?? `r${++db.seq}`, shiftTypeIds: [], leaveShiftTypeId: null, offStrategyOrder: [], strength: "hard", status: "pending",
+        autoApproved: false, source: "scheduler", receivedAt: new Date(), approvedAt: null, approvedBy: null, notes: null, flaggedAt: null, flaggedReason: null,
+        ...a.data,
+      } as FakeRequest;
+      db.requests.push(row);
+      undo?.push(() => { db.requests = db.requests.filter((x) => x !== row); });
+      return { ...row };
+    },
+    delete: async (a: { where: { id: string } }) => {
+      log("scheduleRequest.delete"); await tick();
+      const r = db.requests.find((x) => x.id === a.where.id);
+      if (!r) throw Object.assign(new Error("Record to delete does not exist"), { code: "P2025" });
+      db.requests = db.requests.filter((x) => x !== r);
+      undo?.push(() => { db.requests.push(r); });
+      return { ...r };
+    },
   };
+  const payPeriod = {
+    findMany: async () => { log("payPeriod.findMany"); await tick(); return [...db.payPeriods].sort((a, b) => a.startDate.getTime() - b.startDate.getTime()).map((p) => ({ ...p })); },
+    deleteMany: async () => { log("payPeriod.deleteMany"); await tick(); const n = db.payPeriods.length; db.payPeriods = []; return { count: n }; },
+    createMany: async (a: { data: FakePayPeriod[] }) => { log("payPeriod.createMany"); await tick(); db.payPeriods.push(...a.data); return { count: a.data.length }; },
+  };
+  const schedulingPreferences = {
+    findFirst: async () => { log("schedulingPreferences.findFirst"); await tick(); return db.prefs ? { ...db.prefs } : null; },
+    create: async (a: { data: Record<string, unknown> & { id: string } }) => { log("schedulingPreferences.create"); db.prefs = { ...a.data }; return { ...db.prefs }; },
+    upsert: async (a: { where: { id: string }; update: Record<string, unknown>; create: Record<string, unknown> & { id: string } }) => {
+      log("schedulingPreferences.upsert"); await tick();
+      db.prefs = db.prefs ? { ...db.prefs, ...a.update } : { ...a.create };
+      return { ...db.prefs };
+    },
+  };
+  const shiftMinimumTarget = { findMany: async () => { log("shiftMinimumTarget.findMany"); return db.minTargets.map((t) => ({ ...t })); } };
+  const departmentShiftTarget = { findMany: async () => { log("departmentShiftTarget.findMany"); return db.deptTargets.map((t) => ({ ...t })); } };
   const user = { findMany: async () => { log("user.findMany"); return db.users.map((u) => ({ ...u })); } };
   const scheduleVersion = {
     findUnique: async (a: { where: { id: string } }) => { log("scheduleVersion.findUnique"); const v = db.versions.find((x) => x.id === a.where.id); return v ? { ...v } : null; },
@@ -216,7 +291,7 @@ function makeClient(tag: string, undo: Undo[] | null) {
       return { ...v };
     },
   };
-  return { assignment, shiftType, staffingRequirement, holiday, scheduleRequest, user, scheduleVersion };
+  return { assignment, shiftType, staffingRequirement, holiday, scheduleRequest, payPeriod, schedulingPreferences, shiftMinimumTarget, departmentShiftTarget, user, scheduleVersion };
 }
 
 export type FakeClient = ReturnType<typeof makeClient>;

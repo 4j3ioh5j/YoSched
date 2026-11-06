@@ -319,6 +319,7 @@ export default async function Home() {
           receivedAt: r.receivedAt.toISOString(),
           approvedAt: r.approvedAt ? r.approvedAt.toISOString() : null,
           approvedByName: canEdit && r.approvedBy ? approverNames.get(r.approvedBy) ?? "Unknown" : null,
+          flaggedReason: r.flaggedReason,
           source: r.source,
           notes: r.notes,
           offStrategyOrder: r.offStrategyOrder,

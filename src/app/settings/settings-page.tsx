@@ -3,7 +3,7 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
-import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
+import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy, APPROVAL_CONFLICT_POLICIES, type ApprovalConflictPolicy } from "@/lib/schedule-requests";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
 import { EQUITY_FACTORS_SAVE_URL, buildEquityFactorsSave, equitySaveErrorMessage } from "@/lib/equity-factors";
 import { COUNT_COLUMNS_SAVE_URL, buildCountColumnsSave, countColumnsSaveErrorMessage } from "@/lib/count-columns";
@@ -89,6 +89,7 @@ type SchedulingPrefs = {
   maxLeavePerDay: number;
   pendingRequestMode: PendingRequestMode;
   requestConflictPolicy: RequestConflictPolicy;
+  approvalConflictPolicy: ApprovalConflictPolicy;
   defaultOffStrategyOrder: string[];
   defaultLiveScope: LiveScope;
   shiftShareBasis: ShiftShareBasis;
@@ -2799,6 +2800,32 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
     }
   }
 
+  const [approvalPolicyStatus, setApprovalPolicyStatus] = useState<SaveStatus>("idle");
+  async function saveApprovalPolicy(value: ApprovalConflictPolicy) {
+    const prev = prefs.approvalConflictPolicy;
+    setPrefs((p) => ({ ...p, approvalConflictPolicy: value }));
+    setApprovalPolicyStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approvalConflictPolicy: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setApprovalPolicyStatus("saved");
+      setTimeout(() => setApprovalPolicyStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, approvalConflictPolicy: prev }));
+      setApprovalPolicyStatus("error");
+    }
+  }
+
+  const APPROVAL_POLICY_LABELS: Record<ApprovalConflictPolicy, { label: string; hint: string }> = {
+    "resolve-pp": { label: "Re-arrange the day, then the pay period", hint: "Move auto-placed shifts on the day; if that is not enough, widen to the rest of the pay period. Hand-placed, locked and other approved shifts never move" },
+    "resolve-day": { label: "Re-arrange the day only", hint: "Move auto-placed shifts on the requested day only; anything wider flags the request" },
+    flag: { label: "Never move anyone — flag it", hint: "A full day never changes; the request stays pending and is marked as needing resolving" },
+  };
+
   const [shareStatus, setShareStatus] = useState<SaveStatus>("idle");
   async function saveShareBasis(value: ShiftShareBasis) {
     const prev = prefs.shiftShareBasis;
@@ -3101,6 +3128,36 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
               >
                 <span className="text-sm font-medium">{POLICY_LABELS[policy].label}</span>
                 <span className="text-[11px] text-slate-500 mt-0.5">{POLICY_LABELS[policy].hint}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-slate-700/50">
+          <div className="text-sm font-medium text-slate-200">When an approved request lands on a full day</div>
+          <div className="text-xs text-slate-400">
+            A maximum is never broken. Approving a request for a day that already has its full count either re-arranges auto-placed shifts so every rule still holds, or flags the request as needing resolving. Hand-placed, locked, imported and other approved shifts are never moved.
+            {approvalPolicyStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
+            {approvalPolicyStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
+            {approvalPolicyStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
+          </div>
+          <div className="grid grid-cols-3 gap-2 mt-3">
+            {APPROVAL_CONFLICT_POLICIES.map((policy) => (
+              <button
+                key={policy}
+                onClick={() => canEdit && saveApprovalPolicy(policy)}
+                disabled={!canEdit}
+                title={APPROVAL_POLICY_LABELS[policy].hint}
+                className={[
+                  "flex flex-col items-start px-3 py-2 rounded-lg border text-left transition-colors",
+                  prefs.approvalConflictPolicy === policy
+                    ? "bg-blue-600/20 border-blue-500 text-blue-300"
+                    : "bg-slate-700/30 border-slate-600/50 text-slate-300 hover:border-slate-500",
+                  !canEdit ? "opacity-60 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                <span className="text-sm font-medium">{APPROVAL_POLICY_LABELS[policy].label}</span>
+                <span className="text-[11px] text-slate-500 mt-0.5">{APPROVAL_POLICY_LABELS[policy].hint}</span>
               </button>
             ))}
           </div>

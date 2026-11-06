@@ -63,6 +63,7 @@ export default async function Requests() {
           // null for viewers (no schedule:edit) — they see the date, not who.
           approverLabel: canEdit && r.approvedBy ? approverName[r.approvedBy] ?? "Unknown" : null,
           notes: r.notes,
+          flaggedReason: r.flaggedReason,
         }))}
       />
     </main>

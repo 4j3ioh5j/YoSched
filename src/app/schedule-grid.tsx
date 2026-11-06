@@ -21,7 +21,7 @@ import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { dayCapViolations, type DayCapCell } from "@/lib/max-per-day";
 import { buildDayCapLookup, dayKeyLabel, dayKeyOf } from "@/lib/day-cap";
 import { rejectionError, dayFullPopoverText, type RejectionError } from "@/lib/rejection-error";
-import { classifyRequestRefusal, requestFailureText, type RequestRefusal } from "@/lib/request-refusal";
+import { classifyRequestRefusal, requestFailureText, requestFlaggedText, type RequestRefusal } from "@/lib/request-refusal";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, keysToRequestIntent, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory, type RequestKind, type RequestStrength, type RequestStatus } from "@/lib/schedule-requests";
@@ -30,7 +30,9 @@ import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } fr
 // A schedule request as delivered to the grid (pure-module shape + display stamp).
 // source/notes are carried (beyond ScheduleRequestData) so a deleted request can
 // be restored verbatim on undo; autoApproved/approvedBy are re-derived by /restore.
-type GridRequest = ScheduleRequestData & { receivedAt: string; source: string; notes: string | null; offStrategyOrder: string[]; approvedAt?: string | null; approvedByName?: string | null };
+// flaggedReason (card #67): a pending request whose approval could not be honoured
+// without breaking a hard rule carries the server's plain sentence ("needs resolving").
+type GridRequest = ScheduleRequestData & { receivedAt: string; source: string; notes: string | null; offStrategyOrder: string[]; approvedAt?: string | null; approvedByName?: string | null; flaggedReason?: string | null };
 
 // Everything /api/requests/[id]/restore needs to recreate a request verbatim
 // under its original id — captured when a request is created/deleted so undo &
@@ -1079,7 +1081,9 @@ export function ScheduleGrid({
     const named = r.status === "approved" && r.approvedByName;
     const by = named ? ` by ${r.approvedByName}` : "";
     const on = named && r.approvedAt ? ` (${formatDate(parseDate(r.approvedAt.split("T")[0]), dateFormat)})` : "";
-    return `  • ${desc} — ${status}${by}${on}, rec'd ${recv}`;
+    // A flagged pending request says why its approval could not be honoured (card #67).
+    const flagged = r.status === "pending" && r.flaggedReason ? ` — needs resolving: ${r.flaggedReason}` : "";
+    return `  • ${desc} — ${status}${by}${on}${flagged}, rec'd ${recv}`;
   }, [shiftTypeMap, dateFormat]);
 
   // ONE tooltip for every grid cell, parallel construction in all modes:
@@ -1944,11 +1948,24 @@ export function ScheduleGrid({
       })),
       ...prev,
     ]);
+    // The restore answers with the authoritative window (card #67): the recreated row's
+    // status (an approved request whose shift could not be legally re-placed comes back
+    // PENDING and flagged), the requests it co-approved, and every cell the placement
+    // and its ripple wrote — other staff's cells included.
     const results = await Promise.all(
       snapshots.map((s) =>
         fetch(`/api/requests/${s.id}/restore`, {
           method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s),
-        }).then((r) => r.ok).catch(() => false),
+        }).then(async (r) => {
+          if (!r.ok) return false;
+          const body = await r.json().catch(() => null) as { status?: RequestStatus; flagged?: boolean; flaggedReason?: string | null; affected?: AffectedDelta } | null;
+          applyRequestDelta(body?.affected);
+          if (body?.status) {
+            setLocalRequests((prev) => prev.map((x) => (x.id === s.id ? { ...x, status: body.status!, flaggedReason: body.flagged ? body.flaggedReason ?? null : null } : x)));
+          }
+          if (body?.flagged) setRequestError(requestFlaggedText(1, body.flaggedReason ?? undefined));
+          return true;
+        }).catch(() => false),
       ),
     );
     if (results.some((ok) => !ok)) setRequestError("Some requests could not be restored during undo/redo.");
@@ -1961,7 +1978,7 @@ export function ScheduleGrid({
   type AffectedDelta = {
     // approvedByName/approvedAt are present from the PATCH route (schedule:edit);
     // the assignment-write sync deltas omit them (name shows on next load instead).
-    requests?: { id: string; status: RequestStatus; autoApproved: boolean; approvedByName?: string | null; approvedAt?: string | null }[];
+    requests?: { id: string; status: RequestStatus; autoApproved: boolean; approvedByName?: string | null; approvedAt?: string | null; flaggedReason?: string | null }[];
     cells?: { staffId: string; date: string; assignment: { id: string; shiftTypeId: string; isLocked: boolean } | null }[];
   };
   function applyRequestDelta(affected?: AffectedDelta) {
@@ -1985,6 +2002,7 @@ export function ScheduleGrid({
           autoApproved: d.autoApproved,
           approvedByName: d.approvedByName ?? null,
           approvedAt: d.approvedAt ?? null,
+          flaggedReason: d.flaggedReason ?? null,
         };
       }));
     }
@@ -2005,8 +2023,10 @@ export function ScheduleGrid({
 
   // PATCH one request's status and apply the affected window it returns. The
   // explicit row's status is set by the caller (a terminal status like declined
-  // drops out of the returned window). Returns ok + http status (409 = locked).
-  async function patchRequestStatus(id: string, status: RequestStatus): Promise<{ ok: boolean; httpStatus: number; refusal?: RequestRefusal; refusalText?: string; affected?: AffectedDelta; stillScheduled?: { date: string; code: string }[] }> {
+  // drops out of the returned window). Returns ok + http status (409 = busy retry).
+  // `flagged` (card #67): the approval could not be honoured without breaking a hard
+  // rule — the request stayed PENDING with `flaggedReason`, and nothing was placed.
+  async function patchRequestStatus(id: string, status: RequestStatus): Promise<{ ok: boolean; httpStatus: number; refusal?: RequestRefusal; refusalText?: string; affected?: AffectedDelta; stillScheduled?: { date: string; code: string }[]; flagged?: boolean; flaggedReason?: string | null }> {
     try {
       const res = await fetch(`/api/requests/${id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }),
@@ -2015,10 +2035,10 @@ export function ScheduleGrid({
         const body = await res.json();
         const affected = body?.affected as AffectedDelta | undefined;
         applyRequestDelta(affected);
-        return { ok: true, httpStatus: res.status, affected, stillScheduled: body?.stillScheduled };
+        return { ok: true, httpStatus: res.status, affected, stillScheduled: body?.stillScheduled, flagged: body?.flagged === true, flaggedReason: body?.flaggedReason ?? null };
       }
-      // A 409 is either a locked covered day or (card #65) a wait that timed out behind
-      // another save — the body's reason tells which, and the busy sentence is shown.
+      // The only 409 left is (card #65) a wait that timed out behind another save — the
+      // busy sentence is shown and the client retries.
       const body = await res.json().catch(() => null);
       return { ok: false, httpStatus: res.status, refusal: classifyRequestRefusal(res.status, body), refusalText: typeof body?.error === "string" ? body.error : undefined };
     } catch {
@@ -3073,21 +3093,28 @@ export function ScheduleGrid({
     const postStatus = new Map(preStatus);
 
     setLocalRequests((prev) => prev.map((r) => (explicit.includes(r.id) ? { ...r, status: target } : r)));
-    let failed = 0, locked = 0, busy = 0;
+    let failed = 0, busy = 0, flagged = 0;
     let busyText: string | undefined;
+    let flaggedReason: string | undefined;
     // Reset-to-pending only: days a reset request still satisfies via a shift it
     // didn't place (auto/manual) — it will re-approve unless that shift is cleared.
     const stillScheduled: { staffId: string; date: string; code: string }[] = [];
     for (const id of explicit) {
       const staffId = localRequests.find((r) => r.id === id)?.staffId ?? "";
-      const { ok, refusal, refusalText, affected, stillScheduled: still } = await patchRequestStatus(id, target);
-      if (ok) {
+      const { ok, refusal, refusalText, affected, stillScheduled: still, flagged: wasFlagged, flaggedReason: why } = await patchRequestStatus(id, target);
+      if (ok && wasFlagged) {
+        // Card #67: the approval could not be honoured without breaking a hard rule. The
+        // request stayed pending on the server and is marked "needs resolving" with the
+        // reason; snap the optimistic status back and keep the sentence.
+        flagged++;
+        flaggedReason ??= why ?? undefined;
+        setLocalRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: preStatus.get(id) ?? "pending", flaggedReason: why ?? null } : r)));
+      } else if (ok) {
         postStatus.set(id, target);
         for (const ar of affected?.requests ?? []) postStatus.set(ar.id, ar.status); // co-approved neighbours
         if (still) for (const s of still) stillScheduled.push({ staffId, date: s.date, code: s.code });
       } else {
         failed++;
-        if (refusal === "locked") locked++; // a covered day is locked-and-unsatisfied
         if (refusal === "busy") { busy++; busyText ??= refusalText; } // waited out behind another save: retry
         setLocalRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: preStatus.get(id) ?? "pending" } : r))); // revert to prior
       }
@@ -3112,7 +3139,9 @@ export function ScheduleGrid({
     }
     if (failed > 0) {
       const verb = target === "approved" ? "approved" : target === "declined" ? "denied" : "reset to pending";
-      setRequestError(requestFailureText({ failed, locked, busy, busyText, verb }));
+      setRequestError(requestFailureText({ failed, busy, busyText, verb }));
+    } else if (flagged > 0) {
+      setRequestError(requestFlaggedText(flagged, flaggedReason));
     }
   }, [selection, activeCol, activeRow, localRequests]);
   const requestApproveRef = useRef(handleRequestSetStatus);

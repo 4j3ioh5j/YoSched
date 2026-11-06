@@ -30,7 +30,11 @@ import { dayCapViolations } from "./max-per-day";
 import { buildDayCapLookup } from "./day-cap";
 
 // A cell the edit forces into place (locked, the engine must honor it).
-export type ScenarioPin = { staffId: string; date: string; shiftTypeId: string };
+// `away` (card #67): the pin is an approved OFF/leave placement. The engine itself
+// pre-places approved leave/off through `assign()` without the `isAvailable` gate
+// (STEP 0a / 0b pass 2), so a standalone pin check must not demand eligibility or
+// availability for it either — only the per-day cap still applies.
+export type ScenarioPin = { staffId: string; date: string; shiftTypeId: string; away?: boolean };
 // A cell the edit emptied (the engine may refill it to keep coverage).
 export type ScenarioFree = { staffId: string; date: string };
 
@@ -94,7 +98,9 @@ function ppRangesOf(input: AutoScheduleInput): PayPeriodRange[] {
 // in `requestBlocksWork`), and (3) availability / working-day rules. Deferred and
 // surfaced SOFTLY instead (via engine warnings/quality, since they need the
 // engine-internal grid state): follow-rule adjacency, per-day caps, rolling max.
-function pinHardLegality(
+// Exported for the approval resolver (card #67), which re-checks every written
+// working cell against the exact grid it is about to save.
+export function pinHardLegality(
   staff: ScheduleStaff,
   st: ScheduleShiftType,
   date: string,
@@ -181,6 +187,9 @@ export function applyScenario(
     const st = stById.get(pin.shiftTypeId);
     if (!staff) { rejected.push({ ...pin, reason: "unknown-staff" }); continue; }
     if (!st) { rejected.push({ ...pin, reason: "unknown-shift" }); continue; }
+    // An approved away (OFF/leave) placement bypasses eligibility/availability like
+    // the engine's own pre-placement does; the per-day cap check below still applies.
+    if (pin.away) continue;
     const legality = pinHardLegality(staff, st, pin.date, ppRanges, baselineAssigned, requests, pendingMode, isAwayShift);
     if (legality !== "ok") rejected.push({ ...pin, reason: legality });
   }
@@ -229,6 +238,8 @@ export function applyScenario(
     const st = stById.get(pin.shiftTypeId)!;
     survivors.push({ staffId: pin.staffId, date: pin.date, shiftTypeId: pin.shiftTypeId, code: st.code, isLocked: true });
   }
+  // (The engine's existingAssignments type has no `away`; pins reach it only as the
+  // locked cells above, so the flag never leaks into the engine input.)
 
   const result = autoSchedule({ ...input, existingAssignments: survivors });
 

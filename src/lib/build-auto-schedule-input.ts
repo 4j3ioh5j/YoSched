@@ -6,6 +6,7 @@
 // returned value is plain JSON-serializable data (dates are "YYYY-MM-DD").
 
 import { prisma } from "@/lib/prisma";
+import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { getPayPeriods } from "@/lib/pay-periods-server";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, type ScheduleRequestData } from "@/lib/schedule-requests";
@@ -19,10 +20,15 @@ import { deriveEquityFactorCodes } from "@/lib/equity-factors";
  * Assemble the engine input for [startDate, endDate], expanded outward to cover
  * any pay period that overlaps the range (so per-PP math sees whole periods).
  */
-export async function buildAutoScheduleInput(startDate: string, endDate: string): Promise<AutoScheduleInput> {
-  const allPayPeriods = await getPayPeriods();
+/** The reads this builder performs: the global client, or an interactive transaction so a caller that
+ *  holds the day locks (request approval, card #67) sees one consistent snapshot under them. */
+export type InputReadClient = PrismaClient | Prisma.TransactionClient;
+export type PayPeriodLike = { startDate: Date; endDate: Date; targetHours: number };
 
-  const overlappingPPs = allPayPeriods.filter((pp) => {
+/** [effectiveStart, effectiveEnd]: the requested range widened to whole overlapping pay periods —
+ *  the range the engine input covers. Exported so a caller can lock exactly that range first. */
+export function coveringRange(payPeriods: readonly PayPeriodLike[], startDate: string, endDate: string): { effectiveStart: string; effectiveEnd: string } {
+  const overlappingPPs = payPeriods.filter((pp) => {
     const ppStart = pp.startDate.toISOString().split("T")[0];
     const ppEnd = pp.endDate.toISOString().split("T")[0];
     return ppEnd >= startDate && ppStart <= endDate;
@@ -40,6 +46,20 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
         return e > max ? e : max;
       }, endDate)
     : endDate;
+  return { effectiveStart, effectiveEnd };
+}
+
+export async function buildAutoScheduleInput(
+  startDate: string,
+  endDate: string,
+  opts: { client?: InputReadClient; payPeriods?: readonly PayPeriodLike[] } = {},
+): Promise<AutoScheduleInput> {
+  // Every table read goes through `db`; the pay periods come from the caller when it already read
+  // them under its own locks (getPayPeriods may regenerate rows in a transaction of its own, so it
+  // is never called inside another transaction).
+  const db = opts.client ?? prisma;
+  const allPayPeriods = opts.payPeriods ?? (await getPayPeriods());
+  const { effectiveStart, effectiveEnd } = coveringRange(allPayPeriods, startDate, endDate);
 
   const [
     staff,
@@ -64,9 +84,9 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
     requiredFollowers,
     autoGenFactors,
   ] = await Promise.all([
-    prisma.staff.findMany({ where: { isActive: true } }),
-    prisma.shiftType.findMany(),
-    prisma.assignment.findMany({
+    db.staff.findMany({ where: { isActive: true } }),
+    db.shiftType.findMany(),
+    db.assignment.findMany({
       where: {
         date: {
           gte: new Date(effectiveStart + "T00:00:00Z"),
@@ -74,38 +94,38 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
         },
       },
     }),
-    prisma.holiday.findMany(),
-    prisma.desirabilityWeight.findMany(),
-    prisma.standingCommitment.findMany(),
-    prisma.staffShiftOverride.findMany(),
-    prisma.staffDayPreference.findMany(),
-    prisma.assignment.findMany({
+    db.holiday.findMany(),
+    db.desirabilityWeight.findMany(),
+    db.standingCommitment.findMany(),
+    db.staffShiftOverride.findMany(),
+    db.staffDayPreference.findMany(),
+    db.assignment.findMany({
       where: {
         date: { lt: new Date(effectiveStart + "T00:00:00Z") },
       },
     }),
-    prisma.staffingRequirement.findMany({ orderBy: [{ shiftTypeId: "asc" }, { dayKey: "asc" }] }),
-    prisma.schedulingPreferences.findFirst(),
-    prisma.staffEligibleShift.findMany(),
-    prisma.availabilityRule.findMany(),
-    prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
-    prisma.shiftFollowRule.findMany(),
-    prisma.shiftEligibilityRule.findMany(),
-    prisma.shiftMinimumTarget.findMany(),
-    prisma.departmentShiftTarget.findMany(),
+    db.staffingRequirement.findMany({ orderBy: [{ shiftTypeId: "asc" }, { dayKey: "asc" }] }),
+    db.schedulingPreferences.findFirst(),
+    db.staffEligibleShift.findMany(),
+    db.availabilityRule.findMany(),
+    db.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
+    db.shiftFollowRule.findMany(),
+    db.shiftEligibilityRule.findMany(),
+    db.shiftMinimumTarget.findMany(),
+    db.departmentShiftTarget.findMany(),
     // Approved + pending requests overlapping the (effective) scheduling window.
     // Overlap = req.startDate <= windowEnd AND req.endDate >= windowStart. We always
     // load pending too; the scheduler's `pendingRequestMode` decides whether pending
     // requests exert force (and at what strength) — in "off" mode they're ignored.
-    prisma.scheduleRequest.findMany({
+    db.scheduleRequest.findMany({
       where: {
         status: { in: ["approved", "pending"] },
         startDate: { lte: new Date(effectiveEnd + "T00:00:00Z") },
         endDate: { gte: new Date(effectiveStart + "T00:00:00Z") },
       },
     }),
-    prisma.requiredFollower.findMany(),
-    prisma.autoGenFactor.findMany({ orderBy: { sortOrder: "asc" } }),
+    db.requiredFollower.findMany(),
+    db.autoGenFactor.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
 
   const payPeriods = allPayPeriods;

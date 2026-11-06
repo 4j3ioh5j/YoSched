@@ -4,7 +4,7 @@ import { getPayPeriods } from "@/lib/pay-periods-server";
 import { SettingsPage } from "./settings-page";
 import { NavHeader } from "../nav-header";
 import { getPageSession } from "@/lib/auth-guard";
-import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, DEFAULT_OFF_STRATEGY_ORDER } from "@/lib/schedule-requests";
+import { parsePendingRequestMode, parseRequestConflictPolicy, parseApprovalConflictPolicy, parseOffStrategyOrder, DEFAULT_OFF_STRATEGY_ORDER } from "@/lib/schedule-requests";
 import { coerceConditions } from "@/lib/print-column-visibility";
 import { parseLiveScope } from "@/lib/live-scope";
 import { parseShiftShareBasis } from "@/lib/shift-share";
@@ -60,6 +60,7 @@ export default async function Settings() {
     maxLeavePerDay: schedulingPrefsRow?.maxLeavePerDay ?? 0,
     pendingRequestMode: parsePendingRequestMode(schedulingPrefsRow?.pendingRequestMode),
     requestConflictPolicy: parseRequestConflictPolicy(schedulingPrefsRow?.requestConflictPolicy),
+    approvalConflictPolicy: parseApprovalConflictPolicy(schedulingPrefsRow?.approvalConflictPolicy),
     defaultOffStrategyOrder: schedulingPrefsRow
       ? parseOffStrategyOrder(schedulingPrefsRow.defaultOffStrategyOrder, leaveShiftIds)
       : [...DEFAULT_OFF_STRATEGY_ORDER],
