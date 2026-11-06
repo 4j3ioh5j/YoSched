@@ -219,9 +219,9 @@ describe("computeFairness", () => {
   describe("equity factors", () => {
     it("produces equityShiftCodes from enabled shift factors", () => {
       const factors: EquityFactor[] = [
-        { factorType: "shift", shiftCode: "OR", weight: 1, enabled: true },
-        { factorType: "shift", shiftCode: "ORC", weight: 1, enabled: false },
-        { factorType: "desirability", shiftCode: null, weight: 1, enabled: true },
+        { factorType: "shift", shiftTypeId: "st-or", shiftCode: "OR", weight: 1, enabled: true },
+        { factorType: "shift", shiftTypeId: "st-orc", shiftCode: "ORC", weight: 1, enabled: false },
+        { factorType: "desirability", shiftTypeId: null, shiftCode: null, weight: 1, enabled: true },
       ];
       const result = computeFairness({
         assignments: [makeAssignment("p1", "2025-05-12", "OR", "st1")],
@@ -237,7 +237,7 @@ describe("computeFairness", () => {
   describe("FTE normalization", () => {
     it("deviations account for part-time FTE", () => {
       const factors: EquityFactor[] = [
-        { factorType: "holiday", shiftCode: null, weight: 1, enabled: true },
+        { factorType: "holiday", shiftTypeId: null, shiftCode: null, weight: 1, enabled: true },
       ];
       const result = computeFairness({
         assignments: [

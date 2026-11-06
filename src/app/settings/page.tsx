@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { deriveEquityFactorCodes } from "@/lib/equity-factors";
 import { getPayPeriods } from "@/lib/pay-periods-server";
 import { SettingsPage } from "./settings-page";
 import { NavHeader } from "../nav-header";
@@ -158,9 +159,10 @@ export default async function Settings() {
           sortOrder: et.sortOrder,
           staffCount: et._count.staff,
         }))}
-        equityFactors={equityFactors.map((f) => ({
+        equityFactors={deriveEquityFactorCodes(equityFactors, shiftTypes).map((f) => ({
           id: f.id,
           factorType: f.factorType,
+          shiftTypeId: f.shiftTypeId,
           shiftCode: f.shiftCode,
           weight: f.weight,
           enabled: f.enabled,

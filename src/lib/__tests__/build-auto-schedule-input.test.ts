@@ -9,6 +9,7 @@ import { describe, it, expect, vi } from "vitest";
 const db = vi.hoisted(() => ({
   shifts: [] as { id: string; code: string }[],
   reqs: [] as { shiftTypeId: string; dayKey: string; minCount: number; preferredCount: number; maxCount: number | null }[],
+  factors: [] as { factorType: string; shiftTypeId: string | null; weight: number; enabled: boolean }[],
 }));
 
 vi.mock("@/lib/pay-periods-server", () => ({ getPayPeriods: async () => [] }));
@@ -38,7 +39,8 @@ vi.mock("@/lib/prisma", () => {
       })),
   };
   const staffingRequirement = { findMany: async () => db.reqs.map((r) => ({ id: `${r.shiftTypeId}-${r.dayKey}`, ...r })) };
-  const prisma = new Proxy({ shiftType, staffingRequirement } as Record<string, unknown>, {
+  const equityFactor = { findMany: async () => db.factors.map((f, i) => ({ id: `f${i}`, sortOrder: i, shiftCode: null, ...f })) };
+  const prisma = new Proxy({ shiftType, staffingRequirement, equityFactor } as Record<string, unknown>, {
     get: (t, k: string) => t[k] ?? empty,
   });
   return { prisma };
@@ -82,6 +84,21 @@ describe("auto-schedule input bundle: staffing requirements carry both keys", ()
       { shiftTypeId: "st-orc", shiftCode: "ORCX", dayKey: "1", minCount: 1, preferredCount: 1, maxCount: 1 },
       { shiftTypeId: "st-card", shiftCode: "CARD", dayKey: "1", minCount: 0, preferredCount: 0, maxCount: 2 },
     ]);
+  });
+
+  it("equity factors carry shiftTypeId AND the shift's CURRENT code (rows hold no code)", async () => {
+    db.shifts = [{ id: "st-orc", code: "ORCX" }, { id: "st-call", code: "CALL" }];
+    db.reqs = [];
+    db.factors = [
+      { factorType: "desirability", shiftTypeId: null, weight: 1, enabled: true },
+      { factorType: "shift", shiftTypeId: "st-orc", weight: 1, enabled: true },
+    ];
+    const input = await buildAutoScheduleInput("2027-01-04", "2027-01-04");
+    expect(input.equityFactors).toEqual([
+      { factorType: "desirability", shiftTypeId: null, shiftCode: null, weight: 1, enabled: true },
+      { factorType: "shift", shiftTypeId: "st-orc", shiftCode: "ORCX", weight: 1, enabled: true },
+    ]);
+    db.factors = [];
   });
 
   it("old client + new bundle: the pre-id-link cap lookup still finds Max 1 for ORC on a Monday", async () => {

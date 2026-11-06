@@ -109,6 +109,7 @@ model ShiftType {
   departmentTargets            DepartmentShiftTarget[]
   requestLeaveShifts           ScheduleRequest[] @relation("requestLeaveShift")
   staffingRequirements         StaffingRequirement[]
+  equityFactors                EquityFactor[]
 
   @@map("shift_types")
 }
@@ -375,13 +376,16 @@ model LoginLog {
 }
 
 model EquityFactor {
-  id         String  @id @default(cuid())
-  factorType String  // "desirability", "holiday", "shift"
-  shiftCode  String? // only for factorType="shift"
-  weight     Float   @default(1.0)
-  enabled    Boolean @default(true)
-  sortOrder  Int     @default(0)
+  id          String     @id @default(cuid())
+  factorType  String     // "desirability", "holiday", "shift"
+  shiftTypeId String?    // only for factorType="shift": the shift this factor counts; a rename of its code changes nothing here
+  shiftType   ShiftType? @relation(fields: [shiftTypeId], references: [id], onDelete: Restrict) // a shift with an equity factor can't be deleted
+  shiftCode   String?    // PHASE A COMPAT ONLY — never read or written by the app; a DB trigger derives it from shiftTypeId (migration 20261106050000). Dropped in Phase B.
+  weight      Float      @default(1.0)
+  enabled     Boolean    @default(true)
+  sortOrder   Int        @default(0)
 
+  @@unique([factorType, shiftTypeId])
   @@unique([factorType, shiftCode])
   @@map("equity_factors")
 }

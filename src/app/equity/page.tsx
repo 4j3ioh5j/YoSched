@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getPayPeriods } from "@/lib/pay-periods-server";
+import { deriveEquityFactorCodes } from "@/lib/equity-factors";
 import type { RawStatsData } from "@/lib/graph/model";
 import { DEFAULT_SPEC, decodeSpec } from "@/lib/graph/spec";
 import { DEFAULT_DATE_FORMAT } from "@/lib/date-format";
@@ -84,12 +85,10 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
       weight: dw.weight,
     })),
     holidays: holidays.map((h) => ({ date: h.date.toISOString().split("T")[0] })),
-    equityFactors: equityFactors.map((f) => ({
-      factorType: f.factorType,
-      shiftCode: f.shiftCode,
-      weight: f.weight,
-      enabled: f.enabled,
-    })),
+    equityFactors: deriveEquityFactorCodes(
+      equityFactors.map((f) => ({ factorType: f.factorType, shiftTypeId: f.shiftTypeId, weight: f.weight, enabled: f.enabled })),
+      shiftTypes,
+    ),
     overrides: overrides.map((o) => ({
       staffId: o.staffId,
       shiftTypeId: o.shiftTypeId,

@@ -79,6 +79,11 @@ function getDow(d: Date | string): number {
 
 export type EquityFactor = {
   factorType: string;
+  // The stored link (equity_factors.shiftTypeId); null for the built-in factors.
+  shiftTypeId: string | null;
+  // The shift's CURRENT code, derived from shift_types at read time (src/lib/equity-factors.ts),
+  // never stored. The fairness math keys per-shift counts by this code, which is consistent
+  // because assignment codes come from the same shift_types snapshot.
   shiftCode: string | null;
   weight: number;
   enabled: boolean;

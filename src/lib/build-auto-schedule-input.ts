@@ -13,6 +13,7 @@ import { effectiveTargetsForStaff, type DepartmentShiftTarget } from "@/lib/depa
 import { parseHoursPolicy } from "@/lib/autogen-hours-policy";
 import { parseShiftShareBasis } from "@/lib/shift-share";
 import { parseHolidayPolicy } from "@/lib/holiday-policy";
+import { deriveEquityFactorCodes } from "@/lib/equity-factors";
 
 /**
  * Assemble the engine input for [startDate, endDate], expanded outward to cover
@@ -342,12 +343,11 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       shiftShareBasis: parseShiftShareBasis(schedulingPrefsRow?.shiftShareBasis),
       holidayPolicy: parseHolidayPolicy(schedulingPrefsRow?.holidayPolicy),
     },
-    equityFactors: equityFactors.map((f) => ({
-      factorType: f.factorType,
-      shiftCode: f.shiftCode,
-      weight: f.weight,
-      enabled: f.enabled,
-    })),
+    // Linked by shift id; the code the fairness pass keys on is the shift's CURRENT one.
+    equityFactors: deriveEquityFactorCodes(
+      equityFactors.map((f) => ({ factorType: f.factorType, shiftTypeId: f.shiftTypeId, weight: f.weight, enabled: f.enabled })),
+      shiftTypes,
+    ),
     followRules: followRules.map((r) => ({
       sourceShiftId: r.sourceShiftId,
       allowedShiftId: r.allowedShiftId,

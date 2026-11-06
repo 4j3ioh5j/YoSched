@@ -133,6 +133,14 @@ export async function DELETE(req: NextRequest) {
       { status: 409 },
     );
   }
+  const equityRows = await prisma.equityFactor.count({ where: { shiftTypeId: id } });
+  if (equityRows > 0) {
+    const st = await prisma.shiftType.findUnique({ where: { id }, select: { code: true } });
+    return NextResponse.json(
+      { error: `Cannot delete: Equity Factors has a row for ${st?.code ?? "this shift"}. Remove it there first.`, reason: "equity-factor-linked" },
+      { status: 409 },
+    );
+  }
 
   await prisma.shiftType.delete({ where: { id } });
   return NextResponse.json({ ok: true });

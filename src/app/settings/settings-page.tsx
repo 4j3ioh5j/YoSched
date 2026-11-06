@@ -5,6 +5,7 @@ import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy } from "@/lib/schedule-requests";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
+import { EQUITY_FACTORS_SAVE_URL, buildEquityFactorsSave, equitySaveErrorMessage } from "@/lib/equity-factors";
 import { SHIFT_SHARE_BASES, type ShiftShareBasis } from "@/lib/shift-share";
 import { HOLIDAY_POLICIES, type HolidayPolicy } from "@/lib/holiday-policy";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
@@ -122,7 +123,8 @@ type EmploymentTypeData = {
 type EquityFactorData = {
   id: string;
   factorType: string;
-  shiftCode: string | null;
+  shiftTypeId: string | null; // the link (factorType "shift" only)
+  shiftCode: string | null; // display only: the shift's current code at page load; the live label comes from the shared shift list
   weight: number;
   enabled: boolean;
   sortOrder: number;
@@ -2439,22 +2441,28 @@ function AutoGenPrioritySection({
 
 // ─── Scheduling Preferences Section ─────────────────────────────────────────
 
+// Equity factors are linked to the shift's ID. `shifts` is the page's shared shift list, so a
+// rename in Shift Types shows in a factor's label at once; saves send ids only.
 function EquityFactorsSection({
   initial,
-  availableShiftCodes,
+  shifts,
 }: {
   initial: EquityFactorData[];
-  availableShiftCodes: string[];
+  shifts: ShiftType[];
 }) {
   const canEdit = useCanEdit();
   const [factors, setFactors] = useState(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
 
+  // Only working shifts can carry an equity factor (off/leave shifts never did).
+  const pickable = shifts.filter((st) => !st.isOffShift && !st.isLeave);
+  const codeOf = (id: string | null) => (id ? shifts.find((st) => st.id === id)?.code ?? "?" : "?");
+
   function factorLabel(f: EquityFactorData): string {
     if (f.factorType === "desirability") return "Shift Desirability";
     if (f.factorType === "holiday") return "Holiday Work";
-    if (f.factorType === "shift") return `${f.shiftCode} Count`;
+    if (f.factorType === "shift") return `${codeOf(f.shiftTypeId)} Count`;
     return f.factorType;
   }
 
@@ -2467,12 +2475,12 @@ function EquityFactorsSection({
   }
 
   function addShiftFactor() {
-    const usedCodes = new Set(factors.filter((f) => f.factorType === "shift").map((f) => f.shiftCode));
-    const available = availableShiftCodes.filter((c) => !usedCodes.has(c));
+    const usedIds = new Set(factors.filter((f) => f.factorType === "shift").map((f) => f.shiftTypeId));
+    const available = pickable.filter((st) => !usedIds.has(st.id));
     if (available.length === 0) return;
     setFactors((prev) => [
       ...prev,
-      { id: "", factorType: "shift", shiftCode: available[0], weight: 1.0, enabled: true, sortOrder: prev.length },
+      { id: "", factorType: "shift", shiftTypeId: available[0].id, shiftCode: available[0].code, weight: 1.0, enabled: true, sortOrder: prev.length },
     ]);
   }
 
@@ -2480,19 +2488,22 @@ function EquityFactorsSection({
     if (factors.some((f) => f.factorType === type)) return;
     setFactors((prev) => [
       ...prev,
-      { id: "", factorType: type, shiftCode: null, weight: 1.0, enabled: true, sortOrder: prev.length },
+      { id: "", factorType: type, shiftTypeId: null, shiftCode: null, weight: 1.0, enabled: true, sortOrder: prev.length },
     ]);
   }
 
   async function save() {
     setStatus("saving");
     try {
-      const res = await fetch("/api/settings/equity-factors", {
+      // Ids only — the code is display state and never travels in a write (a server could
+      // resolve a renamed-and-reused code to the wrong shift). A pre-slice server has no
+      // such route and answers 404: the message asks for a reload, nothing changes.
+      const res = await fetch(EQUITY_FACTORS_SAVE_URL, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ factors: factors.map((f, i) => ({ ...f, sortOrder: i })) }),
+        body: JSON.stringify(buildEquityFactorsSave(factors)),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw new Error(equitySaveErrorMessage(res.status, await res.text()));
       const saved = await res.json();
       setFactors(saved);
       setStatus("saved");
@@ -2504,8 +2515,8 @@ function EquityFactorsSection({
   }
 
   const totalWeight = factors.filter((f) => f.enabled).reduce((s, f) => s + f.weight, 0) || 1;
-  const usedShiftCodes = new Set(factors.filter((f) => f.factorType === "shift").map((f) => f.shiftCode));
-  const canAddShift = availableShiftCodes.some((c) => !usedShiftCodes.has(c));
+  const usedShiftIds = new Set(factors.filter((f) => f.factorType === "shift").map((f) => f.shiftTypeId));
+  const canAddShift = pickable.some((st) => !usedShiftIds.has(st.id));
   const hasDesirability = factors.some((f) => f.factorType === "desirability");
   const hasHoliday = factors.some((f) => f.factorType === "holiday");
 
@@ -2541,12 +2552,15 @@ function EquityFactorsSection({
                 <select
                   disabled={!canEdit}
                   className="bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  value={f.shiftCode ?? ""}
-                  onChange={(e) => updateFactor(idx, { shiftCode: e.target.value })}
+                  value={f.shiftTypeId ?? ""}
+                  onChange={(e) => updateFactor(idx, { shiftTypeId: e.target.value, shiftCode: codeOf(e.target.value) })}
                 >
-                  {availableShiftCodes.map((code) => (
-                    <option key={code} value={code} disabled={usedShiftCodes.has(code) && code !== f.shiftCode}>
-                      {code} Count
+                  {f.shiftTypeId && !pickable.some((st) => st.id === f.shiftTypeId) && (
+                    <option value={f.shiftTypeId}>{codeOf(f.shiftTypeId)} Count</option>
+                  )}
+                  {pickable.map((st) => (
+                    <option key={st.id} value={st.id} disabled={usedShiftIds.has(st.id) && st.id !== f.shiftTypeId}>
+                      {st.code} Count
                     </option>
                   ))}
                 </select>
@@ -4720,7 +4734,7 @@ function StaffColumnOrderSection({ initial, staff }: { initial: StaffOrderCriter
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, shiftCodes: availableShiftCodes, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, staffColumnOrder, orderableStaff, canEdit = true, canEditAutoGenPriority = false }: Props) {
+export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, staffColumnOrder, orderableStaff, canEdit = true, canEditAutoGenPriority = false }: Props) {
   const undo = useUndo();
   // One shift list for the whole page: Shift Types edits it, every other section reads it.
   const [shiftTypes, setShiftTypes] = useState(initialShiftTypes);
@@ -4753,7 +4767,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
           <SchedulingPrefsSection initial={schedulingPrefs} shiftTypes={shiftTypes} />
           <PayPeriodPrefsSection initial={departmentTargets} shiftTypes={shiftTypes} />
           <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
-          <EquityFactorsSection initial={initialEquityFactors} availableShiftCodes={availableShiftCodes} />
+          <EquityFactorsSection initial={initialEquityFactors} shifts={shiftTypes} />
           <AutoGenPrioritySection initial={initialAutoGenFactors} initialProfiles={initialAutoGenProfiles} canEdit={canEditAutoGenPriority} />
         </div>
 

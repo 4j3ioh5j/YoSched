@@ -37,7 +37,8 @@ vi.mock("@/lib/prisma", () => {
     delete: async (a: { where: { id: string } }) => { db.shifts = db.shifts.filter((x) => x.id !== a.where.id); },
   };
   const assignment = { count: async () => db.assignments };
-  const client = { staffingRequirement, shiftType, assignment };
+  const equityFactor = { count: async () => 0 }; // no equity factors in these scenarios (slice 2 has its own test)
+  const client = { staffingRequirement, shiftType, assignment, equityFactor };
   return {
     prisma: {
       ...client,

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getPayPeriods } from "@/lib/pay-periods-server";
 import { computeFairness } from "@/lib/fairness";
+import { deriveEquityFactorCodes } from "@/lib/equity-factors";
 import { ScheduleGrid } from "./schedule-grid";
 import { NavHeader } from "./nav-header";
 import { EditorPresenceBanner } from "./editor-presence-banner";
@@ -140,7 +141,8 @@ export default async function Home() {
       weight: dw.weight,
     })),
     holidays,
-    equityFactors,
+    // Linked by shift id; the code the fairness math keys on is the shift's CURRENT one.
+    equityFactors: deriveEquityFactorCodes(equityFactors, shiftTypes),
   });
 
   const fairnessData: Record<string, { metrics: (typeof fairness.metrics)[0]; deviation: { desirability: number; holidayWork: number; overall: number }; displayDeviation: { desirability: number; holidayWork: number; overall: number } }> = {};

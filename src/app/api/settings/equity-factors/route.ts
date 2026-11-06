@@ -1,43 +1,26 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { deriveEquityFactorCodes } from "@/lib/equity-factors";
+import { STALE_CLIENT } from "@/lib/stale-client";
 
+// Read: rows linked by shift id, with the shift's CURRENT code derived alongside.
 export async function GET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
-  const factors = await prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } });
-  return NextResponse.json(factors);
+  const [factors, shiftTypes] = await Promise.all([
+    prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.shiftType.findMany({ select: { id: true, code: true } }),
+  ]);
+  return NextResponse.json(deriveEquityFactorCodes(factors, shiftTypes));
 }
 
-export async function PUT(req: NextRequest) {
+// Write moved to PUT /api/settings/equity-factors/by-shift-id (ids only). The only
+// callers of THIS path are Settings tabs on a pre-slice bundle, which name shifts by
+// code; a renamed-and-reused code can name the wrong shift, so nothing is written —
+// the tab reloads. (Refusal stub; removed in a later slice.)
+export async function PUT() {
   const { error } = await getSession("settings:edit");
   if (error) return error;
-  const { factors } = await req.json() as {
-    factors: Array<{
-      id?: string;
-      factorType: string;
-      shiftCode?: string | null;
-      weight: number;
-      enabled: boolean;
-      sortOrder: number;
-    }>;
-  };
-
-  const result = await prisma.$transaction(async (tx) => {
-    await tx.equityFactor.deleteMany({});
-    if (factors.length > 0) {
-      await tx.equityFactor.createMany({
-        data: factors.map((f, i) => ({
-          factorType: f.factorType,
-          shiftCode: f.shiftCode ?? null,
-          weight: f.weight,
-          enabled: f.enabled,
-          sortOrder: f.sortOrder ?? i,
-        })),
-      });
-    }
-    return tx.equityFactor.findMany({ orderBy: { sortOrder: "asc" } });
-  });
-
-  return NextResponse.json(result);
+  return NextResponse.json(STALE_CLIENT, { status: 409 });
 }
