@@ -111,10 +111,10 @@ async function main() {
     { initials: "SS",  name: "SS",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 16, specialQualifications: ["cardiac"] },
     { initials: "STa", name: "STa", employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 17 },
     { initials: "KZ",  name: "KZ",  employmentTypeId: fteType.id, ftePercentage: 1.0, sortOrder: 18 },
-    { initials: "CWr", name: "CWr", employmentTypeId: feeBasisType.id, isAutoScheduled: false, sortOrder: 19 },
-    { initials: "NH",  name: "NH",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, sortOrder: 20 },
-    { initials: "PN",  name: "PN",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, sortOrder: 21 },
-    { initials: "HC",  name: "HC",  employmentTypeId: feeBasisType.id, isAutoScheduled: false, sortOrder: 22 },
+    { initials: "CWr", name: "CWr", employmentTypeId: feeBasisType.id, ftePercentage: 0, isAutoScheduled: false, sortOrder: 19 },
+    { initials: "NH",  name: "NH",  employmentTypeId: feeBasisType.id, ftePercentage: 0, isAutoScheduled: false, sortOrder: 20 },
+    { initials: "PN",  name: "PN",  employmentTypeId: feeBasisType.id, ftePercentage: 0, isAutoScheduled: false, sortOrder: 21 },
+    { initials: "HC",  name: "HC",  employmentTypeId: feeBasisType.id, ftePercentage: 0, isAutoScheduled: false, sortOrder: 22 },
   ];
 
   for (const p of staff) {
