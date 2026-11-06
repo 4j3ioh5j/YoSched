@@ -225,4 +225,35 @@ describe("card #73 — conditional rules re-checked on the finished grid", () =>
     expect(r.warnings.some((w) => w.startsWith(`CD ${MON}:`) && w.includes("removed"))).toBe(true);
     expect(r.warnings.some((w) => w.startsWith(`AB ${MON}:`))).toBe(false);
   });
+
+  it("adjacent removals never produce a day off the follow rules forbid (card #74)", () => {
+    // "After X only OR": freeing AB's Mon and Tue would give X→X. The emptied neighbour must be
+    // judged as the X it becomes, so at least one of each adjacent pair is kept.
+    const r = run([staff("ab", { availabilityRules: cond("cd", "not_working") }), staff("cd")], {
+      followRules: [{ sourceShiftId: "st-off", allowedShiftId: "st-or", allowOffShifts: false, mode: "allow" }],
+    });
+    const removed = new Set(r.warnings.filter((w) => w.startsWith("AB ") && w.includes("removed")).map((w) => w.slice(3, 13)));
+    expect(removed.size).toBeGreaterThan(0);
+    for (let i = 1; i < DATES.length; i++) {
+      const consecutive = new Date(DATES[i] + "T00:00:00Z").getTime() - new Date(DATES[i - 1] + "T00:00:00Z").getTime() === 86400000;
+      if (consecutive) expect(removed.has(DATES[i - 1]) && removed.has(DATES[i]), `${DATES[i - 1]}+${DATES[i]}`).toBe(false);
+    }
+  });
+
+  it("the next-day guard: a removal is kept when the following day's shift may not follow a day off", () => {
+    // "After X never ORC" (block): AB holds ORC Tue (staffing) and OR Mon, broken by CD on Mon only.
+    const existing: Existing[] = [{ staffId: "cd", date: DATES[1], shiftTypeId: OFF.id, code: "X", isLocked: true, source: "manual" }];
+    const r = run([staff("ab", { availabilityRules: cond("cd", "not_working") }), staff("cd", { eligibleShiftTypeIds: ["st-or", "st-off"] })], {
+      existingAssignments: existing,
+      staffingRequirements: [{ shiftTypeId: "st-orc", dayKey: "2", minCount: 1 }] as unknown as Input["staffingRequirements"],
+      followRules: [{ sourceShiftId: "st-off", allowedShiftId: "st-orc", allowOffShifts: false, mode: "block" }],
+    });
+    const g = finalGrid(r, existing);
+    expect(g.get(`ab:${DATES[1]}`)).toBe("ORC");
+    if (working(g, "cd", MON)) {
+      expect(g.get(`ab:${MON}`)).toBe("OR");
+      expect(r.warnings.some((w) => w.startsWith(`AB ${MON}: OR breaks`) && w.includes("next day's shift"))).toBe(true);
+    }
+    expect(working(g, "cd", MON)).toBe(true);
+  });
 });

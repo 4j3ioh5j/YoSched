@@ -2717,11 +2717,15 @@ export function autoSchedule({
       if (followerBySource.has(cell.shiftTypeId)) return "it has a required follower";
       if (st.weekendPaired && (isWeekend(date) || (st.holidayWeekendPaired && holidaySet.has(date)))) return "weekend pair";
       if (offShift) {
-        const prev = getCell(staffId, prevDate(date));
-        if (prev && !isShiftAllowedAfter(followMap, prev.shiftTypeId, offShift.id, true)) return "a day off is not allowed after the day before";
-        const next = getCell(staffId, nextDate(date));
-        const nextSt = next ? stById.get(next.shiftTypeId) : undefined;
-        if (next && nextSt && !isShiftAllowedAfter(followMap, offShift.id, next.shiftTypeId, nextSt.isOffShift)) return "the next day's shift is not allowed after a day off";
+        // A neighbour as it will END: an empty in-window day (never filled, or freed by an
+        // earlier removal) becomes X in STEP 4, so judge it as X (card #74: two adjacent
+        // removals must not produce a forbidden X→X). Out-of-window and unknown days: no check.
+        const endingAs = (d: string): string | null => grid.get(`${staffId}:${d}`)?.shiftTypeId ?? (dateSet.has(d) ? offShift.id : null);
+        const prev = endingAs(prevDate(date));
+        if (prev && !isShiftAllowedAfter(followMap, prev, offShift.id, true)) return "a day off is not allowed after the day before";
+        const next = endingAs(nextDate(date));
+        const nextSt = next ? stById.get(next) : undefined;
+        if (next && nextSt && !isShiftAllowedAfter(followMap, offShift.id, next, nextSt.isOffShift)) return "the next day's shift is not allowed after a day off";
       }
       return null;
     };
