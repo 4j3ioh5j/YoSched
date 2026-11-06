@@ -6,6 +6,7 @@ import { useEscape } from "@/lib/use-escape";
 import { staffLoginStatusFromClient, type StaffLoginStatus } from "@/lib/staff-login-status";
 import { loginOptionsForStaff } from "@/lib/staff-login-link";
 import { initSavedActive, applySavedActive, canLinkLogin, type SavedActiveEvent } from "@/lib/staff-saved-active";
+import { SavedRows } from "@/lib/staff-saved-rows";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen, standingToWhen } from "@/lib/recurrence";
 import { RecurrencePicker } from "./recurrence-picker";
 import { FrequencyPicker } from "./frequency-picker";
@@ -936,6 +937,11 @@ function StandingCommitmentsEditor({
 
 export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff: initial, employmentTypes, allShiftTypes }: Props) {
   const [staff, setStaff] = useState(initial);
+  // Card #25: the last SAVED version of each row (not the page-load props, not the draft).
+  // Cancel and the failure/Undo paths restore from here, so a save earlier in the same visit
+  // is what Cancel goes back to. Read only in handlers, so a ref (no re-render needed).
+  const savedRows = useRef(new SavedRows<Staff>(initial));
+  const remember = (p: Staff) => savedRows.current.remember(p);
   // Live login list (users:edit only). Badges derive from it so a link change in the edit
   // window shows at once and isn't undone by the staff Cancel/Undo (which restore rows).
   const [logins, setLogins] = useState<LoginRow[]>(initialLogins);
@@ -1028,14 +1034,14 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
 
   const cancelEdit = useCallback(() => {
     if (!editingId) return;
-    const orig = initial.find((p) => p.id === editingId);
+    const orig = savedRows.current.get(editingId);
     if (orig) setStaff((prev) => prev.map((p) => p.id === editingId ? orig : p));
     setEditingId(null);
-  }, [editingId, initial]);
+  }, [editingId]);
   useEscape(cancelEdit);
 
   async function saveStaff(member: Staff) {
-    const prev = initial.find((p) => p.id === member.id) ?? staff.find((p) => p.id === member.id);
+    const prev = savedRows.current.get(member.id) ?? staff.find((p) => p.id === member.id);
     setSaving(true);
     try {
       const res = await fetch("/api/staff", {
@@ -1048,17 +1054,20 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
         return;
       }
       setEditingId(null);
+      remember(member);
       markSaved({ kind: "saved", id: member.id, isActive: member.isActive });
       if (prev?.isActive && !member.isActive) detachLocal(member.id);
       if (prev) {
         pushUndo({
           label: `Updated ${member.initials}`,
           execute: async () => {
-            await fetch("/api/staff", {
+            const res = await fetch("/api/staff", {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(prev),
-            });
+            }).catch(() => null);
+            if (!res?.ok) return; // refused: nothing changed on the server, so nothing changes here
+            remember(prev);
             setStaff((cur) => cur.map((p) => p.id === prev.id ? prev : p));
             markSaved({ kind: "saved", id: prev.id, isActive: prev.isActive });
           },
@@ -1070,7 +1079,7 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
   }
 
   async function deleteStaff(id: string) {
-    const member = staff.find((p) => p.id === id);
+    const member = savedRows.current.get(id) ?? staff.find((p) => p.id === id);
     if (!member) return;
     if (!confirm(`Remove ${member.initials}? If they have assignments, they'll be deactivated instead.`)) return;
 
@@ -1086,8 +1095,10 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
       detachLocal(id);
       markSaved(result.deactivated ? { kind: "deactivated", id } : { kind: "removed", id });
       if (result.deactivated) {
-        setStaff((prev) => prev.map((p) => p.id === id ? { ...p, isActive: false } : p));
+        remember({ ...member, isActive: false });
+        setStaff((prev) => prev.map((p) => p.id === id ? { ...member, isActive: false } : p));
       } else {
+        savedRows.current.forget(id);
         setStaff((prev) => prev.filter((p) => p.id !== id));
       }
       setEditingId(null);
@@ -1096,20 +1107,24 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
         label: result.deactivated ? `Deactivated ${member.initials}` : `Removed ${member.initials}`,
         execute: async () => {
           if (result.deactivated) {
-            await fetch("/api/staff", {
+            const res = await fetch("/api/staff", {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ ...member, isActive: true }),
-            });
-            setStaff((cur) => cur.map((p) => p.id === id ? { ...p, isActive: true } : p));
+            }).catch(() => null);
+            if (!res?.ok) return;
+            remember({ ...member, isActive: true });
+            setStaff((cur) => cur.map((p) => p.id === id ? { ...member, isActive: true } : p));
             markSaved({ kind: "saved", id, isActive: true });
           } else {
             const res = await fetch("/api/staff", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(member),
-            });
+            }).catch(() => null);
+            if (!res?.ok) return;
             const created = await res.json();
+            remember({ ...member, id: created.id });
             setStaff((cur) => [...cur, { ...member, id: created.id }].sort((a, b) => a.sortOrder - b.sortOrder));
             markSaved({ kind: "added", id: created.id, isActive: !!created.isActive });
           }
@@ -1164,6 +1179,7 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
         isAutoScheduled: created.isAutoScheduled ?? true,
         sortOrder: created.sortOrder,
       };
+      remember(newProv);
       setStaff((prev) => [...prev, newProv]);
       markSaved({ kind: "added", id: created.id, isActive: !!created.isActive });
       setEditingId(created.id);
@@ -1171,11 +1187,13 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
       pushUndo({
         label: "Added new staff member",
         execute: async () => {
-          await fetch("/api/staff", {
+          const res = await fetch("/api/staff", {
             method: "DELETE",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ id: created.id }),
-          });
+          }).catch(() => null);
+          if (!res?.ok) return;
+          savedRows.current.forget(created.id);
           setStaff((cur) => cur.filter((p) => p.id !== created.id));
           markSaved({ kind: "removed", id: created.id });
         },
