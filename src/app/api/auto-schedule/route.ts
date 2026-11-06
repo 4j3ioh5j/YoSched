@@ -5,7 +5,7 @@ import { autoSchedule } from "@/lib/auto-scheduler";
 import { buildAutoScheduleInput } from "@/lib/build-auto-schedule-input";
 import { syncRequestApprovalsAfterCommit, visibleRequestChanges } from "@/lib/request-sync";
 import { owningMonthKey, isValidDateRange } from "@/lib/auto-clear";
-import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, refusalResponse } from "@/lib/day-cap-db";
+import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, refusalResponse, isTxTimeout, busyResponse } from "@/lib/day-cap-db";
 import { dayCapViolations } from "@/lib/max-per-day";
 
 type AppliedRow = { id: string; staffId: string; date: string; shiftTypeId: string; isLocked: boolean; code: string; color: string; source: string; autoMonth: string | null; autoShiftTypeId: string | null };
@@ -187,22 +187,41 @@ export async function DELETE(req: NextRequest) {
   // different month's run (stamped a different autoMonth) is left intact. Legacy
   // rows predate autoMonth (null), so they fall back to the original
   // month-range clear by date.
-  const toDelete = await prisma.assignment.findMany({
-    where: {
-      source: "auto",
-      isLocked: false,
-      OR: [
-        { autoMonth },
-        {
-          autoMonth: null,
-          date: {
-            gte: new Date(startDate + "T00:00:00Z"),
-            lte: new Date(endDate + "T00:00:00Z"),
-          },
+  const clearWhere = {
+    source: "auto",
+    isLocked: false,
+    OR: [
+      { autoMonth },
+      {
+        autoMonth: null,
+        date: {
+          gte: new Date(startDate + "T00:00:00Z"),
+          lte: new Date(endDate + "T00:00:00Z"),
         },
-      ],
-    },
-  });
+      },
+    ],
+  };
+  // Card #70: Clear Auto has no date bound (it follows autoMonth), so find the dates its
+  // rows sit on, lock exactly those dates FIRST in one transaction, then re-read and delete
+  // only rows on locked dates. A row that lands on another date after the pre-read was made
+  // after this clear was asked for, and is left alone.
+  const preDates = (await prisma.assignment.findMany({ where: clearWhere, select: { date: true } }))
+    .map((a) => a.date.toISOString().split("T")[0]);
+  const lockedDates = [...new Set(preDates)];
+  let toDelete: Awaited<ReturnType<typeof prisma.assignment.findMany>> = [];
+  try {
+    toDelete = lockedDates.length === 0 ? [] : await prisma.$transaction(async (tx) => {
+      await lockDayCaps(tx, lockedDates);
+      const rows = await tx.assignment.findMany({
+        where: { AND: [clearWhere, { date: { in: lockedDates.map((d) => new Date(d + "T00:00:00Z")) } }] },
+      });
+      await tx.assignment.deleteMany({ where: { id: { in: rows.map((a) => a.id) } } });
+      return rows;
+    }, DAY_CAP_TX);
+  } catch (e) {
+    if (isTxTimeout(e)) return busyResponse(); // waited out behind another writer: nothing was cleared
+    throw e;
+  }
 
   const removed = toDelete.map((a) => {
     const st = stMap.get(a.shiftTypeId);
@@ -215,10 +234,6 @@ export async function DELETE(req: NextRequest) {
       code: st?.code ?? "?",
       color: st?.color ?? "#6b7280",
     };
-  });
-
-  await prisma.assignment.deleteMany({
-    where: { id: { in: toDelete.map((a) => a.id) } },
   });
 
   const requestChanges = await syncRequestApprovalsAfterCommit(

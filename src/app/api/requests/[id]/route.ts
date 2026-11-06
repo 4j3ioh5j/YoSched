@@ -1,9 +1,12 @@
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@/generated/prisma/client";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, syncRequestApprovalsAfterCommit } from "@/lib/request-sync";
 import { affectedWindow, uniqueCells, visibleWarnings } from "@/lib/request-affected-window";
 import { resolveApproval, ApprovalRetry } from "@/lib/request-approval-resolve";
-import { busyResponse, isTxTimeout } from "@/lib/day-cap-db";
+import { busyResponse, isTxTimeout, lockDayCaps, DAY_CAP_TX } from "@/lib/day-cap-db";
+import { unapproveUnderLocks, RippleStale } from "@/lib/request-unapprove";
+import { parseRipple } from "@/lib/request-approval-outcome";
 import { resolveRequestPlacement, releasableDates, eachDateInclusive, isRequestSatisfied, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -56,15 +59,17 @@ const coveredCells = (r: RequestRow) =>
   eachDateInclusive(ymd(r.startDate), ymd(r.endDate)).map((date) => ({ staffId: r.staffId, date }));
 
 /** Every status transition clears the "needs resolving" flag (card #67). */
-const CLEAR_FLAG = { flaggedAt: null, flaggedReason: null } as const;
+// Card #70: approvalRipple is valid only while the approval that wrote it stands: every other
+// status write clears it (only an explicit Undo, undoApproval: true, ever restores it).
+const CLEAR_FLAG = { flaggedAt: null, flaggedReason: null, approvalRipple: Prisma.DbNull };
 
 /** Dates of `r` whose request-placed shift is safe to clear when r is removed —
  *  excludes dates another still-approved request also resolves to the same shift,
  *  so removing one request never yanks a shift another still relies on. */
-async function datesToRelease(r: RequestRow, placement: string | null, offId: string | null): Promise<Date[]> {
+async function datesToRelease(r: RequestRow, placement: string | null, offId: string | null, db: Prisma.TransactionClient | typeof prisma = prisma): Promise<Date[]> {
   if (!placement) return [];
   const days = coveredCells(r).map((c) => c.date);
-  const others = await prisma.scheduleRequest.findMany({
+  const others = await db.scheduleRequest.findMany({
     where: {
       staffId: r.staffId,
       id: { not: r.id },
@@ -158,15 +163,15 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
           result.userId,
           // The row's status rides in the SAME transaction as the placement: approved
           // with its shifts, or pending + flagged with nothing placed — never one without the other.
-          (tx, outcome) =>
+          (tx, outcome, ripple) =>
             outcome.ok
               ? tx.scheduleRequest.update({
                   where: { id },
-                  data: { status: "approved", autoApproved: true, approvedAt: new Date(), approvedBy: result.userId, ...CLEAR_FLAG },
+                  data: { status: "approved", autoApproved: true, approvedAt: new Date(), approvedBy: result.userId, ...CLEAR_FLAG, approvalRipple: ripple ?? Prisma.DbNull },
                 })
               : tx.scheduleRequest.update({
                   where: { id },
-                  data: { status: "pending", autoApproved: false, approvedAt: null, approvedBy: null, flaggedAt: new Date(), flaggedReason: outcome.reason },
+                  data: { status: "pending", autoApproved: false, approvedAt: null, approvedBy: null, flaggedAt: new Date(), flaggedReason: outcome.reason, approvalRipple: Prisma.DbNull },
                 }),
         );
       } catch (e) {
@@ -199,32 +204,62 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if (status === "declined" || status === "withdrawn" || status === "pending") {
     // Pull back this request's placed shift — but only on dates no OTHER approved
     // request still needs it, and never a cell a scheduler took over (source flips
-    // to "manual") or locked.
-    const release = await datesToRelease(existing, placement, offId);
-    if (release.length > 0) {
-      await prisma.assignment.deleteMany({
-        where: {
-          staffId: existing.staffId,
-          source: "request",
-          isLocked: false,
-          shiftTypeId: placement!,
-          date: { in: release },
+    // to "manual") or locked. Card #70: under the day locks, and on an explicit Undo
+    // (undoApproval: true) the approval's ripple onto other staff is put back too.
+    const undo = body?.undoApproval === true && existing.status === "approved";
+    const ripple = undo ? parseRipple(existing.approvalRipple) : null;
+    let done;
+    try {
+      done = await unapproveUnderLocks({
+        requestId: id,
+        staffId: existing.staffId,
+        coveredDates: cells.map((c) => c.date),
+        ripple,
+        storedRipple: existing.approvalRipple,
+        userId: result.userId,
+        release: async (tx) => {
+          const release = await datesToRelease(existing, placement, offId, tx);
+          if (release.length > 0) {
+            await tx.assignment.deleteMany({
+              where: {
+                staffId: existing.staffId,
+                source: "request",
+                isLocked: false,
+                shiftTypeId: placement!,
+                date: { in: release },
+              },
+            });
+          }
         },
+        setStatus: (tx) =>
+          tx.scheduleRequest.update({
+            where: { id },
+            data: { status, autoApproved: false, approvedAt: null, approvedBy: null, ...CLEAR_FLAG },
+          }),
       });
+    } catch (e) {
+      if (e instanceof RippleStale) {
+        return NextResponse.json({ error: "This approval changed since — reload to see the current schedule.", reason: "stale" }, { status: 409 });
+      }
+      if (isTxTimeout(e) || e instanceof ApprovalRetry) return busyResponse();
+      throw e;
     }
-    const updated = await prisma.scheduleRequest.update({
-      where: { id },
-      data: { status, autoApproved: false, approvedAt: null, approvedBy: null, ...CLEAR_FLAG },
-    });
+    const { updated, ripple: restore } = done;
+    const touched = restore ? uniqueCells([...cells, ...restore.cells]) : cells;
     // Reconcile OTHER requests on those cells, but never re-derive THIS one — the
     // explicit transition is authoritative, even if a satisfying shift remains.
-    await syncRequestApprovals(cells, result.userId, { excludeRequestId: id });
+    await syncRequestApprovalsAfterCommit("PATCH /api/requests/[id] un-approve", touched, result.userId, { excludeRequestId: id });
     // Only PENDING re-approves on the next reconcile, so the "still scheduled"
     // warning only matters there; declined/withdrawn stay put regardless. Gate on
     // placement: a single concrete shift (REQUEST_SHIFT-of-one / LEAVE / OFF) — not
     // NEGATE or multi-option, which place nothing to "leave behind".
     const stillScheduled = status === "pending" && placement != null ? await stillScheduledDays(existing) : [];
-    return NextResponse.json({ ...serialize(updated), affected: await affectedWindow(cells, viewer), stillScheduled });
+    return NextResponse.json({
+      ...serialize(updated),
+      affected: await affectedWindow(touched, viewer),
+      stillScheduled,
+      ...(restore ? { rippleRestored: restore.restored, rippleReason: restore.reason } : {}),
+    });
   }
 
   // fulfilled — record the outcome only; leave assignments and the stamp as-is.
@@ -246,20 +281,28 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const cells = coveredCells(existing);
   const offId = await offShiftId();
   const placement = placementOf(existing, offId);
-  const release = await datesToRelease(existing, placement, offId);
-  if (release.length > 0) {
-    await prisma.assignment.deleteMany({
-      where: {
-        staffId: existing.staffId,
-        source: "request",
-        isLocked: false,
-        shiftTypeId: placement!,
-        date: { in: release },
-      },
-    });
+  // Card #70: lock → re-read → release → delete, in one transaction under the day locks.
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockDayCaps(tx, cells.map((c) => c.date));
+      const release = await datesToRelease(existing, placement, offId, tx);
+      if (release.length > 0) {
+        await tx.assignment.deleteMany({
+          where: {
+            staffId: existing.staffId,
+            source: "request",
+            isLocked: false,
+            shiftTypeId: placement!,
+            date: { in: release },
+          },
+        });
+      }
+      await tx.scheduleRequest.delete({ where: { id } });
+    }, DAY_CAP_TX);
+  } catch (e) {
+    if (isTxTimeout(e)) return busyResponse();
+    throw e;
   }
-
-  await prisma.scheduleRequest.delete({ where: { id } });
   await syncRequestApprovals(cells, result.userId);
   return NextResponse.json({ ok: true });
 }

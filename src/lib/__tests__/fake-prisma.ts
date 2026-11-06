@@ -27,7 +27,7 @@ export type FakeRequest = {
   id: string; staffId: string; startDate: Date; endDate: Date; kind: string; shiftTypeIds: string[];
   leaveShiftTypeId: string | null; offStrategyOrder: string[]; strength: string; status: string; autoApproved: boolean;
   source: string; receivedAt: Date; approvedAt: Date | null; approvedBy: string | null; notes: string | null;
-  flaggedAt: Date | null; flaggedReason: string | null;
+  flaggedAt: Date | null; flaggedReason: string | null; approvalRipple?: unknown;
 };
 export type FakePayPeriod = { id: string; startDate: Date; endDate: Date; targetHours: number };
 export type FakePrefs = Record<string, unknown> & { id: string };

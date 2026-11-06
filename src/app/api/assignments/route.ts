@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovalsAfterCommit, visibleRequestChanges } from "@/lib/request-sync";
 import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { dayCapViolations } from "@/lib/max-per-day";
-import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, WriteRefused, refusalResponse } from "@/lib/day-cap-db";
+import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, WriteRefused, refusalResponse, isTxTimeout, busyResponse } from "@/lib/day-cap-db";
 import { NextRequest, NextResponse } from "next/server";
 
 type AssignmentRow = { id: string; staffId: string; shiftTypeId: string; isLocked: boolean; source: string; autoMonth: string | null; autoShiftTypeId: string | null; updatedAt: Date; shiftType: { code: string; color: string | null } };
@@ -235,19 +235,22 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
 
-  const existing = await prisma.assignment.findUnique({
-    where: { staffId_date: { staffId, date: new Date(date + "T00:00:00Z") } },
-  });
-  if (existing?.isLocked) {
-    return NextResponse.json({ error: "Cannot delete locked assignment" }, { status: 400 });
+  // Card #70: lock → re-read → check → delete, like every other writer of the day, so an
+  // approval Undo's compare-and-set can't race a clear between its read and its write.
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockDayCaps(tx, [date]);
+      const existing = await tx.assignment.findUnique({
+        where: { staffId_date: { staffId, date: new Date(date + "T00:00:00Z") } },
+      });
+      if (existing?.isLocked) throw new WriteRefused({ error: "Cannot delete locked assignment" }, 400);
+      await tx.assignment.deleteMany({ where: { staffId, date: new Date(date + "T00:00:00Z") } });
+    }, DAY_CAP_TX);
+  } catch (e) {
+    if (e instanceof WriteRefused) return NextResponse.json(e.body, { status: e.status });
+    if (isTxTimeout(e)) return busyResponse(); // waited out behind another writer of the day
+    throw e;
   }
-
-  await prisma.assignment.deleteMany({
-    where: {
-      staffId,
-      date: new Date(date + "T00:00:00Z"),
-    },
-  });
 
   const requestChanges = await syncRequestApprovalsAfterCommit("assignments DELETE", [{ staffId, date }], userId);
 

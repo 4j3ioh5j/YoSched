@@ -123,15 +123,18 @@ export function reasonFromRejection(
   }
 }
 
-export function decideApproval(
+// The verifier and the hard-rule helpers it reads, built once per grid. decideApproval
+// uses it for the forward path; verifyRippleRestore (card #70) for an Undo that puts the
+// approval's displaced cells back. `requests` is the request set the grid is judged by;
+// `coveredKeys` are the requester's covered cells (governed by B, never "never-write");
+// `reqId` is the request being approved (null for a restore).
+function buildApprovalVerifier(
   input: AutoScheduleInput,
-  req: ApprovalRequest,
-  placement: string,
-  policy: ApprovalConflictPolicy,
-  context: readonly ContextCell[] = [],
-): ApprovalDecision {
-  const impossible = (reason: string): ApprovalDecision => ({ ok: false, reason });
-
+  requests: ScheduleRequestData[],
+  context: readonly ContextCell[],
+  coveredKeys: ReadonlySet<string>,
+  reqId: string | null,
+) {
   const stById = new Map(input.shiftTypes.map((s) => [s.id, s] as const));
   const staffById = new Map(input.staff.map((s) => [s.id, s] as const));
   const codeOf = (id: string) => stById.get(id)?.code ?? "?";
@@ -148,30 +151,7 @@ export function decideApproval(
   const capOf = buildDayCapLookup(input.staffingRequirements, holidaySet);
   const dateSet = new Set(input.dates);
   const names = { initialsOf, codeOf, capOf };
-
-  const requester = staffById.get(req.staffId);
-  if (!requester) return impossible("the staff member is not on the active roster");
-  const placementSt = stById.get(placement);
-  if (!placementSt) return impossible("the requested shift no longer exists");
   const offShiftId = input.shiftTypes.find((s) => s.isOffShift)?.id ?? null;
-
-  // ── A. the input copy: this request present as a human-approved hard request ──
-  const approvedReq: ScheduleRequestData = {
-    id: req.id,
-    staffId: req.staffId,
-    startDate: req.startDate,
-    endDate: req.endDate,
-    kind: req.kind,
-    shiftTypeIds: req.shiftTypeIds,
-    leaveShiftTypeId: req.leaveShiftTypeId,
-    strength: "hard",
-    status: "approved",
-    autoApproved: false,
-    receivedAt: null,
-    offStrategyOrder: req.offStrategyOrder ?? [],
-  };
-  const requests: ScheduleRequestData[] = [...(input.scheduleRequests ?? []).filter((r) => r.id !== req.id), approvedReq];
-  const copy: AutoScheduleInput = { ...input, scheduleRequests: requests };
   const approved = requests.filter((r) => r.status === "approved");
   const approvedCovering = (staffId: string, date: string, excludeId?: string) =>
     approved.filter((r) => r.staffId === staffId && r.id !== excludeId && coversDate(r, date));
@@ -205,31 +185,6 @@ export function decideApproval(
   }
   const base = new Map<string, Cell>([...contextMap, ...baseline]);
 
-  // ── B. covered days → pins ──
-  const covered = eachDateInclusive(req.startDate, req.endDate);
-  const coveredKeys = new Set(covered.map((d) => keyOf(req.staffId, d)));
-  const pins: ScenarioPin[] = [];
-  const pinnedKeys = new Set<string>();
-  const coveredPinned: string[] = [];
-  for (const d of covered) {
-    if (!dateSet.has(d)) return impossible(`${dayLabel(d)} is outside the scheduling range`);
-    const cell = baseline.get(keyOf(req.staffId, d));
-    if (cell?.isLocked) {
-      if (assignmentSatisfiesRequestOnDate(req, cell.shiftTypeId, isOff)) continue; // untouched
-      return impossible(`${dayLabel(d)} is locked and holds ${codeOf(cell.shiftTypeId)} for ${requester.initials}`);
-    }
-    // V4-1: the requester's OTHER approvals on this day are hard rules too.
-    for (const R of approvedCovering(req.staffId, d, req.id)) {
-      if (!assignmentSatisfiesRequestOnDate(R, placement, isOff)) {
-        return impossible(`${requester.initials} is already approved for ${describeRequest(R, codeOf)} on ${dayLabel(d)}`);
-      }
-    }
-    pins.push({ staffId: req.staffId, date: d, shiftTypeId: placement, away: isAway(placement) });
-    pinnedKeys.add(keyOf(req.staffId, d));
-    coveredPinned.push(d);
-  }
-
-  // ── D. never-write / never-free ──
   const isNW = (staffId: string, date: string): boolean => {
     const k = keyOf(staffId, date);
     if (coveredKeys.has(k)) return false; // the requester's covered keys are governed by B
@@ -237,84 +192,11 @@ export function decideApproval(
     if (cell && (cell.isLocked || cell.source === "manual" || cell.source === "imported" || cell.source === "request")) return true;
     return approvedCovering(staffId, date).length > 0;
   };
-  const isNF = (staffId: string, date: string): boolean => {
-    const k = keyOf(staffId, date);
-    if (pinnedKeys.has(k) || isNW(staffId, date)) return true;
-    const cell = baseline.get(k);
-    return !cell || cell.source !== "auto"; // undefined provenance is not freeable
-  };
-
-  // ── E. required followers of the pinned source ──
   const followerBySource = new Map<string, { follower: ScheduleShiftType; scope: string }>();
   for (const r of input.requiredFollowers ?? []) {
     const f = stById.get(r.followerShiftId);
     if (f) followerBySource.set(r.sourceShiftId, { follower: f, scope: r.scope });
   }
-  const w0 = new Map<string, Cell>(base);
-  for (const p of pins) w0.set(keyOf(p.staffId, p.date), { shiftTypeId: p.shiftTypeId, isLocked: true, source: "request" });
-  const pinSpec = followerBySource.get(placement);
-  if (pinSpec && isWorkingShift(placementSt)) {
-    const F = pinSpec.follower;
-    const workFollower = isWorkingShift(F);
-    const followerDates = new Set<string>();
-    for (const p of pins) {
-      if (pinSpec.scope === "each_day") followerDates.add(shiftDate(p.date, 1));
-      else if (pinSpec.scope === "each_run") {
-        let end = p.date;
-        while (w0.get(keyOf(req.staffId, shiftDate(end, 1)))?.shiftTypeId === placement) end = shiftDate(end, 1);
-        followerDates.add(shiftDate(end, 1));
-      }
-    }
-    for (const fd of [...followerDates].sort()) {
-      const fail = (why: string) => impossible(`a required ${F.code} after ${placementSt.code} could not be placed on ${dayLabel(fd)} (${why})`);
-      const k = keyOf(req.staffId, fd);
-      if (!dateSet.has(fd)) {
-        if (contextMap.get(k)?.shiftTypeId === F.id) continue; // already there, outside the range
-        return fail("outside the scheduling range");
-      }
-      const cell = w0.get(k);
-      if (cell?.shiftTypeId === F.id) {
-        // Already holds the follower: pin the same value so no free can take it.
-        if (!pinnedKeys.has(k)) { pins.push({ staffId: req.staffId, date: fd, shiftTypeId: F.id, away: isAway(F.id) }); pinnedKeys.add(k); }
-        continue;
-      }
-      if (pinnedKeys.has(k)) return fail(`that day is requested as ${codeOf(cell!.shiftTypeId)}`);
-      if (isNW(req.staffId, fd)) return fail(cell ? `that day holds ${codeOf(cell.shiftTypeId)}` : "that day is held by another approved request");
-      if (cell && cell.source !== "auto") return fail(`that day holds ${codeOf(cell.shiftTypeId)}`);
-      if (workFollower && holidaySet.has(fd)) return fail("holiday");
-      if (workFollower && heldDayOff(req.staffId, fd)) return fail("that day is requested off");
-      pins.push({ staffId: req.staffId, date: fd, shiftTypeId: F.id, away: isAway(F.id) });
-      pinnedKeys.add(k);
-    }
-  }
-
-  // ── F0. holders of a pinned shift on a day at its Max ──
-  const frees0 = new Map<string, ScenarioFree>();
-  for (const p of pins) {
-    const cap = capOf(p.shiftTypeId, p.date);
-    if (cap == null) continue;
-    const code = codeOf(p.shiftTypeId);
-    // A Max of 0 means the shift is not allowed that day at all: no holder to move, no policy
-    // can help (review #328: this used to dereference an absent holder).
-    if (cap === 0) return impossible(`${code} is not allowed on ${dayLabel(p.date)}`);
-    const holders = input.existingAssignments.filter((a) => a.date === p.date && a.shiftTypeId === p.shiftTypeId && a.staffId !== p.staffId);
-    if (holders.length < cap) continue;
-    if (policy === "flag") return impossible(`${dayLabel(p.date)} already has its ${cap} ${code}`);
-    const immovable = holders.filter((h) => isNF(h.staffId, h.date));
-    if (immovable.length >= cap) {
-      const h = immovable[0];
-      const cell = baseline.get(keyOf(h.staffId, h.date))!;
-      const why = cell.isLocked
-        ? `locked for ${initialsOf(h.staffId)}`
-        : approvedCovering(h.staffId, h.date).length > 0
-          ? `held by ${initialsOf(h.staffId)} for another approved request`
-          : `set by hand for ${initialsOf(h.staffId)}`;
-      return impossible(`${dayLabel(p.date)} already has its ${cap} ${code} (${why})`);
-    }
-    const freeable = holders.filter((h) => !isNF(h.staffId, h.date));
-    for (const h of freeable) frees0.set(keyOf(h.staffId, h.date), { staffId: h.staffId, date: h.date });
-  }
-
   const followMap = buildFollowRuleMap(input.followRules ?? []);
 
   // ── G. verify the written grid, rule by rule ──
@@ -453,7 +335,7 @@ export function decideApproval(
       const days = eachDateInclusive(R.startDate, R.endDate);
       if (!days.some((d) => writtenKeys.has(keyOf(R.staffId, d)))) continue;
       const cellOn = (G: Map<string, Cell>, d: string) => G.get(keyOf(R.staffId, d))?.shiftTypeId ?? null;
-      if (R.id === req.id) {
+      if (R.id === reqId) {
         for (const d of days) {
           if (!assignmentSatisfiesRequestOnDate(R, cellOn(W, d), isOff)) return `the request would not be honoured on ${dayLabel(d)}`;
         }
@@ -467,6 +349,150 @@ export function decideApproval(
       }
     }
     return null;
+  }
+
+  return {
+    stById, staffById, codeOf, initialsOf, isOff, isAway, isWorkingShift, ppRanges, pendingMode, holidaySet, capOf,
+    dateSet, names, offShiftId, approved, approvedCovering, heldDayOff, baseline, contextMap, knownDates, base, isNW,
+    followerBySource, followMap, verify,
+  };
+}
+
+export function decideApproval(
+  input: AutoScheduleInput,
+  req: ApprovalRequest,
+  placement: string,
+  policy: ApprovalConflictPolicy,
+  context: readonly ContextCell[] = [],
+): ApprovalDecision {
+  const impossible = (reason: string): ApprovalDecision => ({ ok: false, reason });
+
+  // ── A. the input copy: this request present as a human-approved hard request ──
+  const approvedReq: ScheduleRequestData = {
+    id: req.id,
+    staffId: req.staffId,
+    startDate: req.startDate,
+    endDate: req.endDate,
+    kind: req.kind,
+    shiftTypeIds: req.shiftTypeIds,
+    leaveShiftTypeId: req.leaveShiftTypeId,
+    strength: "hard",
+    status: "approved",
+    autoApproved: false,
+    receivedAt: null,
+    offStrategyOrder: req.offStrategyOrder ?? [],
+  };
+  const requests: ScheduleRequestData[] = [...(input.scheduleRequests ?? []).filter((r) => r.id !== req.id), approvedReq];
+  const copy: AutoScheduleInput = { ...input, scheduleRequests: requests };
+  const covered = eachDateInclusive(req.startDate, req.endDate);
+  const coveredKeys = new Set(covered.map((d) => keyOf(req.staffId, d)));
+  const V = buildApprovalVerifier(input, requests, context, coveredKeys, req.id);
+  const {
+    stById, staffById, codeOf, initialsOf, isOff, isAway, isWorkingShift, holidaySet, capOf,
+    dateSet, names, approvedCovering, heldDayOff, baseline, contextMap, base, isNW,
+    followerBySource, verify,
+  } = V;
+
+
+  const requester = staffById.get(req.staffId);
+  if (!requester) return impossible("the staff member is not on the active roster");
+  const placementSt = stById.get(placement);
+  if (!placementSt) return impossible("the requested shift no longer exists");
+
+  // ── B. covered days → pins ──
+  const pins: ScenarioPin[] = [];
+  const pinnedKeys = new Set<string>();
+  const coveredPinned: string[] = [];
+  for (const d of covered) {
+    if (!dateSet.has(d)) return impossible(`${dayLabel(d)} is outside the scheduling range`);
+    const cell = baseline.get(keyOf(req.staffId, d));
+    if (cell?.isLocked) {
+      if (assignmentSatisfiesRequestOnDate(req, cell.shiftTypeId, isOff)) continue; // untouched
+      return impossible(`${dayLabel(d)} is locked and holds ${codeOf(cell.shiftTypeId)} for ${requester.initials}`);
+    }
+    // V4-1: the requester's OTHER approvals on this day are hard rules too.
+    for (const R of approvedCovering(req.staffId, d, req.id)) {
+      if (!assignmentSatisfiesRequestOnDate(R, placement, isOff)) {
+        return impossible(`${requester.initials} is already approved for ${describeRequest(R, codeOf)} on ${dayLabel(d)}`);
+      }
+    }
+    pins.push({ staffId: req.staffId, date: d, shiftTypeId: placement, away: isAway(placement) });
+    pinnedKeys.add(keyOf(req.staffId, d));
+    coveredPinned.push(d);
+  }
+
+  // ── D. never-free (never-write: isNW, in buildApprovalVerifier) ──
+  const isNF = (staffId: string, date: string): boolean => {
+    const k = keyOf(staffId, date);
+    if (pinnedKeys.has(k) || isNW(staffId, date)) return true;
+    const cell = baseline.get(k);
+    return !cell || cell.source !== "auto"; // undefined provenance is not freeable
+  };
+
+  // ── E. required followers of the pinned source ──
+  const w0 = new Map<string, Cell>(base);
+  for (const p of pins) w0.set(keyOf(p.staffId, p.date), { shiftTypeId: p.shiftTypeId, isLocked: true, source: "request" });
+  const pinSpec = followerBySource.get(placement);
+  if (pinSpec && isWorkingShift(placementSt)) {
+    const F = pinSpec.follower;
+    const workFollower = isWorkingShift(F);
+    const followerDates = new Set<string>();
+    for (const p of pins) {
+      if (pinSpec.scope === "each_day") followerDates.add(shiftDate(p.date, 1));
+      else if (pinSpec.scope === "each_run") {
+        let end = p.date;
+        while (w0.get(keyOf(req.staffId, shiftDate(end, 1)))?.shiftTypeId === placement) end = shiftDate(end, 1);
+        followerDates.add(shiftDate(end, 1));
+      }
+    }
+    for (const fd of [...followerDates].sort()) {
+      const fail = (why: string) => impossible(`a required ${F.code} after ${placementSt.code} could not be placed on ${dayLabel(fd)} (${why})`);
+      const k = keyOf(req.staffId, fd);
+      if (!dateSet.has(fd)) {
+        if (contextMap.get(k)?.shiftTypeId === F.id) continue; // already there, outside the range
+        return fail("outside the scheduling range");
+      }
+      const cell = w0.get(k);
+      if (cell?.shiftTypeId === F.id) {
+        // Already holds the follower: pin the same value so no free can take it.
+        if (!pinnedKeys.has(k)) { pins.push({ staffId: req.staffId, date: fd, shiftTypeId: F.id, away: isAway(F.id) }); pinnedKeys.add(k); }
+        continue;
+      }
+      if (pinnedKeys.has(k)) return fail(`that day is requested as ${codeOf(cell!.shiftTypeId)}`);
+      if (isNW(req.staffId, fd)) return fail(cell ? `that day holds ${codeOf(cell.shiftTypeId)}` : "that day is held by another approved request");
+      if (cell && cell.source !== "auto") return fail(`that day holds ${codeOf(cell.shiftTypeId)}`);
+      if (workFollower && holidaySet.has(fd)) return fail("holiday");
+      if (workFollower && heldDayOff(req.staffId, fd)) return fail("that day is requested off");
+      pins.push({ staffId: req.staffId, date: fd, shiftTypeId: F.id, away: isAway(F.id) });
+      pinnedKeys.add(k);
+    }
+  }
+
+  // ── F0. holders of a pinned shift on a day at its Max ──
+  const frees0 = new Map<string, ScenarioFree>();
+  for (const p of pins) {
+    const cap = capOf(p.shiftTypeId, p.date);
+    if (cap == null) continue;
+    const code = codeOf(p.shiftTypeId);
+    // A Max of 0 means the shift is not allowed that day at all: no holder to move, no policy
+    // can help (review #328: this used to dereference an absent holder).
+    if (cap === 0) return impossible(`${code} is not allowed on ${dayLabel(p.date)}`);
+    const holders = input.existingAssignments.filter((a) => a.date === p.date && a.shiftTypeId === p.shiftTypeId && a.staffId !== p.staffId);
+    if (holders.length < cap) continue;
+    if (policy === "flag") return impossible(`${dayLabel(p.date)} already has its ${cap} ${code}`);
+    const immovable = holders.filter((h) => isNF(h.staffId, h.date));
+    if (immovable.length >= cap) {
+      const h = immovable[0];
+      const cell = baseline.get(keyOf(h.staffId, h.date))!;
+      const why = cell.isLocked
+        ? `locked for ${initialsOf(h.staffId)}`
+        : approvedCovering(h.staffId, h.date).length > 0
+          ? `held by ${initialsOf(h.staffId)} for another approved request`
+          : `set by hand for ${initialsOf(h.staffId)}`;
+      return impossible(`${dayLabel(p.date)} already has its ${cap} ${code} (${why})`);
+    }
+    const freeable = holders.filter((h) => !isNF(h.staffId, h.date));
+    for (const h of freeable) frees0.set(keyOf(h.staffId, h.date), { staffId: h.staffId, date: h.date });
   }
 
   // ── F. the ladder ──
@@ -537,4 +563,92 @@ export function decideApproval(
     lastReason = reason;
   }
   return impossible(lastReason ?? `no legal re-arrangement within the ${ceiling >= 2 ? "pay period" : "day"}`);
+}
+
+// ── Card #70: Undo of an approval puts its ripple back ──
+// One displaced cell the approval changed: what it held before (null = empty) and what the
+// approval wrote (null = it deleted the cell). `before` keeps the provenance the restore
+// writes back (source, autoMonth), so a re-created auto cell still belongs to its run.
+export type RippleCell = {
+  staffId: string;
+  date: string;
+  before: { shiftTypeId: string; source: string; autoMonth: string | null } | null;
+  after: { shiftTypeId: string; source: string } | null;
+};
+
+/** Parse a stored approvalRipple. Anything malformed → null (treated as "nothing to restore"). */
+export function parseRipple(raw: unknown): RippleCell[] | null {
+  if (!Array.isArray(raw)) return null;
+  const str = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+  const out: RippleCell[] = [];
+  for (const c of raw) {
+    if (!c || typeof c !== "object") return null;
+    const { staffId, date, before, after } = c as Record<string, unknown>;
+    if (!str(staffId) || !str(date)) return null;
+    let b: RippleCell["before"] = null;
+    if (before !== null) {
+      const o = before as Record<string, unknown> | undefined;
+      if (!o || !str(o.shiftTypeId) || !str(o.source) || !(o.autoMonth === null || str(o.autoMonth))) return null;
+      b = { shiftTypeId: o.shiftTypeId, source: o.source, autoMonth: (o.autoMonth as string | null) };
+    }
+    let a: RippleCell["after"] = null;
+    if (after !== null) {
+      const o = after as Record<string, unknown> | undefined;
+      if (!o || !str(o.shiftTypeId) || !str(o.source)) return null;
+      a = { shiftTypeId: o.shiftTypeId, source: o.source };
+    }
+    out.push({ staffId, date, before: b, after: a });
+  }
+  return out;
+}
+
+/** The compare-and-set: every ripple cell must still hold exactly what the approval wrote —
+ *  same shift AND same source, unlocked (a hand re-paste of the same shift flips the source
+ *  to "manual" and fails here), or still be empty when the approval deleted it. Returns the
+ *  first cell that changed, or null when all still match. */
+export function rippleChangedCell(
+  ripple: readonly RippleCell[],
+  current: ReadonlyMap<string, { shiftTypeId: string; source: string; isLocked: boolean }>,
+): RippleCell | null {
+  for (const c of ripple) {
+    const now = current.get(keyOf(c.staffId, c.date));
+    if (c.after === null) {
+      if (now) return c;
+      continue;
+    }
+    if (!now || now.isLocked || now.shiftTypeId !== c.after.shiftTypeId || now.source !== c.after.source) return c;
+  }
+  return null;
+}
+
+/** Judge the grid an Undo would save — the current grid (the request already released, in
+ *  the same transaction) with every ripple cell put back — by the SAME hard-rule verifier
+ *  the approval used. Returns the plain reason it can't be saved, or null. `input` is built
+ *  under the day locks over a range covering every ripple date; `context` is the pad bands. */
+export function verifyRippleRestore(
+  input: AutoScheduleInput,
+  context: readonly ContextCell[],
+  ripple: readonly RippleCell[],
+  undone: { requestId: string; staffId: string; dates: readonly string[] },
+): string | null {
+  // The grid is judged as it was before the approval: without the request being undone (it
+  // goes back to where it was), and its own covered cells are restored by B's rules, not
+  // refused as "never-write" for holding its own placement.
+  const requests = (input.scheduleRequests ?? []).filter((r) => r.id !== undone.requestId);
+  const coveredKeys = new Set(undone.dates.map((d) => keyOf(undone.staffId, d)));
+  const V = buildApprovalVerifier({ ...input, scheduleRequests: requests }, requests, context, coveredKeys, null);
+  const writes: ApprovalWrite[] = [];
+  const W = new Map<string, Cell>(V.base);
+  for (const c of ripple) {
+    if (!V.dateSet.has(c.date)) return `${dayLabel(c.date)} is outside the scheduling range`;
+    const k = keyOf(c.staffId, c.date);
+    if (c.before === null) {
+      W.delete(k);
+      writes.push({ staffId: c.staffId, date: c.date, shiftTypeId: null, source: "auto" });
+    } else {
+      W.set(k, { shiftTypeId: c.before.shiftTypeId, isLocked: false, source: c.before.source });
+      writes.push({ staffId: c.staffId, date: c.date, shiftTypeId: c.before.shiftTypeId, source: c.before.source as ApprovalWrite["source"] });
+    }
+  }
+  return V.verify(W, writes);
 }

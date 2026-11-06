@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovalsAfterCommit, visibleRequestChanges } from "@/lib/request-sync";
 import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { dayCapViolations } from "@/lib/max-per-day";
-import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, refusalResponse } from "@/lib/day-cap-db";
+import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, refusalResponse, isTxTimeout, busyResponse } from "@/lib/day-cap-db";
 import { NextRequest, NextResponse } from "next/server";
 
 type BulkItem = { staffId: string; date: string };
@@ -115,23 +115,27 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
 
-  const skipped = [];
+  const skipped: { staffId: string; date: string; reason: string }[] = [];
   const clearedCells: BulkItem[] = [];
-  for (const { staffId, date } of cells) {
-    const existing = await prisma.assignment.findUnique({
-      where: { staffId_date: { staffId, date: new Date(date + "T00:00:00Z") } },
-    });
-    if (existing?.isLocked) {
-      skipped.push({ staffId, date, reason: "locked" });
-      continue;
-    }
-    await prisma.assignment.deleteMany({
-      where: {
-        staffId,
-        date: new Date(date + "T00:00:00Z"),
-      },
-    });
-    clearedCells.push({ staffId, date });
+  // Card #70: one transaction, every touched date locked FIRST, then read → check → delete.
+  try {
+    await prisma.$transaction(async (tx) => {
+      await lockDayCaps(tx, cells.map((c) => c.date));
+      for (const { staffId, date } of cells) {
+        const existing = await tx.assignment.findUnique({
+          where: { staffId_date: { staffId, date: new Date(date + "T00:00:00Z") } },
+        });
+        if (existing?.isLocked) {
+          skipped.push({ staffId, date, reason: "locked" });
+          continue;
+        }
+        await tx.assignment.deleteMany({ where: { staffId, date: new Date(date + "T00:00:00Z") } });
+        clearedCells.push({ staffId, date });
+      }
+    }, DAY_CAP_TX);
+  } catch (e) {
+    if (isTxTimeout(e)) return busyResponse(); // waited out behind another writer: nothing was cleared
+    throw e;
   }
 
   const requestChanges = await syncRequestApprovalsAfterCommit("assignments bulk DELETE", clearedCells, userId);

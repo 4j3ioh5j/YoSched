@@ -1,5 +1,6 @@
 "use client";
 
+import { StatusOpRecorder, undoOrder } from "@/lib/request-undo-ops";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } from "@/lib/constraints";
@@ -854,10 +855,9 @@ export function ScheduleGrid({
     // the returned affected window.
     | { kind: "request-status"; item: { id: string; from: RequestStatus; to: RequestStatus } }
     // approve/deny/reset that changed MULTIPLE requests (a multi-cell batch, or a
-    // co-approval cascade that also moved neighbours). Holds the FULL change set
-    // so undo/redo can replay every request's status. Replayed SEQUENTIALLY, each
-    // PATCH to its from/to status, so reconcile converges to the right end state
-    // (releases placements + cascades the un-approval) regardless of order.
+    // co-approval cascade that also moved neighbours). Holds every change IN THE ORDER
+    // IT HAPPENED (card #70): undo replays them newest-first (an approval's co-approvals
+    // before the approval, so its stored inverse meets the grid it left), redo oldest-first.
     | { kind: "request-status-multi"; items: { id: string; from: RequestStatus; to: RequestStatus }[] };
   const undoStack = useRef<UndoEntry[]>([]);
   const redoStack = useRef<UndoEntry[]>([]);
@@ -2030,16 +2030,22 @@ export function ScheduleGrid({
   // drops out of the returned window). Returns ok + http status (409 = busy retry).
   // `flagged` (card #67): the approval could not be honoured without breaking a hard
   // rule — the request stayed PENDING with `flaggedReason`, and nothing was placed.
-  async function patchRequestStatus(id: string, status: RequestStatus): Promise<{ ok: boolean; httpStatus: number; refusal?: RequestRefusal; refusalText?: string; affected?: AffectedDelta; stillScheduled?: { date: string; code: string }[]; flagged?: boolean; flaggedReason?: string | null }> {
+  // `undoApproval` (card #70): this PATCH is the Undo of an approval — the server also puts back
+  // the other staff the approval moved, if nothing changed since and no rule would break.
+  async function patchRequestStatus(id: string, status: RequestStatus, opts: { undoApproval?: boolean } = {}): Promise<{ ok: boolean; httpStatus: number; refusal?: RequestRefusal; refusalText?: string; affected?: AffectedDelta; stillScheduled?: { date: string; code: string }[]; flagged?: boolean; flaggedReason?: string | null; rippleRestored?: boolean; rippleReason?: string | null }> {
     try {
       const res = await fetch(`/api/requests/${id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }),
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(opts.undoApproval ? { status, undoApproval: true } : { status }),
       });
       if (res.ok) {
         const body = await res.json();
         const affected = body?.affected as AffectedDelta | undefined;
         applyRequestDelta(affected);
-        return { ok: true, httpStatus: res.status, affected, stillScheduled: body?.stillScheduled, flagged: body?.flagged === true, flaggedReason: body?.flaggedReason ?? null };
+        return {
+          ok: true, httpStatus: res.status, affected, stillScheduled: body?.stillScheduled, flagged: body?.flagged === true, flaggedReason: body?.flaggedReason ?? null,
+          rippleRestored: typeof body?.rippleRestored === "boolean" ? body.rippleRestored : undefined,
+          rippleReason: typeof body?.rippleReason === "string" ? body.rippleReason : null,
+        };
       }
       // The only 409 left is (card #65) a wait that timed out behind another save — the
       // busy sentence is shown and the client retries.
@@ -2065,17 +2071,25 @@ export function ScheduleGrid({
       // Single, non-cascading change → revert with one PATCH; the affected
       // window restores its placement.
       setLocalRequests((prev) => prev.map((r) => (r.id === entry.item.id ? { ...r, status: entry.item.from } : r)));
-      const { ok } = await patchRequestStatus(entry.item.id, entry.item.from);
-      if (!ok) setRequestError("The request approval could not be reverted during undo.");
+      const r = await patchRequestStatus(entry.item.id, entry.item.from, { undoApproval: entry.item.to === "approved" });
+      if (!r.ok) setRequestError(r.httpStatus === 409 && r.refusalText ? r.refusalText : "The request approval could not be reverted during undo.");
+      else if (r.rippleRestored === false && r.rippleReason) setRequestError(`Undone — ${r.rippleReason}.`);
     } else if (entry.kind === "request-status-multi") {
       // Revert the whole change set: PATCH each request back to its `from` status,
       // SEQUENTIALLY so each reconcile settles before the next (releasing placed
       // shifts and cascading the un-approval converge to the correct end state).
       const fromMap = new Map(entry.items.map((it) => [it.id, it.from]));
       setLocalRequests((prev) => prev.map((r) => (fromMap.has(r.id) ? { ...r, status: fromMap.get(r.id)! } : r)));
+      // Card #70: newest change first, so each approval's ripple is put back onto the grid it left.
       let failed = 0;
-      for (const it of entry.items) { const { ok } = await patchRequestStatus(it.id, it.from); if (!ok) failed++; }
+      const kept: string[] = [];
+      for (const it of undoOrder(entry.items)) {
+        const r = await patchRequestStatus(it.id, it.from, { undoApproval: it.to === "approved" });
+        if (!r.ok) failed++;
+        else if (r.rippleRestored === false && r.rippleReason) kept.push(r.rippleReason);
+      }
       if (failed > 0) setRequestError(`${failed} request(s) couldn't be reverted during undo.`);
+      else if (kept.length > 0) setRequestError(`Undone — ${kept[0]}${kept.length > 1 ? ` (and ${kept.length - 1} more)` : ""}.`);
     }
   }
 
@@ -3094,7 +3108,12 @@ export function ScheduleGrid({
     // set that changes — explicit approvals/denials AND any co-approved/reverted
     // neighbours — so undo reverts the whole cascade, not just the keys pressed.
     const preStatus = new Map(localRequests.map((r) => [r.id, r.status]));
-    const postStatus = new Map(preStatus);
+    // Card #70: every status change IN THE ORDER IT HAPPENED — each explicit change, then the
+    // neighbours its cascade moved — so Undo can replay them newest-first and each approval's
+    // stored inverse meets the grid it left (a co-approval it caused is undone before it).
+    const recorder = new StatusOpRecorder<RequestStatus>(preStatus, "pending");
+    const recordOp = (id: string, to: RequestStatus) => recorder.record(id, to);
+    const ops = recorder.ops;
 
     setLocalRequests((prev) => prev.map((r) => (explicit.includes(r.id) ? { ...r, status: target } : r)));
     let failed = 0, busy = 0, flagged = 0;
@@ -3114,8 +3133,8 @@ export function ScheduleGrid({
         flaggedReason ??= why ?? undefined;
         setLocalRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: preStatus.get(id) ?? "pending", flaggedReason: why ?? null } : r)));
       } else if (ok) {
-        postStatus.set(id, target);
-        for (const ar of affected?.requests ?? []) postStatus.set(ar.id, ar.status); // co-approved neighbours
+        recordOp(id, target);
+        for (const ar of affected?.requests ?? []) recordOp(ar.id, ar.status); // co-approved neighbours, after the change that moved them
         if (still) for (const s of still) stillScheduled.push({ staffId, date: s.date, code: s.code });
       } else {
         failed++;
@@ -3128,11 +3147,8 @@ export function ScheduleGrid({
     // PATCH to reverse; a multi-cell batch or a co-approval cascade that moved
     // neighbours records the FULL change set (request-status-multi) so undo/redo
     // replays every request — sequentially, letting reconcile converge.
-    const changed = [...postStatus.entries()]
-      .filter(([id, st]) => preStatus.get(id) !== st)
-      .map(([id, st]) => ({ id, from: preStatus.get(id) ?? ("pending" as RequestStatus), to: st }));
-    if (changed.length === 1) pushUndoEntry({ kind: "request-status", item: changed[0] });
-    else if (changed.length > 1) pushUndoEntry({ kind: "request-status-multi", items: changed });
+    if (ops.length === 1) pushUndoEntry({ kind: "request-status", item: ops[0] });
+    else if (ops.length > 1) pushUndoEntry({ kind: "request-status-multi", items: ops });
     if (stillScheduled.length > 0) {
       // Anchor the heads-up beside the offending cell (amber, non-blocking) — a top
       // toast was easy to miss. The shift stayed, so the request re-approves unless

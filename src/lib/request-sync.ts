@@ -6,6 +6,7 @@
 // The approve→assign direction (placing an approved request's shift) lives in
 // src/lib/request-approval-resolve.ts since card #67: it re-arranges the grid legally
 // or flags the request, under the same day locks.
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "./prisma";
 import { isRequestSatisfied, reconcileApprovalAction, isRequestVisibleToViewer, type RequestKind } from "./schedule-requests";
 
@@ -137,13 +138,13 @@ export async function syncRequestApprovals(
       updates.push(prisma.scheduleRequest.update({
         where: { id: r.id },
         // A satisfied request is no longer "needs resolving" (card #67): the flag clears with the approval.
-        data: { status: "approved", autoApproved: true, approvedAt: new Date(), approvedBy: approverUserId, flaggedAt: null, flaggedReason: null },
+        data: { status: "approved", autoApproved: true, approvedAt: new Date(), approvedBy: approverUserId, flaggedAt: null, flaggedReason: null, approvalRipple: Prisma.DbNull },
       }));
       changes.push({ id: r.id, staffId: r.staffId, status: "approved", autoApproved: true });
     } else if (action === "revert") {
       updates.push(prisma.scheduleRequest.update({
         where: { id: r.id },
-        data: { status: "pending", autoApproved: false, approvedAt: null, approvedBy: null },
+        data: { status: "pending", autoApproved: false, approvedAt: null, approvedBy: null, approvalRipple: Prisma.DbNull }, // card #70: the Undo record dies with the approval
       }));
       changes.push({ id: r.id, staffId: r.staffId, status: "pending", autoApproved: false });
     }

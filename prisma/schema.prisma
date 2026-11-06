@@ -768,6 +768,9 @@ model ScheduleRequest {
   // every status transition and by the sync auto-approve.
   flaggedAt    DateTime?
   flaggedReason String?
+  // Card #70: the inverse of the approval's ripple onto other cells (RippleCell[] JSON), written
+  // with the approval; an Undo restores it under the day locks. NULL = nothing to put back.
+  approvalRipple Json?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

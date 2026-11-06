@@ -1,3 +1,4 @@
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { buildSelfRequestInput, canWithdrawOwnRequest, describeRequest, validateOffStrategyOrder } from "@/lib/schedule-requests";
@@ -166,7 +167,7 @@ export async function DELETE(req: NextRequest) {
 
   const updated = await prisma.scheduleRequest.update({
     where: { id },
-    data: { status: "withdrawn" },
+    data: { status: "withdrawn", approvalRipple: Prisma.DbNull }, // card #70
   });
   return NextResponse.json(serialize(updated));
 }

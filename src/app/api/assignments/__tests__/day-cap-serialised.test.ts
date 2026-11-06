@@ -14,12 +14,12 @@ vi.mock("@/lib/auth-guard", () => ({
   getSession: async () => ({ error: null, userId: "u1", permissions: ["schedule:edit", "schedule:auto", "requests:view"], staffId: null, session: { user: { id: "u1" } } }),
 }));
 
-import { PUT as putOne, POST as postSwap } from "../route";
-import { PUT as putBulk } from "../bulk/route";
+import { PUT as putOne, POST as postSwap, DELETE as deleteOne } from "../route";
+import { PUT as putBulk, DELETE as deleteBulk } from "../bulk/route";
 import { POST as postDedicated } from "../dedicated-entry/route";
 import { PUT as putPaste } from "../paste/route";
 import { PUT as putRosterPaste } from "../roster-paste/route";
-import { PUT as putAutoAccept } from "../../auto-schedule/route";
+import { PUT as putAutoAccept, DELETE as deleteAuto } from "../../auto-schedule/route";
 
 const req = (body: unknown) => ({ json: async () => body }) as unknown as NextRequest;
 const MON = "2026-11-09"; // a Monday: ORC is capped at 1 on weekday "1"
@@ -306,3 +306,70 @@ describe("PUT /api/auto-schedule (Live Accept)", () => {
     expect(db.rows.find((r) => r.staffId === "s1" && +r.date === +at(TUE))!.shiftTypeId).toBe("free");
   });
 });
+
+// Card #70 (Codex #355 WARNING): the deleters take the day locks too, so an approval Undo's
+// compare-and-set can never race a clear between its read and its write.
+describe("the deleters lock their dates (card #70)", () => {
+  it("DELETE /api/assignments: lock, re-read, delete in one transaction; the locked refusal stays 400", async () => {
+    db.seed([{ staffId: "s1", date: MON, shiftTypeId: "orc" }]);
+    const res = await deleteOne(req({ staffId: "s1", date: MON }));
+    expect(res.status).toBe(200);
+    expectLockedTx(1, [MON], { reads: /assignment\.findUnique/, writes: /assignment\.deleteMany/ });
+    expect(db.holders("orc", MON)).toEqual([]);
+
+    db.seed([{ staffId: "s2", date: MON, shiftTypeId: "orc", isLocked: true }]);
+    const locked = await deleteOne(req({ staffId: "s2", date: MON }));
+    expect(locked.status).toBe(400);
+    expect(await locked.json()).toEqual({ error: "Cannot delete locked assignment" });
+    expect(txLog(2)[0]).toBe(`lock:${MON}`);
+    expect(txLog(2)[txLog(2).length - 1]).toBe("rollback");
+    expect(db.holders("orc", MON)).toEqual(["s2"]);
+  });
+
+  it("DELETE /api/assignments/bulk: every date locked first; locked cells still skipped", async () => {
+    db.seed([{ staffId: "s1", date: TUE, shiftTypeId: "free" }, { staffId: "s2", date: MON, shiftTypeId: "orc", isLocked: true }]);
+    const res = await deleteBulk(req({ cells: [{ staffId: "s1", date: TUE }, { staffId: "s2", date: MON }] }));
+    expect(res.status).toBe(200);
+    expectLockedTx(1, [MON, TUE], { reads: /assignment\.findUnique/, writes: /assignment\.deleteMany/ });
+    expect(await res.json()).toMatchObject({ cleared: 1, skipped: [{ staffId: "s2", date: MON, reason: "locked" }] });
+  });
+
+  it("DELETE /api/auto-schedule (Clear Auto): locks the dates its rows sit on, deletes under them, keeps autoMonth scoping", async () => {
+    db.seed([
+      { staffId: "s1", date: MON, shiftTypeId: "orc", source: "auto" },
+      { staffId: "s2", date: TUE, shiftTypeId: "free", source: "manual" },
+    ]);
+    db.rows[0].autoMonth = "2026-11";
+    const res = await deleteAuto(req({ startDate: "2026-11-01", endDate: "2026-11-30" }));
+    expect(res.status).toBe(200);
+    const log = txLog(1);
+    expect(log[0]).toBe(`lock:${MON}`);
+    expect(log.indexOf("assignment.findMany")).toBeGreaterThan(0);
+    expect(log).toContain("assignment.deleteMany");
+    expect(log[log.length - 1]).toBe("commit");
+    expect(db.rows.map((r) => r.staffId)).toEqual(["s2"]); // the manual row stays
+    expect((await res.json()).removed).toHaveLength(1);
+  });
+
+  it("each deleter answers a timed-out lock wait with the 409 busy, not a 500, and clears nothing (Codex #361 WARNING)", async () => {
+    const BUSY = { error: "Another edit on that day is still saving — try again", reason: "busy" };
+    db.seed([
+      { staffId: "s1", date: MON, shiftTypeId: "orc", source: "auto" },
+      { staffId: "s2", date: TUE, shiftTypeId: "free" },
+    ]);
+    db.rows[0].autoMonth = "2026-11";
+    const calls = [
+      () => deleteOne(req({ staffId: "s2", date: TUE })),
+      () => deleteBulk(req({ cells: [{ staffId: "s2", date: TUE }] })),
+      () => deleteAuto(req({ startDate: "2026-11-01", endDate: "2026-11-30" })),
+    ];
+    for (const call of calls) {
+      db.failTxWith = Object.assign(new Error("Transaction already closed"), { code: "P2028" });
+      const res = await call();
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual(BUSY);
+      expect(db.rows).toHaveLength(2);
+    }
+  });
+});
+

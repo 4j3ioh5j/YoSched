@@ -5,7 +5,7 @@ import { affectedWindow, uniqueCells, visibleWarnings } from "@/lib/request-affe
 import { resolveApproval, ApprovalRetry } from "@/lib/request-approval-resolve";
 import { busyResponse, isTxTimeout } from "@/lib/day-cap-db";
 import { resolveRequestPlacement, eachDateInclusive, validateRestoreInput, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -85,9 +85,9 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         },
         placement,
         result.userId,
-        (tx, outcome) =>
+        (tx, outcome, ripple) =>
           outcome.ok
-            ? tx.scheduleRequest.create({ data: rowData(true) })
+            ? tx.scheduleRequest.create({ data: { ...rowData(true), approvalRipple: ripple ?? Prisma.DbNull } })
             : tx.scheduleRequest.create({ data: { ...rowData(false), flaggedAt: new Date(), flaggedReason: outcome.reason } }),
       );
     } catch (e) {
