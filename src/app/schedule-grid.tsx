@@ -1914,6 +1914,8 @@ export function ScheduleGrid({
       if ((err as RejectionError)?.dayFull) {
         const anchor = addStaffIds[0] ?? removalIds[0];
         showRejectAt([{ staffId: anchor, date, shiftTypeId, reason: "day-full" }], (err as RejectionError).serverText);
+      } else if ((err as RejectionError)?.busy) {
+        setPasteToast((err as Error).message);
       } else {
         window.alert(`Couldn't update ${st.code} on ${dayLabel} — no changes made.`);
       }
@@ -2672,6 +2674,8 @@ export function ScheduleGrid({
       });
       if ((err as RejectionError)?.dayFull) {
         showRejectAt(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId: st.id, reason: "day-full" as const })), (err as RejectionError).serverText);
+      } else if ((err as RejectionError)?.busy) {
+        setPasteToast((err as Error).message);
       }
     }
     setSaving(null);
@@ -2792,6 +2796,8 @@ export function ScheduleGrid({
       });
       if ((err as RejectionError)?.dayFull) {
         showRejectAt(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId, reason: "day-full" as const })), (err as RejectionError).serverText);
+      } else if ((err as RejectionError)?.busy) {
+        setPasteToast((err as Error).message);
       }
     } finally {
       setSaving(null);
@@ -3244,6 +3250,15 @@ export function ScheduleGrid({
           return next;
         });
         showRejectAt([{ staffId: toStaffId, date: toDate, shiftTypeId: fromA.shiftTypeId, reason: "day-full" }], (err as RejectionError).serverText);
+      } else if ((err as RejectionError)?.busy) {
+        // Nothing moved on the server: put both cells back and say so, no reload.
+        setLocalAssignments((prev) => {
+          const next = prev.filter((a) => !(a.staffId === fromStaffId && a.date === fromDate) && !(a.staffId === toStaffId && a.date === toDate));
+          next.push(fromA);
+          if (toA) next.push(toA);
+          return next;
+        });
+        setPasteToast((err as Error).message);
       } else {
         window.location.reload();
       }
@@ -3415,6 +3430,13 @@ export function ScheduleGrid({
           ).map((r) => ({ staffId: r.staffId, date: r.date, shiftTypeId: r.shiftTypeId, reason: "day-full" as const }));
           setLiveReject(cells);
           showRejectAt(cells, typeof body.error === "string" && body.error.length > 0 ? body.error : undefined);
+          keepLive = true;
+          return;
+        }
+        if (body?.reason === "busy") {
+          // The server gave up waiting for another save on one of these days: nothing
+          // was written. Keep the sandbox exactly as it is and let the user accept again.
+          setPasteToast(typeof body.error === "string" && body.error.length > 0 ? body.error : "Another edit is still saving — try again");
           keepLive = true;
           return;
         }

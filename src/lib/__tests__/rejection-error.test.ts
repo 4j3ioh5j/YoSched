@@ -31,6 +31,18 @@ describe("rejectionError", () => {
     expect(bare.dayFull).toBe(true);
     expect(bare.serverText).toBeUndefined();
   });
+
+  it("flags a timed-out wait (reason busy) as a retry, not a cap rejection", async () => {
+    // Card #65: the server gave up waiting on another save for the same day. The grid
+    // shows the sentence and keeps its state (no reload, no Live cancel).
+    const busy = await rejectionError(resp(409, { error: "Another edit on that day is still saving — try again", reason: "busy" }));
+    expect(busy.busy).toBe(true);
+    expect(busy.dayFull).toBe(false);
+    expect(busy.serverText).toBeUndefined();
+    expect(busy.message).toBe("Another edit on that day is still saving — try again");
+    const full = await rejectionError(resp(409, { error: "x", reason: "day-full" }));
+    expect(full.busy).toBe(false);
+  });
 });
 
 describe("dayFullPopoverText", () => {

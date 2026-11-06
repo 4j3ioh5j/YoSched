@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, placeApprovedRequestShift } from "@/lib/request-sync";
 import { resolveUpdaterNames } from "@/lib/assignment-attribution";
+import { busyResponse, isTxTimeout } from "@/lib/day-cap-db";
 import { resolveRequestPlacement, releasableDates, eachDateInclusive, isRequestSatisfied, type RequestKind } from "@/lib/schedule-requests";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -189,7 +190,15 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       // resolves the lock; the grid keeps surfacing it as an unmet request.
       // (Shared with /restore via placeApprovedRequestShift so the lock rule and
       // placement are identical in both.)
-      const { blocked } = await placeApprovedRequestShift({ ...reqShape(existing), staffId: existing.staffId }, placement);
+      let blocked: string[];
+      try {
+        ({ blocked } = await placeApprovedRequestShift({ ...reqShape(existing), staffId: existing.staffId }, placement));
+      } catch (e) {
+        // The placement waited on another writer of those days for longer than the
+        // transaction allows: nothing was placed, the request is still pending.
+        if (isTxTimeout(e)) return busyResponse();
+        throw e;
+      }
       if (blocked.length > 0) {
         return NextResponse.json(
           {

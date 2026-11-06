@@ -1,9 +1,9 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
+import { syncRequestApprovalsAfterCommit, visibleRequestChanges } from "@/lib/request-sync";
 import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
-import { loadDayCaps } from "@/lib/day-cap-db";
+import { loadDayCaps, lockDayCaps, DAY_CAP_TX, refusalResponse } from "@/lib/day-cap-db";
 
 // Paste into a DEDICATED column (ICU/CARD): set each day's roster for one shift type.
 // The unit is a per-date GROUP { addStaffIds, removeStaffIds }, and the server enforces
@@ -60,70 +60,76 @@ export async function PUT(req: NextRequest) {
   const st = await prisma.shiftType.findUnique({ where: { id: shiftTypeId }, select: { id: true, code: true } });
   if (!st) return NextResponse.json({ error: "Unknown shift type" }, { status: 400 });
   const caps = await loadDayCaps(groups.map((g) => g.date));
-
-  // Fetch current state for every involved cell once.
-  const involved = groups.flatMap((g) =>
-    [...g.addStaffIds, ...g.removeStaffIds].map((staffId) => ({ staffId, date: g.date }))
-  );
-  const existing = involved.length
-    ? await prisma.assignment.findMany({
-        where: { OR: involved.map((c) => ({ staffId: c.staffId, date: asUtcDate(c.date) })) },
-        select: { staffId: true, date: true, shiftTypeId: true, isLocked: true, source: true, autoShiftTypeId: true },
-      })
-    : [];
-  const stateByKey = new Map(existing.map((e) => [`${e.staffId}:${dateKey(e.date)}`, e]));
-
-  // Per-day cap: a dedicated column (ICU/CARD) may be capped at one holder per day.
-  // Compute each date's full CURRENT roster for this shift so we can reject a group
-  // whose resulting roster (current − removes + adds) would exceed that day's cap.
-  const rosterByDate = new Map<string, Set<string>>();
-  if (groups.some((g) => caps.capOf(shiftTypeId, g.date) != null)) {
-    const dates = [...new Set(groups.map((g) => g.date))].map(asUtcDate);
-    const holders = await prisma.assignment.findMany({ where: { date: { in: dates }, shiftTypeId }, select: { staffId: true, date: true } });
-    for (const h of holders) {
-      const k = dateKey(h.date);
-      (rosterByDate.get(k) ?? rosterByDate.set(k, new Set()).get(k)!).add(h.staffId);
-    }
-  }
-
-  // Decide each group against the authoritative current state. A group survives only if
-  // nothing involved is locked and applying it can't clobber a different shift.
-  const survivors: { date: string; adds: string[]; removes: string[] }[] = [];
-  const skippedGroups: { date: string; reason: string }[] = [];
-  for (const g of groups) {
-    const cur = (staffId: string) => stateByKey.get(`${staffId}:${g.date}`);
-    if ([...g.addStaffIds, ...g.removeStaffIds].some((id) => cur(id)?.isLocked)) {
-      skippedGroups.push({ date: g.date, reason: "locked" });
-      continue;
-    }
-    const addConflict = g.addStaffIds.some((id) => { const e = cur(id); return e && e.shiftTypeId !== shiftTypeId; });
-    const removeDrift = g.removeStaffIds.some((id) => { const e = cur(id); return !e || e.shiftTypeId !== shiftTypeId; });
-    if (addConflict || removeDrift) {
-      skippedGroups.push({ date: g.date, reason: "conflict" });
-      continue;
-    }
-    // Per-day cap: would the resulting roster (current − removes + adds) overflow?
-    const cap = caps.capOf(shiftTypeId, g.date);
-    if (cap != null) {
-      const roster = new Set(rosterByDate.get(g.date) ?? []);
-      for (const id of g.removeStaffIds) roster.delete(id);
-      for (const id of g.addStaffIds) roster.add(id);
-      if (roster.size > cap) {
-        skippedGroups.push({ date: g.date, reason: "day-full" });
-        continue;
-      }
-    }
-    survivors.push({ date: g.date, adds: g.addStaffIds, removes: g.removeStaffIds });
-  }
+  const actorName = userId ? (await resolveUpdaterNames([userId])).get(userId) ?? null : null;
 
   const applied: { id: string; staffId: string; date: string; shiftTypeId: string; isLocked: boolean; code: string; color: string; source: string; autoMonth: string | null; autoShiftTypeId: string | null; updatedByName: string | null; updatedAt: string }[] = [];
   const cleared: { staffId: string; date: string }[] = [];
-  const actorName = userId ? (await resolveUpdaterNames([userId])).get(userId) ?? null : null;
+  const skippedGroups: { date: string; reason: string }[] = [];
 
+  // The whole decision + write runs under the pasted dates' advisory locks in one
+  // transaction (src/lib/day-cap-db.ts), so the per-date roster read below is the
+  // truth at the moment of the write. Roster paste keeps its SKIP-PER-GROUP semantics:
+  // an over-cap date is skipped with reason "day-full", never a refusal of the paste.
   // All surviving groups apply together (atomic — one unexpected error rolls back every
   // accepted date, and the client treats route failure as "nothing persisted").
-  if (survivors.length) {
+  try {
     await prisma.$transaction(async (tx) => {
+      await lockDayCaps(tx, groups.map((g) => g.date));
+
+      // Fetch current state for every involved cell once.
+      const involved = groups.flatMap((g) =>
+        [...g.addStaffIds, ...g.removeStaffIds].map((staffId) => ({ staffId, date: g.date }))
+      );
+      const existing = involved.length
+        ? await tx.assignment.findMany({
+            where: { OR: involved.map((c) => ({ staffId: c.staffId, date: asUtcDate(c.date) })) },
+            select: { staffId: true, date: true, shiftTypeId: true, isLocked: true, source: true, autoShiftTypeId: true },
+          })
+        : [];
+      const stateByKey = new Map(existing.map((e) => [`${e.staffId}:${dateKey(e.date)}`, e]));
+
+      // Per-day cap: a dedicated column (ICU/CARD) may be capped at one holder per day.
+      // Compute each date's full CURRENT roster for this shift so we can reject a group
+      // whose resulting roster (current − removes + adds) would exceed that day's cap.
+      const rosterByDate = new Map<string, Set<string>>();
+      if (groups.some((g) => caps.capOf(shiftTypeId, g.date) != null)) {
+        const dates = [...new Set(groups.map((g) => g.date))].map(asUtcDate);
+        const holders = await tx.assignment.findMany({ where: { date: { in: dates }, shiftTypeId }, select: { staffId: true, date: true } });
+        for (const h of holders) {
+          const k = dateKey(h.date);
+          (rosterByDate.get(k) ?? rosterByDate.set(k, new Set()).get(k)!).add(h.staffId);
+        }
+      }
+
+      // Decide each group against the authoritative current state. A group survives only if
+      // nothing involved is locked and applying it can't clobber a different shift.
+      const survivors: { date: string; adds: string[]; removes: string[] }[] = [];
+      for (const g of groups) {
+        const cur = (staffId: string) => stateByKey.get(`${staffId}:${g.date}`);
+        if ([...g.addStaffIds, ...g.removeStaffIds].some((id) => cur(id)?.isLocked)) {
+          skippedGroups.push({ date: g.date, reason: "locked" });
+          continue;
+        }
+        const addConflict = g.addStaffIds.some((id) => { const e = cur(id); return e && e.shiftTypeId !== shiftTypeId; });
+        const removeDrift = g.removeStaffIds.some((id) => { const e = cur(id); return !e || e.shiftTypeId !== shiftTypeId; });
+        if (addConflict || removeDrift) {
+          skippedGroups.push({ date: g.date, reason: "conflict" });
+          continue;
+        }
+        // Per-day cap: would the resulting roster (current − removes + adds) overflow?
+        const cap = caps.capOf(shiftTypeId, g.date);
+        if (cap != null) {
+          const roster = new Set(rosterByDate.get(g.date) ?? []);
+          for (const id of g.removeStaffIds) roster.delete(id);
+          for (const id of g.addStaffIds) roster.add(id);
+          if (roster.size > cap) {
+            skippedGroups.push({ date: g.date, reason: "day-full" });
+            continue;
+          }
+        }
+        survivors.push({ date: g.date, adds: g.addStaffIds, removes: g.removeStaffIds });
+      }
+
       for (const s of survivors) {
         for (const staffId of s.adds) {
           const a = await tx.assignment.upsert({
@@ -141,16 +147,17 @@ export async function PUT(req: NextRequest) {
           cleared.push({ staffId, date: s.date });
         }
       }
-    });
+    }, DAY_CAP_TX);
+  } catch (e) {
+    // Nothing persisted (the transaction rolled back): the arrays filled inside it
+    // must not be reported either.
+    const refused = refusalResponse(e, caps);
+    if (refused) return refused;
+    throw e;
   }
 
   // Request-approval sync over the UNION of applied + cleared. Non-fatal post-commit.
-  let requestChanges: Awaited<ReturnType<typeof syncRequestApprovals>> = [];
-  try {
-    requestChanges = await syncRequestApprovals([...applied.map((a) => ({ staffId: a.staffId, date: a.date })), ...cleared], userId);
-  } catch (err) {
-    console.error("roster-paste: request-approval sync failed after commit (assignments persisted)", err);
-  }
+  const requestChanges = await syncRequestApprovalsAfterCommit("roster-paste", [...applied.map((a) => ({ staffId: a.staffId, date: a.date })), ...cleared], userId);
 
   return NextResponse.json({ applied, cleared, skippedGroups, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }

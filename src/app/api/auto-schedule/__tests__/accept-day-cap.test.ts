@@ -15,7 +15,7 @@ const db = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/auth-guard", () => ({ getSession: async () => ({ error: null, userId: "u", permissions: ["schedule:auto"], staffId: null }) }));
-vi.mock("@/lib/request-sync", () => ({ syncRequestApprovals: async () => [], visibleRequestChanges: () => [] }));
+vi.mock("@/lib/request-sync", () => ({ syncRequestApprovals: async () => [], syncRequestApprovalsAfterCommit: async () => [], visibleRequestChanges: () => [] }));
 vi.mock("@/lib/prisma", () => {
   const key = (staffId: string, date: Date) => `${staffId}:${date.toISOString().slice(0, 10)}`;
   const assignment = {
@@ -41,7 +41,11 @@ vi.mock("@/lib/prisma", () => {
   };
   const staffingRequirement = { findMany: async () => db.caps.filter((c) => c.maxCount != null) };
   const holiday = { findMany: async () => db.holidays.map((d) => ({ date: new Date(d + "T00:00:00Z") })) };
-  return { prisma: { assignment, shiftType, staffingRequirement, holiday } };
+  const client = { assignment, shiftType, staffingRequirement, holiday };
+  // The route now runs its check + writes in one transaction under per-date advisory locks
+  // (card #65); the lock statement is a no-op here. The serialisation itself is tested in
+  // src/app/api/assignments/__tests__/day-cap-serialised.test.ts.
+  return { prisma: { ...client, $transaction: async (fn: (tx: typeof client & { $executeRaw: () => Promise<number> }) => Promise<unknown>) => fn({ ...client, $executeRaw: async () => 1 }) } };
 });
 
 import { PUT as acceptRun } from "../route";

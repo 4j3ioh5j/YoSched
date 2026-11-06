@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { syncRequestApprovals } from "@/lib/request-sync";
+import { syncRequestApprovalsAfterCommit } from "@/lib/request-sync";
+import { lockDayCaps, dateKeysBetween, DAY_CAP_TX, isTxTimeout, busyResponse } from "@/lib/day-cap-db";
 import { NextRequest, NextResponse } from "next/server";
 import { type AssignmentSnapshot, monthDateRange, hashSnapshot, nextVersionNumber, restoreAffectedCells } from "@/lib/versions";
 
@@ -35,6 +36,13 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
 
   try {
     const restored = await prisma.$transaction(async (tx) => {
+      // 0. Lock every date of the month FIRST (src/lib/day-cap-db.ts). The restore
+      //    reads the month for its auto-backup, then deletes and recreates it; without
+      //    the locks a save committed between that read and the delete would be erased
+      //    AND missing from the backup. Under the locks a save either committed before
+      //    (so it is in the backup) or waits and lands on the restored month.
+      await lockDayCaps(tx, dateKeysBetween(start, end));
+
       // 1. Auto-backup the current live month so the pre-restore state is recoverable.
       const liveRows = await tx.assignment.findMany({
         where: { date: { gte: start, lt: end } },
@@ -90,7 +98,7 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
         snapshot.map((s) => ({ staffId: s.staffId, date: s.date })),
       );
       return { version, affected };
-    });
+    }, DAY_CAP_TX);
 
     // Reconcile request approvals against the restored schedule. A restore swaps a
     // whole month of assignments wholesale, so any auto-approved request whose
@@ -98,10 +106,14 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
     // satisfies may auto-approve). Runs AFTER the tx so it reads the committed
     // state. Without this, restores silently strand approvals (approved with no
     // assignment) — exactly what a wrong-month restore did to August's roster.
-    await syncRequestApprovals(restored.affected, userId);
+    // Non-fatal: the month is already restored, so a sync failure must not report
+    // the restore as failed.
+    await syncRequestApprovalsAfterCommit("versions restore", restored.affected, userId);
 
     return NextResponse.json({ version: restored.version });
   } catch (e) {
+    // Waited too long on another writer of this month: nothing was restored.
+    if (isTxTimeout(e)) return busyResponse();
     // Most likely an FK violation: the snapshot references a staff or shift
     // type that has since been deleted. Fail loudly rather than silently drop rows.
     const msg = e instanceof Error ? e.message : "Restore failed";

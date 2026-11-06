@@ -4,6 +4,7 @@
 // true. This is the assign→approve direction; the requests route handles the
 // approve→assign direction. Satisfaction rules live in schedule-requests.ts.
 import { prisma } from "./prisma";
+import { DAY_CAP_TX, lockDayCaps } from "./day-cap-db";
 import { isRequestSatisfied, reconcileApprovalAction, lockedBlockingDates, eachDateInclusive, isRequestVisibleToViewer, type RequestKind } from "./schedule-requests";
 
 type Cell = { staffId: string; date: string }; // date = "YYYY-MM-DD"
@@ -38,33 +39,41 @@ export async function placeApprovedRequestShift(
 ): Promise<{ blocked: string[] }> {
   const at = (date: string) => new Date(date + "T00:00:00Z");
   const dates = eachDateInclusive(req.startDate, req.endDate);
-  const existing = await prisma.assignment.findMany({
-    where: { staffId: req.staffId, date: { in: dates.map(at) } },
-    select: { date: true, shiftTypeId: true, isLocked: true },
-  });
-  const byDate = new Map(existing.map((c) => [ymd(c.date), c]));
   const offSet = new Set(
     (await prisma.shiftType.findMany({ where: { isOffShift: true }, select: { id: true } })).map((s) => s.id)
   );
-  const blocked = lockedBlockingDates(
-    req,
-    (date) => {
-      const c = byDate.get(date);
-      return c ? { shiftTypeId: c.shiftTypeId, isLocked: c.isLocked } : null;
-    },
-    (s) => offSet.has(s)
-  );
-  if (blocked.length > 0) return { blocked };
-
-  for (const date of dates) {
-    if (byDate.get(date)?.isLocked) continue; // already satisfies (else it'd be blocked)
-    await prisma.assignment.upsert({
-      where: { staffId_date: { staffId: req.staffId, date: at(date) } },
-      update: { shiftTypeId: placement, source: "request" },
-      create: { staffId: req.staffId, date: at(date), shiftTypeId: placement, source: "request" },
+  // This is an assignment WRITER like the grid routes, so it joins their lock protocol
+  // (src/lib/day-cap-db.ts): the per-date locks first, then the read the decision rests
+  // on, then the writes, all in one transaction. Without it a request approval could
+  // land between another writer's cap check and its write. It does not itself check
+  // the per-day cap (card #67 is that decision).
+  return prisma.$transaction(async (tx) => {
+    await lockDayCaps(tx, dates);
+    const existing = await tx.assignment.findMany({
+      where: { staffId: req.staffId, date: { in: dates.map(at) } },
+      select: { date: true, shiftTypeId: true, isLocked: true },
     });
-  }
-  return { blocked: [] };
+    const byDate = new Map(existing.map((c) => [ymd(c.date), c]));
+    const blocked = lockedBlockingDates(
+      req,
+      (date) => {
+        const c = byDate.get(date);
+        return c ? { shiftTypeId: c.shiftTypeId, isLocked: c.isLocked } : null;
+      },
+      (s) => offSet.has(s)
+    );
+    if (blocked.length > 0) return { blocked };
+
+    for (const date of dates) {
+      if (byDate.get(date)?.isLocked) continue; // already satisfies (else it'd be blocked)
+      await tx.assignment.upsert({
+        where: { staffId_date: { staffId: req.staffId, date: at(date) } },
+        update: { shiftTypeId: placement, source: "request" },
+        create: { staffId: req.staffId, date: at(date), shiftTypeId: placement, source: "request" },
+      });
+    }
+    return { blocked: [] };
+  }, DAY_CAP_TX);
 }
 
 /**
@@ -98,6 +107,27 @@ export function visibleRequestChanges(
   return changes
     .filter((c) => isRequestVisibleToViewer(c, { canViewAll, viewerStaffId: viewer.staffId }))
     .map((c) => ({ id: c.id, status: c.status, autoApproved: c.autoApproved }));
+}
+
+/**
+ * syncRequestApprovals for a route whose assignment write has ALREADY committed. The
+ * sync is a derived, secondary effect: if it fails, the route must still report the
+ * rows it saved, or the client would revert cells the server kept and the two would
+ * diverge. Logs under `label` and returns no changes; a later write or refresh
+ * re-derives the approval state.
+ */
+export async function syncRequestApprovalsAfterCommit(
+  label: string,
+  affected: Cell[],
+  approverUserId: string | null,
+  opts: { excludeRequestId?: string | null } = {}
+): Promise<RequestStatusChange[]> {
+  try {
+    return await syncRequestApprovals(affected, approverUserId, opts);
+  } catch (err) {
+    console.error(`${label}: request-approval sync failed after commit (assignments persisted)`, err);
+    return [];
+  }
 }
 
 export async function syncRequestApprovals(

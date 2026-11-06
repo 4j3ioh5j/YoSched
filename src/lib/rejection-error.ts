@@ -8,13 +8,20 @@
  * the whole point of a server 409 is that the server's rules or grid differ from the
  * browser's copy, so the browser's copy is the one thing the message must not use.
  */
-export type RejectionError = Error & { dayFull?: boolean; serverText?: string };
+export type RejectionError = Error & { dayFull?: boolean; busy?: boolean; serverText?: string };
 
+/**
+ * `busy` (HTTP 409, body.reason "busy"): the server gave up waiting for another save
+ * on the same day (src/lib/day-cap-db.ts busyResponse). Nothing was written; the grid
+ * reverts the cell and shows the server's retry sentence — it is not a rule violation
+ * and must never reload the page or cancel a Live sandbox.
+ */
 export async function rejectionError(res: Response): Promise<RejectionError> {
   const body = await res.json().catch(() => null);
   const dayFull = body?.reason === "day-full";
+  const busy = body?.reason === "busy";
   const serverText = dayFull && typeof body?.error === "string" && body.error.length > 0 ? body.error : undefined;
-  return Object.assign(new Error(body?.error ?? `request failed: ${res.status}`), { dayFull, serverText });
+  return Object.assign(new Error(body?.error ?? `request failed: ${res.status}`), { dayFull, busy, serverText });
 }
 
 /**

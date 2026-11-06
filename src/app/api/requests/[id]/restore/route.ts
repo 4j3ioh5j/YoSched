@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { syncRequestApprovals, placeApprovedRequestShift } from "@/lib/request-sync";
+import { busyResponse, isTxTimeout } from "@/lib/day-cap-db";
 import { resolveRequestPlacement, eachDateInclusive, validateRestoreInput, type RequestKind } from "@/lib/schedule-requests";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -50,10 +51,18 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   let finalStatus = v.status;
   let blockedDates: string[] = [];
   if (v.status === "approved" && placement) {
-    const { blocked } = await placeApprovedRequestShift(
-      { staffId: v.staffId, kind: v.kind as RequestKind, shiftTypeIds: v.shiftTypeIds, leaveShiftTypeId: v.leaveShiftTypeId, startDate: v.startDate, endDate: v.endDate },
-      placement
-    );
+    let blocked: string[];
+    try {
+      ({ blocked } = await placeApprovedRequestShift(
+        { staffId: v.staffId, kind: v.kind as RequestKind, shiftTypeIds: v.shiftTypeIds, leaveShiftTypeId: v.leaveShiftTypeId, startDate: v.startDate, endDate: v.endDate },
+        placement
+      ));
+    } catch (e) {
+      // Waited too long on another writer of those days: nothing placed, nothing
+      // recreated yet — the client retries the undo.
+      if (isTxTimeout(e)) return busyResponse();
+      throw e;
+    }
     if (blocked.length > 0) { finalStatus = "pending"; blockedDates = blocked; }
   }
   const approved = finalStatus === "approved";

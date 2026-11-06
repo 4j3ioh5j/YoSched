@@ -3,10 +3,12 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { autoSchedule } from "@/lib/auto-scheduler";
 import { buildAutoScheduleInput } from "@/lib/build-auto-schedule-input";
-import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
+import { syncRequestApprovalsAfterCommit, visibleRequestChanges } from "@/lib/request-sync";
 import { owningMonthKey, isValidDateRange } from "@/lib/auto-clear";
-import { loadDayCaps } from "@/lib/day-cap-db";
+import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, refusalResponse } from "@/lib/day-cap-db";
 import { dayCapViolations } from "@/lib/max-per-day";
+
+type AppliedRow = { id: string; staffId: string; date: string; shiftTypeId: string; isLocked: boolean; code: string; color: string; source: string; autoMonth: string | null; autoShiftTypeId: string | null };
 
 const dateKey = (d: Date) => d.toISOString().split("T")[0];
 const isStr = (v: unknown): v is string => typeof v === "string" && v.length > 0;
@@ -58,20 +60,6 @@ export async function PUT(req: NextRequest) {
   // grid can show the same red-border rejection as a manual over-cap edit.
   const dates = [...new Set(suggestions.map((s) => s.date))];
   const caps = await loadDayCaps(dates);
-  const onDates = await prisma.assignment.findMany({
-    where: { date: { in: dates.map((d) => new Date(d + "T00:00:00Z")) } },
-    select: { staffId: true, date: true, shiftTypeId: true, isLocked: true },
-  });
-  const current = onDates.map((a) => ({ staffId: a.staffId, date: dateKey(a.date), shiftTypeId: a.shiftTypeId }));
-  const lockedKeys = new Set(onDates.filter((a) => a.isLocked).map((a) => `${a.staffId}:${dateKey(a.date)}`));
-  const proposed = suggestions
-    .filter((s) => !lockedKeys.has(`${s.staffId}:${s.date}`))
-    .map((s) => ({ staffId: s.staffId, date: s.date, shiftTypeId: s.shiftTypeId }));
-  const violations = dayCapViolations(proposed, current, caps.capOf);
-  if (violations.length > 0) {
-    const v = violations[0];
-    return caps.dayFull(v.shiftTypeId, v.date, { staffId: v.staffId, shiftTypeId: v.shiftTypeId, rejected: violations });
-  }
 
   const shiftTypes = await prisma.shiftType.findMany();
   const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
@@ -85,60 +73,86 @@ export async function PUT(req: NextRequest) {
       ? owningMonthKey(startDate, endDate)
       : null;
 
-  const applied = [];
-  const skipped = [];
-  for (const s of suggestions) {
-    const existing = await prisma.assignment.findUnique({
-      where: {
-        staffId_date: {
-          staffId: s.staffId,
-          date: new Date(s.date + "T00:00:00Z"),
-        },
-      },
-    });
-    if (existing?.isLocked) {
-      skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" });
-      continue;
-    }
-    const result = await prisma.assignment.upsert({
-      where: {
-        staffId_date: {
-          staffId: s.staffId,
-          date: new Date(s.date + "T00:00:00Z"),
-        },
-      },
-      // Reset autoShiftTypeId: this row IS the auto value now, so any earlier
-      // "was X" override capture from a prior manual edit must be cleared.
-      // Record who accepted the run (updatedBy) — not shown for auto cells, but
-      // keeps the audit column populated like every other write path.
-      update: { shiftTypeId: s.shiftTypeId, source: "auto", autoMonth, autoShiftTypeId: null, updatedBy: userId },
-      create: {
-        staffId: s.staffId,
-        date: new Date(s.date + "T00:00:00Z"),
-        shiftTypeId: s.shiftTypeId,
-        source: "auto",
-        autoMonth,
-        updatedBy: userId,
-      },
-    });
-    const st = stMap.get(result.shiftTypeId);
-    applied.push({
-      id: result.id,
-      staffId: result.staffId,
-      date: result.date.toISOString().split("T")[0],
-      shiftTypeId: result.shiftTypeId,
-      isLocked: result.isLocked,
-      code: st?.code ?? "?",
-      color: st?.color ?? "#6b7280",
-      // Carry provenance so the grid's post-Accept local state shows these as
-      // Source: Auto (not the AssignmentData default) without a reload.
-      source: result.source,
-      autoMonth: result.autoMonth,
-      autoShiftTypeId: result.autoShiftTypeId,
-    });
-  }
+  // The cap check and every upsert run in ONE transaction under the touched dates'
+  // advisory locks (src/lib/day-cap-db.ts): a manual edit on one of those dates
+  // waits for the accept to commit instead of slipping in between the check and the
+  // writes. The batch is now atomic — a failure part-way rolls every cell back,
+  // which is what the grid assumes (a non-2xx keeps the Live sandbox, nothing saved).
+  // A whole month can be hundreds of upserts, hence DAY_CAP_TX's 60 s budget.
+  let outcome: { applied: AppliedRow[]; skipped: { staffId: string; date: string; reason: string }[] };
+  try {
+    outcome = await prisma.$transaction(async (tx) => {
+      await lockDayCaps(tx, dates);
+      const onDates = await tx.assignment.findMany({
+        where: { date: { in: dates.map((d) => new Date(d + "T00:00:00Z")) } },
+        select: { staffId: true, date: true, shiftTypeId: true, isLocked: true },
+      });
+      const current = onDates.map((a) => ({ staffId: a.staffId, date: dateKey(a.date), shiftTypeId: a.shiftTypeId }));
+      const lockedKeys = new Set(onDates.filter((a) => a.isLocked).map((a) => `${a.staffId}:${dateKey(a.date)}`));
+      const proposed = suggestions
+        .filter((s) => !lockedKeys.has(`${s.staffId}:${s.date}`))
+        .map((s) => ({ staffId: s.staffId, date: s.date, shiftTypeId: s.shiftTypeId }));
+      const violations = dayCapViolations(proposed, current, caps.capOf);
+      if (violations.length > 0) {
+        const v = violations[0];
+        throw new DayCapRefused(v.shiftTypeId, v.date, { staffId: v.staffId, shiftTypeId: v.shiftTypeId, rejected: violations });
+      }
 
-  const requestChanges = await syncRequestApprovals(
+      const applied: AppliedRow[] = [];
+      const skipped: { staffId: string; date: string; reason: string }[] = [];
+      for (const s of suggestions) {
+        if (lockedKeys.has(`${s.staffId}:${s.date}`)) {
+          skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" });
+          continue;
+        }
+        const result = await tx.assignment.upsert({
+          where: {
+            staffId_date: {
+              staffId: s.staffId,
+              date: new Date(s.date + "T00:00:00Z"),
+            },
+          },
+          // Reset autoShiftTypeId: this row IS the auto value now, so any earlier
+          // "was X" override capture from a prior manual edit must be cleared.
+          // Record who accepted the run (updatedBy) — not shown for auto cells, but
+          // keeps the audit column populated like every other write path.
+          update: { shiftTypeId: s.shiftTypeId, source: "auto", autoMonth, autoShiftTypeId: null, updatedBy: userId },
+          create: {
+            staffId: s.staffId,
+            date: new Date(s.date + "T00:00:00Z"),
+            shiftTypeId: s.shiftTypeId,
+            source: "auto",
+            autoMonth,
+            updatedBy: userId,
+          },
+        });
+        const st = stMap.get(result.shiftTypeId);
+        applied.push({
+          id: result.id,
+          staffId: result.staffId,
+          date: result.date.toISOString().split("T")[0],
+          shiftTypeId: result.shiftTypeId,
+          isLocked: result.isLocked,
+          code: st?.code ?? "?",
+          color: st?.color ?? "#6b7280",
+          // Carry provenance so the grid's post-Accept local state shows these as
+          // Source: Auto (not the AssignmentData default) without a reload.
+          source: result.source,
+          autoMonth: result.autoMonth,
+          autoShiftTypeId: result.autoShiftTypeId,
+        });
+      }
+      return { applied, skipped };
+    }, DAY_CAP_TX);
+  } catch (e) {
+    const refused = refusalResponse(e, caps);
+    if (refused) return refused;
+    throw e;
+  }
+  const { applied, skipped } = outcome;
+
+  const requestChanges = await syncRequestApprovalsAfterCommit(
+    "auto-schedule PUT",
     applied.map((a) => ({ staffId: a.staffId, date: a.date })),
     userId
   );
@@ -207,7 +221,8 @@ export async function DELETE(req: NextRequest) {
     where: { id: { in: toDelete.map((a) => a.id) } },
   });
 
-  const requestChanges = await syncRequestApprovals(
+  const requestChanges = await syncRequestApprovalsAfterCommit(
+    "auto-schedule DELETE",
     removed.map((a) => ({ staffId: a.staffId, date: a.date })),
     userId
   );
