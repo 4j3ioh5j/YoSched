@@ -157,8 +157,6 @@ model Staff {
   ftePercentage         Float?   // card #71 Phase B: no default — every insert writes an explicit value (NULL = inherit the type default)
   // Card #71: NULL = no fixed hours (the default). Only meaningful when the type allowsFixedHours.
   fixedHoursPerPp       Float?
-  fteSplit              Json?    // e.g. {"OR": 0.8, "ICU": 0.2}
-  feeBasisHoursPerShift Float?
   role                  String?
   specialQualifications String[] @default([])
   isTemporary           Boolean  @default(false)
