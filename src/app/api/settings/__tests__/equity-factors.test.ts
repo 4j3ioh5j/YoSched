@@ -47,7 +47,7 @@ vi.mock("@/lib/prisma", () => {
 });
 
 import { PUT as putById } from "../equity-factors/by-shift-id/route";
-import { GET as getFactors, PUT as putLegacy } from "../equity-factors/route";
+import { GET as getFactors } from "../equity-factors/route";
 import { PUT as putShiftType, DELETE as deleteShiftType } from "../shift-types/route";
 
 const req = (body: unknown) => ({ json: async () => body }) as unknown as NextRequest;
@@ -133,17 +133,6 @@ describe("PUT /api/settings/equity-factors/by-shift-id", () => {
   });
 });
 
-describe("PUT /api/settings/equity-factors (legacy path)", () => {
-  it("is a refusal stub: 409 stale-client whatever the body (it never reads one), store untouched", async () => {
-    const before = structuredClone(db.rows);
-    const res = await putLegacy();
-    expect(res.status).toBe(409);
-    expect((await res.json()).reason).toBe("stale-client");
-    expect(db.rows).toEqual(before);
-    // The handler takes no request: a code-shaped and an id-shaped body are refused alike.
-    expect(putLegacy.length).toBe(0);
-  });
-});
 
 describe("DELETE /api/settings/shift-types with an equity factor", () => {
   it("409 equity-factor-linked while a factor references the shift; 200 after it is removed", async () => {

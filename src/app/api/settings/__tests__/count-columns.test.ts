@@ -45,7 +45,7 @@ vi.mock("@/lib/prisma", () => {
 });
 
 import { PUT as putById } from "../count-columns/by-shift-id/route";
-import { GET as getColumns, PUT as putLegacy } from "../count-columns/route";
+import { GET as getColumns } from "../count-columns/route";
 import { PUT as putShiftType, DELETE as deleteShiftType } from "../shift-types/route";
 
 const req = (body: unknown) => ({ json: async () => body }) as unknown as NextRequest;
@@ -129,15 +129,6 @@ describe("PUT /api/settings/count-columns/by-shift-id", () => {
   });
 });
 
-describe("PUT /api/settings/count-columns (legacy path)", () => {
-  it("is a refusal stub: 409 stale-client whatever the body (it never reads one), store untouched", async () => {
-    const before = structuredClone(db.rows);
-    const res = await putLegacy();
-    expect(res.status).toBe(409);
-    expect((await res.json()).reason).toBe("stale-client");
-    expect(db.rows).toEqual(before);
-  });
-});
 
 describe("DELETE /api/settings/shift-types", () => {
   it("409 count-column-linked while a column names the shift; 200 after the column drops it", async () => {

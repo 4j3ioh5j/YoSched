@@ -44,9 +44,9 @@ vi.mock("@/lib/prisma", () => {
 });
 
 import { PUT as putRulesById } from "../print-column-rules/by-shift-id/route";
-import { GET as getRules, PUT as putRulesLegacy } from "../print-column-rules/route";
+import { GET as getRules } from "../print-column-rules/route";
 import { PUT as putAggById } from "../print-aggregate-columns/by-shift-id/route";
-import { GET as getAggs, PUT as putAggLegacy } from "../print-aggregate-columns/route";
+import { GET as getAggs } from "../print-aggregate-columns/route";
 import { PUT as putShiftType, DELETE as deleteShiftType } from "../shift-types/route";
 
 const req = (body: unknown) => ({ json: async () => body }) as unknown as NextRequest;
@@ -165,18 +165,6 @@ describe("PUT /api/settings/print-aggregate-columns/by-shift-id", () => {
   });
 });
 
-describe("legacy PUT paths", () => {
-  it("are refusal stubs: 409 stale-client whatever the body (never read), stores untouched", async () => {
-    const before = { rules: structuredClone(db.rules), aggs: structuredClone(db.aggs) };
-    for (const put of [putRulesLegacy, putAggLegacy]) {
-      const res = await put();
-      expect(res.status).toBe(409);
-      expect((await res.json()).reason).toBe("stale-client");
-    }
-    expect(db.rules).toEqual(before.rules);
-    expect(db.aggs).toEqual(before.aggs);
-  });
-});
 
 describe("DELETE /api/settings/shift-types", () => {
   it("409 print-column-linked while a rule (even via exceptIds) or an aggregate column names the shift; 200 after removal", async () => {
