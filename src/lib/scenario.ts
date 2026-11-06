@@ -150,7 +150,6 @@ export function applyScenario(
   pins: ScenarioPin[],
   frees: ScenarioFree[],
 ): ScenarioOutcome {
-  const offShift = input.shiftTypes.find((s) => s.isOffShift);
   const staffById = new Map(input.staff.map((s) => [s.id, s] as const));
   const stById = new Map(input.shiftTypes.map((s) => [s.id, s] as const));
   const ppRanges = ppRangesOf(input);
@@ -169,8 +168,8 @@ export function applyScenario(
   const baselineAssigned = (staffId: string, date: string): boolean => {
     const a = baseMap.get(keyOf(staffId, date));
     if (!a) return false;
-    if (offShift && a.shiftTypeId === offShift.id) return false;
-    return true;
+    // Card #69: off AND leave are "not working" for conditional availability.
+    return !isAwayShift(a.shiftTypeId);
   };
 
   // Grade the untouched, fully-locked baseline once — the quality-delta reference.

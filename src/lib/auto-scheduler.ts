@@ -829,6 +829,15 @@ export function autoSchedule({
     return true;
   }
 
+  // Card #69: "is this person WORKING that day?", the question conditional
+  // availability rules ask ("AB only when CD is working"). Unlike isAssigned
+  // (is the cell occupied?), an off or leave cell, locked or not, is NOT working.
+  // Same reading as request-approval-outcome's verify and scenario's baseline.
+  function isWorking(staffId: string, date: string): boolean {
+    const cell = grid.get(`${staffId}:${date}`);
+    return !!cell && !isAwayShift(cell.shiftTypeId);
+  }
+
   // `ignoreHardMax` (Slice 2b-2) waives ONLY the hard per-staff rolling-MAX gate so a
   // coverage minimum can be filled by exceeding a hard max when coverage is ranked above
   // hardLimits. Every other gate — eligibility, availability, follow rules, the per-day
@@ -849,7 +858,7 @@ export function autoSchedule({
     if (!st.ignoresWorkingDays) {
       const avail = evaluateAvailability(
         staff.availabilityRules, date, payPeriods,
-        (pid, d) => isAssigned(pid, d)
+        (pid, d) => isWorking(pid, d)
       );
       if (!avail.available) return false;
     }
@@ -914,7 +923,7 @@ export function autoSchedule({
     // isAvailable), so the requestBlocksWork hold wouldn't catch it — check here too.
     // An off-shift follower is fine (the day is meant to be off anyway).
     if (isWorkFollower && heldDayOffOrder(staffId, next)) { warn("staff requested this day off"); return; }
-    const avail = evaluateAvailability(member.availabilityRules, next, payPeriods, (pid, d) => isAssigned(pid, d));
+    const avail = evaluateAvailability(member.availabilityRules, next, payPeriods, (pid, d) => isWorking(pid, d));
     if (!avail.available) { warn("staff unavailable"); return; }
     if (holidaySet.has(next) && isWorkFollower) { warn("holiday"); return; }
     if (dayFull(spec.follower, next)) { warn(`Max for ${spec.follower.code} that day already reached`); return; }
@@ -1459,7 +1468,7 @@ export function autoSchedule({
 
       const avail = evaluateAvailability(
         member.availabilityRules, date, payPeriods,
-        (pid, d) => isAssigned(pid, d)
+        (pid, d) => isWorking(pid, d)
       );
       if (!avail.available) continue;
       if (holidaySet.has(date)) continue;
@@ -2051,7 +2060,7 @@ export function autoSchedule({
       for (const staff of activeStaff) {
         if (targetFor(staff, pp) <= 0) continue;
         if (isAssigned(staff.id, date)) continue;
-        const avail = evaluateAvailability(staff.availabilityRules, date, payPeriods, (pid, d) => isAssigned(pid, d));
+        const avail = evaluateAvailability(staff.availabilityRules, date, payPeriods, (pid, d) => isWorking(pid, d));
         if (!avail.available) continue;
         assign(staff.id, date, holShift, "Holiday entitlement (normally scheduled day)", "holiday", 0.9);
       }
@@ -2416,7 +2425,7 @@ export function autoSchedule({
     if (requestBlocksWork(staff.id, date, st)) return false;
     if (!st.ignoresWorkingDays) {
       const avail = evaluateAvailability(
-        staff.availabilityRules, date, payPeriods, (pid, d) => isAssigned(pid, d)
+        staff.availabilityRules, date, payPeriods, (pid, d) => isWorking(pid, d)
       );
       if (!avail.available) return false;
     }

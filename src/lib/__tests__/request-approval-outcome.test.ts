@@ -247,24 +247,20 @@ describe("decideApproval — 4. conditional availability: the requester's and th
     expectOk(decide(working, wantORC(), "st-orc"));
   });
 
-  it("approving p2 OFF when p1's auto OR depends on p2 working is never saved with p1 still working", () => {
-    // The verify step re-checks the dependents of every changed cell on the grid to be saved.
-    // The engine's own re-solve counts a LOCKED off cell as "assigned" for conditional rules
-    // (auto-scheduler.ts isAssigned → isFillableOffCell), so at ring 1/2 it puts p1's OR back
-    // and the decision is refused rather than saved wrong (engine follow-up: its own card).
+  it("approving p2 OFF when p1's auto OR depends on p2 working re-arranges p1 off that shift (card #69)", () => {
+    // The verify step re-checks the dependents of every changed cell. Since card #69 the engine reads
+    // a LOCKED off cell as "not working" for conditional rules, so the re-solve moves p1 off the OR
+    // and the request is accommodated (ring 1) instead of refused.
     for (const policy of ["resolve-day", "resolve-pp"] as const) {
       const input = makeInput({ staff: [dependsOnP2(), makeStaff("p2", "CD")], existingAssignments: [cell("p1", MON, "st-or", "auto")] });
       const d = decide(input, wantOff("r1", "p2"), "st-off", policy);
-      if (d.ok) {
-        // If the engine ever learns that a locked X is not "working", the day is re-arranged instead.
-        expect(d.ring).toBeGreaterThanOrEqual(1);
-        expect(d.writes).toContainEqual({ staffId: "p2", date: MON, shiftTypeId: "st-off", source: "request" });
-        const p1 = d.writes.find((w) => w.staffId === "p1" && w.date === MON);
-        expect(p1).toBeDefined();
-        expect(p1!.shiftTypeId).not.toBe("st-or");
-      } else {
-        expect(d.reason).toBe(`AB would no longer be available to work on ${dayLabel(MON)}`);
-      }
+      expect(d.ok).toBe(true);
+      if (!d.ok) continue;
+      expect(d.ring).toBeGreaterThanOrEqual(1);
+      expect(d.writes).toContainEqual({ staffId: "p2", date: MON, shiftTypeId: "st-off", source: "request" });
+      const p1 = d.writes.find((w) => w.staffId === "p1" && w.date === MON);
+      expect(p1).toBeDefined();
+      expect(p1!.shiftTypeId).not.toBe("st-or");
     }
   });
 
