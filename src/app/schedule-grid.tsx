@@ -3393,6 +3393,10 @@ export function ScheduleGrid({
     const toApply = cellsToCommitOnAccept(outcome.grid, liveSavedGridRef.current);
     if (toApply.length === 0) { cancelLive(); return; }
     setLiveLoading(true);
+    // Stays true only when the server refused the batch over a per-day cap: the Live
+    // sandbox is kept (nothing was saved) and the offending cell is flagged so the
+    // user can fix it and accept again, instead of silently losing the whole run.
+    let keepLive = false;
     try {
       const res = await fetch("/api/auto-schedule", {
         method: "PUT",
@@ -3406,6 +3410,23 @@ export function ScheduleGrid({
           endDate: dates[dates.length - 1],
         }),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        if (body?.reason === "day-full") {
+          // The server's view of the caps or of the saved grid differed from ours
+          // (a rule or another user's edit landed after Live started): show the
+          // same rejection a manual over-cap edit gets, anchored on the cell(s) it named.
+          const cells: ScenarioPinRejection[] = (Array.isArray(body.rejected) && body.rejected.length > 0
+            ? (body.rejected as { staffId: string; date: string; shiftTypeId: string }[])
+            : [{ staffId: String(body.staffId ?? ""), date: String(body.date ?? ""), shiftTypeId: String(body.shiftTypeId ?? "") }]
+          ).map((r) => ({ staffId: r.staffId, date: r.date, shiftTypeId: r.shiftTypeId, reason: "day-full" as const }));
+          setLiveReject(cells);
+          showRejectAt(cells);
+          keepLive = true;
+          return;
+        }
+        throw new Error(body?.error ?? `request failed: ${res.status}`);
+      }
       const data = await res.json();
       const applied: AssignmentData[] = data.applied;
       const undoOps: UndoOp[] = applied.map((a) => ({
@@ -3424,7 +3445,7 @@ export function ScheduleGrid({
       console.error("Live: accept failed", e);
     } finally {
       setLiveLoading(false);
-      cancelLive();
+      if (!keepLive) cancelLive();
     }
   }
 

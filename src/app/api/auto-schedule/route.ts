@@ -5,6 +5,11 @@ import { autoSchedule } from "@/lib/auto-scheduler";
 import { buildAutoScheduleInput } from "@/lib/build-auto-schedule-input";
 import { syncRequestApprovals, visibleRequestChanges } from "@/lib/request-sync";
 import { owningMonthKey, isValidDateRange } from "@/lib/auto-clear";
+import { loadDayCaps } from "@/lib/day-cap-db";
+import { dayCapViolations } from "@/lib/max-per-day";
+
+const dateKey = (d: Date) => d.toISOString().split("T")[0];
+const isStr = (v: unknown): v is string => typeof v === "string" && v.length > 0;
 
 export async function POST(req: NextRequest) {
   const { error } = await getSession("schedule:auto");
@@ -37,8 +42,35 @@ export async function PUT(req: NextRequest) {
     endDate?: string;
   };
 
-  if (!suggestions?.length) {
+  if (!Array.isArray(suggestions) || suggestions.length === 0) {
     return NextResponse.json({ error: "No suggestions to apply" }, { status: 400 });
+  }
+  if (!suggestions.every((s) => s && typeof s === "object" && isStr(s.staffId) && isStr(s.shiftTypeId) && /^\d{4}-\d{2}-\d{2}$/.test(String(s.date)))) {
+    return NextResponse.json({ error: "Each suggestion needs staffId, date (YYYY-MM-DD) and shiftTypeId" }, { status: 400 });
+  }
+
+  // Per-day cap (Staffing Rules "Max"), re-checked here because the server is the
+  // authority: the browser engine honours the caps itself, but its copy of the rules
+  // or of the saved grid can be stale by the time the user accepts. Counted against
+  // the SAVED rows on the touched dates, minus the cells the batch overwrites; a
+  // suggestion onto a locked cell is skipped below, so it neither replaces nor adds.
+  // Refuse the WHOLE batch (nothing written) and name the offending cell(s) so the
+  // grid can show the same red-border rejection as a manual over-cap edit.
+  const dates = [...new Set(suggestions.map((s) => s.date))];
+  const caps = await loadDayCaps(dates);
+  const onDates = await prisma.assignment.findMany({
+    where: { date: { in: dates.map((d) => new Date(d + "T00:00:00Z")) } },
+    select: { staffId: true, date: true, shiftTypeId: true, isLocked: true },
+  });
+  const current = onDates.map((a) => ({ staffId: a.staffId, date: dateKey(a.date), shiftTypeId: a.shiftTypeId }));
+  const lockedKeys = new Set(onDates.filter((a) => a.isLocked).map((a) => `${a.staffId}:${dateKey(a.date)}`));
+  const proposed = suggestions
+    .filter((s) => !lockedKeys.has(`${s.staffId}:${s.date}`))
+    .map((s) => ({ staffId: s.staffId, date: s.date, shiftTypeId: s.shiftTypeId }));
+  const violations = dayCapViolations(proposed, current, caps.capOf);
+  if (violations.length > 0) {
+    const v = violations[0];
+    return caps.dayFull(v.shiftTypeId, v.date, { staffId: v.staffId, shiftTypeId: v.shiftTypeId, rejected: violations });
   }
 
   const shiftTypes = await prisma.shiftType.findMany();

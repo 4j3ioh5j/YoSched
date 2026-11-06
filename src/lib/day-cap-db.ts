@@ -9,8 +9,9 @@ import { buildDayCapLookup, dayCapMessage, type DayCapLookup } from "@/lib/day-c
  */
 export type DayCaps = {
   capOf: DayCapLookup;
-  /** The 409 the routes return when an edit would exceed a cap. */
-  dayFull: (shiftTypeId: string, date: string) => NextResponse;
+  /** The 409 the routes return when an edit would exceed a cap. `extra` fields (e.g. the
+   *  offending cell's staffId, or every rejected cell) ride along in the body. */
+  dayFull: (shiftTypeId: string, date: string, extra?: Record<string, unknown>) => NextResponse;
 };
 
 export async function loadDayCaps(dates: readonly string[]): Promise<DayCaps> {
@@ -31,11 +32,11 @@ export async function loadDayCaps(dates: readonly string[]): Promise<DayCaps> {
   const codeById = new Map(shiftTypes.map((s) => [s.id, s.code] as const));
   return {
     capOf,
-    dayFull: (shiftTypeId, date) => {
+    dayFull: (shiftTypeId, date, extra = {}) => {
       const code = codeById.get(shiftTypeId) ?? "that shift";
       const cap = capOf(shiftTypeId, date) ?? 0;
       return NextResponse.json(
-        { error: dayCapMessage(code, cap, date, holidays), reason: "day-full", code, maxPerDay: cap, date },
+        { ...extra, error: dayCapMessage(code, cap, date, holidays), reason: "day-full", code, maxPerDay: cap, date },
         { status: 409 },
       );
     },
