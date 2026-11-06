@@ -20,6 +20,7 @@ import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicat
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { dayCapViolations, type DayCapCell } from "@/lib/max-per-day";
 import { buildDayCapLookup, dayKeyLabel, dayKeyOf } from "@/lib/day-cap";
+import { rejectionError, dayFullPopoverText, type RejectionError } from "@/lib/rejection-error";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, keysToRequestIntent, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory, type RequestKind, type RequestStrength, type RequestStatus } from "@/lib/schedule-requests";
@@ -419,14 +420,6 @@ function ShiftChip({ st }: { st?: { code: string; color: string } }) {
       {st?.code ?? "—"}
     </span>
   );
-}
-
-// A failed assignment write, tagged so callers can tell a per-day-cap rejection
-// (HTTP 409, reason "day-full") from any other failure and react accordingly.
-type RejectionError = Error & { dayFull?: boolean };
-async function rejectionError(res: Response): Promise<RejectionError> {
-  const body = await res.json().catch(() => null);
-  return Object.assign(new Error(body?.error ?? `request failed: ${res.status}`), { dayFull: body?.reason === "day-full" });
 }
 
 export function ScheduleGrid({
@@ -1920,7 +1913,7 @@ export function ScheduleGrid({
       });
       if ((err as RejectionError)?.dayFull) {
         const anchor = addStaffIds[0] ?? removalIds[0];
-        showRejectAt([{ staffId: anchor, date, shiftTypeId, reason: "day-full" }]);
+        showRejectAt([{ staffId: anchor, date, shiftTypeId, reason: "day-full" }], (err as RejectionError).serverText);
       } else {
         window.alert(`Couldn't update ${st.code} on ${dayLabel} — no changes made.`);
       }
@@ -2678,7 +2671,7 @@ export function ScheduleGrid({
         return [...filtered, ...priors];
       });
       if ((err as RejectionError)?.dayFull) {
-        showRejectAt(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId: st.id, reason: "day-full" as const })));
+        showRejectAt(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId: st.id, reason: "day-full" as const })), (err as RejectionError).serverText);
       }
     }
     setSaving(null);
@@ -2798,7 +2791,7 @@ export function ScheduleGrid({
         return [...filtered, ...priors];
       });
       if ((err as RejectionError)?.dayFull) {
-        showRejectAt(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId, reason: "day-full" as const })));
+        showRejectAt(cells.map((c) => ({ staffId: c.staffId, date: c.date, shiftTypeId, reason: "day-full" as const })), (err as RejectionError).serverText);
       }
     } finally {
       setSaving(null);
@@ -3250,7 +3243,7 @@ export function ScheduleGrid({
           if (toA) next.push(toA);
           return next;
         });
-        showRejectAt([{ staffId: toStaffId, date: toDate, shiftTypeId: fromA.shiftTypeId, reason: "day-full" }]);
+        showRejectAt([{ staffId: toStaffId, date: toDate, shiftTypeId: fromA.shiftTypeId, reason: "day-full" }], (err as RejectionError).serverText);
       } else {
         window.location.reload();
       }
@@ -3421,7 +3414,7 @@ export function ScheduleGrid({
             : [{ staffId: String(body.staffId ?? ""), date: String(body.date ?? ""), shiftTypeId: String(body.shiftTypeId ?? "") }]
           ).map((r) => ({ staffId: r.staffId, date: r.date, shiftTypeId: r.shiftTypeId, reason: "day-full" as const }));
           setLiveReject(cells);
-          showRejectAt(cells);
+          showRejectAt(cells, typeof body.error === "string" && body.error.length > 0 ? body.error : undefined);
           keepLive = true;
           return;
         }
@@ -3470,7 +3463,10 @@ export function ScheduleGrid({
   // Human-readable reason an edit was refused, for the toast. A refused keystroke
   // changes nothing on the grid, so without this it looked like the key did nothing
   // (the real cause: the staff is ineligible/unavailable for that shift on that day).
-  function describeRejection(rejected: ScenarioPinRejection[]): string {
+  // `serverText` is the server's own cap sentence from a 409 (RejectionError.serverText);
+  // when present it is shown instead of a sentence rebuilt from the page-load rules,
+  // which are exactly what the server just disagreed with.
+  function describeRejection(rejected: ScenarioPinRejection[], serverText?: string): string {
     const r = rejected[0];
     const who = staffMap.get(r.staffId)?.initials ?? "Staff";
     const code = shiftTypeMap.get(r.shiftTypeId)?.code ?? "that shift";
@@ -3481,9 +3477,14 @@ export function ScheduleGrid({
       return `${who}'s ${code} on ${day} was set manually and can't be changed in auto-generate${more}`;
     // Per-day cap: this date already holds the max allowed of this shift.
     if (r.reason === "day-full") {
-      const cap = dayCapOf(r.shiftTypeId, r.date) ?? 0;
-      const limit = cap === 0 ? `No ${code}` : cap === 1 ? `Only one ${code}` : `Only ${cap} ${code}`;
-      return `${limit} allowed ${dayKeyLabel(dayKeyOf(r.date, holidaySet))} — ${day} is already full${more}`;
+      return dayFullPopoverText({
+        serverText,
+        code,
+        cap: dayCapOf(r.shiftTypeId, r.date) ?? 0,
+        dayLabel: dayKeyLabel(dayKeyOf(r.date, holidaySet)),
+        day,
+        more,
+      });
     }
     const why =
       r.reason === "ineligible" ? `isn't eligible for ${code}` :
@@ -3496,9 +3497,9 @@ export function ScheduleGrid({
   // Anchor the rejection reason beside the offending cell — placed 1–2 cells away
   // (flipping toward whichever side has room) so it never covers the cell itself.
   // Falls back to the top-of-page toast if the cell isn't currently in the DOM.
-  function showRejectAt(rejected: ScenarioPinRejection[]) {
+  function showRejectAt(rejected: ScenarioPinRejection[], serverText?: string) {
     const r = rejected[0];
-    anchorPopover(`${r.staffId}:${r.date}`, describeRejection(rejected), "reject");
+    anchorPopover(`${r.staffId}:${r.date}`, describeRejection(rejected, serverText), "reject");
   }
 
   // Anchor a popover beside a cell (same placement as showRejectAt). Falls back to
