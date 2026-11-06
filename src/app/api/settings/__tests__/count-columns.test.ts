@@ -31,7 +31,8 @@ vi.mock("@/lib/prisma", () => {
   const staffingRequirement = { count: async () => 0 };
   const equityFactor = { count: async () => 0 };
   const assignment = { count: async () => 0 };
-  const client = { countColumn, shiftType, staffingRequirement, equityFactor, assignment };
+  const printColumnRule = { findMany: async () => [] }; const printAggregateColumn = { findMany: async () => [] };
+  const client = { countColumn, shiftType, staffingRequirement, equityFactor, assignment, printColumnRule, printAggregateColumn };
   return {
     prisma: {
       ...client,

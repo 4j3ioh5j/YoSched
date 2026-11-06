@@ -1,63 +1,28 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { coerceConditions } from "@/lib/print-column-visibility";
-import { NextRequest, NextResponse } from "next/server";
+import { deriveConditionCodes } from "@/lib/print-conditions";
+import { STALE_CLIENT } from "@/lib/stale-client";
+import { NextResponse } from "next/server";
 
+// Read: rules whose conditions name shifts by id, with the shifts' CURRENT codes derived alongside.
 export async function GET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
 
-  const rules = await prisma.printColumnRule.findMany({ orderBy: { sortOrder: "asc" } });
-  return NextResponse.json(rules);
+  const [rules, shiftTypes] = await Promise.all([
+    prisma.printColumnRule.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.shiftType.findMany({ select: { id: true, code: true } }),
+  ]);
+  return NextResponse.json(rules.map((r) => ({ ...r, conditions: deriveConditionCodes(coerceConditions(r.conditions), shiftTypes) })));
 }
 
-type RuleInput = {
-  label?: string;
-  enabled?: boolean;
-  mode?: string;
-  employmentTypeIds?: string[];
-  minFtePercentage?: number | null;
-  maxFtePercentage?: number | null;
-  conditions?: unknown;
-};
-
-/** Coerce a value to a finite number or null (rejects NaN/strings/±Infinity). */
-function num(v: unknown): number | null {
-  if (v == null || v === "") return null;
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-export async function PUT(req: NextRequest) {
+// Write moved to PUT /api/settings/print-column-rules/by-shift-id (ids only). The only
+// callers of THIS path are Settings tabs on a pre-slice bundle, whose conditions name shifts
+// by code; a renamed-and-reused code can name the wrong shift, so nothing is written — the
+// tab reloads. (Refusal stub; removed in a later slice.)
+export async function PUT() {
   const { error } = await getSession("settings:edit");
   if (error) return error;
-
-  const { rules } = await req.json();
-  if (!Array.isArray(rules)) {
-    return NextResponse.json({ error: "rules must be an array" }, { status: 400 });
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.printColumnRule.deleteMany();
-    if (rules.length > 0) {
-      await tx.printColumnRule.createMany({
-        data: rules.map((r: RuleInput, i: number) => ({
-          label: typeof r.label === "string" ? r.label : "",
-          sortOrder: i,
-          enabled: r.enabled !== false,
-          mode: r.mode === "exclude" ? "exclude" : "include",
-          employmentTypeIds: Array.isArray(r.employmentTypeIds)
-            ? r.employmentTypeIds.filter((x) => typeof x === "string")
-            : [],
-          minFtePercentage: num(r.minFtePercentage),
-          maxFtePercentage: num(r.maxFtePercentage),
-          // New rules use `conditions`; legacy columns are left at defaults.
-          conditions: coerceConditions(r.conditions),
-        })),
-      });
-    }
-  });
-
-  const result = await prisma.printColumnRule.findMany({ orderBy: { sortOrder: "asc" } });
-  return NextResponse.json(result);
+  return NextResponse.json(STALE_CLIENT, { status: 409 });
 }

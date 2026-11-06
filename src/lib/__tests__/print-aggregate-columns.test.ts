@@ -18,6 +18,7 @@ describe("computeAggregateColumns", () => {
   const fte = (id: string, pct: number | null = 1): PrintVisStaff => ({ id, employmentTypeId: "fte", ftePercentage: pct });
   const fb = (id: string): PrintVisStaff => ({ id, employmentTypeId: "feebasis", ftePercentage: null });
 
+  // Shift ID -> kind (ids spelled like codes for readability; the helper never sees a code).
   const kindByCode = new Map<string, ShiftKind>([
     ["OR", "work"], ["ICU", "work"], ["AL", "leave"], ["x", "off"],
   ]);
@@ -110,8 +111,8 @@ describe("computeAggregateColumns", () => {
   it("DAY scope: per-day first-match — OR Monday / ICU Tuesday land in their own columns (the #784 case)", () => {
     const staff = [fte("a")];
     const cols = [
-      col({ label: "OR", conditionScope: "day", suppressMembers: false, conditions: [{ quantifier: "has_any", categories: [], codes: ["OR"], except: [] }] }),
-      col({ label: "ICU", conditionScope: "day", suppressMembers: false, conditions: [{ quantifier: "has_any", categories: [], codes: ["ICU"], except: [] }] }),
+      col({ label: "OR", conditionScope: "day", suppressMembers: false, conditions: [{ quantifier: "has_any", categories: [], shiftTypeIds: ["OR"], exceptIds: [] }] }),
+      col({ label: "ICU", conditionScope: "day", suppressMembers: false, conditions: [{ quantifier: "has_any", categories: [], shiftTypeIds: ["ICU"], exceptIds: [] }] }),
     ];
     const res = run(staff, null, cols, D, { a: { d1: "OR", d2: "ICU" } });
     expect(idsOn(res, "OR", "d1")).toEqual(["a"]);
@@ -132,8 +133,8 @@ describe("computeAggregateColumns", () => {
     const staff = [fte("a")];
     // a: leave (AL) d1, off (x) d2.
     const schedule = { a: { d1: "AL", d2: "x" } };
-    const leaveCol = col({ label: "L", conditionScope: "day", suppressMembers: false, conditions: [{ quantifier: "has_any", categories: ["leave"], codes: [], except: [] }] });
-    const offCol = col({ label: "O", conditionScope: "day", suppressMembers: false, conditions: [{ quantifier: "has_any", categories: ["off"], codes: [], except: [] }] });
+    const leaveCol = col({ label: "L", conditionScope: "day", suppressMembers: false, conditions: [{ quantifier: "has_any", categories: ["leave"], shiftTypeIds: [], exceptIds: [] }] });
+    const offCol = col({ label: "O", conditionScope: "day", suppressMembers: false, conditions: [{ quantifier: "has_any", categories: ["off"], shiftTypeIds: [], exceptIds: [] }] });
     const resL = run(staff, null, [leaveCol], D, schedule);
     expect(idsOn(resL, "L", "d1")).toEqual(["a"]); // leave is not off → renders
     const resO = run(staff, null, [offCol], D, schedule);
@@ -145,7 +146,7 @@ describe("computeAggregateColumns", () => {
     // A day-scoped suppressing column. `a` matches OR only on d2, which is NOT passed as an
     // in-month date below (it stands in for a leading/trailing padding row). On the only
     // in-month day d1, `a` has an off shift → not scheduled. Must not own or suppress.
-    const cols = [col({ label: "OR", conditionScope: "day", suppressMembers: true, conditions: [{ quantifier: "has_any", categories: [], codes: ["OR"], except: [] }] })];
+    const cols = [col({ label: "OR", conditionScope: "day", suppressMembers: true, conditions: [{ quantifier: "has_any", categories: [], shiftTypeIds: ["OR"], exceptIds: [] }] })];
     const res = run(staff, null, cols, ["d1"], { a: { d1: "x", d2: "OR" } });
     expect(idsOn(res, "OR", "d1")).toEqual([]);
     expect(res.suppressedIndividualIds.size).toBe(0); // d2 is outside the in-month set
@@ -153,7 +154,7 @@ describe("computeAggregateColumns", () => {
 
   it("month scope: matches shift conditions via the shared rule matcher (whole-month codes)", () => {
     const staff = [fte("a"), fte("b")];
-    const cols = [col({ label: "ICU team", suppressMembers: false, conditions: [{ quantifier: "has_any", categories: [], codes: ["ICU"], except: [] }] })];
+    const cols = [col({ label: "ICU team", suppressMembers: false, conditions: [{ quantifier: "has_any", categories: [], shiftTypeIds: ["ICU"], exceptIds: [] }] })];
     // a does ICU once in the month → member every scheduled day; b never does ICU.
     const res = run(staff, null, cols, D, { a: { d1: "ICU", d2: "OR" }, b: { d1: "OR", d2: "OR" } });
     expect(idsOn(res, "ICU team", "d1")).toEqual(["a"]);
@@ -162,7 +163,7 @@ describe("computeAggregateColumns", () => {
 
   it("malformed stored conditionScope behaves as month, not a third behavior", () => {
     const staff = [fte("a")];
-    const cols = [col({ label: "OR", conditionScope: "garbage" as unknown as string, suppressMembers: false, conditions: [{ quantifier: "has_any", categories: [], codes: ["OR"], except: [] }] })];
+    const cols = [col({ label: "OR", conditionScope: "garbage" as unknown as string, suppressMembers: false, conditions: [{ quantifier: "has_any", categories: [], shiftTypeIds: ["OR"], exceptIds: [] }] })];
     const res = run(staff, null, cols, D, { a: { d1: "OR", d2: "ICU" } });
     // month behavior: member matched the month (has OR) → shows on every scheduled day.
     expect(idsOn(res, "OR", "d1")).toEqual(["a"]);
@@ -212,7 +213,7 @@ describe("computeAggregateColumns", () => {
       const staff = [fte("a")];
       // Day-scoped suppressing OR column owns a only on the OR day.
       const cols = [
-        col({ label: "OR", conditionScope: "day", suppressMembers: true, conditions: [{ quantifier: "has_any", categories: [], codes: ["OR"], except: [] }] }),
+        col({ label: "OR", conditionScope: "day", suppressMembers: true, conditions: [{ quantifier: "has_any", categories: [], shiftTypeIds: ["OR"], exceptIds: [] }] }),
         other(),
       ];
       const res = run(staff, null, cols, D, { a: { d1: "OR", d2: "ICU" } });
@@ -246,7 +247,7 @@ describe("computeAggregateColumns", () => {
     const staff = [fte("a"), fte("b"), fb("c"), fb("d")];
     const cols = [
       col({ label: "FB", employmentTypeIds: ["feebasis"], suppressMembers: true }), // claims c, d
-      col({ label: "ICU", suppressMembers: false, conditions: [{ quantifier: "has_any", categories: [], codes: ["ICU"], except: [] }] }), // a (co-exist)
+      col({ label: "ICU", suppressMembers: false, conditions: [{ quantifier: "has_any", categories: [], shiftTypeIds: ["ICU"], exceptIds: [] }] }), // a (co-exist)
       other(),
     ];
     // a: ICU d1, OR d2.  b: OR both days (plain).  c: OR d1 only.  d: OR both days.

@@ -39,7 +39,8 @@ vi.mock("@/lib/prisma", () => {
   const assignment = { count: async () => db.assignments };
   const equityFactor = { count: async () => 0 }; // no equity factors in these scenarios (slice 2 has its own test)
   const countColumn = { count: async () => 0 }; // no count columns in these scenarios (slice 3 has its own test)
-  const client = { staffingRequirement, shiftType, assignment, equityFactor, countColumn };
+  const printColumnRule = { findMany: async () => [] }; const printAggregateColumn = { findMany: async () => [] };
+  const client = { staffingRequirement, shiftType, assignment, equityFactor, countColumn, printColumnRule, printAggregateColumn };
   return {
     prisma: {
       ...client,

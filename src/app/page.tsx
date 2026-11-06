@@ -8,7 +8,7 @@ import { EditorPresenceBanner } from "./editor-presence-banner";
 import { getPageSession } from "@/lib/auth-guard";
 import { resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { isRequestVisibleToViewer } from "@/lib/schedule-requests";
-import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
+import { coerceConditions } from "@/lib/print-column-visibility";
 import { parseLiveScope } from "@/lib/live-scope";
 import { orderStaff, parseStaffOrderCriteria } from "@/lib/staff-order";
 import { redirect } from "next/navigation";
@@ -274,7 +274,7 @@ export default async function Home() {
           employmentTypeIds: r.employmentTypeIds,
           minFtePercentage: r.minFtePercentage,
           maxFtePercentage: r.maxFtePercentage,
-          conditions: effectiveConditions(r.conditions, r.shiftCodes, r.shiftMatch),
+          conditions: coerceConditions(r.conditions),
         }))}
         printAggregateColumns={printAggregateColumns.map((c) => ({
           label: c.label,

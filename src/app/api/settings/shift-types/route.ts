@@ -2,6 +2,8 @@ import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { coerceConditions } from "@/lib/print-column-visibility";
+import { conditionsReference } from "@/lib/print-conditions";
 
 // Editable columns. PUT is a partial update — only keys actually present in the
 // request body are written, so omitting a field leaves it untouched (rather than
@@ -146,6 +148,18 @@ export async function DELETE(req: NextRequest) {
     const st = await prisma.shiftType.findUnique({ where: { id }, select: { code: true } });
     return NextResponse.json(
       { error: `Cannot delete: Count Columns has a column using ${st?.code ?? "this shift"}. Remove it there first.`, reason: "count-column-linked" },
+      { status: 409 },
+    );
+  }
+  // Printed-schedule rules/columns name shifts inside their conditions Json (few rows; scan in code).
+  const [printRules, printAggregates] = await Promise.all([
+    prisma.printColumnRule.findMany({ select: { conditions: true } }),
+    prisma.printAggregateColumn.findMany({ select: { conditions: true } }),
+  ]);
+  if ([...printRules, ...printAggregates].some((r) => conditionsReference(coerceConditions(r.conditions), id))) {
+    const st = await prisma.shiftType.findUnique({ where: { id }, select: { code: true } });
+    return NextResponse.json(
+      { error: `Cannot delete: Printed Schedule Columns has a rule using ${st?.code ?? "this shift"}. Remove it there first.`, reason: "print-column-linked" },
       { status: 409 },
     );
   }

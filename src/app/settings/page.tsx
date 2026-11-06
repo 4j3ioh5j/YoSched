@@ -5,7 +5,7 @@ import { SettingsPage } from "./settings-page";
 import { NavHeader } from "../nav-header";
 import { getPageSession } from "@/lib/auth-guard";
 import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, DEFAULT_OFF_STRATEGY_ORDER } from "@/lib/schedule-requests";
-import { effectiveConditions, coerceConditions } from "@/lib/print-column-visibility";
+import { coerceConditions } from "@/lib/print-column-visibility";
 import { parseLiveScope } from "@/lib/live-scope";
 import { parseShiftShareBasis } from "@/lib/shift-share";
 import { parseHolidayPolicy } from "@/lib/holiday-policy";
@@ -212,7 +212,7 @@ export default async function Settings() {
           employmentTypeIds: r.employmentTypeIds,
           minFtePercentage: r.minFtePercentage,
           maxFtePercentage: r.maxFtePercentage,
-          conditions: effectiveConditions(r.conditions, r.shiftCodes, r.shiftMatch),
+          conditions: coerceConditions(r.conditions),
         }))}
         printAggregateColumns={printAggregateColumns.map((c) => ({
           id: c.id,

@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   printVisibleStaffIds,
   coerceConditions,
-  legacyToConditions,
-  effectiveConditions,
   type PrintRule,
   type ShiftCondition,
   type ShiftKind,
@@ -14,7 +12,8 @@ describe("printVisibleStaffIds", () => {
   const fte = (id: string, pct: number | null): PrintVisStaff => ({ id, employmentTypeId: "fte", ftePercentage: pct });
   const fb = (id: string, pct: number | null = null): PrintVisStaff => ({ id, employmentTypeId: "feebasis", ftePercentage: pct });
 
-  // Shift catalog: code -> kind
+  // Shift catalog: shift ID -> kind. The ids are spelled like codes for readability; the
+  // matcher never sees a code (see print-conditions.test.ts for the derivation).
   const kindByCode = new Map<string, ShiftKind>([
     ["OR", "work"], ["ORC", "work"], ["ORL", "work"], ["ICU", "work"], ["CARD", "work"],
     ["AL", "leave"], ["SL", "leave"],
@@ -24,8 +23,8 @@ describe("printVisibleStaffIds", () => {
   const cond = (over: Partial<ShiftCondition> = {}): ShiftCondition => ({
     quantifier: "has_any",
     categories: [],
-    codes: [],
-    except: [],
+    shiftTypeIds: [],
+    exceptIds: [],
     ...over,
   });
   const rule = (over: Partial<PrintRule> = {}): PrintRule => ({
@@ -61,17 +60,17 @@ describe("printVisibleStaffIds", () => {
     expect(res).toEqual(new Set(["b"]));
   });
 
-  it("has_any over explicit codes", () => {
+  it("has_any over explicit shifts", () => {
     const staff = [fte("a", 1), fte("b", 1), fte("c", 1)];
     const c = codes({ a: ["ORC"], b: ["OR"], c: ["AL"] });
-    const res = printVisibleStaffIds(staff, [rule({ conditions: [cond({ codes: ["ORC", "ORL", "OR", "CARD"] })] })], c, kindByCode);
+    const res = printVisibleStaffIds(staff, [rule({ conditions: [cond({ shiftTypeIds: ["ORC", "ORL", "OR", "CARD"] })] })], c, kindByCode);
     expect(res).toEqual(new Set(["a", "b"]));
   });
 
-  it("has_all over explicit codes", () => {
+  it("has_all over explicit shifts", () => {
     const staff = [fte("a", 1), fte("b", 1)];
     const c = codes({ a: ["ICU", "CARD"], b: ["ICU"] });
-    const res = printVisibleStaffIds(staff, [rule({ conditions: [cond({ quantifier: "has_all", codes: ["ICU", "CARD"] })] })], c, kindByCode);
+    const res = printVisibleStaffIds(staff, [rule({ conditions: [cond({ quantifier: "has_all", shiftTypeIds: ["ICU", "CARD"] })] })], c, kindByCode);
     expect(res).toEqual(new Set(["a"]));
   });
 
@@ -99,7 +98,7 @@ describe("printVisibleStaffIds", () => {
   it("has_any work EXCEPT ICU/CARD", () => {
     const staff = [fte("a", 1), fte("b", 1)];
     const c = codes({ a: ["ICU"], b: ["OR", "ICU"] });
-    const res = printVisibleStaffIds(staff, [rule({ conditions: [cond({ categories: ["work"], except: ["ICU", "CARD"] })] })], c, kindByCode);
+    const res = printVisibleStaffIds(staff, [rule({ conditions: [cond({ categories: ["work"], exceptIds: ["ICU", "CARD"] })] })], c, kindByCode);
     expect(res).toEqual(new Set(["b"])); // a only has ICU (excepted); b has OR
   });
 
@@ -110,7 +109,7 @@ describe("printVisibleStaffIds", () => {
       fte("c", 1), // only AL leave -> matches (no work at all)
     ];
     const c = codes({ a: ["ICU"], b: ["ICU", "OR"], c: ["AL"] });
-    const res = printVisibleStaffIds(staff, [rule({ conditions: [cond({ quantifier: "has_none", categories: ["work"], except: ["ICU", "CARD"] })] })], c, kindByCode);
+    const res = printVisibleStaffIds(staff, [rule({ conditions: [cond({ quantifier: "has_none", categories: ["work"], exceptIds: ["ICU", "CARD"] })] })], c, kindByCode);
     expect(res).toEqual(new Set(["a", "c"]));
   });
 
@@ -122,7 +121,7 @@ describe("printVisibleStaffIds", () => {
     ];
     const c = codes({ a: ["ICU", "AL"], b: ["ICU"], c: ["OR", "AL"] });
     const rules = [rule({ conditions: [
-      cond({ quantifier: "has_none", categories: ["work"], except: ["ICU"] }),
+      cond({ quantifier: "has_none", categories: ["work"], exceptIds: ["ICU"] }),
       cond({ quantifier: "has_any", categories: ["leave"] }),
     ] })];
     const res = printVisibleStaffIds(staff, rules, c, kindByCode);
@@ -134,7 +133,7 @@ describe("printVisibleStaffIds", () => {
     const c = codes({ b: ["ICU"] });
     const rules = [
       rule({ employmentTypeIds: ["fte"], minFtePercentage: 0.5 }), // a
-      rule({ employmentTypeIds: ["feebasis"], conditions: [cond({ codes: ["ICU"] })] }), // b
+      rule({ employmentTypeIds: ["feebasis"], conditions: [cond({ shiftTypeIds: ["ICU"] })] }), // b
     ];
     expect(printVisibleStaffIds(staff, rules, c, kindByCode)).toEqual(new Set(["a", "b"]));
   });
@@ -150,7 +149,7 @@ describe("printVisibleStaffIds", () => {
     const c = codes({ a: ["ICU"] });
     const rules = [
       rule({ mode: "include", employmentTypeIds: ["fte"] }),
-      rule({ mode: "exclude", conditions: [cond({ codes: ["ICU"] })] }),
+      rule({ mode: "exclude", conditions: [cond({ shiftTypeIds: ["ICU"] })] }),
     ];
     expect(printVisibleStaffIds(staff, rules, c, kindByCode)).toEqual(new Set());
   });
@@ -162,40 +161,22 @@ describe("printVisibleStaffIds", () => {
   });
 });
 
-describe("condition coercion / legacy synthesis", () => {
-  it("coerceConditions drops junk and defaults a bad quantifier to has_any", () => {
+describe("condition coercion", () => {
+  it("coerceConditions reads shiftTypeIds/exceptIds, drops junk, defaults a bad quantifier to has_any and ignores legacy code keys", () => {
     const res = coerceConditions([
-      { quantifier: "has_none", categories: ["work", "bogus"], codes: ["ICU", 7], except: ["AL"] },
+      { quantifier: "has_none", categories: ["work", "bogus"], shiftTypeIds: ["st-icu", 7], exceptIds: ["st-al"], codes: ["ICU"], except: ["AL"] },
       { quantifier: "weird" },
       "nope",
       null,
     ]);
     expect(res).toEqual([
-      { quantifier: "has_none", categories: ["work"], codes: ["ICU"], except: ["AL"] },
-      { quantifier: "has_any", categories: [], codes: [], except: [] },
+      { quantifier: "has_none", categories: ["work"], shiftTypeIds: ["st-icu"], exceptIds: ["st-al"] },
+      { quantifier: "has_any", categories: [], shiftTypeIds: [], exceptIds: [] },
     ]);
     expect(coerceConditions("not-an-array")).toEqual([]);
-  });
-
-  it("legacyToConditions synthesizes one condition from shiftCodes/shiftMatch", () => {
-    expect(legacyToConditions(["OR", "ICU"], "any")).toEqual([
-      { quantifier: "has_any", categories: [], codes: ["OR", "ICU"], except: [] },
+    // A condition that still carries only the legacy keys (never stored after the migration) selects nothing.
+    expect(coerceConditions([{ quantifier: "has_any", categories: [], codes: ["ICU"], except: [] }])).toEqual([
+      { quantifier: "has_any", categories: [], shiftTypeIds: [], exceptIds: [] },
     ]);
-    expect(legacyToConditions(["OR"], "all")).toEqual([
-      { quantifier: "has_all", categories: [], codes: ["OR"], except: [] },
-    ]);
-    expect(legacyToConditions([], "any")).toEqual([]);
-  });
-
-  it("effectiveConditions prefers stored conditions, else falls back to legacy", () => {
-    // New row: conditions present → used, legacy ignored.
-    const stored = [{ quantifier: "has_none", categories: ["work"], codes: [], except: ["ICU"] }];
-    expect(effectiveConditions(stored, ["OR"], "any")).toEqual(stored);
-    // Legacy row migrated to conditions=[]: synthesize from shiftCodes/shiftMatch.
-    expect(effectiveConditions([], ["OR", "CARD"], "all")).toEqual([
-      { quantifier: "has_all", categories: [], codes: ["OR", "CARD"], except: [] },
-    ]);
-    // Neither → no shift constraint.
-    expect(effectiveConditions([], [], "any")).toEqual([]);
   });
 });

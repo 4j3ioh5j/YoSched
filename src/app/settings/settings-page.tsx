@@ -7,6 +7,7 @@ import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICI
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
 import { EQUITY_FACTORS_SAVE_URL, buildEquityFactorsSave, equitySaveErrorMessage } from "@/lib/equity-factors";
 import { COUNT_COLUMNS_SAVE_URL, buildCountColumnsSave, countColumnsSaveErrorMessage } from "@/lib/count-columns";
+import { PRINT_COLUMN_RULES_SAVE_URL, PRINT_AGGREGATE_COLUMNS_SAVE_URL, buildConditionsSave, printSaveErrorMessage } from "@/lib/print-conditions";
 import { SHIFT_SHARE_BASES, type ShiftShareBasis } from "@/lib/shift-share";
 import { HOLIDAY_POLICIES, type HolidayPolicy } from "@/lib/holiday-policy";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
@@ -150,8 +151,8 @@ type RequiredFollowerData = {
 type PrintShiftCondition = {
   quantifier: string; // "has_any" | "has_none" | "has_all"
   categories: string[]; // "work" | "leave" | "off"
-  codes: string[];
-  except: string[];
+  shiftTypeIds: string[]; // shifts by id; the chip text is the shift's CURRENT code
+  exceptIds: string[];
 };
 
 type PrintColumnRuleData = {
@@ -3942,8 +3943,8 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
 type EditCondition = {
   quantifier: string; // has_any | has_none | has_all
   categories: string[]; // work | leave | off
-  codes: string[];
-  except: string[];
+  shiftTypeIds: string[]; // shifts by id (never codes: a renamed-and-reused code could name the wrong shift)
+  exceptIds: string[];
 };
 type EditPrintRule = {
   label: string;
@@ -3992,19 +3993,20 @@ function RuleFieldsEditor({
   value,
   onChange,
   employmentTypes,
-  allCodes,
+  shifts,
   canEdit,
 }: {
   value: RuleFields;
   onChange: (patch: Partial<RuleFields>) => void;
   employmentTypes: EmploymentTypeData[];
-  allCodes: string[];
+  shifts: ShiftType[]; // the page's shared shift list — a rename shows in the chips at once
   canEdit: boolean;
 }) {
   const empName = (id: string) => employmentTypes.find((e) => e.id === id)?.name ?? id;
+  const codeOf = (id: string) => shifts.find((st) => st.id === id)?.code ?? "?";
   const conds = value.conditions;
   const setConds = (c: EditCondition[]) => onChange({ conditions: c });
-  const addCond = () => setConds([...conds, { quantifier: "has_any", categories: [], codes: [], except: [] }]);
+  const addCond = () => setConds([...conds, { quantifier: "has_any", categories: [], shiftTypeIds: [], exceptIds: [] }]);
   const removeCond = (ci: number) => setConds(conds.filter((_, j) => j !== ci));
   const updateCond = (ci: number, patch: Partial<EditCondition>) =>
     setConds(conds.map((c, j) => (j === ci ? { ...c, ...patch } : c)));
@@ -4012,34 +4014,34 @@ function RuleFieldsEditor({
     const c = conds[ci];
     updateCond(ci, { categories: c.categories.includes(cat) ? c.categories.filter((x) => x !== cat) : [...c.categories, cat] });
   };
-  const addListItem = (ci: number, field: "codes" | "except", code: string) => {
+  const addListItem = (ci: number, field: "shiftTypeIds" | "exceptIds", id: string) => {
     const c = conds[ci];
-    if (c[field].includes(code)) return;
-    updateCond(ci, { [field]: [...c[field], code] });
+    if (c[field].includes(id)) return;
+    updateCond(ci, { [field]: [...c[field], id] });
   };
-  const removeListItem = (ci: number, field: "codes" | "except", code: string) => {
+  const removeListItem = (ci: number, field: "shiftTypeIds" | "exceptIds", id: string) => {
     const c = conds[ci];
-    updateCond(ci, { [field]: c[field].filter((x) => x !== code) });
+    updateCond(ci, { [field]: c[field].filter((x) => x !== id) });
   };
   const addEmp = (id: string) => onChange({ employmentTypeIds: [...value.employmentTypeIds, id] });
   const removeEmp = (id: string) => onChange({ employmentTypeIds: value.employmentTypeIds.filter((x) => x !== id) });
 
-  // Chip + add-dropdown for a condition's codes/except lists.
-  function codeChips(ci: number, field: "codes" | "except", label: string) {
+  // Chip + add-dropdown for a condition's shift / except lists (values are shift ids; chips show the current code).
+  function codeChips(ci: number, field: "shiftTypeIds" | "exceptIds", label: string) {
     const c = conds[ci];
     return (
       <div className="flex items-center gap-1 flex-wrap">
         <span className="text-[11px] text-slate-500">{label}</span>
-        {c[field].map((code) => (
-          <span key={code} className="inline-flex items-center gap-0.5 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-[11px] border border-slate-600">
-            {code}
-            {canEdit && <button onClick={() => removeListItem(ci, field, code)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>}
+        {c[field].map((id) => (
+          <span key={id} className="inline-flex items-center gap-0.5 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 text-[11px] border border-slate-600">
+            {codeOf(id)}
+            {canEdit && <button onClick={() => removeListItem(ci, field, id)} className="text-slate-500 hover:text-red-400 ml-0.5">×</button>}
           </span>
         ))}
         {canEdit && (
           <select value="" onChange={(e) => { if (e.target.value) addListItem(ci, field, e.target.value); }} className="bg-slate-700 text-slate-400 rounded px-1 py-0.5 text-[11px] border border-slate-600">
             <option value="">+</option>
-            {allCodes.filter((x) => !c[field].includes(x)).map((x) => <option key={x} value={x}>{x}</option>)}
+            {shifts.filter((st) => !c[field].includes(st.id)).map((st) => <option key={st.id} value={st.id}>{st.code}</option>)}
           </select>
         )}
       </div>
@@ -4092,8 +4094,8 @@ function RuleFieldsEditor({
                 })}
               </span>
             )}
-            {codeChips(ci, "codes", c.quantifier === "has_all" ? "shifts:" : "+shifts:")}
-            {c.quantifier !== "has_all" && c.categories.length > 0 && codeChips(ci, "except", "except:")}
+            {codeChips(ci, "shiftTypeIds", c.quantifier === "has_all" ? "shifts:" : "+shifts:")}
+            {c.quantifier !== "has_all" && c.categories.length > 0 && codeChips(ci, "exceptIds", "except:")}
             {canEdit && <button onClick={() => removeCond(ci)} className="text-slate-500 hover:text-red-400 text-sm ml-auto">×</button>}
           </div>
         ))}
@@ -4125,13 +4127,13 @@ function PrintColumnRulesSection({
       conditions: (r.conditions ?? []).map((c) => ({
         quantifier: c.quantifier,
         categories: [...c.categories],
-        codes: [...c.codes],
-        except: [...c.except],
+        shiftTypeIds: [...c.shiftTypeIds],
+        exceptIds: [...c.exceptIds],
       })),
     })),
   );
   const [status, setStatus] = useState<SaveStatus>("idle");
-  const allCodes = shiftTypes.map((st) => st.code); // includes leave + off (X) so conditions can target them
+  const [error, setError] = useState("");
 
   function update(idx: number, patch: Partial<EditPrintRule>) {
     setRules(rules.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
@@ -4152,21 +4154,21 @@ function PrintColumnRulesSection({
 
   async function save() {
     setStatus("saving");
+    setError("");
     try {
-      // Drop conditions with no positive selector (they impose no constraint).
-      const payload = rules.map((r) => ({
-        ...r,
-        conditions: r.conditions.filter((c) => c.categories.length > 0 || c.codes.length > 0),
-      }));
-      const res = await fetch("/api/settings/print-column-rules", {
+      // Ids only (buildConditionsSave also drops conditions with no positive selector). A
+      // pre-slice server has no such route and answers 404: the message asks for a reload.
+      const payload = rules.map((r) => ({ ...r, conditions: buildConditionsSave(r.conditions) }));
+      const res = await fetch(PRINT_COLUMN_RULES_SAVE_URL, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rules: payload }),
       });
-      if (!res.ok) throw new Error("Save failed");
+      if (!res.ok) throw new Error(printSaveErrorMessage(res.status, await res.text()));
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2000);
-    } catch {
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
       setStatus("error");
     }
   }
@@ -4177,6 +4179,7 @@ function PrintColumnRulesSection({
       title="Staff Columns on Printed Schedule"
       description="Rules deciding which staff get their own column when printing. Include rules pick who prints (no include rules = everyone); exclude rules then remove matches. A rule's shift conditions are ALL required (AND). No rules = print everyone. Print-only — the on-screen grid always shows all staff."
       status={status}
+      error={error}
     >
 
       <div className="space-y-3">
@@ -4201,7 +4204,7 @@ function PrintColumnRulesSection({
               )}
             </div>
 
-            <RuleFieldsEditor value={rule} onChange={(patch) => update(idx, patch)} employmentTypes={employmentTypes} allCodes={allCodes} canEdit={canEdit} />
+            <RuleFieldsEditor value={rule} onChange={(patch) => update(idx, patch)} employmentTypes={employmentTypes} shifts={shiftTypes} canEdit={canEdit} />
           </div>
         ))}
         {rules.length === 0 && <p className="text-xs text-slate-500 italic">No rules — the printed schedule shows every staff member.</p>}
@@ -4256,13 +4259,13 @@ function AdditionalColumnsSection({
       conditions: (c.conditions ?? []).map((x) => ({
         quantifier: x.quantifier,
         categories: [...x.categories],
-        codes: [...x.codes],
-        except: [...x.except],
+        shiftTypeIds: [...x.shiftTypeIds],
+        exceptIds: [...x.exceptIds],
       })),
     })),
   );
   const [status, setStatus] = useState<SaveStatus>("idle");
-  const allCodes = shiftTypes.map((st) => st.code);
+  const [error, setError] = useState("");
 
   function update(idx: number, patch: Partial<EditAggCol>) {
     setCols(cols.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
@@ -4281,21 +4284,21 @@ function AdditionalColumnsSection({
 
   async function save() {
     setStatus("saving");
+    setError("");
     try {
-      const payload = cols.map((c) => ({
-        ...c,
-        // The Other column carries no rule; named columns drop empty-selector conditions.
-        conditions: c.isOther ? [] : c.conditions.filter((x) => x.categories.length > 0 || x.codes.length > 0),
-      }));
-      const res = await fetch("/api/settings/print-aggregate-columns", {
+      // Ids only; the Other column carries no rule; named columns drop empty-selector conditions.
+      // A pre-slice server has no such route and answers 404: the message asks for a reload.
+      const payload = cols.map((c) => ({ ...c, conditions: c.isOther ? [] : buildConditionsSave(c.conditions) }));
+      const res = await fetch(PRINT_AGGREGATE_COLUMNS_SAVE_URL, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ columns: payload }),
       });
-      if (!res.ok) throw new Error("Save failed");
+      if (!res.ok) throw new Error(printSaveErrorMessage(res.status, await res.text()));
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2000);
-    } catch {
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
       setStatus("error");
     }
   }
@@ -4306,6 +4309,7 @@ function AdditionalColumnsSection({
       title="Additional Columns on Printed Schedule"
       description="Extra aggregate columns for the printed schedule. Each lists, per day, the initials of the staff matching its rule who are scheduled that day. 'Suppress members' hides those staff's own individual columns in print (otherwise they appear both places). Tick 'Catch-all' to make a column the residual — it lists everyone who appears in no other column (no rule of its own). A column with no one to show that month is hidden automatically. Print-only — the on-screen grid is unchanged."
       status={status}
+      error={error}
     >
 
       <div className="space-y-3">
@@ -4316,7 +4320,7 @@ function AdditionalColumnsSection({
             col.employmentTypeIds.length > 0 ||
             col.minFtePercentage != null ||
             col.maxFtePercentage != null ||
-            col.conditions.some((c) => c.categories.length > 0 || c.codes.length > 0);
+            col.conditions.some((c) => c.categories.length > 0 || c.shiftTypeIds.length > 0);
           return (
           <div key={idx} className="bg-slate-900/50 rounded p-3 border border-slate-700 space-y-2">
             <div className="flex items-center gap-2 flex-wrap">
@@ -4369,7 +4373,7 @@ function AdditionalColumnsSection({
                       : "lists a person on every scheduled day if they meet the conditions anytime that month"}
                   </span>
                 </div>
-                <RuleFieldsEditor value={col} onChange={(patch) => update(idx, patch)} employmentTypes={employmentTypes} allCodes={allCodes} canEdit={canEdit} />
+                <RuleFieldsEditor value={col} onChange={(patch) => update(idx, patch)} employmentTypes={employmentTypes} shifts={shiftTypes} canEdit={canEdit} />
                 {col.enabled && !hasSelector && (
                   <p className="text-[11px] text-amber-400/90">No rule set — this column matches <strong>all staff</strong>. Add an employment type, FTE bound, or shift condition, or tick Catch-all.</p>
                 )}

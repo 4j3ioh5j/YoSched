@@ -1299,7 +1299,7 @@ export function ScheduleGrid({
   //     hardcoded "FB" column), each with per-date member initials. Only columns that
   //     have a scheduled member on an in-month day are kept (skip-empty over the
   //     PRINTED period — so the seeded default "Other" adds nothing when empty).
-  // On-screen the grid still shows every staff; this only affects print. Shift codes
+  // On-screen the grid still shows every staff; this only affects print. Shifts (by id)
   // are gathered from REAL assignments in the printed (in-month) dates.
   const { printHiddenIds, printAggColumns } = useMemo(() => {
     // Only scan dates the printed page actually shows — the grid's `dates` include
@@ -1307,34 +1307,34 @@ export function ScheduleGrid({
     // landing only in a padding day must NOT make a staff's column print, nor make an
     // aggregate column appear.
     const inMonth = dates.filter((d) => d >= firstOfMonth && d <= lastOfMonth);
-    const codesByStaff = new Map<string, Set<string>>();
+    const shiftIdsByStaff = new Map<string, Set<string>>();
     for (const p of visibleStaff) {
       const set = new Set<string>();
       for (const date of inMonth) {
         const a = assignmentMap.get(`${p.id}:${date}`);
-        if (a?.code) set.add(a.code);
+        if (a?.shiftTypeId) set.add(a.shiftTypeId);
       }
-      if (set.size > 0) codesByStaff.set(p.id, set);
+      if (set.size > 0) shiftIdsByStaff.set(p.id, set);
     }
-    // Code → kind (work | leave | off) for category-based shift conditions.
-    const kindByCode = new Map<string, ShiftKind>();
+    // Shift id → kind (work | leave | off) for category-based shift conditions.
+    const kindById = new Map<string, ShiftKind>();
     for (const st of shiftTypes) {
-      kindByCode.set(st.code, st.isOffShift ? "off" : st.isLeave ? "leave" : "work");
+      kindById.set(st.id, st.isOffShift ? "off" : st.isLeave ? "leave" : "work");
     }
     const visStaff = visibleStaff.map((p) => ({
       id: p.id,
       employmentTypeId: p.employmentTypeId,
       ftePercentage: p.ftePercentage,
     }));
-    const visIds = printVisibleStaffIds(visStaff, printColumnRules, codesByStaff, kindByCode);
+    const visIds = printVisibleStaffIds(visStaff, printColumnRules, shiftIdsByStaff, kindById);
 
-    // Render gate (assignment exists that day + not an off-shift) and per-day code lookup,
+    // Render gate (assignment exists that day + not an off-shift) and per-day shift lookup,
     // used by both scope modes of the aggregate columns.
     const isScheduledNonOff = (staffId: string, date: string) => {
       const a = assignmentMap.get(`${staffId}:${date}`);
       return !!a && !offShiftTypeIds.has(a.shiftTypeId);
     };
-    const codeByStaffDate = (staffId: string, date: string) => assignmentMap.get(`${staffId}:${date}`)?.code;
+    const shiftTypeIdByStaffDate = (staffId: string, date: string) => assignmentMap.get(`${staffId}:${date}`)?.shiftTypeId;
 
     // Aggregate columns: per-day member ids + which individual columns they suppress.
     // Pass ONLY in-month dates — ownership, suppression and the catch-all residual must
@@ -1346,9 +1346,9 @@ export function ScheduleGrid({
       visIds,
       printAggregateColumns,
       inMonth,
-      codesByStaff,
-      codeByStaffDate,
-      kindByCode,
+      shiftIdsByStaff,
+      shiftTypeIdByStaffDate,
+      kindById,
       isScheduledNonOff,
     );
 

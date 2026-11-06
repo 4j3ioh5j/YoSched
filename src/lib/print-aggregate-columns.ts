@@ -14,9 +14,9 @@
  * A NAMED column (isOther = false) shows p on day d when p is SCHEDULED (a non-off
  * assignment) that day AND p satisfies the column's rule. How the rule's shift
  * conditions are evaluated depends on the column's `conditionScope`:
- *   - "month" (default): conditions match over the WHOLE printed month's codes (today's
+ *   - "month" (default): conditions match over the WHOLE printed month's shifts (today's
  *     behavior). Membership is day-invariant, so the member shows on every scheduled day.
- *   - "day": conditions match against THAT DAY's single code, so the member shows only on
+ *   - "day": conditions match against THAT DAY's single shift, so the member shows only on
  *     days whose shift satisfies the conditions.
  * Employment-type and FTE bounds are person-level and apply identically in both scopes.
  * The non-off "scheduled" render gate applies in BOTH scopes — so a no-condition day
@@ -80,15 +80,15 @@ export function computeAggregateColumns(
   individualVisible: ReadonlySet<string> | null, // null = every staff has an individual column
   columns: readonly AggregateColumn[],
   dates: readonly string[],
-  monthCodesByStaff: ReadonlyMap<string, Set<string>>, // month-wide codes per staff (for "month" scope)
-  codeByStaffDate: (staffId: string, date: string) => string | undefined, // that day's code (for "day" scope)
-  kindByCode: ReadonlyMap<string, ShiftKind>,
+  monthShiftIdsByStaff: ReadonlyMap<string, Set<string>>, // month-wide shift ids per staff (for "month" scope)
+  shiftTypeIdByStaffDate: (staffId: string, date: string) => string | undefined, // that day's shift id (for "day" scope)
+  kindById: ReadonlyMap<string, ShiftKind>,
   isScheduledNonOff: (staffId: string, date: string) => boolean, // the render gate (assignment exists + not off)
 ): AggregateColumnResult {
   const enabled = columns.filter((c) => c.enabled);
   const named = enabled.filter((c) => !c.isOther);
   const hasCatchAll = enabled.some((c) => c.isOther);
-  const emptyCodes = new Set<string>();
+  const emptyIds = new Set<string>();
   const scopeOf = named.map((c) => coerceConditionScope(c.conditionScope));
 
   // Month-scoped membership is day-invariant — precompute once per month-scoped column to
@@ -97,7 +97,7 @@ export function computeAggregateColumns(
     scopeOf[i] === "month"
       ? new Set(
           staff
-            .filter((p) => staffMatchesRule(p, c, monthCodesByStaff.get(p.id) ?? emptyCodes, kindByCode))
+            .filter((p) => staffMatchesRule(p, c, monthShiftIdsByStaff.get(p.id) ?? emptyIds, kindById))
             .map((p) => p.id),
         )
       : null,
@@ -107,8 +107,8 @@ export function computeAggregateColumns(
   const showsOnNamed = (i: number, p: PrintVisStaff, d: string): boolean => {
     if (!isScheduledNonOff(p.id, d)) return false;
     if (scopeOf[i] === "month") return monthMatch[i]!.has(p.id);
-    const code = codeByStaffDate(p.id, d);
-    return staffMatchesRule(p, named[i], code != null ? new Set([code]) : emptyCodes, kindByCode);
+    const id = shiftTypeIdByStaffDate(p.id, d);
+    return staffMatchesRule(p, named[i], id != null ? new Set([id]) : emptyIds, kindById);
   };
 
   // Per-day, first-match-wins ownership. Each named column gets a per-date id list; track
