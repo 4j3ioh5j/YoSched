@@ -8,7 +8,7 @@ import { describe, it, expect, vi } from "vitest";
 
 const db = vi.hoisted(() => ({
   shifts: [] as { id: string; code: string }[],
-  reqs: [] as { shiftTypeId: string; shiftCode: string | null; dayKey: string; minCount: number; preferredCount: number; maxCount: number | null }[],
+  reqs: [] as { shiftTypeId: string; dayKey: string; minCount: number; preferredCount: number; maxCount: number | null }[],
 }));
 
 vi.mock("@/lib/pay-periods-server", () => ({ getPayPeriods: async () => [] }));
@@ -68,15 +68,14 @@ function oldBuildDayCapLookup(requirements: readonly OldReq[], shiftTypes: reado
 }
 
 describe("auto-schedule input bundle: staffing requirements carry both keys", () => {
-  it("every requirement has shiftTypeId AND the shift's CURRENT code (not the row's compat column)", async () => {
+  it("every requirement has shiftTypeId AND the shift's CURRENT code (derived from the shift, rows hold no code)", async () => {
     db.shifts = [
       { id: "st-orc", code: "ORCX" }, // renamed ORC → ORCX
       { id: "st-card", code: "CARD" },
     ];
     db.reqs = [
-      // compat column deliberately stale/null: the bundle must not read it
-      { shiftTypeId: "st-orc", shiftCode: "ORC", dayKey: "1", minCount: 1, preferredCount: 1, maxCount: 1 },
-      { shiftTypeId: "st-card", shiftCode: null, dayKey: "1", minCount: 0, preferredCount: 0, maxCount: 2 },
+      { shiftTypeId: "st-orc", dayKey: "1", minCount: 1, preferredCount: 1, maxCount: 1 },
+      { shiftTypeId: "st-card", dayKey: "1", minCount: 0, preferredCount: 0, maxCount: 2 },
     ];
     const input = await buildAutoScheduleInput("2027-01-04", "2027-01-04");
     expect(input.staffingRequirements).toEqual([
@@ -87,7 +86,7 @@ describe("auto-schedule input bundle: staffing requirements carry both keys", ()
 
   it("old client + new bundle: the pre-id-link cap lookup still finds Max 1 for ORC on a Monday", async () => {
     db.shifts = [{ id: "st-orc", code: "ORC" }];
-    db.reqs = [{ shiftTypeId: "st-orc", shiftCode: "ORC", dayKey: "1", minCount: 1, preferredCount: 1, maxCount: 1 }];
+    db.reqs = [{ shiftTypeId: "st-orc", dayKey: "1", minCount: 1, preferredCount: 1, maxCount: 1 }];
     const input = await buildAutoScheduleInput("2027-01-04", "2027-01-04");
     // The old engine's types required shiftCode: string; assert the wire shape satisfies them.
     const oldShaped: OldReq[] = input.staffingRequirements.map((r) => {

@@ -9,6 +9,7 @@
 BEGIN;
 ALTER TABLE "shift_types" ADD COLUMN IF NOT EXISTS "maxPerDay" INTEGER;
 UPDATE "shift_types" st
-SET "maxPerDay" = (SELECT MAX(sr."maxCount") FROM "staffing_requirements" sr WHERE sr."shiftCode" = st."code");
+-- Joined by the shift's id (staffing_requirements."shiftCode" was dropped in 20261106040000).
+SET "maxPerDay" = (SELECT MAX(sr."maxCount") FROM "staffing_requirements" sr WHERE sr."shiftTypeId" = st."id");
 DELETE FROM "_prisma_migrations" WHERE "migration_name" = '20261106010000_drop_shift_types_max_per_day';
 COMMIT;

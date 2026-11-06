@@ -140,8 +140,9 @@ type DayPreference = {
 type StaffingRequirement = {
   shiftTypeId: string; // Staffing Rules are linked to the shift, not its code (a rename changes nothing)
   // Wire compatibility only: the input bundle (GET /api/auto-schedule/inputs) also carries the
-  // shift's CURRENT code so a grid tab still running a pre-id-link engine bundle keys its
-  // minimums and caps correctly. The engine itself never reads it. Dropped in Phase B.
+  // shift's CURRENT code (derived from shift_types, not a stored column) so a grid tab still
+  // running a pre-id-link engine bundle keys its minimums and caps correctly. The engine itself
+  // never reads it. Keep it until old bundles are version-gated (Codex #262).
   shiftCode?: string;
   dayKey: string;
   minCount: number;
