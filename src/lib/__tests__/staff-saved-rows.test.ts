@@ -49,11 +49,15 @@ describe("the Staff page restores from saved rows, never the page-load props (ca
     expect(src).toMatch(/const orig = savedRows\.current\.get\(editingId\)/);
     expect(src).toMatch(/const prev = savedRows\.current\.get\(member\.id\)/);
     expect(src).toMatch(/const member = savedRows\.current\.get\(id\)/);
-    expect(src).toMatch(/remember\(member\);/);
+    // Card #75: a save remembers the row the server returned (its eligibility list), not the sent one.
+    expect(src).toMatch(/const result = await putStaff\(member, /);
+    expect(src).toMatch(/const saved = result\.row;/);
+    expect(src).toMatch(/remember\(saved\);/);
   });
   it("every Undo updates the saved rows only after the server accepted it (Codex #362 WARNING)", () => {
-    // In every Undo callback, each remember()/forget() has `if (!res?.ok) return;` between it and
-    // the fetch that precedes it.
+    // In every Undo callback, each remember()/forget() has a refusal check between it and the
+    // write that precedes it: `if (!res?.ok) return;` after a fetch, or `if (!back) return;` after
+    // putStaff (card #75: it returns null when the server refused).
     const starts = [...src.matchAll(/execute: async \(\) => \{/g)].map((m) => m.index!);
     expect(starts.length).toBeGreaterThanOrEqual(3);
     let checked = 0;
@@ -62,9 +66,9 @@ describe("the Staff page restores from saved rows, never the page-load props (ca
       const body = src.slice(st, end); // just this Undo callback
       for (const m of body.matchAll(/remember\(|savedRows\.current\.forget\(/g)) {
         const before = body.slice(0, m.index);
-        const lastFetch = before.lastIndexOf("fetch(");
+        const lastFetch = Math.max(before.lastIndexOf("fetch("), before.lastIndexOf("putStaff("));
         expect(lastFetch).toBeGreaterThan(-1);
-        expect(before.slice(lastFetch)).toMatch(/if \(!res\?\.ok\) return;/);
+        expect(before.slice(lastFetch)).toMatch(/if \(!res\?\.ok\) return;|if \(!res\) return;/);
         checked++;
       }
     }
@@ -72,3 +76,12 @@ describe("the Staff page restores from saved rows, never the page-load props (ca
   });
 });
 
+
+describe("Staff Undo reverses only its own eligibility change (card #75, Codex #385)", () => {
+  const src = readFileSync(join(__dirname, "../../app/staff/staff-page.tsx"), "utf8");
+  it("the edit's Undo sends undoList(saved list, applied diff), never prev's whole list", () => {
+    expect(src).toMatch(/const u = undoList\(saved\.eligibleShiftTypeIds, result\.applied\);/);
+    expect(src).toMatch(/putStaff\(\{ \.\.\.prev, eligibleShiftTypeIds: u\.list \}, u\.base\)/);
+    expect(src).not.toMatch(/putStaff\(prev, /);
+  });
+});

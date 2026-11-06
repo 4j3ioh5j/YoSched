@@ -111,7 +111,8 @@ export function pinHardLegality(
   isAwayShift: (shiftTypeId: string) => boolean,
 ): "ok" | "ineligible" | "unavailable" | "request-blocked" {
   let eligible = staff.eligibleShiftTypeIds.includes(st.id);
-  if (staff.shiftEligibilityRules && staff.shiftEligibilityRules.length > 0) {
+  // Card #75: rules only narrow; without an eligibility row the shift is never eligible.
+  if (eligible && staff.shiftEligibilityRules && staff.shiftEligibilityRules.length > 0) {
     const r = evaluateShiftEligibility(staff.shiftEligibilityRules, st.id, date, ppRanges);
     // A soft preference (small negative weight) does NOT make a shift ineligible.
     if (r !== null) eligible = r.eligible || (r.weight < 0 && r.weight > -10);

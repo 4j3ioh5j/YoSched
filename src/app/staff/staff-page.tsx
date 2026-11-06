@@ -1,5 +1,6 @@
 "use client";
 
+import { appliedDiff, undoList, type ListApplied } from "@/lib/eligibility-undo";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useEscape } from "@/lib/use-escape";
@@ -1040,35 +1041,54 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
   }, [editingId]);
   useEscape(cancelEdit);
 
+  // Card #75: every staff PUT sends the shift list it started from (`base`), so the server applies
+  // only this page's changes — a shift turned on in Settings meanwhile is never reverted. The saved
+  // row then takes the server's list. A 409 ("reload") is shown, nothing changes locally.
+  // Also returns the eligibility diff the server applied, so Undo reverses exactly this save.
+  async function putStaff(body: Staff, base: readonly string[]): Promise<{ row: Staff; applied: ListApplied } | null> {
+    const res = await fetch("/api/staff", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, eligibleShiftTypeIdsBase: base }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      if (res?.status === 409) alert((await res.json().catch(() => null))?.error ?? "This staff member was changed elsewhere. Reload the page and try again.");
+      return null;
+    }
+    const saved = await res.json().catch(() => null) as { eligibleShifts?: { shiftTypeId: string }[]; eligibleShiftTypeIdsApplied?: unknown } | null;
+    const ids = saved?.eligibleShifts?.map((e) => e.shiftTypeId);
+    const row = ids ? { ...body, eligibleShiftTypeIds: ids } : body;
+    return { row, applied: appliedDiff(saved?.eligibleShiftTypeIdsApplied, body.eligibleShiftTypeIds, base, row.eligibleShiftTypeIds) };
+  }
+
   async function saveStaff(member: Staff) {
     const prev = savedRows.current.get(member.id) ?? staff.find((p) => p.id === member.id);
     setSaving(true);
     try {
-      const res = await fetch("/api/staff", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(member),
-      });
-      if (!res.ok) {
+      const result = await putStaff(member, (prev ?? member).eligibleShiftTypeIds);
+      if (!result) {
         if (prev) setStaff((cur) => cur.map((p) => p.id === member.id ? prev : p));
         return;
       }
+      const saved = result.row;
       setEditingId(null);
-      remember(member);
+      remember(saved);
+      setStaff((cur) => cur.map((p) => p.id === saved.id ? saved : p));
       markSaved({ kind: "saved", id: member.id, isActive: member.isActive });
       if (prev?.isActive && !member.isActive) detachLocal(member.id);
       if (prev) {
         pushUndo({
           label: `Updated ${member.initials}`,
           execute: async () => {
-            const res = await fetch("/api/staff", {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(prev),
-            }).catch(() => null);
-            if (!res?.ok) return; // refused: nothing changed on the server, so nothing changes here
-            remember(prev);
-            setStaff((cur) => cur.map((p) => p.id === prev.id ? prev : p));
+            // Undo this edit only: the other fields go back to `prev`; the eligibility list loses
+            // exactly what this save added and regains what it removed — a shift turned on
+            // elsewhere meanwhile (kept by the save) stays (Codex #385).
+            const u = undoList(saved.eligibleShiftTypeIds, result.applied);
+            const res = await putStaff({ ...prev, eligibleShiftTypeIds: u.list }, u.base);
+            if (!res) return; // refused: nothing changed on the server, so nothing changes here
+            const back = res.row;
+            remember(back);
+            setStaff((cur) => cur.map((p) => p.id === back.id ? back : p));
             markSaved({ kind: "saved", id: prev.id, isActive: prev.isActive });
           },
         });
@@ -1107,14 +1127,11 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
         label: result.deactivated ? `Deactivated ${member.initials}` : `Removed ${member.initials}`,
         execute: async () => {
           if (result.deactivated) {
-            const res = await fetch("/api/staff", {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...member, isActive: true }),
-            }).catch(() => null);
-            if (!res?.ok) return;
-            remember({ ...member, isActive: true });
-            setStaff((cur) => cur.map((p) => p.id === id ? { ...member, isActive: true } : p));
+            const res = await putStaff({ ...member, isActive: true }, member.eligibleShiftTypeIds);
+            if (!res) return;
+            const back = res.row;
+            remember(back);
+            setStaff((cur) => cur.map((p) => p.id === id ? back : p));
             markSaved({ kind: "saved", id, isActive: true });
           } else {
             const res = await fetch("/api/staff", {

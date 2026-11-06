@@ -1,5 +1,6 @@
 "use client";
 
+import { appliedDiff, undoList, type ListApplied } from "@/lib/eligibility-undo";
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
@@ -96,6 +97,9 @@ type SchedulingPrefs = {
   holidayPolicy: HolidayPolicy;
   payPeriodAnchor: string | null;
   payPeriodLengthDays: number;
+  activationWorkedDefault: ActivationData["defaults"]["worked"];
+  activationNeverDefault: ActivationData["defaults"]["never"];
+  activationNewHireDefault: ActivationData["defaults"]["newHire"];
 };
 
 type DefaultAvailabilityRule = {
@@ -234,6 +238,10 @@ type OrderableStaffRow = {
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
+
+// Card #75: the activation panel tells the employment-type editor that one shift's new-hire
+// defaults changed, so a later edit there starts from (and sends) the new list.
+const TYPE_DEFAULTS_EVENT = "yosched:type-default-shifts";
 
 type UndoAction = {
   label: string;
@@ -640,6 +648,148 @@ function RequiredFollowerEditor({ sourceShiftId, allShifts, state, onChange }: {
 
 // The shift list lives in SettingsPage state (`shifts` / `onShiftsChange`), so sibling
 // sections that show shift codes (Staffing Rules headers etc.) see a saved rename at once.
+type ActivationChoice = { version: string; eligibleStaffIds: string[]; defaultEmploymentTypeIds: string[] };
+type ActivationUndo = { version: string; inverse: { autoSchedulable: boolean; eligibleStaffIds: string[]; defaultEmploymentTypeIds: string[] } };
+type ActivationData = {
+  version: string;
+  people: { id: string; initials: string; name: string; employmentTypeId: string; isAutoScheduled: boolean; eligibleNow: boolean; workedCount: number; lastWorked: string | null; hasRules: boolean }[];
+  types: { id: string; name: string; defaultNow: boolean }[];
+  defaults: { worked: "eligible" | "not_eligible" | "keep"; never: "eligible" | "not_eligible" | "keep"; newHire: "keep" | "match" | "none" | "all" };
+};
+const GROUP_LABELS = { eligible: "Eligible", not_eligible: "Not eligible", keep: "Leave as saved" } as const;
+const NEW_HIRE_LABELS = { keep: "Leave as saved", match: "Types of the people ticked", none: "None", all: "All types" } as const;
+
+// Card #75: who becomes eligible when a shift's Auto-schedule is turned on. Starting ticks come
+// from Settings → Scheduling (people who have worked the shift / everyone else / new hires);
+// every row can be changed. Cancel saves nothing.
+function ActivationPanel({ shift, onCancel, onConfirm }: { shift: ShiftType; onCancel: () => void; onConfirm: (c: ActivationChoice) => void }) {
+  const [data, setData] = useState<ActivationData | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [worked, setWorked] = useState<ActivationData["defaults"]["worked"]>("eligible");
+  const [never, setNever] = useState<ActivationData["defaults"]["never"]>("not_eligible");
+  const [newHire, setNewHire] = useState<ActivationData["defaults"]["newHire"]>("keep");
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [typeTicks, setTypeTicks] = useState<Set<string> | null>(null); // null = follow the new-hire rule
+  useEscape(onCancel);
+
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/settings/shift-types/activation?id=${encodeURIComponent(shift.id)}`)
+      .then(async (r) => { const j = await r.json(); if (!r.ok) throw new Error(j?.error ?? "Failed to load"); return j as ActivationData; })
+      .then((d) => {
+        if (!live) return;
+        setData(d);
+        setWorked(d.defaults.worked); setNever(d.defaults.never); setNewHire(d.defaults.newHire);
+        setTicked(groupTicks(d, d.defaults.worked, d.defaults.never));
+      })
+      .catch((e) => { if (live) setLoadError(e instanceof Error ? e.message : "Failed to load"); });
+    return () => { live = false; };
+  }, [shift.id]);
+
+  function groupTicks(d: ActivationData, w: typeof worked, n: typeof never) {
+    const out = new Set<string>();
+    for (const p of d.people) {
+      const rule = p.workedCount > 0 ? w : n;
+      if (rule === "keep" ? p.eligibleNow : rule === "eligible") out.add(p.id);
+    }
+    return out;
+  }
+  const typesTicked = useMemo(() => {
+    if (!data) return new Set<string>();
+    if (typeTicks) return typeTicks;
+    const out = new Set<string>();
+    for (const t of data.types) {
+      const on = newHire === "keep" ? t.defaultNow : newHire === "all" ? true : newHire === "none" ? false
+        : data.people.some((p) => ticked.has(p.id) && p.employmentTypeId === t.id);
+      if (on) out.add(t.id);
+    }
+    return out;
+  }, [data, typeTicks, newHire, ticked]);
+
+  const toggle = (set: Set<string>, id: string) => { const n = new Set(set); if (n.has(id)) n.delete(id); else n.add(id); return n; };
+  const workedPeople = data?.people.filter((p) => p.workedCount > 0) ?? [];
+  const neverPeople = data?.people.filter((p) => p.workedCount === 0) ?? [];
+  const unticksWithRules = data?.people.filter((p) => p.hasRules && !ticked.has(p.id)) ?? [];
+
+  const row = (p: ActivationData["people"][number]) => (
+    <label key={p.id} className="flex items-center gap-2 py-1 text-sm">
+      <input type="checkbox" checked={ticked.has(p.id)} onChange={() => setTicked((cur) => toggle(cur, p.id))} className="rounded border-slate-600 w-4 h-4" />
+      <span className="font-mono w-12">{p.initials}</span>
+      <span className="text-slate-400 flex-1 truncate">{p.name}</span>
+      <span className="text-xs text-slate-500">
+        {p.workedCount > 0 ? `worked ${p.workedCount}×, last ${p.lastWorked}` : "never"}
+        {!p.isAutoScheduled && " · not auto-scheduled"}
+        {p.hasRules && " · has rules for this shift"}
+      </span>
+    </label>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`Turn on ${shift.code}`}>
+      <div className="bg-slate-900 border border-slate-700 rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className="p-4 border-b border-slate-700">
+          <h3 className="text-lg font-semibold">Turn on auto-scheduling for {shift.code}</h3>
+          <p className="text-sm text-slate-400 mt-1">Choose who the scheduler may give {shift.code} to. Nothing is saved until you press Turn on.</p>
+        </div>
+        <div className="p-4 overflow-y-auto flex-1 space-y-4">
+          {loadError && <p className="text-red-400 text-sm">{loadError}</p>}
+          {!data && !loadError && <p className="text-slate-400 text-sm">Loading…</p>}
+          {data && (
+            <>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <label className="text-sm">People who have worked {shift.code} ({workedPeople.length})
+                  <select value={worked} onChange={(e) => { const v = e.target.value as typeof worked; setWorked(v); setTicked(groupTicks(data, v, never)); }} className="mt-1 w-full bg-slate-800 border border-slate-600 rounded px-2 py-1">
+                    {(["eligible", "not_eligible", "keep"] as const).map((k) => <option key={k} value={k}>{GROUP_LABELS[k]}</option>)}
+                  </select>
+                </label>
+                <label className="text-sm">Everyone else ({neverPeople.length})
+                  <select value={never} onChange={(e) => { const v = e.target.value as typeof never; setNever(v); setTicked(groupTicks(data, worked, v)); }} className="mt-1 w-full bg-slate-800 border border-slate-600 rounded px-2 py-1">
+                    {(["eligible", "not_eligible", "keep"] as const).map((k) => <option key={k} value={k}>{GROUP_LABELS[k]}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div>
+                <h4 className="text-sm font-semibold text-slate-300">Have worked {shift.code}</h4>
+                {workedPeople.length ? workedPeople.map(row) : <p className="text-xs text-slate-500">Nobody yet.</p>}
+              </div>
+              <div>
+                <h4 className="text-sm font-semibold text-slate-300">Never worked it</h4>
+                {neverPeople.length ? neverPeople.map(row) : <p className="text-xs text-slate-500">Nobody.</p>}
+              </div>
+              {unticksWithRules.length > 0 && (
+                <p className="text-xs text-amber-400">{unticksWithRules.map((p) => p.initials).join(", ")}: their rules for {shift.code} are kept but ignored while they are not eligible; ticking them again brings the rules back.</p>
+              )}
+              <div className="border-t border-slate-700 pt-3">
+                <label className="text-sm">New hires get {shift.code} by default for
+                  <select value={newHire} onChange={(e) => { setNewHire(e.target.value as typeof newHire); setTypeTicks(null); }} className="mt-1 w-full bg-slate-800 border border-slate-600 rounded px-2 py-1">
+                    {(["keep", "match", "none", "all"] as const).map((k) => <option key={k} value={k}>{NEW_HIRE_LABELS[k]}</option>)}
+                  </select>
+                </label>
+                <div className="mt-2 flex flex-wrap gap-x-4">
+                  {data.types.map((t) => (
+                    <label key={t.id} className="flex items-center gap-2 text-sm py-1">
+                      <input type="checkbox" checked={typesTicked.has(t.id)} onChange={() => setTypeTicks(toggle(typesTicked, t.id))} className="rounded border-slate-600 w-4 h-4" />
+                      {t.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+        <div className="p-4 border-t border-slate-700 flex justify-end gap-2">
+          <button onClick={onCancel} className="px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-sm">Cancel</button>
+          <button
+            disabled={!data}
+            onClick={() => data && onConfirm({ version: data.version, eligibleStaffIds: [...ticked], defaultEmploymentTypeIds: [...typesTicked] })}
+            className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm disabled:opacity-50"
+          >Turn on ({ticked.size} eligible)</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initialFollowRules, initialRequiredFollowers }: { shifts: ShiftType[]; onShiftsChange: React.Dispatch<React.SetStateAction<ShiftType[]>>; pushUndo: (a: UndoAction) => void; initialFollowRules: FollowRuleData[]; initialRequiredFollowers: RequiredFollowerData[] }) {
   const canEdit = useCanEdit();
   // Each shift as last SAVED (not page-load props): Cancel reverts to it and Undo restores it.
@@ -684,16 +834,37 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
     setDragOverIdx(null);
   }
 
-  async function saveShift(shift: ShiftType) {
+  // Card #75: turning Auto-schedule ON opens the activation panel first (who becomes eligible,
+  // which employment types give it to new hires); the save then goes through its endpoint.
+  const [activating, setActivating] = useState<ShiftType | null>(null);
+
+  async function saveShift(shift: ShiftType, activation?: ActivationChoice) {
     const prev = lastSaved.find((s) => s.id === shift.id) ?? shifts.find((s) => s.id === shift.id);
+    if (!activation && prev && !prev.autoSchedulable && shift.autoSchedulable) {
+      setActivating(shift);
+      return;
+    }
     setStatus("saving");
     try {
-      const res = await fetch("/api/settings/shift-types", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(shift),
-      });
-      if (!res.ok) throw new Error(await res.text());
+      let activationUndo: ActivationUndo | null = null;
+      if (activation) {
+        const res = await fetch("/api/settings/shift-types/activation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: shift.id, version: activation.version, autoSchedulable: true, eligibleStaffIds: activation.eligibleStaffIds, defaultEmploymentTypeIds: activation.defaultEmploymentTypeIds, shift }),
+        });
+        const j = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(j?.error ?? `Save failed (${res.status})`);
+        activationUndo = { inverse: j.inverse, version: j.state.version };
+        window.dispatchEvent(new CustomEvent(TYPE_DEFAULTS_EVENT, { detail: { shiftTypeId: shift.id, typeIds: activation.defaultEmploymentTypeIds } }));
+      } else {
+        const res = await fetch("/api/settings/shift-types", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(shift),
+        });
+        if (!res.ok) throw new Error(await res.text());
+      }
 
       const frRules: Array<{ allowedShiftId: string | null; allowOffShifts: boolean }> = [];
       if (followRuleState.enabled) {
@@ -747,7 +918,30 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
       setLastSaved((cur) => cur.some((s) => s.id === shift.id) ? cur.map((s) => s.id === shift.id ? shift : s) : [...cur, shift]);
       setTimeout(() => setStatus("idle"), 2000);
 
-      if (prev) {
+      if (prev && activationUndo) {
+        const undo = activationUndo;
+        pushUndo({
+          label: `Turned on ${shift.code}`,
+          execute: async () => {
+            // Puts back the flag, everyone's eligibility and the new-hire defaults — refused (409)
+            // when anyone changed them since, and then nothing is reverted.
+            const res = await fetch("/api/settings/shift-types/activation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: prev.id, version: undo.version, ...undo.inverse, shift: prev }),
+            }).catch(() => null);
+            if (!res?.ok) {
+              const j = await res?.json().catch(() => null);
+              setError(j?.error ?? "Undo failed");
+              setStatus("error");
+              return;
+            }
+            window.dispatchEvent(new CustomEvent(TYPE_DEFAULTS_EVENT, { detail: { shiftTypeId: prev.id, typeIds: undo.inverse.defaultEmploymentTypeIds } }));
+            setShifts((cur) => cur.map((s) => s.id === prev.id ? prev : s));
+            setLastSaved((cur) => cur.map((s) => s.id === prev.id ? prev : s));
+          },
+        });
+      } else if (prev) {
         pushUndo({
           label: `Updated ${shift.code}`,
           execute: async () => {
@@ -795,9 +989,13 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(deleted),
             });
+            if (!res.ok) return;
             const created = await res.json();
-            setShifts((cur) => [...cur, { ...deleted, id: created.id }]);
-            setLastSaved((cur) => [...cur, { ...deleted, id: created.id }]);
+            // Card #75: a re-created shift always comes back with Auto-schedule off (the server
+            // forces it); turning it on again opens the panel that chooses who gets it.
+            const back = { ...deleted, id: created.id, autoSchedulable: !!created.autoSchedulable };
+            setShifts((cur) => [...cur, back]);
+            setLastSaved((cur) => [...cur, back]);
           },
         });
       }
@@ -926,6 +1124,14 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
   }, [editingId, requiredFollowers]);
 
   return (
+    <>
+    {activating && (
+      <ActivationPanel
+        shift={activating}
+        onCancel={() => setActivating(null)}
+        onConfirm={(c) => { const sh = activating; setActivating(null); void saveShift(sh, c); }}
+      />
+    )}
     <CollapsibleSection
       id="shift-types"
       title="Shift Types"
@@ -1139,6 +1345,7 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
         </button>
       )}
     </CollapsibleSection>
+    </>
   );
 }
 
@@ -2899,6 +3106,27 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
     "honor-always": { label: "Honor always", hint: "Force every requested shift first and keep it, even past the staffer's hour cap" },
   };
 
+  // Card #75: the starting ticks of the shift activation panel.
+  const [activationStatus, setActivationStatus] = useState<SaveStatus>("idle");
+  async function saveActivation<K extends "activationWorkedDefault" | "activationNeverDefault" | "activationNewHireDefault">(key: K, value: SchedulingPrefs[K]) {
+    const prev = prefs[key];
+    setPrefs((p) => ({ ...p, [key]: value }));
+    setActivationStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [key]: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setActivationStatus("saved");
+      setTimeout(() => setActivationStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, [key]: prev }));
+      setActivationStatus("error");
+    }
+  }
+
   const [leapStatus, setLeapStatus] = useState<SaveStatus>("idle");
   async function saveMaxLeave(value: number) {
     const prev = prefs.maxLeavePerDay;
@@ -3195,6 +3423,51 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
               leaveTypes={leaveTypes}
               disabled={!canEdit}
             />
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-slate-700/50">
+          <div className="text-sm font-medium text-slate-200">When a shift&apos;s Auto-schedule is turned on</div>
+          <div className="text-xs text-slate-400">
+            Who starts ticked in the panel that opens when you turn on a shift&apos;s Auto-schedule (Shift Types). You can change any person there before saving. &ldquo;Worked it&rdquo; means at least one saved assignment of that shift, on any date.
+            {activationStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
+            {activationStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
+            {activationStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+            <label className="text-xs text-slate-400 flex flex-col gap-1">
+              People who have worked it
+              <select
+                value={prefs.activationWorkedDefault}
+                disabled={!canEdit}
+                onChange={(e) => canEdit && saveActivation("activationWorkedDefault", e.target.value as SchedulingPrefs["activationWorkedDefault"])}
+                className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 disabled:opacity-50"
+              >
+                {(["eligible", "not_eligible", "keep"] as const).map((k) => <option key={k} value={k}>{GROUP_LABELS[k]}</option>)}
+              </select>
+            </label>
+            <label className="text-xs text-slate-400 flex flex-col gap-1">
+              Everyone else
+              <select
+                value={prefs.activationNeverDefault}
+                disabled={!canEdit}
+                onChange={(e) => canEdit && saveActivation("activationNeverDefault", e.target.value as SchedulingPrefs["activationNeverDefault"])}
+                className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 disabled:opacity-50"
+              >
+                {(["eligible", "not_eligible", "keep"] as const).map((k) => <option key={k} value={k}>{GROUP_LABELS[k]}</option>)}
+              </select>
+            </label>
+            <label className="text-xs text-slate-400 flex flex-col gap-1">
+              New hires get it by employment type
+              <select
+                value={prefs.activationNewHireDefault}
+                disabled={!canEdit}
+                onChange={(e) => canEdit && saveActivation("activationNewHireDefault", e.target.value as SchedulingPrefs["activationNewHireDefault"])}
+                className="bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 disabled:opacity-50"
+              >
+                {(["keep", "match", "none", "all"] as const).map((k) => <option key={k} value={k}>{NEW_HIRE_LABELS[k]}</option>)}
+              </select>
+            </label>
           </div>
         </div>
       </div>
@@ -3581,30 +3854,65 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
 
   const editingType = editingId ? types.find((t) => t.id === editingId) ?? null : null;
 
+  // Card #75: the last SAVED row per type (not the page-load props): Cancel restores it, and each
+  // save sends its new-hire shift list as the base so the server applies only this edit.
+  const savedTypes = useRef(new Map(initial.map((t) => [t.id, t] as const)));
+  useEffect(() => {
+    // The activation panel (Shift types) rewrites one shift's new-hire defaults across types.
+    const onDefaults = (e: Event) => {
+      const { shiftTypeId, typeIds } = (e as CustomEvent<{ shiftTypeId: string; typeIds: string[] }>).detail;
+      const apply = (t: EmploymentTypeData): EmploymentTypeData => {
+        const has = t.defaultEligibleShiftTypeIds.includes(shiftTypeId);
+        const want = typeIds.includes(t.id);
+        if (has === want) return t;
+        return { ...t, defaultEligibleShiftTypeIds: want ? [...t.defaultEligibleShiftTypeIds, shiftTypeId] : t.defaultEligibleShiftTypeIds.filter((id) => id !== shiftTypeId) };
+      };
+      for (const [id, t] of savedTypes.current) savedTypes.current.set(id, apply(t));
+      setTypes((cur) => cur.map(apply));
+    };
+    window.addEventListener(TYPE_DEFAULTS_EVENT, onDefaults);
+    return () => window.removeEventListener(TYPE_DEFAULTS_EVENT, onDefaults);
+  }, []);
+
   function updateField(id: string, field: keyof EmploymentTypeData, value: unknown) {
     setTypes((prev) => prev.map((t) => t.id === id ? { ...t, [field]: value } : t));
   }
 
   const cancelEdit = useCallback(() => {
     if (!editingId) return;
-    const orig = initial.find((t) => t.id === editingId);
+    const orig = savedTypes.current.get(editingId);
     if (orig) setTypes((prev) => prev.map((t) => t.id === editingId ? orig : t));
     setEditingId(null);
-  }, [editingId, initial]);
+  }, [editingId]);
   useEscape(cancelEdit);
 
+  // PUT with the base list; returns the row with the server's canonical default-shift list.
+  // Also returns the default-shift diff the server applied, so Undo reverses exactly this save.
+  async function putType(body: EmploymentTypeData, base: readonly string[]): Promise<{ row: EmploymentTypeData; applied: ListApplied }> {
+    const res = await fetch("/api/settings/employment-types", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, defaultEligibleShiftTypeIdsBase: base }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => null) as { error?: string } | null;
+      throw new Error(j?.error ?? `Save failed (${res.status})`);
+    }
+    const saved = await res.json().catch(() => null) as { defaultEligibleShifts?: { shiftTypeId: string }[]; defaultEligibleShiftTypeIdsApplied?: unknown } | null;
+    const ids = saved?.defaultEligibleShifts?.map((d) => d.shiftTypeId);
+    const row = ids ? { ...body, defaultEligibleShiftTypeIds: ids } : body;
+    return { row, applied: appliedDiff(saved?.defaultEligibleShiftTypeIdsApplied, body.defaultEligibleShiftTypeIds, base, row.defaultEligibleShiftTypeIds) };
+  }
+
   async function saveType(et: EmploymentTypeData) {
-    const prev = initial.find((t) => t.id === et.id);
+    const prev = savedTypes.current.get(et.id);
     const warning = prev ? typeFlagChangeWarning(prev, et) : null;
     if (warning && !confirm(warning)) return;
     setStatus("saving");
     try {
-      const res = await fetch("/api/settings/employment-types", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(et),
-      });
-      if (!res.ok) throw new Error(await res.text());
+      const { row: saved, applied } = await putType(et, (prev ?? et).defaultEligibleShiftTypeIds);
+      savedTypes.current.set(saved.id, saved);
+      setTypes((cur) => cur.map((t) => t.id === saved.id ? saved : t));
       setEditingId(null);
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2000);
@@ -3612,12 +3920,17 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
         pushUndo({
           label: `Updated ${et.name}`,
           execute: async () => {
-            await fetch("/api/settings/employment-types", {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(prev),
-            });
-            setTypes((cur) => cur.map((t) => t.id === prev.id ? prev : t));
+            try {
+              // Only this save's own additions/removals are reversed; a shift activation made
+              // elsewhere meanwhile (kept by the save) stays (Codex #385).
+              const u = undoList(saved.defaultEligibleShiftTypeIds, applied);
+              const { row: back } = await putType({ ...prev, defaultEligibleShiftTypeIds: u.list }, u.base);
+              savedTypes.current.set(back.id, back);
+              setTypes((cur) => cur.map((t) => t.id === back.id ? back : t));
+            } catch (e) {
+              setError(e instanceof Error ? e.message : "Undo failed");
+              setStatus("error");
+            }
           },
         });
       }
@@ -3654,6 +3967,7 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
         sortOrder: created.sortOrder,
         staffCount: 0,
       };
+      savedTypes.current.set(newType.id, newType);
       setTypes((prev) => [...prev, newType]);
       setEditingId(created.id);
       setStatus("saved");
@@ -3702,7 +4016,10 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
             body: JSON.stringify(et),
           });
           const created = await res.json();
-          setTypes((cur) => [...cur, { ...et, id: created.id }]);
+          // POST gives a new type its own default shifts: keep the server's list.
+          const back = { ...et, id: created.id, defaultEligibleShiftTypeIds: (created.defaultEligibleShifts ?? []).map((ds: { shiftTypeId: string }) => ds.shiftTypeId) };
+          savedTypes.current.set(back.id, back);
+          setTypes((cur) => [...cur, back]);
         },
       });
     } catch (e) {

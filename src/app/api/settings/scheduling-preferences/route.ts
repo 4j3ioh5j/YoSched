@@ -8,6 +8,7 @@ import { isLiveScope, LIVE_SCOPES } from "@/lib/live-scope";
 import { isShiftShareBasis, SHIFT_SHARE_BASES } from "@/lib/shift-share";
 import { isHolidayPolicy, HOLIDAY_POLICIES } from "@/lib/holiday-policy";
 import { validateStaffOrderCriteria } from "@/lib/staff-order";
+import { isActivationGroupDefault, isActivationNewHireDefault, ACTIVATION_GROUP_DEFAULTS, ACTIVATION_NEW_HIRE_DEFAULTS } from "@/lib/shift-activation";
 
 export async function GET() {
   const { error } = await getSession("settings:view");
@@ -25,7 +26,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault } = body;
 
   // Mode is STRICTLY validated on write — a bad value is rejected, never coerced to
   // the default (which would silently turn a typo into "full"). Reads stay lenient.
@@ -46,6 +47,14 @@ export async function PUT(req: NextRequest) {
   }
   if (holidayPolicy !== undefined && !isHolidayPolicy(holidayPolicy)) {
     return NextResponse.json({ error: `holidayPolicy must be one of ${HOLIDAY_POLICIES.join(", ")}` }, { status: 400 });
+  }
+  for (const [k, v] of [["activationWorkedDefault", activationWorkedDefault], ["activationNeverDefault", activationNeverDefault]] as const) {
+    if (v !== undefined && !isActivationGroupDefault(v)) {
+      return NextResponse.json({ error: `${k} must be one of ${ACTIVATION_GROUP_DEFAULTS.join(", ")}` }, { status: 400 });
+    }
+  }
+  if (activationNewHireDefault !== undefined && !isActivationNewHireDefault(activationNewHireDefault)) {
+    return NextResponse.json({ error: `activationNewHireDefault must be one of ${ACTIVATION_NEW_HIRE_DEFAULTS.join(", ")}` }, { status: 400 });
   }
 
   // Schedule column order: strict on write like the modes above (null explicitly
@@ -94,6 +103,9 @@ export async function PUT(req: NextRequest) {
       ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
       ...(isHolidayPolicy(holidayPolicy) && { holidayPolicy }),
       ...(columnOrder !== undefined && { staffColumnOrder: columnOrder === null ? Prisma.DbNull : columnOrder }),
+      ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
+      ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),
+      ...(isActivationNewHireDefault(activationNewHireDefault) && { activationNewHireDefault }),
     },
     create: {
       id: "default",
@@ -109,6 +121,9 @@ export async function PUT(req: NextRequest) {
       ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
       ...(isHolidayPolicy(holidayPolicy) && { holidayPolicy }),
       ...(columnOrder != null && { staffColumnOrder: columnOrder }),
+      ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
+      ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),
+      ...(isActivationNewHireDefault(activationNewHireDefault) && { activationNewHireDefault }),
     },
   });
 

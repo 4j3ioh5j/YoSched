@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { ruleToWhen, whenToColumns } from "@/lib/recurrence";
 import { NextRequest, NextResponse } from "next/server";
 import { typeFlagsWrite } from "@/lib/fte";
+import { lockEligibility, eligibilityDiff, EligibilityStale } from "@/lib/eligibility-write";
 
 // Derive the normalized WHEN columns for a default-availability rule on save,
 // keeping them in sync with the legacy columns. ruleToWhen prefers explicit when*
@@ -26,12 +27,19 @@ function whenColumns(r: Record<string, unknown>) {
 export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
-  const { id, defaultEligibleShiftTypeIds, defaultAvailabilityRules, ...data } = await req.json();
+  const { id, defaultEligibleShiftTypeIds, defaultEligibleShiftTypeIdsBase, defaultAvailabilityRules, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
   // Card #71: the type's settings (FTE %, fixed hours, fairness). Staff values are never touched
   // here: the resolver ignores what a setting turns off, so turning it back on (or Undo) restores it.
-  const flagError = await prisma.$transaction(async (tx) => {
+  let flagError: string | null;
+  // Card #75: the default-shift diff actually applied, for an exact Undo (Codex #385).
+  let applied: { add: string[]; remove: string[] } | null = null;
+  try {
+  flagError = await prisma.$transaction(async (tx) => {
+    // Card #75: the eligibility lock first; the default-shift list is applied in this same
+    // transaction as the user's diff, so a stale page can't overwrite a shift activation.
+    if (Array.isArray(defaultEligibleShiftTypeIds)) await lockEligibility(tx);
     const existing = await tx.employmentType.findUnique({ where: { id } });
     if (!existing) return "Employment type not found";
     const w = typeFlagsWrite({ existing, body: data });
@@ -46,21 +54,21 @@ export async function PUT(req: NextRequest) {
         ...w.flags,
       },
     });
+    if (Array.isArray(defaultEligibleShiftTypeIds)) {
+      const stored = (await tx.employmentTypeDefaultShift.findMany({ where: { employmentTypeId: id }, select: { shiftTypeId: true } })).map((r) => r.shiftTypeId);
+      const { add, remove } = eligibilityDiff(stored, defaultEligibleShiftTypeIds, defaultEligibleShiftTypeIdsBase);
+      applied = { add, remove };
+      if (remove.length > 0) await tx.employmentTypeDefaultShift.deleteMany({ where: { employmentTypeId: id, shiftTypeId: { in: remove } } });
+      if (add.length > 0) await tx.employmentTypeDefaultShift.createMany({ data: add.map((shiftTypeId) => ({ employmentTypeId: id, shiftTypeId })) });
+    }
     return null;
   });
-  if (flagError) return NextResponse.json({ error: flagError }, { status: 400 });
-
-  if (Array.isArray(defaultEligibleShiftTypeIds)) {
-    await prisma.employmentTypeDefaultShift.deleteMany({ where: { employmentTypeId: id } });
-    if (defaultEligibleShiftTypeIds.length > 0) {
-      await prisma.employmentTypeDefaultShift.createMany({
-        data: defaultEligibleShiftTypeIds.map((stId: string) => ({
-          employmentTypeId: id,
-          shiftTypeId: stId,
-        })),
-      });
-    }
+  } catch (e) {
+    if (e instanceof EligibilityStale) return NextResponse.json({ error: e.message, reason: "stale" }, { status: 409 });
+    if (e instanceof TypeError) return NextResponse.json({ error: e.message }, { status: 400 });
+    throw e;
   }
+  if (flagError) return NextResponse.json({ error: flagError }, { status: 400 });
 
   if (Array.isArray(defaultAvailabilityRules)) {
     await prisma.employmentTypeDefaultAvailability.deleteMany({ where: { employmentTypeId: id } });
@@ -81,7 +89,7 @@ export async function PUT(req: NextRequest) {
     include: { defaultEligibleShifts: true, defaultAvailability: true },
   });
 
-  return NextResponse.json(result);
+  return NextResponse.json(applied ? { ...result, defaultEligibleShiftTypeIdsApplied: applied } : result);
 }
 
 export async function POST(req: NextRequest) {
@@ -118,15 +126,16 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const allShiftTypes = await prisma.shiftType.findMany({ select: { id: true } });
-  if (allShiftTypes.length > 0) {
-    await prisma.employmentTypeDefaultShift.createMany({
-      data: allShiftTypes.map((st) => ({
-        employmentTypeId: created.id,
-        shiftTypeId: st.id,
-      })),
-    });
-  }
+  // A new type starts with every shift as a default (unchanged), written under the eligibility lock.
+  await prisma.$transaction(async (tx) => {
+    await lockEligibility(tx);
+    const allShiftTypes = await tx.shiftType.findMany({ select: { id: true } });
+    if (allShiftTypes.length > 0) {
+      await tx.employmentTypeDefaultShift.createMany({
+        data: allShiftTypes.map((st) => ({ employmentTypeId: created.id, shiftTypeId: st.id })),
+      });
+    }
+  });
 
   const result = await prisma.employmentType.findUnique({
     where: { id: created.id },

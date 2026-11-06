@@ -4,6 +4,7 @@ import { detachLoginForStaff } from "@/lib/user-lifecycle";
 import { ruleToWhen, whenToColumns, standingToWhen, normalizeAnyDay } from "@/lib/recurrence";
 import { NextRequest, NextResponse } from "next/server";
 import { staffHoursWrite } from "@/lib/fte";
+import { lockEligibility, eligibilityDiff, EligibilityStale } from "@/lib/eligibility-write";
 
 class HoursError extends Error {}
 
@@ -54,11 +55,16 @@ function standingWhenColumns(r: Record<string, unknown>) {
 export async function PUT(req: NextRequest) {
   const { error } = await getSession("staff:edit");
   if (error) return error;
-  const { id, eligibleShiftTypeIds, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, standingCommitments, shiftOverrides, ...data } = await req.json();
+  const { id, eligibleShiftTypeIds, eligibleShiftTypeIdsBase, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, standingCommitments, shiftOverrides, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
+  // Card #75: what the eligibility diff actually changed, returned so the page's Undo reverses
+  // exactly this save and nothing made elsewhere (Codex #385).
+  let applied: { add: string[]; remove: string[] } | null = null;
   try {
   await prisma.$transaction(async (tx) => {
+    // Card #75: the eligibility lock first (every writer of staff_eligible_shifts takes it).
+    if (Array.isArray(eligibleShiftTypeIds)) await lockEligibility(tx);
     // Card #71: FTE % and fixed hours are decided by the (new) employment type's settings,
     // read in this transaction — a type change applies in the same write.
     const current = await tx.staff.findUnique({ where: { id }, select: { employmentTypeId: true } });
@@ -99,16 +105,14 @@ export async function PUT(req: NextRequest) {
       await detachLoginForStaff(id, tx);
     }
 
+    // Card #75: apply only the user's changes (against the list the page started from), so a
+    // page loaded before a shift was turned on in Settings cannot revert that.
     if (Array.isArray(eligibleShiftTypeIds)) {
-      await tx.staffEligibleShift.deleteMany({ where: { staffId: id } });
-      if (eligibleShiftTypeIds.length > 0) {
-        await tx.staffEligibleShift.createMany({
-          data: eligibleShiftTypeIds.map((stId: string) => ({
-            staffId: id,
-            shiftTypeId: stId,
-          })),
-        });
-      }
+      const stored = (await tx.staffEligibleShift.findMany({ where: { staffId: id }, select: { shiftTypeId: true } })).map((r) => r.shiftTypeId);
+      const { add, remove } = eligibilityDiff(stored, eligibleShiftTypeIds, eligibleShiftTypeIdsBase);
+      applied = { add, remove };
+      if (remove.length > 0) await tx.staffEligibleShift.deleteMany({ where: { staffId: id, shiftTypeId: { in: remove } } });
+      if (add.length > 0) await tx.staffEligibleShift.createMany({ data: add.map((shiftTypeId) => ({ staffId: id, shiftTypeId })) });
     }
 
     if (Array.isArray(availabilityRules)) {
@@ -202,6 +206,8 @@ export async function PUT(req: NextRequest) {
   });
   } catch (e) {
     if (e instanceof HoursError) return NextResponse.json({ error: e.message }, { status: 400 });
+    if (e instanceof EligibilityStale) return NextResponse.json({ error: e.message, reason: "stale" }, { status: 409 });
+    if (e instanceof TypeError) return NextResponse.json({ error: e.message }, { status: 400 });
     throw e;
   }
 
@@ -210,7 +216,7 @@ export async function PUT(req: NextRequest) {
     include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true, shiftOverrides: true },
   });
 
-  return NextResponse.json(result);
+  return NextResponse.json(applied ? { ...result, eligibleShiftTypeIdsApplied: applied } : result);
 }
 
 export async function POST(req: NextRequest) {
@@ -257,18 +263,18 @@ export async function POST(req: NextRequest) {
     return staff;
   });
 
-  const [defaultShifts, defaultAvailability] = await Promise.all([
-    prisma.employmentTypeDefaultShift.findMany({ where: { employmentTypeId } }),
-    prisma.employmentTypeDefaultAvailability.findMany({ where: { employmentTypeId } }),
-  ]);
-  if (defaultShifts.length > 0) {
-    await prisma.staffEligibleShift.createMany({
-      data: defaultShifts.map((ds) => ({
-        staffId: created.id,
-        shiftTypeId: ds.shiftTypeId,
-      })),
-    });
-  }
+  // Card #75: the new hire's shifts come from the type's defaults, read and copied under the
+  // eligibility lock so a shift being turned on at the same moment is seen whole.
+  await prisma.$transaction(async (tx) => {
+    await lockEligibility(tx);
+    const defaultShifts = await tx.employmentTypeDefaultShift.findMany({ where: { employmentTypeId } });
+    if (defaultShifts.length > 0) {
+      await tx.staffEligibleShift.createMany({
+        data: defaultShifts.map((ds) => ({ staffId: created.id, shiftTypeId: ds.shiftTypeId })),
+      });
+    }
+  });
+  const defaultAvailability = await prisma.employmentTypeDefaultAvailability.findMany({ where: { employmentTypeId } });
   if (defaultAvailability.length > 0) {
     await prisma.availabilityRule.createMany({
       data: defaultAvailability.map((da) => ({

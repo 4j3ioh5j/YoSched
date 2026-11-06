@@ -11,6 +11,7 @@ import { parseShiftShareBasis } from "@/lib/shift-share";
 import { parseHolidayPolicy } from "@/lib/holiday-policy";
 import { parseStaffOrderCriteria } from "@/lib/staff-order";
 import { parseHoursPolicy } from "@/lib/autogen-hours-policy";
+import { parseActivationWorked, parseActivationNever, parseActivationNewHire } from "@/lib/shift-activation";
 import { redirect } from "next/navigation";
 import { effectiveFte } from "@/lib/fte";
 
@@ -70,6 +71,9 @@ export default async function Settings() {
     holidayPolicy: parseHolidayPolicy(schedulingPrefsRow?.holidayPolicy),
     payPeriodAnchor: schedulingPrefsRow?.payPeriodAnchor?.toISOString().split("T")[0] ?? null,
     payPeriodLengthDays: schedulingPrefsRow?.payPeriodLengthDays ?? 14,
+    activationWorkedDefault: parseActivationWorked(schedulingPrefsRow?.activationWorkedDefault),
+    activationNeverDefault: parseActivationNever(schedulingPrefsRow?.activationNeverDefault),
+    activationNewHireDefault: parseActivationNewHire(schedulingPrefsRow?.activationNewHireDefault),
   };
 
   return (

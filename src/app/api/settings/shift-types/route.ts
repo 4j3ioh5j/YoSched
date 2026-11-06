@@ -4,25 +4,8 @@ import { Prisma } from "@/generated/prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { coerceConditions } from "@/lib/print-column-visibility";
 import { conditionsReference } from "@/lib/print-conditions";
-
-// Editable columns. PUT is a partial update — only keys actually present in the
-// request body are written, so omitting a field leaves it untouched (rather than
-// resetting it to a default). The Settings UI sends the full object; other
-// callers can safely PATCH a subset.
-const EDITABLE_FIELDS = [
-  "name", "code", "defaultHours", "defaultHoursWeekend", "defaultHoursHoliday",
-  "countsTowardFte", "countsAsHolidayWork",
-  "isLeave", "isPaid", "category", "color", "printBackgroundColor", "sortOrder",
-  "schedulePriority", "isOffShift", "isFillShift", "weekendPaired", "holidayWeekendPaired",
-  "ignoresWorkingDays", "autoSchedulable", "hotkey", "dedicatedColumn",
-  "boldOnSchedule",
-] as const;
-
-// Accept only null or a #rrggbb hex string for the print background; any other value
-// (malformed direct-API input) is coerced to null. The settings UI only emits valid hex.
-function sanitizePrintBg(v: unknown): string | null {
-  return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v : null;
-}
+import { lockEligibility } from "@/lib/eligibility-write";
+import { SHIFT_TYPE_EDITABLE_FIELDS as EDITABLE_FIELDS, sanitizePrintBg } from "@/lib/shift-type-fields";
 
 export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
@@ -49,7 +32,12 @@ export async function PUT(req: NextRequest) {
   const current = await prisma.shiftType.findUnique({ where: { id }, select: { id: true } });
   if (!current) return NextResponse.json({ error: "Shift type not found" }, { status: 404 });
 
-  const updated = await prisma.shiftType.update({ where: { id }, data: updateData });
+  // Card #75: autoSchedulable is part of the activation version, so a plain save that changes it
+  // takes the eligibility lock like every other writer the activation panel compares against.
+  const updated = await prisma.$transaction(async (tx) => {
+    if ("autoSchedulable" in updateData) await lockEligibility(tx);
+    return tx.shiftType.update({ where: { id }, data: updateData });
+  });
   return NextResponse.json(updated);
 }
 
@@ -84,29 +72,17 @@ export async function POST(req: NextRequest) {
       weekendPaired: data.weekendPaired ?? false,
       holidayWeekendPaired: data.holidayWeekendPaired ?? false,
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
-      autoSchedulable: data.autoSchedulable ?? false,
+      // Card #75: always off. Turning it on goes through the activation panel, which chooses who gets
+      // it (a deleted shift's Undo re-POSTs its old row; it must not come back "on" with nobody).
+      autoSchedulable: false,
       hotkey: data.hotkey ?? null,
       dedicatedColumn: data.dedicatedColumn ?? false,
       boldOnSchedule: data.boldOnSchedule ?? false,
     },
   });
 
-  const [activeStaff, employmentTypes] = await Promise.all([
-    prisma.staff.findMany({ where: { isActive: true }, select: { id: true } }),
-    prisma.employmentType.findMany({ select: { id: true } }),
-  ]);
-  const eligibilityRows = [
-    ...activeStaff.map((p) => ({ staffId: p.id, shiftTypeId: created.id })),
-  ];
-  const defaultRows = [
-    ...employmentTypes.map((et) => ({ employmentTypeId: et.id, shiftTypeId: created.id })),
-  ];
-  if (eligibilityRows.length > 0) {
-    await prisma.staffEligibleShift.createMany({ data: eligibilityRows });
-  }
-  if (defaultRows.length > 0) {
-    await prisma.employmentTypeDefaultShift.createMany({ data: defaultRows });
-  }
+  // Card #75: a new shift is granted to nobody. Who may get it (and which employment types give
+  // it to new hires) is chosen in the activation panel when its Auto-schedule is turned on.
 
   return NextResponse.json(created);
 }

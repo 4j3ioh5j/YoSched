@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { NextRequest } from "next/server";
+import { appliedDiff, undoList } from "@/lib/eligibility-undo";
 
 // Card #71 — staff and employment-type APIs decide FTE % / fixed hours by the type's settings,
 // never its name. A small in-memory store (rolled back when a transaction throws).
@@ -7,7 +8,12 @@ import type { NextRequest } from "next/server";
 type Type = { id: string; name: string; defaultIsAutoScheduled: boolean; defaultFtePercentage: number; usesFtePercentage: boolean; allowsFixedHours: boolean; includedInFairness: boolean; sortOrder: number };
 type Staff = { id: string; name: string; initials: string; employmentTypeId: string; ftePercentage: number | null; fixedHoursPerPp: number | null; isActive: boolean; isAutoScheduled: boolean; sortOrder: number };
 
-const store = { types: [] as Type[], staff: [] as Staff[], seq: 0, failNextStaffUpdateMany: false };
+type Elig = { staffId: string; shiftTypeId: string };
+type TypeDefault = { employmentTypeId: string; shiftTypeId: string };
+const store = { types: [] as Type[], staff: [] as Staff[], elig: [] as Elig[], typeDefaults: [] as TypeDefault[], locks: 0, seq: 0, failNextStaffUpdateMany: false };
+// Equality and `{ in: [...] }` filters, as the eligibility writers use them.
+const hit = (row: Record<string, unknown>, where: Record<string, unknown> = {}) =>
+  Object.entries(where).every(([k, v]) => (v && typeof v === "object" && "in" in v ? (v as { in: unknown[] }).in.includes(row[k]) : row[k] === v));
 const copy = <T,>(v: T): T => (v == null ? v : structuredClone(v));
 const pick = <T extends object>(data: Record<string, unknown>, row: T): T => {
   const out = { ...row } as Record<string, unknown>;
@@ -55,12 +61,22 @@ function client() {
         return { count: 0 };
       },
     },
-    employmentTypeDefaultShift: { findMany: async () => [], createMany: async () => ({ count: 0 }), deleteMany: async () => ({ count: 0 }) },
+    employmentTypeDefaultShift: {
+      findMany: async ({ where }: { where?: Record<string, unknown> } = {}) => copy(store.typeDefaults.filter((r) => hit(r, where))),
+      createMany: async ({ data }: { data: TypeDefault[] }) => { store.typeDefaults.push(...copy(data)); return { count: data.length }; },
+      deleteMany: async ({ where }: { where: Record<string, unknown> }) => { store.typeDefaults = store.typeDefaults.filter((r) => !hit(r, where)); return { count: 0 }; },
+    },
     employmentTypeDefaultAvailability: { findMany: async () => [], createMany: async () => ({ count: 0 }), deleteMany: async () => ({ count: 0 }) },
     shiftType: { findMany: async () => [] },
+    staffEligibleShift: {
+      findMany: async ({ where }: { where?: Record<string, unknown> } = {}) => copy(store.elig.filter((r) => hit(r, where))),
+      createMany: async ({ data }: { data: Elig[] }) => { store.elig.push(...copy(data)); return { count: data.length }; },
+      deleteMany: async ({ where }: { where: Record<string, unknown> }) => { store.elig = store.elig.filter((r) => !hit(r, where)); return { count: 0 }; },
+    },
+    async $executeRaw() { store.locks++; return 0; }, // card #75: the eligibility advisory lock
     async $transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
-      const snap = structuredClone({ types: store.types, staff: store.staff });
-      try { return await fn(this); } catch (e) { store.types = snap.types; store.staff = snap.staff; throw e; }
+      const snap = structuredClone({ types: store.types, staff: store.staff, elig: store.elig, typeDefaults: store.typeDefaults });
+      try { return await fn(this); } catch (e) { Object.assign(store, snap); throw e; }
     },
   };
 }
@@ -78,7 +94,10 @@ const staffRow = (id: string) => store.staff.find((p) => p.id === id)!;
 
 beforeEach(() => {
   store.seq = 0;
+  store.locks = 0;
   store.failNextStaffUpdateMany = false;
+  store.elig = [];
+  store.typeDefaults = [];
   // Deliberately odd names: behaviour must follow the settings, not "FTE" / "Fee Basis".
   store.types = [
     { id: "t-ft", name: "Staff Nurse", defaultIsAutoScheduled: true, defaultFtePercentage: 0.9, usesFtePercentage: true, allowsFixedHours: false, includedInFairness: true, sortOrder: 0 },
@@ -181,5 +200,120 @@ describe("POST /api/settings/employment-types", () => {
     expect((await postType(req({ name: "Casual", usesFtePercentage: false, allowsFixedHours: true, includedInFairness: false }))).status).toBe(200);
     expect(store.types.find((t) => t.name === "Casual")).toMatchObject({ usesFtePercentage: false, allowsFixedHours: true, includedInFairness: false });
     expect((await postType(req({ name: "Bad", usesFtePercentage: true, allowsFixedHours: true }))).status).toBe(400);
+  });
+});
+
+// Card #75: the Staff page and the employment-type editor send whole lists. They now send the list
+// they started from too (`…Base`) and the server applies only the difference, under the
+// eligibility lock, so a page loaded before a shift was turned on in Settings can't undo that.
+describe("eligibility lists: apply the user's change only (card #75)", () => {
+  const eligOf = (id: string) => store.elig.filter((r) => r.staffId === id).map((r) => r.shiftTypeId).sort();
+  const defaultsOf = (id: string) => store.typeDefaults.filter((r) => r.employmentTypeId === id).map((r) => r.shiftTypeId).sort();
+
+  it("Staff PUT: a stale page's save keeps a shift turned on elsewhere, and applies its own tick/untick", async () => {
+    store.elig = [{ staffId: "ab", shiftTypeId: "U" }, { staffId: "ab", shiftTypeId: "S" }]; // S was added by an activation
+    const res = await putStaff(req({ id: "ab", eligibleShiftTypeIds: ["T"], eligibleShiftTypeIdsBase: ["U"] }));
+    expect(res.status).toBe(200);
+    expect(eligOf("ab")).toEqual(["S", "T"]);
+    expect(store.locks).toBeGreaterThan(0);
+  });
+  it("Staff PUT from an old cached page (no base): the stored list is fine, a different list is 409 and nothing changes", async () => {
+    store.elig = [{ staffId: "ab", shiftTypeId: "S" }];
+    expect((await putStaff(req({ id: "ab", eligibleShiftTypeIds: ["S"] }))).status).toBe(200);
+    const res = await putStaff(req({ id: "ab", name: "Renamed", eligibleShiftTypeIds: [] }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).reason).toBe("stale");
+    expect(eligOf("ab")).toEqual(["S"]);
+    expect(staffRow("ab").name).toBe("AB"); // the whole save rolled back
+  });
+  it("Staff PUT: a malformed list is 400", async () => {
+    expect((await putStaff(req({ id: "ab", eligibleShiftTypeIds: [1], eligibleShiftTypeIdsBase: [] }))).status).toBe(400);
+  });
+  it("Staff PUT without a list doesn't touch eligibility", async () => {
+    store.elig = [{ staffId: "ab", shiftTypeId: "S" }];
+    expect((await putStaff(req({ id: "ab", name: "A B" }))).status).toBe(200);
+    expect(eligOf("ab")).toEqual(["S"]);
+  });
+  it("Staff POST: a new hire gets the type's default shifts (under the lock)", async () => {
+    store.typeDefaults = [{ employmentTypeId: "t-ft", shiftTypeId: "S" }, { employmentTypeId: "t-fee", shiftTypeId: "X" }];
+    await postStaff(req({ name: "New", initials: "NW", employmentTypeId: "t-ft" }));
+    const id = store.staff.find((p) => p.initials === "NW")!.id;
+    expect(eligOf(id)).toEqual(["S"]);
+    expect(store.locks).toBeGreaterThan(0);
+  });
+  it("employment-type PUT: the default list is diffed against its base; the flags save with it", async () => {
+    store.typeDefaults = [{ employmentTypeId: "t-ft", shiftTypeId: "U" }, { employmentTypeId: "t-ft", shiftTypeId: "S" }];
+    const res = await putType(req({ id: "t-ft", name: "Renamed", defaultEligibleShiftTypeIds: ["T"], defaultEligibleShiftTypeIdsBase: ["U"] }));
+    expect(res.status).toBe(200);
+    expect(defaultsOf("t-ft")).toEqual(["S", "T"]);
+    expect(store.types.find((t) => t.id === "t-ft")!.name).toBe("Renamed");
+  });
+  it("employment-type PUT from an old cached page with a different list: 409, and its flag changes are not saved either", async () => {
+    store.typeDefaults = [{ employmentTypeId: "t-ft", shiftTypeId: "S" }];
+    const res = await putType(req({ id: "t-ft", name: "Renamed", defaultEligibleShiftTypeIds: [] }));
+    expect(res.status).toBe(409);
+    expect(defaultsOf("t-ft")).toEqual(["S"]);
+    expect(store.types.find((t) => t.id === "t-ft")!.name).toBe("Staff Nurse");
+  });
+});
+
+// Codex #385: a stale page's save keeps a shift turned on elsewhere; its Undo must then reverse
+// ONLY that save's own change. These replay what each editor's Undo does (putStaff/putType →
+// undoList from the reported diff).
+describe("merge → save → Undo reverses only the save's own change (card #75, Codex #385)", () => {
+  const eligOf = (id: string) => store.elig.filter((r) => r.staffId === id).map((r) => r.shiftTypeId).sort();
+  const defaultsOf = (id: string) => store.typeDefaults.filter((r) => r.employmentTypeId === id).map((r) => r.shiftTypeId).sort();
+
+  async function staffSaveThenUndo(pageList: string[], sent: string[], extra: Record<string, unknown> = {}) {
+    const res = await putStaff(req({ id: "ab", ...extra, eligibleShiftTypeIds: sent, eligibleShiftTypeIdsBase: pageList }));
+    expect(res.status).toBe(200);
+    const j = await res.json();
+    const after = eligOf("ab"); // = the response's eligibleShifts (the fake omits includes)
+    const u = undoList(after, appliedDiff(j.eligibleShiftTypeIdsApplied, sent, pageList, after));
+    const back = await putStaff(req({ id: "ab", name: "AB", eligibleShiftTypeIds: u.list, eligibleShiftTypeIdsBase: u.base }));
+    expect(back.status).toBe(200);
+  }
+
+  it("Staff: name-only save on a page that never saw PRE → Undo keeps PRE", async () => {
+    store.elig = [{ staffId: "ab", shiftTypeId: "U" }, { staffId: "ab", shiftTypeId: "PRE" }]; // PRE activated elsewhere
+    staffRow("ab").name = "AB";
+    await staffSaveThenUndo(["U"], ["U"], { name: "Renamed" });
+    expect(eligOf("ab")).toEqual(["PRE", "U"]);
+    expect(staffRow("ab").name).toBe("AB");
+  });
+  it("Staff: a shift removed by an activation is not re-granted by the Undo", async () => {
+    store.elig = [{ staffId: "ab", shiftTypeId: "U" }]; // page still shows PRE, activation removed it
+    await staffSaveThenUndo(["U", "PRE"], ["U", "PRE"], { name: "Renamed" });
+    expect(eligOf("ab")).toEqual(["U"]);
+  });
+  it("Staff: the save's own tick and untick are reversed, the outside change stays", async () => {
+    store.elig = [{ staffId: "ab", shiftTypeId: "U" }, { staffId: "ab", shiftTypeId: "PRE" }];
+    await staffSaveThenUndo(["U"], ["T"]); // user ticked T, unticked U
+    expect(eligOf("ab")).toEqual(["PRE", "U"]);
+  });
+  it("Staff: the server reports exactly what it applied (not the user's whole diff)", async () => {
+    store.elig = [{ staffId: "ab", shiftTypeId: "PRE" }];
+    const j = await (await putStaff(req({ id: "ab", eligibleShiftTypeIds: ["PRE", "T"], eligibleShiftTypeIdsBase: [] }))).json();
+    expect(j.eligibleShiftTypeIdsApplied).toEqual({ add: ["T"], remove: [] }); // PRE was already there
+  });
+
+  async function typeSaveThenUndo(pageList: string[], sent: string[], extra: Record<string, unknown> = {}) {
+    const res = await putType(req({ id: "t-ft", ...extra, defaultEligibleShiftTypeIds: sent, defaultEligibleShiftTypeIdsBase: pageList }));
+    expect(res.status).toBe(200);
+    const j = await res.json();
+    const after = defaultsOf("t-ft"); // = the response's defaultEligibleShifts
+    const u = undoList(after, appliedDiff(j.defaultEligibleShiftTypeIdsApplied, sent, pageList, after));
+    expect((await putType(req({ id: "t-ft", name: "Staff Nurse", defaultEligibleShiftTypeIds: u.list, defaultEligibleShiftTypeIdsBase: u.base }))).status).toBe(200);
+  }
+  it("employment type: name-only save on a stale editor → Undo keeps the activation's default", async () => {
+    store.typeDefaults = [{ employmentTypeId: "t-ft", shiftTypeId: "U" }, { employmentTypeId: "t-ft", shiftTypeId: "PRE" }];
+    await typeSaveThenUndo(["U"], ["U"], { name: "Renamed" });
+    expect(defaultsOf("t-ft")).toEqual(["PRE", "U"]);
+    expect(store.types.find((t) => t.id === "t-ft")!.name).toBe("Staff Nurse");
+  });
+  it("employment type: a default removed elsewhere is not re-added; own changes reversed", async () => {
+    store.typeDefaults = [{ employmentTypeId: "t-ft", shiftTypeId: "U" }];
+    await typeSaveThenUndo(["U", "PRE"], ["PRE", "T"]); // user unticked U, ticked T; PRE gone elsewhere
+    expect(defaultsOf("t-ft")).toEqual(["U"]);
   });
 });

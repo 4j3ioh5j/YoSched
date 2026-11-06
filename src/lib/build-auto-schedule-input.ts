@@ -163,6 +163,13 @@ export async function buildAutoScheduleInput(
     eligibilityMap.get(pes.staffId)!.push(pes.shiftTypeId);
   }
 
+  // Card #75: a (staff, shift) pair with NO eligibility row is inert. Unticking someone for a
+  // shift keeps their rules / minimum targets / standing commitments for it (hidden, so a
+  // re-tick brings them back), but nothing here may act on them: an "eligible" rule would
+  // otherwise grant the shift and a standing commitment would place it.
+  const eligiblePairs = new Set(staffEligibleShifts.map((e) => `${e.staffId}:${e.shiftTypeId}`));
+  const hasRow = (r: { staffId: string; shiftTypeId: string }) => eligiblePairs.has(`${r.staffId}:${r.shiftTypeId}`);
+
   const rulesMap = new Map<string, typeof availabilityRules>();
   for (const ar of availabilityRules) {
     if (!rulesMap.has(ar.staffId)) {
@@ -173,6 +180,7 @@ export async function buildAutoScheduleInput(
 
   const eligRulesMap = new Map<string, typeof shiftEligibilityRules>();
   for (const er of shiftEligibilityRules) {
+    if (!hasRow(er)) continue;
     if (!eligRulesMap.has(er.staffId)) {
       eligRulesMap.set(er.staffId, []);
     }
@@ -181,6 +189,7 @@ export async function buildAutoScheduleInput(
 
   const minTargetsMap = new Map<string, typeof shiftMinimumTargets>();
   for (const mt of shiftMinimumTargets) {
+    if (!hasRow(mt)) continue;
     if (!minTargetsMap.has(mt.staffId)) {
       minTargetsMap.set(mt.staffId, []);
     }
@@ -312,7 +321,7 @@ export async function buildAutoScheduleInput(
       dayOfWeek: dw.dayOfWeek,
       weight: dw.weight,
     })),
-    standingCommitments: standingCommitments.map((sc) => ({
+    standingCommitments: standingCommitments.filter(hasRow).map((sc) => ({
       staffId: sc.staffId,
       shiftTypeId: sc.shiftTypeId,
       whenKind: sc.whenKind,

@@ -340,6 +340,9 @@ model SchedulingPreferences {
   staffColumnOrder        Json?    // ordered criteria stack for schedule column order, [{key, dir?}] (see src/lib/staff-order.ts); null = default (employmentType → ftePercentage desc → alphabetical)
   shiftShareBasis         String   @default("fte") // auto-scheduler split of a scheduled shift's slots across eligible staff: "fte" (proportional to FTE) | "head" (equal per person) — see src/lib/shift-share.ts
   holidayPolicy           String   @default("entitlement") // who is owed HOL on a holiday: "entitlement" (scheduled-workday rule, counts toward PP target) | "fill" (legacy hours-fill only) | "none" — see src/lib/holiday-policy.ts
+  activationWorkedDefault  String  @default("eligible")     // card #75: turning a shift's Auto-schedule on — people who have worked it start "eligible" | "not_eligible" | "keep" (see src/lib/shift-activation.ts)
+  activationNeverDefault   String  @default("not_eligible") // card #75: … everyone else
+  activationNewHireDefault String  @default("keep")         // card #75: employment-type defaults for new hires: "keep" | "match" | "none" | "all"
 
   @@map("scheduling_preferences")
 }

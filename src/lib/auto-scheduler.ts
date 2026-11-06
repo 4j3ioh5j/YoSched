@@ -918,6 +918,9 @@ export function autoSchedule({
       if (isWorkFollower) warnings.push(`${member.initials}: could not place required ${spec.follower.code} after ${sourceShift.code} on ${next} (${why})`);
     };
     if (isAssigned(staffId, next)) { warn("cell already filled"); return; }
+    // Card #75: a WORK follower is a shift like any other — never for a person not eligible for
+    // it (unticked in the activation panel). A recovery day off is always fine.
+    if (isWorkFollower && !member.eligibleShiftTypeIds.includes(spec.follower.id)) { warn(`not eligible for ${spec.follower.code}`); return; }
     // A WORK follower must not overwrite a day the staff holds off via an effective-hard
     // day-off-strategy request. This path assigns directly (it never flows through
     // isAvailable), so the requestBlocksWork hold wouldn't catch it — check here too.
@@ -986,6 +989,9 @@ export function autoSchedule({
 
   function eligibleStaff(st: ScheduleShiftType, date?: string): ScheduleStaff[] {
     return activeStaff.filter((p) => {
+      // Card #75: no eligibility row → never eligible; rules can only narrow (a hidden
+      // "eligible" rule of an unticked person must not grant the shift).
+      if (!(eligibleShiftSets.get(p.id)?.has(st.id) ?? false)) return false;
       if (date && p.shiftEligibilityRules && p.shiftEligibilityRules.length > 0) {
         const result = evaluateShiftEligibility(
           p.shiftEligibilityRules, st.id, date,
@@ -1455,6 +1461,8 @@ export function autoSchedule({
     if (!st || !st.autoSchedulable) continue;
     const member = staff.find((p) => p.id === sc.staffId);
     if (!member?.isActive) continue;
+    // Card #75: a standing commitment of a person not eligible for the shift is inert.
+    if (!member.eligibleShiftTypeIds.includes(sc.shiftTypeId)) continue;
     const when = standingToWhen(sc);
 
     for (const date of dates) {
