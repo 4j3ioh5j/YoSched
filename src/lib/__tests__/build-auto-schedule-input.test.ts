@@ -10,6 +10,8 @@ const db = vi.hoisted(() => ({
   shifts: [] as { id: string; code: string }[],
   reqs: [] as { shiftTypeId: string; dayKey: string; minCount: number; preferredCount: number; maxCount: number | null }[],
   factors: [] as { factorType: string; shiftTypeId: string | null; weight: number; enabled: boolean }[],
+  // Rows as the DB returns them; a stale joined `shiftType` is planted to prove nothing reads it.
+  assignments: [] as { staffId: string; date: string; shiftTypeId: string; isLocked: boolean; source: string }[],
 }));
 
 vi.mock("@/lib/pay-periods-server", () => ({ getPayPeriods: async () => [] }));
@@ -40,7 +42,17 @@ vi.mock("@/lib/prisma", () => {
   };
   const staffingRequirement = { findMany: async () => db.reqs.map((r) => ({ id: `${r.shiftTypeId}-${r.dayKey}`, ...r })) };
   const equityFactor = { findMany: async () => db.factors.map((f, i) => ({ id: `f${i}`, sortOrder: i, shiftCode: null, ...f })) };
-  const prisma = new Proxy({ shiftType, staffingRequirement, equityFactor } as Record<string, unknown>, {
+  const assignment = {
+    findMany: async (a: { where: { date: { lt?: Date; gte?: Date; lte?: Date } } }) =>
+      db.assignments
+        .filter((r) => {
+          const d = new Date(r.date + "T00:00:00Z");
+          if (a.where.date.lt) return d < a.where.date.lt;
+          return d >= a.where.date.gte! && d <= a.where.date.lte!;
+        })
+        .map((r) => ({ ...r, date: new Date(r.date + "T00:00:00Z"), shiftType: { id: r.shiftTypeId, code: "STALE-JOIN" } })),
+  };
+  const prisma = new Proxy({ shiftType, staffingRequirement, equityFactor, assignment } as Record<string, unknown>, {
     get: (t, k: string) => t[k] ?? empty,
   });
   return { prisma };
@@ -115,5 +127,19 @@ describe("auto-schedule input bundle: staffing requirements carry both keys", ()
     // and the old minimums keying (reqsByShift.get(sr.shiftCode)) sees the row too
     const byCode = new Map(oldShaped.map((r) => [r.shiftCode, r.dayKey]));
     expect(byCode.get("ORC")).toBe("1");
+  });
+  it("assignment codes (existing and historical) come from the ONE shiftTypes list, never a per-row join", async () => {
+    db.shifts = [{ id: "st-orc", code: "ORC" }];
+    db.reqs = [];
+    db.factors = [];
+    db.assignments = [
+      { staffId: "a", date: "2026-11-02", shiftTypeId: "st-orc", isLocked: false, source: "manual" },
+      { staffId: "a", date: "2026-10-05", shiftTypeId: "st-orc", isLocked: true, source: "manual" },
+    ];
+    const input = await buildAutoScheduleInput("2026-11-01", "2026-11-30");
+    expect(input.existingAssignments.map((a) => [a.date, a.shiftTypeId, a.code])).toEqual([["2026-11-02", "st-orc", "ORC"]]);
+    expect(input.historicalAssignments.map((a) => [a.date, a.shiftTypeId, a.code])).toEqual([["2026-10-05", "st-orc", "ORC"]]);
+    expect(JSON.stringify(input)).not.toContain("STALE-JOIN");
+    db.assignments = [];
   });
 });

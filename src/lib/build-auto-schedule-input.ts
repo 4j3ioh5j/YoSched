@@ -73,7 +73,6 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
           lte: new Date(effectiveEnd + "T00:00:00Z"),
         },
       },
-      include: { shiftType: true },
     }),
     prisma.holiday.findMany(),
     prisma.desirabilityWeight.findMany(),
@@ -84,7 +83,6 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
       where: {
         date: { lt: new Date(effectiveStart + "T00:00:00Z") },
       },
-      include: { shiftType: true },
     }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftTypeId: "asc" }, { dayKey: "asc" }] }),
     prisma.schedulingPreferences.findFirst(),
@@ -124,6 +122,9 @@ export async function buildAutoScheduleInput(startDate: string, endDate: string)
     cur.setDate(cur.getDate() + 1);
   }
 
+  // ONE shift snapshot for the whole input: every code below (assignments, staffing
+  // requirements, equity factors) is derived from this list, never from a per-row join,
+  // so a shift renamed between two queries cannot appear under two codes in one run.
   const shiftCodeMap = new Map<string, string>();
   for (const st of shiftTypes) shiftCodeMap.set(st.id, st.code);
 

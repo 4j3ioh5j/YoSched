@@ -68,9 +68,7 @@ export default async function Home() {
         include: { availabilityRules: true, eligibleShifts: true, employmentType: true },
       }),
       prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
-      prisma.assignment.findMany({
-        include: { shiftType: true },
-      }),
+      prisma.assignment.findMany(),
       getPayPeriods(),
       prisma.holiday.findMany({ orderBy: { date: "asc" } }),
       prisma.staffShiftOverride.findMany(),
@@ -113,20 +111,28 @@ export default async function Home() {
   // → Staff column ordering; default = employment type → FTE% desc → alphabetical.
   const orderedStaff = orderStaff(staff, parseStaffOrderCriteria(schedPrefs?.staffColumnOrder));
 
+  // ONE shift snapshot for the whole page: the assignments' shift fields and the equity
+  // factors' codes are both derived from the shiftTypes list loaded above, never from a
+  // per-row join — so a shift renamed between two queries cannot show two codes at once.
+  const shiftById = new Map(shiftTypes.map((st) => [st.id, st] as const));
   const fairness = computeFairness({
-    assignments: assignments.map((a) => ({
-      staffId: a.staffId,
-      date: a.date.toISOString().split("T")[0],
-      shiftType: {
-        id: a.shiftType.id,
-        code: a.shiftType.code,
-        defaultHours: a.shiftType.defaultHours,
-        countsTowardFte: a.shiftType.countsTowardFte,
-        countsAsHolidayWork: a.shiftType.countsAsHolidayWork,
-        isLeave: a.shiftType.isLeave,
-        isOffShift: a.shiftType.isOffShift,
-      },
-    })),
+    assignments: assignments.flatMap((a) => {
+      const st = shiftById.get(a.shiftTypeId);
+      if (!st) return []; // not reachable (FK); never invent a shift
+      return [{
+        staffId: a.staffId,
+        date: a.date.toISOString().split("T")[0],
+        shiftType: {
+          id: st.id,
+          code: st.code,
+          defaultHours: st.defaultHours,
+          countsTowardFte: st.countsTowardFte,
+          countsAsHolidayWork: st.countsAsHolidayWork,
+          isLeave: st.isLeave,
+          isOffShift: st.isOffShift,
+        },
+      }];
+    }),
     staff: staff.map((p) => ({
       id: p.id,
       initials: p.initials,
