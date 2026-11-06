@@ -253,16 +253,6 @@ model StaffingMinimum {
   @@map("staffing_minimums")
 }
 
-model ShiftCountRule {
-  id         String @id @default(cuid())
-  shiftCode  String
-  dayType    String // weekday, weekend, holiday
-  exactCount Int
-
-  @@unique([shiftCode, dayType])
-  @@map("shift_count_rules")
-}
-
 model StaffingRequirement {
   id          String    @id @default(cuid())
   shiftTypeId String    // the shift this column belongs to; a rename of its code changes nothing here

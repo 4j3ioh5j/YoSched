@@ -272,25 +272,6 @@ async function main() {
   }
   console.log(`Seeded ${staffingMins.length} staffing minimums`);
 
-  // --- Shift Count Rules (legacy) ---
-  const shiftCountRules = [
-    { shiftCode: "ORC", dayType: "weekday", exactCount: 1 },
-    { shiftCode: "ORC", dayType: "holiday", exactCount: 1 },
-    { shiftCode: "ORC", dayType: "weekend", exactCount: 0 },
-    { shiftCode: "ORL", dayType: "weekday", exactCount: 1 },
-    { shiftCode: "ORL", dayType: "holiday", exactCount: 0 },
-    { shiftCode: "ORL", dayType: "weekend", exactCount: 0 },
-  ];
-
-  for (const rule of shiftCountRules) {
-    await prisma.shiftCountRule.upsert({
-      where: { shiftCode_dayType: { shiftCode: rule.shiftCode, dayType: rule.dayType } },
-      update: rule,
-      create: rule,
-    });
-  }
-  console.log(`Seeded ${shiftCountRules.length} shift count rules`);
-
   // --- Staffing Requirements (per day-of-week grid) ---
   const WEEKDAYS = ["1", "2", "3", "4", "5"]; // Mon-Fri
   const WEEKENDS = ["0", "6"]; // Sun, Sat
