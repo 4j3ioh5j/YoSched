@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { getPayPeriods } from "@/lib/pay-periods-server";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
+import { effectiveFte, effectiveFixedHours } from "@/lib/fte";
 import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOrder, type ScheduleRequestData } from "@/lib/schedule-requests";
 import { effectiveTargetsForStaff, type DepartmentShiftTarget } from "@/lib/department-targets";
 import { parseHoursPolicy } from "@/lib/autogen-hours-policy";
@@ -84,7 +85,7 @@ export async function buildAutoScheduleInput(
     requiredFollowers,
     autoGenFactors,
   ] = await Promise.all([
-    db.staff.findMany({ where: { isActive: true } }),
+    db.staff.findMany({ where: { isActive: true }, include: { employmentType: true } }),
     db.shiftType.findMany(),
     db.assignment.findMany({
       where: {
@@ -206,7 +207,10 @@ export async function buildAutoScheduleInput(
     staff: staff.map((p) => ({
       id: p.id,
       initials: p.initials,
-      ftePercentage: p.ftePercentage ?? 1.0,
+      // Card #71: 0 for a type without an FTE % (no FTE-based target); fixed hours replace it.
+      ftePercentage: effectiveFte(p, p.employmentType) ?? 0,
+      fixedHoursPerPp: effectiveFixedHours(p, p.employmentType),
+      inFairness: p.employmentType.includedInFairness,
       eligibleShiftTypeIds: eligibilityMap.get(p.id) ?? [],
       availabilityRules: (rulesMap.get(p.id) ?? []).map((ar) => ({
         type: ar.type as "available" | "unavailable",
@@ -251,7 +255,7 @@ export async function buildAutoScheduleInput(
           windowCount: mt.windowCount,
         })),
         deptTargets,
-        p.ftePercentage ?? 1.0,
+        effectiveFte(p, p.employmentType) ?? 0,
         // Dept defaults apply only to shifts this staffer is eligible for AND that
         // are auto-schedulable — so ORL targets never touch staff who don't do ORL.
         new Set((eligibilityMap.get(p.id) ?? []).filter((id) => autoSchedulableShiftIds.has(id))),

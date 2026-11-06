@@ -71,7 +71,7 @@ import { whenToColumns, legacyPatternToWhen } from "../recurrence";
 describe("auto-generate reads Staffing Rules Max per day", () => {
   const wEvery = (d: number) => whenToColumns(legacyPatternToWhen({ dayOfWeek: d, pattern: "every" }));
   const staff = (id: string): ScheduleStaff => ({
-    id, initials: id.toUpperCase(), ftePercentage: 1, eligibleShiftTypeIds: ["st-orc", "st-off"],
+    id, initials: id.toUpperCase(), ftePercentage: 1, fixedHoursPerPp: null, inFairness: true, eligibleShiftTypeIds: ["st-orc", "st-off"],
     availabilityRules: [1, 2, 3, 4, 5].map((d) => ({ type: "available" as const, strength: "rule" as const, ...wEvery(d) })),
     isActive: true, isAutoScheduled: true, specialQualifications: [],
   });
@@ -123,7 +123,7 @@ import { standingToWhen } from "../recurrence";
 describe("Max applies to standing commitments and required followers", () => {
   const wEvery = (d: number) => whenToColumns(legacyPatternToWhen({ dayOfWeek: d, pattern: "every" }));
   const staff = (id: string, elig: string[]): ScheduleStaff => ({
-    id, initials: id.toUpperCase(), ftePercentage: 1, eligibleShiftTypeIds: elig,
+    id, initials: id.toUpperCase(), ftePercentage: 1, fixedHoursPerPp: null, inFairness: true, eligibleShiftTypeIds: elig,
     availabilityRules: [1, 2, 3, 4, 5].map((d) => ({ type: "available" as const, strength: "rule" as const, ...wEvery(d) })),
     isActive: true, isAutoScheduled: true, specialQualifications: [],
   });

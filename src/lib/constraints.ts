@@ -1,6 +1,7 @@
 import { FollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
 import { checkRequestConflict, type ScheduleRequestData } from "./schedule-requests";
 import { ruleToWhen } from "./recurrence";
+import { staffPpTarget } from "./fte";
 
 export type Warning = {
   type:
@@ -50,7 +51,10 @@ type AvailabilityRuleData = {
 type Staff = {
   id: string;
   initials: string;
-  ftePercentage: number;
+  /** Card #71: null when the person's employment type has no FTE % (resolved by src/lib/fte.ts). */
+  ftePercentage: number | null;
+  /** Card #71: fixed hours per pay period (types without an FTE %), else null/absent. */
+  fixedHoursPerPp?: number | null;
   availabilityRules: AvailabilityRuleData[];
 };
 
@@ -269,7 +273,8 @@ export function checkDayStaffing({
 
 // Flag a staff member whose scheduled hours diverge from their pay-period target
 // in EITHER direction. Strict: any non-noise difference fires (see PP_HOURS_EPSILON).
-// `target = pp.targetHours * ftePercentage` — must match the grid's PP Totals row.
+// Target from staffPpTarget (src/lib/fte.ts) — must match the grid's PP Totals row. No target
+// (a type without an FTE % and no fixed hours) → no warning.
 export function checkStaffPPHours({
   staff,
   pp,
@@ -281,8 +286,8 @@ export function checkStaffPPHours({
   currentHours: number;
 }): Warning | null {
   if (!pp) return null;
-  const target = pp.targetHours * staff.ftePercentage;
-  if (target <= 0) return null;
+  const target = staffPpTarget(staff.ftePercentage, staff.fixedHoursPerPp ?? null, pp.targetHours);
+  if (target == null || target <= 0) return null;
   const diff = currentHours - target;
   if (Math.abs(diff) <= PP_HOURS_EPSILON) return null;
   const over = diff > 0;

@@ -3,6 +3,9 @@ import { getSession } from "@/lib/auth-guard";
 import { detachLoginForStaff } from "@/lib/user-lifecycle";
 import { ruleToWhen, whenToColumns, standingToWhen, normalizeAnyDay } from "@/lib/recurrence";
 import { NextRequest, NextResponse } from "next/server";
+import { staffHoursWrite } from "@/lib/fte";
+
+class HoursError extends Error {}
 
 // Derive the normalized WHEN columns for a rule on save, keeping them in sync
 // with the legacy columns. ruleToWhen prefers explicit when* fields (slice-4
@@ -54,14 +57,31 @@ export async function PUT(req: NextRequest) {
   const { id, eligibleShiftTypeIds, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, standingCommitments, shiftOverrides, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
+  try {
   await prisma.$transaction(async (tx) => {
+    // Card #71: FTE % and fixed hours are decided by the (new) employment type's settings,
+    // read in this transaction — a type change applies in the same write.
+    const current = await tx.staff.findUnique({ where: { id }, select: { employmentTypeId: true } });
+    if (!current) throw new HoursError("Staff member not found");
+    const typeId: string = data.employmentTypeId ?? current.employmentTypeId;
+    const type = await tx.employmentType.findUnique({ where: { id: typeId } });
+    if (!type) throw new HoursError("Unknown employment type");
+    const hours = staffHoursWrite({
+      type,
+      sentFte: data.ftePercentage,
+      hasFixedKey: Object.prototype.hasOwnProperty.call(data, "fixedHoursPerPp"),
+      sentFixed: data.fixedHoursPerPp,
+      typeChangedOrNew: typeId !== current.employmentTypeId,
+    });
+    if (!hours.ok) throw new HoursError(hours.error);
     await tx.staff.update({
       where: { id },
       data: {
         name: data.name,
         initials: data.initials,
         employmentTypeId: data.employmentTypeId,
-        ftePercentage: data.ftePercentage,
+        ftePercentage: hours.ftePercentage,
+        fixedHoursPerPp: hours.fixedHoursPerPp,
         specialQualifications: data.specialQualifications ?? [],
         isActive: data.isActive,
         isAutoScheduled: data.isAutoScheduled,
@@ -180,6 +200,10 @@ export async function PUT(req: NextRequest) {
       }
     }
   });
+  } catch (e) {
+    if (e instanceof HoursError) return NextResponse.json({ error: e.message }, { status: 400 });
+    throw e;
+  }
 
   const result = await prisma.staff.findUnique({
     where: { id },
@@ -197,11 +221,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing name or initials" }, { status: 400 });
   }
 
-  let employmentTypeId = data.employmentTypeId;
-  if (!employmentTypeId) {
-    const defaultType = await prisma.employmentType.findFirst({ orderBy: { sortOrder: "asc" } });
-    employmentTypeId = defaultType!.id;
-  }
+  const type = data.employmentTypeId
+    ? await prisma.employmentType.findUnique({ where: { id: data.employmentTypeId } })
+    : await prisma.employmentType.findFirst({ orderBy: { sortOrder: "asc" } });
+  if (!type) return NextResponse.json({ error: "Unknown employment type" }, { status: 400 });
+  const employmentTypeId = type.id;
+  // Card #71: FTE % / fixed hours from the type's settings (never a hard 100% default).
+  const hours = staffHoursWrite({
+    type,
+    sentFte: data.ftePercentage,
+    hasFixedKey: Object.prototype.hasOwnProperty.call(data, "fixedHoursPerPp"),
+    sentFixed: data.fixedHoursPerPp,
+    typeChangedOrNew: true,
+  });
+  if (!hours.ok) return NextResponse.json({ error: hours.error }, { status: 400 });
 
   const maxSort = await prisma.staff.aggregate({ _max: { sortOrder: true } });
   // No login is created here: logins are created on demand (the staff page's "Create
@@ -212,7 +245,8 @@ export async function POST(req: NextRequest) {
         name: data.name,
         initials: data.initials,
         employmentTypeId,
-        ftePercentage: data.ftePercentage ?? 1.0,
+        ftePercentage: hours.ftePercentage,
+        fixedHoursPerPp: hours.fixedHoursPerPp ?? null,
         specialQualifications: data.specialQualifications ?? [],
         isActive: true,
         isAutoScheduled: data.isAutoScheduled ?? true,

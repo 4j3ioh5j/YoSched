@@ -2,6 +2,7 @@ import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { ruleToWhen, whenToColumns } from "@/lib/recurrence";
 import { NextRequest, NextResponse } from "next/server";
+import { typeFlagsWrite } from "@/lib/fte";
 
 // Derive the normalized WHEN columns for a default-availability rule on save,
 // keeping them in sync with the legacy columns. ruleToWhen prefers explicit when*
@@ -28,15 +29,26 @@ export async function PUT(req: NextRequest) {
   const { id, defaultEligibleShiftTypeIds, defaultAvailabilityRules, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  await prisma.employmentType.update({
-    where: { id },
-    data: {
-      name: data.name,
-      defaultIsAutoScheduled: data.defaultIsAutoScheduled,
-      defaultFtePercentage: data.defaultFtePercentage,
-      sortOrder: data.sortOrder,
-    },
+  // Card #71: the type's settings (FTE %, fixed hours, fairness). Staff values are never touched
+  // here: the resolver ignores what a setting turns off, so turning it back on (or Undo) restores it.
+  const flagError = await prisma.$transaction(async (tx) => {
+    const existing = await tx.employmentType.findUnique({ where: { id } });
+    if (!existing) return "Employment type not found";
+    const w = typeFlagsWrite({ existing, body: data });
+    if (!w.ok) return w.error;
+    await tx.employmentType.update({
+      where: { id },
+      data: {
+        name: data.name,
+        defaultIsAutoScheduled: data.defaultIsAutoScheduled,
+        defaultFtePercentage: data.defaultFtePercentage,
+        sortOrder: data.sortOrder,
+        ...w.flags,
+      },
+    });
+    return null;
   });
+  if (flagError) return NextResponse.json({ error: flagError }, { status: 400 });
 
   if (Array.isArray(defaultEligibleShiftTypeIds)) {
     await prisma.employmentTypeDefaultShift.deleteMany({ where: { employmentTypeId: id } });
@@ -78,12 +90,16 @@ export async function POST(req: NextRequest) {
   const data = await req.json();
   if (!data.name) return NextResponse.json({ error: "Missing name" }, { status: 400 });
 
+  const w = typeFlagsWrite({ existing: null, body: data });
+  if (!w.ok) return NextResponse.json({ error: w.error }, { status: 400 });
+
   const maxSort = await prisma.employmentType.aggregate({ _max: { sortOrder: true } });
   const created = await prisma.employmentType.create({
     data: {
       name: data.name,
       defaultIsAutoScheduled: data.defaultIsAutoScheduled ?? true,
       defaultFtePercentage: data.defaultFtePercentage ?? 1.0,
+      ...w.flags,
       sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
     },
   });

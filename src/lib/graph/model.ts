@@ -24,7 +24,11 @@ export type EquityRow = {
   initials: string;
   name: string;
   isAutoScheduled: boolean;
+  /** Normalisation weight: the FTE %, or 1 when the type has no FTE % (see hasFte). */
   ftePercentage: number;
+  /** Card #71: the employment type has an FTE % (its setting, never its name). */
+  hasFte: boolean;
+  employmentTypeId: string;
   employmentTypeName: string;
   desirabilityScore: number;
   undesirableShiftCount: number;
@@ -52,7 +56,9 @@ export type AssembleStaff = {
   id: string;
   name: string;
   isAutoScheduled: boolean;
+  /** Card #71: null when the type has no FTE %. */
   ftePercentage: number | null;
+  employmentTypeId: string;
   employmentTypeName: string;
 };
 
@@ -178,6 +184,8 @@ export function assembleEquityModel(input: {
       name: p.name,
       isAutoScheduled: p.isAutoScheduled,
       ftePercentage: p.ftePercentage ?? 1.0,
+      hasFte: p.ftePercentage != null,
+      employmentTypeId: p.employmentTypeId,
       employmentTypeName: p.employmentTypeName,
       totalHours: staffHours[m.staffId] || 0,
       shiftTally: shiftTallies[m.staffId] || {},
@@ -222,9 +230,13 @@ export type RawStaff = {
   id: string;
   initials: string;
   name: string;
+  /** Card #71: resolved by src/lib/fte.ts — null when the type has no FTE %. */
   ftePercentage: number | null;
   isActive: boolean;
   isAutoScheduled: boolean;
+  /** Card #71: the type's includedInFairness setting. */
+  inFairness: boolean;
+  employmentTypeId: string;
   employmentTypeName: string;
   eligibleShiftTypeIds: string[];
 };
@@ -270,6 +282,7 @@ export function computeStatsModel(raw: RawStatsData): EquityModel {
       ftePercentage: p.ftePercentage ?? 1.0,
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
+      inFairness: p.inFairness,
       eligibleShiftTypeIds: p.eligibleShiftTypeIds,
     })),
     desirabilityWeights: raw.desirabilityWeights,
@@ -284,6 +297,7 @@ export function computeStatsModel(raw: RawStatsData): EquityModel {
       name: p.name,
       isAutoScheduled: p.isAutoScheduled,
       ftePercentage: p.ftePercentage,
+      employmentTypeId: p.employmentTypeId,
       employmentTypeName: p.employmentTypeName,
     })),
     assignments: raw.assignments.map((a) => ({

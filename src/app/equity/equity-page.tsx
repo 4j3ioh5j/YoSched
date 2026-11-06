@@ -37,6 +37,8 @@ type EquityRow = {
   name: string;
   isAutoScheduled: boolean;
   ftePercentage: number;
+  hasFte: boolean;
+  employmentTypeId: string;
   employmentTypeName: string;
   desirabilityScore: number;
   undesirableShiftCount: number;
@@ -240,7 +242,7 @@ function StaffDetailPanel({ row, globalMaxDev, onClose, setTip }: {
           <div className="flex items-center gap-3">
             <span className="font-mono font-bold text-lg text-slate-100">{row.initials}</span>
             <span className="text-sm text-slate-400">{row.name}</span>
-            {row.employmentTypeName === "FTE" && row.ftePercentage < 1 && (
+            {row.hasFte && row.ftePercentage < 1 && (
               <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/30 text-amber-400/80 font-mono">{(row.ftePercentage * 100).toFixed(0)}% FTE</span>
             )}
           </div>
@@ -605,8 +607,9 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
               id: p.id,
               initials: p.initials,
               name: p.name,
+              employmentTypeId: p.employmentTypeId,
               employmentTypeName: p.employmentTypeName,
-              ftePercentage: p.ftePercentage ?? 1.0,
+              ftePercentage: p.ftePercentage,
             }))}
             onChange={(staff) => setSpec((s) => ({ ...s, staff }))}
           />
@@ -688,7 +691,7 @@ export function EquityPage({ raw, equityThresholds, payPeriods, initialSpec, dat
                         <div className="flex items-center gap-2">
                           <span className={`font-mono font-bold text-sm w-9 ${!row.isAutoScheduled ? "text-amber-400" : "text-slate-200"}`}>{row.initials}</span>
                           <span className="text-xs text-slate-500 whitespace-nowrap">{row.name}</span>
-                          {row.employmentTypeName === "FTE" && row.ftePercentage < 1 && (
+                          {row.hasFte && row.ftePercentage < 1 && (
                             <span className="text-[10px] px-1 py-px rounded bg-amber-900/30 text-amber-400/80 font-mono">{(row.ftePercentage * 100).toFixed(0)}%</span>
                           )}
                         </div>

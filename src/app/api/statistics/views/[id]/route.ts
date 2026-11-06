@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { coerceSpec } from "@/lib/graph/spec";
+import { coerceSpec, hasLegacyEmploymentTypeName } from "@/lib/graph/spec";
 import { canManageView, nextOwnerId } from "@/lib/graph/view-access";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -25,6 +25,8 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     if (!name) return NextResponse.json({ error: "Name cannot be empty" }, { status: 400 });
     data.name = name;
   }
+  // Card #71: an old browser bundle still filters by employment-type NAME — refuse, never save "any type".
+  if (hasLegacyEmploymentTypeName(body?.spec)) return NextResponse.json({ error: "This page is out of date. Reload it and save the view again." }, { status: 409 });
   if (body?.spec !== undefined) data.spec = coerceSpec(body.spec);
   if (typeof body?.isShared === "boolean") {
     data.isShared = body.isShared;

@@ -16,6 +16,7 @@ import { auth } from "@/lib/auth";
 import { MarketingLanding } from "./marketing-landing";
 import { canonicalUrl } from "@/lib/base-path";
 import type { Metadata } from "next";
+import { effectiveFte, effectiveFixedHours } from "@/lib/fte";
 
 // This route is reachable at two live addresses (apex proxy + tunnel alias), so it has to
 // say which one is real. og:url is not a canonical signal to Google — only <link rel=canonical> is.
@@ -109,7 +110,11 @@ export default async function Home() {
   // Left-to-right column order for the grid AND print (both consume this one
   // array; printVisibleStaffIds only filters it). Admin-configurable in Settings
   // → Staff column ordering; default = employment type → FTE% desc → alphabetical.
-  const orderedStaff = orderStaff(staff, parseStaffOrderCriteria(schedPrefs?.staffColumnOrder));
+  // Card #71: order by the resolved FTE % (none for a type without an FTE %), not the stored value.
+  const orderedStaff = orderStaff(
+    staff.map((p) => ({ ...p, ftePercentage: effectiveFte(p, p.employmentType) })),
+    parseStaffOrderCriteria(schedPrefs?.staffColumnOrder),
+  );
 
   // ONE shift snapshot for the whole page: the assignments' shift fields and the equity
   // factors' codes are both derived from the shiftTypes list loaded above, never from a
@@ -136,9 +141,10 @@ export default async function Home() {
     staff: staff.map((p) => ({
       id: p.id,
       initials: p.initials,
-      ftePercentage: p.ftePercentage ?? 1.0,
+      ftePercentage: effectiveFte(p, p.employmentType) ?? 0,
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
+      inFairness: p.employmentType.includedInFairness,
       eligibleShiftTypeIds: p.eligibleShifts.map((es) => es.shiftTypeId),
     })),
     desirabilityWeights: desirabilityWeights.map((dw) => ({
@@ -184,7 +190,9 @@ export default async function Home() {
           id: p.id,
           initials: p.initials,
           name: p.name,
-          ftePercentage: p.ftePercentage ?? 1.0,
+          // Card #71: null when the type has no FTE %; fixed hours only when the type allows them.
+          ftePercentage: effectiveFte(p, p.employmentType),
+          fixedHoursPerPp: effectiveFixedHours(p, p.employmentType),
           employmentTypeId: p.employmentTypeId,
           employmentTypeName: p.employmentType.name,
           availabilityRules: p.availabilityRules.map((ar) => ({

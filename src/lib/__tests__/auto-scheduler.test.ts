@@ -16,7 +16,7 @@ function makeStaff(id: string, initials: string, overrides: Partial<ScheduleStaf
   return {
     id,
     initials,
-    ftePercentage: 1,
+    ftePercentage: 1, fixedHoursPerPp: null, inFairness: true,
     eligibleShiftTypeIds: ["st-or", "st-off"],
     availabilityRules: [1, 2, 3, 4, 5].map((d) => ({
       type: "available" as const,

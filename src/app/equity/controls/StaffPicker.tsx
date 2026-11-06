@@ -7,8 +7,10 @@ export type StaffPickerStaff = {
   id: string;
   initials: string;
   name: string;
+  employmentTypeId: string;
   employmentTypeName: string;
-  ftePercentage: number;
+  /** Card #71: null when the type has no FTE % (never meets a minimum). */
+  ftePercentage: number | null;
 };
 
 export function StaffPicker({
@@ -22,28 +24,31 @@ export function StaffPicker({
 }) {
   const [showNames, setShowNames] = useState((value.names?.length ?? 0) > 0);
 
-  const employmentTypes = [...new Set(staff.map((p) => p.employmentTypeName))].sort();
+  // Card #71: options keyed by the type's id; the name is only the label.
+  const employmentTypes = [...new Map(staff.map((p) => [p.employmentTypeId, p.employmentTypeName] as const))]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const selectedNames = new Set(value.names ?? []);
 
   // A staff is offerable when it satisfies the other active staff filters
   // (employment type + min FTE). The "By name" chips only show offerable
   // staff, so the filters can't be combined into a contradictory (empty)
   // selection.
-  function matches(p: StaffPickerStaff, employmentType: string | null, minFtePct: number | null): boolean {
-    if (employmentType && p.employmentTypeName !== employmentType) return false;
-    if (minFtePct && minFtePct > 0 && p.ftePercentage < minFtePct) return false;
+  function matches(p: StaffPickerStaff, employmentTypeId: string | null, minFtePct: number | null): boolean {
+    if (employmentTypeId && p.employmentTypeId !== employmentTypeId) return false;
+    if (minFtePct && minFtePct > 0 && (p.ftePercentage == null || p.ftePercentage < minFtePct)) return false;
     return true;
   }
 
-  const visibleStaff = staff.filter((p) => matches(p, value.employmentType ?? null, value.minFtePct ?? null));
+  const visibleStaff = staff.filter((p) => matches(p, value.employmentTypeId ?? null, value.minFtePct ?? null));
 
   // Drop already-picked names that no longer satisfy the filters, so the chip
   // count and the narrowed list stay consistent.
-  function prunedNames(employmentType: string | null, minFtePct: number | null): string[] | undefined {
+  function prunedNames(employmentTypeId: string | null, minFtePct: number | null): string[] | undefined {
     if (!value.names) return value.names;
     return value.names.filter((id) => {
       const p = staff.find((pp) => pp.id === id);
-      return p ? matches(p, employmentType, minFtePct) : false;
+      return p ? matches(p, employmentTypeId, minFtePct) : false;
     });
   }
 
@@ -51,14 +56,14 @@ export function StaffPicker({
     onChange({ ...value, ...next });
   }
 
-  function selectType(type: string) {
-    const employmentType = type || null;
-    onChange({ ...value, employmentType, names: prunedNames(employmentType, value.minFtePct ?? null) });
+  function selectType(typeId: string) {
+    const employmentTypeId = typeId || null;
+    onChange({ ...value, employmentTypeId, names: prunedNames(employmentTypeId, value.minFtePct ?? null) });
   }
 
   function setMinFte(raw: string) {
     const minFtePct = parseFloat(raw) || null;
-    onChange({ ...value, minFtePct, names: prunedNames(value.employmentType ?? null, minFtePct) });
+    onChange({ ...value, minFtePct, names: prunedNames(value.employmentTypeId ?? null, minFtePct) });
   }
 
   function toggleName(id: string) {
@@ -74,13 +79,13 @@ export function StaffPicker({
         <span className="text-xs text-slate-500 w-16">Staff</span>
 
         <select
-          value={value.employmentType ?? ""}
+          value={value.employmentTypeId ?? ""}
           onChange={(e) => selectType(e.target.value)}
           className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300"
         >
           <option value="">All types</option>
           {employmentTypes.map((t) => (
-            <option key={t} value={t}>{t}</option>
+            <option key={t.id} value={t.id}>{t.name}</option>
           ))}
         </select>
 

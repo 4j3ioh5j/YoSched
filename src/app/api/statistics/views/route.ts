@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { coerceSpec } from "@/lib/graph/spec";
+import { coerceSpec, hasLegacyEmploymentTypeName } from "@/lib/graph/spec";
 import { NextRequest, NextResponse } from "next/server";
 
 // GET — list views the caller may see: all shared views plus their own private ones.
@@ -27,6 +27,9 @@ export async function POST(req: NextRequest) {
   if (!name) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
   }
+
+  // Card #71: an old browser bundle still filters by employment-type NAME — refuse, never save "any type".
+  if (hasLegacyEmploymentTypeName(body?.spec)) return NextResponse.json({ error: "This page is out of date. Reload it and save the view again." }, { status: 409 });
 
   const view = await prisma.savedGraphView.create({
     data: {

@@ -18,7 +18,7 @@ const wEvery = (d: number) => whenToColumns(legacyPatternToWhen({ dayOfWeek: d, 
 
 function staff(id: string, initials: string, o: Partial<ScheduleStaff> = {}): ScheduleStaff {
   return {
-    id, initials, ftePercentage: 1,
+    id, initials, ftePercentage: 1, fixedHoursPerPp: null, inFairness: true,
     eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"],
     availabilityRules: [1, 2, 3, 4, 5].map((d) => ({ type: "available" as const, strength: "rule" as const, ...wEvery(d) })),
     isActive: true, isAutoScheduled: true, specialQualifications: [],

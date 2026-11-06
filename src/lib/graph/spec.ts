@@ -29,8 +29,8 @@ export type GraphStaffFilter = {
   all?: boolean;
   /** explicit staff ids */
   names?: string[];
-  /** employment type name, e.g. "FTE" | "Fee Basis" */
-  employmentType?: string | null;
+  /** Card #71: employment type by id (never by its renamable name); null/absent = any type. */
+  employmentTypeId?: string | null;
   minFtePct?: number | null;
 };
 
@@ -106,8 +106,11 @@ function coerceStaff(v: unknown): GraphStaffFilter {
   const staff: GraphStaffFilter = {};
   if (typeof o.all === "boolean") staff.all = o.all;
   if (Array.isArray(o.names)) staff.names = o.names.filter((x): x is string => typeof x === "string");
-  if (typeof o.employmentType === "string") staff.employmentType = o.employmentType;
-  else if (o.employmentType === null) staff.employmentType = null;
+  if (typeof o.employmentTypeId === "string") staff.employmentTypeId = o.employmentTypeId;
+  else if (o.employmentTypeId === null) staff.employmentTypeId = null;
+  // The legacy name key (`employmentType`) is dropped, never resolved by name: a renamed or reused
+  // name would pick the wrong type. Writers refuse it (hasLegacyEmploymentTypeName).
+
   if (typeof o.minFtePct === "number" && Number.isFinite(o.minFtePct)) staff.minFtePct = o.minFtePct;
   else if (o.minFtePct === null) staff.minFtePct = null;
   return Object.keys(staff).length ? staff : { ...DEFAULT_SPEC.staff };
@@ -149,4 +152,17 @@ export function decodeSpec(raw: string): GraphSpec | null {
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   return coerceSpec(parsed);
+}
+
+/**
+ * Card #71: true when a submitted spec still carries the pre-#71 employment-type NAME filter
+ * (a browser running the old bundle). Saved-view writers refuse it with 409 so the user reloads,
+ * instead of silently saving "any type".
+ */
+export function hasLegacyEmploymentTypeName(spec: unknown): boolean {
+  if (!spec || typeof spec !== "object") return false;
+  const staff = (spec as Record<string, unknown>).staff;
+  if (!staff || typeof staff !== "object") return false;
+  const v = (staff as Record<string, unknown>).employmentType;
+  return typeof v === "string" && v !== "";
 }

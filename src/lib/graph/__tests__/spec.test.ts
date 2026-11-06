@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_SPEC, encodeSpec, decodeSpec, coerceSpec, type GraphSpec } from "../spec";
+import { DEFAULT_SPEC, encodeSpec, decodeSpec, coerceSpec, hasLegacyEmploymentTypeName, type GraphSpec } from "../spec";
 
 describe("encodeSpec / decodeSpec", () => {
   it("round-trips the default spec", () => {
@@ -10,7 +10,7 @@ describe("encodeSpec / decodeSpec", () => {
     const spec: GraphSpec = {
       version: 1,
       dateRange: { kind: "payPeriods", payPeriodIds: ["pp1", "pp2"] },
-      staff: { all: false, names: ["a", "b"], employmentType: "Fee Basis", minFtePct: 0.5 },
+      staff: { all: false, names: ["a", "b"], employmentTypeId: "et-fee", minFtePct: 0.5 },
       metric: "hours",
       groupByShiftCode: false,
       chart: "heatmap",
@@ -82,14 +82,32 @@ describe("encodeSpec / decodeSpec", () => {
     expect(decodeSpec(raw)!.groupByShiftCode).toBe(false);
   });
 
-  it("preserves employmentType: null and minFtePct: null", () => {
+  it("preserves employmentTypeId: null and minFtePct: null", () => {
     const raw = encodeURIComponent(JSON.stringify({
       version: 1,
-      staff: { employmentType: null, minFtePct: null },
+      staff: { employmentTypeId: null, minFtePct: null },
     }));
     const decoded = decodeSpec(raw)!;
-    expect(decoded.staff.employmentType).toBeNull();
+    expect(decoded.staff.employmentTypeId).toBeNull();
     expect(decoded.staff.minFtePct).toBeNull();
+  });
+
+  // Card #71: a pre-#71 spec filtered by the type's NAME. It is never resolved by name.
+  it("drops a legacy employment-type name filter instead of resolving it", () => {
+    const raw = encodeURIComponent(JSON.stringify({ version: 1, staff: { employmentType: "Fee Basis", minFtePct: 0.5 } }));
+    const decoded = decodeSpec(raw)!;
+    expect(decoded.staff.employmentTypeId).toBeUndefined();
+    expect((decoded.staff as Record<string, unknown>).employmentType).toBeUndefined();
+    expect(decoded.staff.minFtePct).toBe(0.5);
+  });
+
+  it("hasLegacyEmploymentTypeName flags only a non-empty legacy name key", () => {
+    expect(hasLegacyEmploymentTypeName({ staff: { employmentType: "FTE" } })).toBe(true);
+    expect(hasLegacyEmploymentTypeName({ staff: { employmentType: "" } })).toBe(false);
+    expect(hasLegacyEmploymentTypeName({ staff: { employmentType: null } })).toBe(false);
+    expect(hasLegacyEmploymentTypeName({ staff: { employmentTypeId: "et-1" } })).toBe(false);
+    expect(hasLegacyEmploymentTypeName(undefined)).toBe(false);
+    expect(hasLegacyEmploymentTypeName({ staff: "x" })).toBe(false);
   });
 });
 

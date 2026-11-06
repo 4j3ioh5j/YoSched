@@ -49,7 +49,9 @@ export default async function Staff() {
           initials: p.initials,
           employmentTypeId: p.employmentTypeId,
           employmentTypeName: p.employmentType.name,
-          ftePercentage: p.ftePercentage ?? 1.0,
+          // Card #71: the stored value; the page shows it only when the type has an FTE %.
+          ftePercentage: p.ftePercentage ?? p.employmentType.defaultFtePercentage,
+          fixedHoursPerPp: p.fixedHoursPerPp,
           availabilityRules: p.availabilityRules.map((ar) => ({
             type: ar.type,
             strength: ar.strength,
@@ -112,6 +114,8 @@ export default async function Staff() {
           name: et.name,
           defaultIsAutoScheduled: et.defaultIsAutoScheduled,
           defaultFtePercentage: et.defaultFtePercentage,
+          usesFtePercentage: et.usesFtePercentage,
+          allowsFixedHours: et.allowsFixedHours,
           defaultEligibleShiftTypeIds: et.defaultEligibleShifts.map((ds) => ds.shiftTypeId),
           defaultAvailabilityRules: et.defaultAvailability.map((da) => ({
             type: da.type,

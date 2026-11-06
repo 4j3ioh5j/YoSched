@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getPayPeriods } from "@/lib/pay-periods-server";
 import { deriveEquityFactorCodes } from "@/lib/equity-factors";
 import type { RawStatsData } from "@/lib/graph/model";
+import { effectiveFte } from "@/lib/fte";
 import { DEFAULT_SPEC, decodeSpec } from "@/lib/graph/spec";
 import { DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { EquityPage } from "./equity-page";
@@ -53,9 +54,12 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
       id: p.id,
       initials: p.initials,
       name: p.name,
-      ftePercentage: p.ftePercentage,
+      // Card #71: FTE % and fairness come from the employment type's settings, never its name.
+      ftePercentage: effectiveFte(p, p.employmentType),
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
+      inFairness: p.employmentType.includedInFairness,
+      employmentTypeId: p.employmentTypeId,
       employmentTypeName: p.employmentType.name,
       eligibleShiftTypeIds: eligMap.get(p.id) ?? [],
     })),

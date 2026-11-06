@@ -101,13 +101,14 @@ describe("filterAssignmentsByDate", () => {
 });
 
 describe("filterStaff", () => {
-  const s = (staffId: string, employmentTypeName: string, ftePercentage: number) =>
-    ({ staffId, employmentTypeName, ftePercentage });
+  // Card #71: rows carry the type's id; "fte"/"fee" are ids, the names are labels only.
+  const s = (staffId: string, employmentTypeId: string, ftePercentage: number, hasFte = true) =>
+    ({ staffId, employmentTypeId, employmentTypeName: employmentTypeId === "fte" ? "FTE" : "Fee Basis", ftePercentage, hasFte });
   const rows = [
-    s("a", "FTE", 1.0),
-    s("b", "FTE", 0.5),
-    s("c", "Fee Basis", 0.25),
-    s("d", "Fee Basis", 1.0),
+    s("a", "fte", 1.0),
+    s("b", "fte", 0.5),
+    s("c", "fee", 0.25),
+    s("d", "fee", 1.0),
   ];
 
   it("is a no-op (same ref) for an empty filter", () => {
@@ -123,17 +124,27 @@ describe("filterStaff", () => {
     expect(filterStaff(rows, { names: [] })).toBe(rows);
   });
 
-  it("filters by employment type", () => {
-    expect(filterStaff(rows, { employmentType: "Fee Basis" }).map((r) => r.staffId)).toEqual(["c", "d"]);
+  it("filters by employment type id", () => {
+    expect(filterStaff(rows, { employmentTypeId: "fee" }).map((r) => r.staffId)).toEqual(["c", "d"]);
+  });
+
+  it("a type filter survives renaming the type (matches by id, not name)", () => {
+    const renamed = rows.map((r) => ({ ...r, employmentTypeName: r.employmentTypeId === "fee" ? "Casual" : r.employmentTypeName }));
+    expect(filterStaff(renamed, { employmentTypeId: "fee" }).map((r) => r.staffId)).toEqual(["c", "d"]);
   });
 
   it("composes type AND minFte (the plan's example)", () => {
-    const f: GraphStaffFilter = { employmentType: "Fee Basis", minFtePct: 0.5 };
+    const f: GraphStaffFilter = { employmentTypeId: "fee", minFtePct: 0.5 };
     expect(filterStaff(rows, f).map((r) => r.staffId)).toEqual(["d"]);
   });
 
   it("composes names AND type AND minFte", () => {
-    const f: GraphStaffFilter = { names: ["a", "b", "c"], employmentType: "FTE", minFtePct: 0.6 };
+    const f: GraphStaffFilter = { names: ["a", "b", "c"], employmentTypeId: "fte", minFtePct: 0.6 };
     expect(filterStaff(rows, f).map((r) => r.staffId)).toEqual(["a"]);
+  });
+
+  it("a row whose type has no FTE % never meets a minimum FTE", () => {
+    const noFte = [s("x", "fee", 1, false), s("y", "fte", 1)];
+    expect(filterStaff(noFte, { minFtePct: 0.5 }).map((r) => r.staffId)).toEqual(["y"]);
   });
 });

@@ -31,8 +31,8 @@ describe("fairness keyed through the shift id", () => {
   const A = { id: "st-a", code: "st-b", defaultHours: 8, countsTowardFte: true, countsAsHolidayWork: false, isLeave: false, isOffShift: false };
   const B = { id: "st-b", code: "st-a", defaultHours: 8, countsTowardFte: true, countsAsHolidayWork: false, isLeave: false, isOffShift: false };
   const staff = [
-    { id: "p1", initials: "AA", ftePercentage: 1, isActive: true, isAutoScheduled: true },
-    { id: "p2", initials: "BB", ftePercentage: 1, isActive: true, isAutoScheduled: true },
+    { id: "p1", initials: "AA", ftePercentage: 1, isActive: true, isAutoScheduled: true, inFairness: true },
+    { id: "p2", initials: "BB", ftePercentage: 1, isActive: true, isAutoScheduled: true, inFairness: true },
   ];
   // p1 works B three times; p2 works A three times.
   const assignments = [

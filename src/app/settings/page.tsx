@@ -12,6 +12,7 @@ import { parseHolidayPolicy } from "@/lib/holiday-policy";
 import { parseStaffOrderCriteria } from "@/lib/staff-order";
 import { parseHoursPolicy } from "@/lib/autogen-hours-policy";
 import { redirect } from "next/navigation";
+import { effectiveFte } from "@/lib/fte";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,7 @@ export default async function Settings() {
     prisma.staff.findMany({
       where: { isActive: true },
       orderBy: { sortOrder: "asc" },
-      include: { employmentType: { select: { sortOrder: true, name: true } } },
+      include: { employmentType: { select: { sortOrder: true, name: true, usesFtePercentage: true, allowsFixedHours: true, includedInFairness: true, defaultFtePercentage: true } } },
     }),
   ]);
 
@@ -145,6 +146,9 @@ export default async function Settings() {
           name: et.name,
           defaultIsAutoScheduled: et.defaultIsAutoScheduled,
           defaultFtePercentage: et.defaultFtePercentage,
+          usesFtePercentage: et.usesFtePercentage,
+          allowsFixedHours: et.allowsFixedHours,
+          includedInFairness: et.includedInFairness,
           defaultEligibleShiftTypeIds: et.defaultEligibleShifts.map((ds) => ds.shiftTypeId),
           defaultAvailabilityRules: et.defaultAvailability.map((da) => ({
             type: da.type,
@@ -232,7 +236,8 @@ export default async function Settings() {
           id: p.id,
           name: p.name,
           initials: p.initials,
-          ftePercentage: p.ftePercentage,
+          // Card #71: resolved — null when the type has no FTE % (no "· 0%" label, orders as none).
+          ftePercentage: effectiveFte(p, p.employmentType),
           isAutoScheduled: p.isAutoScheduled,
           sortOrder: p.sortOrder,
           createdAt: p.createdAt.toISOString(),

@@ -12,7 +12,12 @@ import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
 export type ScheduleStaff = {
   id: string;
   initials: string;
+  /** 0 when the person's employment type has no FTE % (card #71). */
   ftePercentage: number;
+  /** Card #71: fixed hours per pay period (types without an FTE %), else null. Replaces the FTE target. */
+  fixedHoursPerPp: number | null;
+  /** Card #71: counted in fairness (the employment type's includedInFairness setting). */
+  inFairness: boolean;
   eligibleShiftTypeIds: string[];
   availabilityRules: AvailabilityRule[];
   isActive: boolean;
@@ -301,6 +306,18 @@ export function buildRankFromConfig(
   config: AutoGenFactorConfig[] | undefined,
 ): number[] {
   return effectiveFactorKeys(config).map((k) => terms[k as (typeof DEFAULT_FACTOR_ORDER)[number]]);
+}
+
+/**
+ * Card #71: the person's hours target for a pay period. Fixed hours (types without an FTE %)
+ * are absolute; otherwise the PP's hours x FTE (0 for a type without an FTE %).
+ * Mirrors src/lib/fte.ts staffPpTarget with the engine's 0-for-no-target convention.
+ */
+export function targetFor(
+  p: { ftePercentage: number; fixedHoursPerPp: number | null },
+  pp: { targetHours: number },
+): number {
+  return p.fixedHoursPerPp != null ? p.fixedHoursPerPp : pp.targetHours * p.ftePercentage;
 }
 
 function toDateStr(d: Date): string {
@@ -782,6 +799,7 @@ export function autoSchedule({
       ftePercentage: p.ftePercentage,
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
+      inFairness: p.inFairness,
       eligibleShiftTypeIds: p.eligibleShiftTypeIds,
     })),
     desirabilityWeights,
@@ -1172,7 +1190,7 @@ export function autoSchedule({
       addByPP.set(pp, (addByPP.get(pp) ?? 0) + getShiftHours(p.id, st, overrideMap, dayTypeOf(d, holidaySet)));
     }
     for (const [pp, add] of addByPP) {
-      const target = pp.targetHours * p.ftePercentage;
+      const target = targetFor(p, pp);
       if (target > 0 && ppHoursForStaff(p.id, pp) + add > target) return true;
     }
     return false;
@@ -1204,7 +1222,7 @@ export function autoSchedule({
   function canStillReachTarget(p: ScheduleStaff, date: string): boolean {
     const pp = findPPForDate(date);
     if (!pp || !fillShift) return true;
-    const target = pp.targetHours * p.ftePercentage;
+    const target = targetFor(p, pp);
     const current = ppHoursForStaff(p.id, pp);
     if (target <= 0 || current >= target) return true;
     const reachableHrs = maxReachableDailyHours(p, shiftTypes, overrideMap);
@@ -1255,7 +1273,7 @@ export function autoSchedule({
     if (!pp || !fillShift) return null;
     const staff = activeStaff.find((p) => p.id === staffId);
     if (!staff) return null;
-    const target = pp.targetHours * staff.ftePercentage;
+    const target = targetFor(staff, pp);
     if (target <= 0) return null;
 
     const sameFollowerPP = !!followerPP && followerPP.startDate === pp.startDate;
@@ -1564,7 +1582,7 @@ export function autoSchedule({
           fitMap = new Map();
           const NEED_TIER = -1e9;
           for (const p of pool) {
-            const target = pp.targetHours * p.ftePercentage;
+            const target = targetFor(p, pp);
             if (target <= 0) { fitMap.set(p.id, Infinity); continue; }
             const current = ppHoursForStaff(p.id, pp);
             const projected = current + getShiftHours(p.id, st, overrideMap, dayTypeOf(date, holidaySet));
@@ -1797,7 +1815,7 @@ export function autoSchedule({
             // Prefer staff a full group does NOT push over their PP target (a hard
             // minimum overrides the cap); fall back to any hostable if none fit.
             const fits = hostable.filter((p) => {
-              const target = pp.targetHours * p.ftePercentage;
+              const target = targetFor(p, pp);
               // The group spans pairingFactor of remainDates (day-type mix not
               // yet fixed); value each day at the largest day type so this cap
               // pre-check stays conservative and never overfills a staffer.
@@ -2031,7 +2049,7 @@ export function autoSchedule({
       const pp = findPPForDate(date);
       if (!pp) continue;
       for (const staff of activeStaff) {
-        if (pp.targetHours * staff.ftePercentage <= 0) continue;
+        if (targetFor(staff, pp) <= 0) continue;
         if (isAssigned(staff.id, date)) continue;
         const avail = evaluateAvailability(staff.availabilityRules, date, payPeriods, (pid, d) => isAssigned(pid, d));
         if (!avail.available) continue;
@@ -2099,7 +2117,7 @@ export function autoSchedule({
       // Share of `p`'s available days the hours fill will consume (same sizing
       // as the main loop) — the expected contribution of a not-yet-processed
       // staffer to each of their available dates.
-      const target = pp.targetHours * p.ftePercentage;
+      const target = targetFor(p, pp);
       if (target <= 0 || avail <= 0) return 0;
       const hours = ppHoursForStaff(p.id, pp);
       if (hours >= target) return 0;
@@ -2200,7 +2218,7 @@ export function autoSchedule({
 
       for (let si = 0; si < sortedStaff.length; si++) {
         const staff = sortedStaff[si];
-        const target = pp.targetHours * staff.ftePercentage;
+        const target = targetFor(staff, pp);
         if (target <= 0) continue;
 
         const currentHours = ppHoursForStaff(staff.id, pp);
@@ -2455,7 +2473,7 @@ export function autoSchedule({
         // Current per-staff deviation (hours − FTE-scaled target) for this PP.
         const dev = new Map<string, number>();
         for (const p of activeStaff) {
-          const target = pp.targetHours * p.ftePercentage;
+          const target = targetFor(p, pp);
           if (target <= 0) continue;
           dev.set(p.id, ppHoursForStaff(p.id, pp) - target);
         }
@@ -2549,7 +2567,7 @@ export function autoSchedule({
     }
     for (const pp of auditPPs) {
       for (const staff of activeStaff) {
-        const target = pp.targetHours * staff.ftePercentage;
+        const target = targetFor(staff, pp);
         if (target <= 0) continue;
         const hours = ppHoursForStaff(staff.id, pp);
         const dev = Math.round(hours - target);
@@ -2716,7 +2734,7 @@ export function autoSchedule({
     step = "repair", confidence = 0.85,
   ): RearrangePlan | null {
     const pp = findPPForDate(date);
-    const target = pp ? pp.targetHours * p.ftePercentage : 0;
+    const target = pp ? targetFor(p, pp) : 0;
     const before = pp ? ppHoursForStaff(p.id, pp) : 0;
     const coverageBefore = countCoverage(st.code, date);
     const releasedCells = release.map((d) => ({ d, c: grid.get(`${p.id}:${d}`)! }));
@@ -2791,7 +2809,7 @@ export function autoSchedule({
     for (const p of eligibleStaff(st, date)) {
       if (p.id === excludeId) continue;
       const plan = tryRearrange(p, date, st);
-      if (plan) plans.push({ plan, deficit: pp ? pp.targetHours * p.ftePercentage - ppHoursForStaff(p.id, pp) : 0 });
+      if (plan) plans.push({ plan, deficit: pp ? targetFor(p, pp) - ppHoursForStaff(p.id, pp) : 0 });
     }
     plans.sort((a, b) =>
       Number(a.plan.over) - Number(b.plan.over)
@@ -2913,8 +2931,8 @@ export function autoSchedule({
         const rb = recvByStaff.get(b.id);
         if (!!ra !== !!rb) return ra ? -1 : 1; // claimants before non-claimants
         if (ra && rb && ra !== rb) return ra < rb ? -1 : 1; // earlier receivedAt wins
-        const defA = pp ? pp.targetHours * a.ftePercentage - ppHoursForStaff(a.id, pp) : 0;
-        const defB = pp ? pp.targetHours * b.ftePercentage - ppHoursForStaff(b.id, pp) : 0;
+        const defA = pp ? targetFor(a, pp) - ppHoursForStaff(a.id, pp) : 0;
+        const defB = pp ? targetFor(b, pp) - ppHoursForStaff(b.id, pp) : 0;
         if (defA !== defB) return defB - defA; // neediest hours first
         return a.id.localeCompare(b.id);
       });
@@ -2959,7 +2977,7 @@ export function autoSchedule({
       if (!pp || !holder) continue; // can't reason → leave placed
 
       // Over the requester's PP-hours target WITH this cell?
-      const target = pp.targetHours * holder.ftePercentage;
+      const target = targetFor(holder, pp);
       const hoursWith = ppHoursForStaff(t.staffId, pp);
       const holderOverCap = t.st.countsTowardFte && target > 0 && hoursWith > target;
 
@@ -3253,6 +3271,8 @@ export function autoSchedule({
   // staff, then its standard deviation: lower = more even = fairer.
   const desScores: number[] = [];
   for (const staff of activeStaff) {
+    // Card #71: staff whose employment type is not in fairness never sway the equity spread.
+    if (!staff.inFairness) continue;
     const fte = staff.ftePercentage > 0 ? staff.ftePercentage : 1;
     let des = 0;
     for (const date of dates) {

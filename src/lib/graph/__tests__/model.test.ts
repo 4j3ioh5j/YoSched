@@ -62,8 +62,8 @@ describe("assembleEquityModel — hours / weekend / override parity", () => {
       metric("p2", "BB", 0.5, { totalWorkDays: 1, totalLeaveDays: 0 }),
     ]),
     staff: [
-      { id: "p1", name: "Alice", isAutoScheduled: true, ftePercentage: 1.0, employmentTypeName: "FTE" },
-      { id: "p2", name: "Bob", isAutoScheduled: false, ftePercentage: 0.5, employmentTypeName: "Fee Basis" },
+      { id: "p1", name: "Alice", isAutoScheduled: true, ftePercentage: 1.0, employmentTypeId: "et-fte", employmentTypeName: "FTE" },
+      { id: "p2", name: "Bob", isAutoScheduled: false, ftePercentage: 0.5, employmentTypeId: "et-fee", employmentTypeName: "Fee Basis" },
     ],
     assignments: [
       { staffId: "p1", shiftTypeId: "work", date: "2026-06-03", code: "WORK", isOffShift: false },
@@ -121,7 +121,7 @@ describe("assembleEquityModel — staff mapping", () => {
           displayDeviations: { p1: dev({ desirability: 0.1, holidayWork: 0.2, overall: 0.9, perShift: { CALL: -0.4 } }) },
         },
       ),
-      staff: [{ id: "p1", name: "Alice", isAutoScheduled: true, ftePercentage: null, employmentTypeName: "FTE" }],
+      staff: [{ id: "p1", name: "Alice", isAutoScheduled: true, ftePercentage: null, employmentTypeId: "et-fte", employmentTypeName: "FTE" }],
       assignments: [],
       shiftTypes: SHIFT_TYPES,
       overrides: [],
@@ -140,7 +140,7 @@ describe("computeStatsModel — full engine wiring", () => {
   it("runs computeFairness + assembleEquityModel from the raw payload", () => {
     const raw: RawStatsData = {
       staff: [
-        { id: "p1", initials: "AA", name: "Alice", ftePercentage: 1.0, isActive: true, isAutoScheduled: true, employmentTypeName: "FTE", eligibleShiftTypeIds: [] },
+        { id: "p1", initials: "AA", name: "Alice", ftePercentage: 1.0, isActive: true, isAutoScheduled: true, inFairness: true, employmentTypeId: "et-fte", employmentTypeName: "FTE", eligibleShiftTypeIds: [] },
       ],
       assignments: [
         {
@@ -168,7 +168,7 @@ describe("computeStatsModel — full engine wiring", () => {
   it("excludes inactive / non-auto-scheduled staff (computeFairness gate)", () => {
     const raw: RawStatsData = {
       staff: [
-        { id: "p1", initials: "AA", name: "Alice", ftePercentage: 1.0, isActive: false, isAutoScheduled: true, employmentTypeName: "FTE", eligibleShiftTypeIds: [] },
+        { id: "p1", initials: "AA", name: "Alice", ftePercentage: 1.0, isActive: false, isAutoScheduled: true, inFairness: true, employmentTypeId: "et-fte", employmentTypeName: "FTE", eligibleShiftTypeIds: [] },
       ],
       assignments: [],
       shiftTypes: [],
@@ -185,7 +185,7 @@ describe("assembleEquityModel — off-shift handling", () => {
   it("excludes off shifts from tallies and hours but still emits the staff row", () => {
     const model = assembleEquityModel({
       fairness: fairness([metric("p3", "CC", 1.0)]),
-      staff: [{ id: "p3", name: "Cara", isAutoScheduled: true, ftePercentage: 1.0, employmentTypeName: "FTE" }],
+      staff: [{ id: "p3", name: "Cara", isAutoScheduled: true, ftePercentage: 1.0, employmentTypeId: "et-fte", employmentTypeName: "FTE" }],
       assignments: [{ staffId: "p3", shiftTypeId: "off", date: "2026-06-08", code: "OFF", isOffShift: true }],
       shiftTypes: SHIFT_TYPES,
       overrides: [],
@@ -208,7 +208,7 @@ describe("assembleEquityModel — holiday hours", () => {
   function totalHours(date: string, holidays: string[]): number {
     const model = assembleEquityModel({
       fairness: fairness([metric("p1", "AA", 1.0)]),
-      staff: [{ id: "p1", name: "A", isAutoScheduled: true, ftePercentage: 1.0, employmentTypeName: "FTE" }],
+      staff: [{ id: "p1", name: "A", isAutoScheduled: true, ftePercentage: 1.0, employmentTypeId: "et-fte", employmentTypeName: "FTE" }],
       assignments: [{ staffId: "p1", shiftTypeId: "work", date, code: "WORK", isOffShift: false }],
       shiftTypes: HSHIFTS,
       overrides: [],

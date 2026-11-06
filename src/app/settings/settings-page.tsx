@@ -117,11 +117,28 @@ type EmploymentTypeData = {
   name: string;
   defaultIsAutoScheduled: boolean;
   defaultFtePercentage: number;
+  /** Card #71: what the type means, as settings (never read from its name). */
+  usesFtePercentage: boolean;
+  allowsFixedHours: boolean;
+  includedInFairness: boolean;
   defaultEligibleShiftTypeIds: string[];
   defaultAvailabilityRules: DefaultAvailabilityRule[];
   sortOrder: number;
   staffCount: number;
 };
+
+/** Card #71: what a setting change does to the type's staff, for the confirm dialog (null = nothing).
+ *  Nothing is deleted: values a setting turns off are kept and come back when it is turned on again. */
+function typeFlagChangeWarning(prev: EmploymentTypeData, next: EmploymentTypeData): string | null {
+  if (next.staffCount === 0) return null;
+  const n = `${next.staffCount} staff member${next.staffCount === 1 ? "" : "s"}`;
+  const parts: string[] = [];
+  if (prev.usesFtePercentage && !next.usesFtePercentage) parts.push(`${n} will have no FTE % or hours target (their FTE % is kept for if you turn this back on)`);
+  if (!prev.usesFtePercentage && next.usesFtePercentage) parts.push(`${n} will use the FTE % stored on each person — check them on the Staff page`);
+  if (prev.allowsFixedHours && !next.allowsFixedHours) parts.push(`fixed hours for ${n} will stop applying (kept for if you turn this back on)`);
+  if (prev.includedInFairness !== next.includedInFairness) parts.push(`${n} will be ${next.includedInFairness ? "counted in" : "left out of"} fairness`);
+  return parts.length ? `${parts.join("; ")}. Continue?` : null;
+}
 
 type EquityFactorData = {
   id: string;
@@ -3578,6 +3595,8 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
 
   async function saveType(et: EmploymentTypeData) {
     const prev = initial.find((t) => t.id === et.id);
+    const warning = prev ? typeFlagChangeWarning(prev, et) : null;
+    if (warning && !confirm(warning)) return;
     setStatus("saving");
     try {
       const res = await fetch("/api/settings/employment-types", {
@@ -3623,6 +3642,9 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
         name: created.name,
         defaultIsAutoScheduled: created.defaultIsAutoScheduled,
         defaultFtePercentage: created.defaultFtePercentage,
+        usesFtePercentage: created.usesFtePercentage,
+        allowsFixedHours: created.allowsFixedHours,
+        includedInFairness: created.includedInFairness,
         defaultEligibleShiftTypeIds: (created.defaultEligibleShifts ?? []).map((ds: { shiftTypeId: string }) => ds.shiftTypeId),
         defaultAvailabilityRules: (created.defaultAvailability ?? []).map((da: DefaultAvailabilityRule) => ({
           type: da.type, strength: da.strength,
@@ -3723,7 +3745,7 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
                 </span>
               </td>
               <td className="py-2 px-2 text-center font-mono text-slate-400">
-                {(t.defaultFtePercentage * 100).toFixed(0)}%
+                {t.usesFtePercentage ? `${(t.defaultFtePercentage * 100).toFixed(0)}%` : t.allowsFixedHours ? "fixed h" : "—"}
               </td>
               <td className="py-2 px-2">
                 <div className="flex flex-wrap gap-1">
@@ -3764,14 +3786,64 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm text-slate-200">FTE percentage</div>
-                  <div className="text-xs text-slate-500">Default target hours ratio</div>
+                  <div className="text-sm text-slate-200">Has an FTE %</div>
+                  <div className="text-xs text-slate-500">Staff have an FTE % and an hours target (pay period hours x FTE)</div>
                 </div>
-                <select disabled={!canEdit} className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50" value={et.defaultFtePercentage} onChange={(e) => updateField(et.id, "defaultFtePercentage", parseFloat(e.target.value))}>
-                  {[1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0].map((v) => (
-                    <option key={v} value={v}>{(v * 100).toFixed(0)}%</option>
-                  ))}
-                </select>
+                <input
+                  disabled={!canEdit}
+                  type="checkbox"
+                  aria-label="Has an FTE %"
+                  checked={et.usesFtePercentage}
+                  onChange={(e) => {
+                    updateField(et.id, "usesFtePercentage", e.target.checked);
+                    // An FTE % and fixed hours are mutually exclusive.
+                    if (e.target.checked) updateField(et.id, "allowsFixedHours", false);
+                  }}
+                  className="rounded border-slate-600 w-4 h-4 disabled:opacity-50"
+                />
+              </div>
+              {et.usesFtePercentage && (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm text-slate-200">FTE percentage</div>
+                    <div className="text-xs text-slate-500">Default target hours ratio</div>
+                  </div>
+                  <select disabled={!canEdit} className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50" value={et.defaultFtePercentage} onChange={(e) => updateField(et.id, "defaultFtePercentage", parseFloat(e.target.value))}>
+                    {[1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0].map((v) => (
+                      <option key={v} value={v}>{(v * 100).toFixed(0)}%</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {!et.usesFtePercentage && (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm text-slate-200">Fixed hours per pay period</div>
+                    <div className="text-xs text-slate-500">Staff of this type can be given a fixed number of hours (off by default for each person)</div>
+                  </div>
+                  <input
+                    disabled={!canEdit}
+                    type="checkbox"
+                    aria-label="Fixed hours per pay period"
+                    checked={et.allowsFixedHours}
+                    onChange={(e) => updateField(et.id, "allowsFixedHours", e.target.checked)}
+                    className="rounded border-slate-600 w-4 h-4 disabled:opacity-50"
+                  />
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm text-slate-200">Included in fairness</div>
+                  <div className="text-xs text-slate-500">Staff of this type count in equity / fairness</div>
+                </div>
+                <input
+                  disabled={!canEdit}
+                  type="checkbox"
+                  aria-label="Included in fairness"
+                  checked={et.includedInFairness}
+                  onChange={(e) => updateField(et.id, "includedInFairness", e.target.checked)}
+                  className="rounded border-slate-600 w-4 h-4 disabled:opacity-50"
+                />
               </div>
               <div>
                 <div className="text-sm text-slate-200 mb-1">Default eligible shifts</div>
@@ -4746,7 +4818,7 @@ function StaffColumnOrderSection({ initial, staff }: { initial: StaffOrderCriter
                   <span className="text-sm text-slate-200 font-semibold w-12 shrink-0">{p.initials}</span>
                   <span className="text-xs text-slate-400 truncate flex-1">{p.name !== p.initials ? p.name : ""}</span>
                   <span className="text-xs text-slate-500 shrink-0">
-                    {p.employmentTypeName} · {((p.ftePercentage ?? 0) * 100).toFixed(0)}%
+                    {p.employmentTypeName}{p.ftePercentage != null ? ` · ${(p.ftePercentage * 100).toFixed(0)}%` : ""}
                   </span>
                 </div>
               );
@@ -4766,7 +4838,7 @@ function StaffColumnOrderSection({ initial, staff }: { initial: StaffOrderCriter
           {preview.map((p) => (
             <span
               key={p.id}
-              title={`${p.name} — ${p.employmentTypeName} · ${((p.ftePercentage ?? 0) * 100).toFixed(0)}%`}
+              title={`${p.name} — ${p.employmentTypeName}${p.ftePercentage != null ? ` · ${(p.ftePercentage * 100).toFixed(0)}%` : ""}`}
               className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-xs text-slate-300 font-mono"
             >
               {p.initials}

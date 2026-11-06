@@ -17,7 +17,7 @@ const OFF: ScheduleShiftType = { ...A, id: "st-off", code: "X", name: "Off", isO
 
 const wEvery = (d: number) => whenToColumns(legacyPatternToWhen({ dayOfWeek: d, pattern: "every" }));
 const staff = (id: string, initials: string): ScheduleStaff => ({
-  id, initials, ftePercentage: 1, eligibleShiftTypeIds: ["st-a", "st-b", "st-off"],
+  id, initials, ftePercentage: 1, fixedHoursPerPp: null, inFairness: true, eligibleShiftTypeIds: ["st-a", "st-b", "st-off"],
   availabilityRules: [1, 2, 3, 4, 5].map((d) => ({ type: "available" as const, strength: "rule" as const, ...wEvery(d) })),
   isActive: true, isAutoScheduled: true, specialQualifications: [],
 });

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } from "@/lib/constraints";
+import { staffPpTarget, ppDiffCell } from "@/lib/fte";
 import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, ALERT_CATEGORIES, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
@@ -106,7 +107,10 @@ type Staff = {
   id: string;
   initials: string;
   name: string;
-  ftePercentage: number;
+  /** Card #71: null when the employment type has no FTE % (resolved server-side by src/lib/fte.ts). */
+  ftePercentage: number | null;
+  /** Card #71: fixed hours per pay period, or null. */
+  fixedHoursPerPp: number | null;
   employmentTypeId: string;
   employmentTypeName: string;
   availabilityRules: AvailabilityRuleData[];
@@ -3762,7 +3766,7 @@ export function ScheduleGrid({
           ppStartDate: pp.startDate,
           anchorDate: pp.endDate,
           hours,
-          target: pp.targetHours * p.ftePercentage,
+          target: staffPpTarget(p.ftePercentage, p.fixedHoursPerPp, pp.targetHours) ?? 0,
           warning,
         });
       }
@@ -4161,9 +4165,11 @@ export function ScheduleGrid({
                 const fe = fairnessData?.[p.id];
                 const fColor = fe ? fairnessColor(fe.deviation.overall) : undefined;
                 const fLabel = fe ? fairnessLabel(fe.deviation.overall) : undefined;
-                const empLabel = p.employmentTypeName === "FTE"
-                  ? `${p.ftePercentage * 100}% FTE`
-                  : p.employmentTypeName;
+                const empLabel = p.ftePercentage != null
+                  ? `${Math.round(p.ftePercentage * 100)}% FTE`
+                  : p.fixedHoursPerPp != null
+                    ? `${p.employmentTypeName} · ${p.fixedHoursPerPp} h/PP`
+                    : p.employmentTypeName;
                 const zFmt = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(2)}σ`;
                 const fte = p.ftePercentage || 1;
                 const fTooltip = fe
@@ -4252,34 +4258,20 @@ export function ScheduleGrid({
                     </td>
                     {visibleStaff.map((p) => {
                       const hours = provHours?.get(p.id) ?? 0;
-                      const target = pp.targetHours * p.ftePercentage;
-                      const diff = hours - target;
-
-                      // Green when hours EXACTLY hit target; below target is red,
-                      // above target is amber. (epsilon guards float rounding,
-                      // matching PP_HOURS_EPSILON.)
-                      let color = "text-slate-500";
-                      if (hours > 0) {
-                        color =
-                          Math.abs(diff) < 0.001
-                            ? "text-emerald-400"
-                            : diff < 0
-                              ? "text-red-400"
-                              : "text-amber-400";
-                      }
-
-                      const diffLabel = diff >= 0 ? `+${diff}` : `${diff}`;
+                      // Card #71: no target (a type without an FTE % and no fixed hours) → "–", no colour.
+                      // Otherwise green on target, red under, amber over (ppDiffCell).
+                      const cell = ppDiffCell(hours, staffPpTarget(p.ftePercentage, p.fixedHoursPerPp, pp.targetHours));
 
                       return (
                         <td
                           key={p.id}
                           data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
                           className="px-0 py-1 text-center border-slate-600/50 border border-y-indigo-500/60"
-                          onMouseEnter={(e) => showTip(setTooltip, `${p.initials}: ${hours}hrs / ${target}hrs target (${diffLabel})`, e)}
+                          onMouseEnter={(e) => showTip(setTooltip, `${p.initials}: ${cell.tip}`, e)}
                           onMouseLeave={() => setTooltip(null)}
                         >
-                          <div className={`text-[10px] font-mono font-bold ${color}`}>
-                            {hours > 0 ? diffLabel : "–"}
+                          <div className={`text-[10px] font-mono font-bold ${cell.colorClass}`}>
+                            {cell.label}
                           </div>
                         </td>
                       );

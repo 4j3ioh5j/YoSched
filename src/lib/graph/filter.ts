@@ -12,16 +12,17 @@
 import type { GraphDateRange, GraphStaffFilter } from "./spec";
 
 /**
- * Keep only rows whose FTE percentage is at or above `minFte`.
+ * Keep only rows whose FTE percentage is at or above `minFte`. A row whose employment
+ * type has no FTE % (`hasFte: false`, card #71) never meets a minimum.
  * A `minFte` of 0 (or negative) is a no-op and returns the rows unchanged —
  * matching the current page's `minFte > 0 ? filter : data` behavior.
  */
-export function filterByMinFte<T extends { ftePercentage: number }>(
+export function filterByMinFte<T extends { ftePercentage: number; hasFte?: boolean }>(
   rows: T[],
   minFte: number,
 ): T[] {
   if (!(minFte > 0)) return rows;
-  return rows.filter((d) => d.ftePercentage >= minFte);
+  return rows.filter((d) => d.hasFte !== false && d.ftePercentage >= minFte);
 }
 
 export type PayPeriodRef = { id: string; startDate: string; endDate: string };
@@ -64,14 +65,16 @@ export function filterAssignmentsByDate<T extends { date: string }>(
 
 export type StaffRow = {
   staffId: string;
-  employmentTypeName: string;
+  /** Card #71: filtered by the type's id, never its (renamable) name. */
+  employmentTypeId: string;
   ftePercentage: number;
+  hasFte?: boolean;
 };
 
 /**
  * Composable staff display filter (AND semantics):
  *  - `names`: when non-empty, keep only those staff ids.
- *  - `employmentType`: when set (non-null/non-empty), keep matching type.
+ *  - `employmentTypeId`: when set (non-null/non-empty), keep that type (by id).
  *  - `minFtePct`: when > 0, keep rows at/above the FTE threshold.
  * The `all` flag is advisory UI state and imposes no constraint here.
  */
@@ -81,8 +84,8 @@ export function filterStaff<T extends StaffRow>(rows: T[], staff: GraphStaffFilt
     const ids = new Set(staff.names);
     out = out.filter((r) => ids.has(r.staffId));
   }
-  if (staff.employmentType) {
-    out = out.filter((r) => r.employmentTypeName === staff.employmentType);
+  if (staff.employmentTypeId) {
+    out = out.filter((r) => r.employmentTypeId === staff.employmentTypeId);
   }
   if (staff.minFtePct && staff.minFtePct > 0) {
     out = filterByMinFte(out, staff.minFtePct);

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { computeFairness, fairnessColor, fairnessLabel, heatmapTempColor, type EquityFactor } from "../fairness";
 
 function makeStaff(id: string, initials: string, fte = 1) {
-  return { id, initials, ftePercentage: fte, isActive: true, isAutoScheduled: true };
+  return { id, initials, ftePercentage: fte, isActive: true, isAutoScheduled: true, inFairness: true };
 }
 
 function makeAssignment(

@@ -18,6 +18,8 @@ type Staff = {
   ftePercentage: number;
   isActive: boolean;
   isAutoScheduled: boolean;
+  /** Card #71: the employment type's includedInFairness setting. Required so every caller decides. */
+  inFairness: boolean;
   eligibleShiftTypeIds?: string[];
 };
 
@@ -129,7 +131,7 @@ export function computeFairness({
   const metrics: FairnessMetrics[] = [];
 
   for (const p of staff) {
-    if (!p.isActive || !p.isAutoScheduled) continue;
+    if (!p.isActive || !p.isAutoScheduled || !p.inFairness) continue;
     staffFte.set(p.id, p.ftePercentage || 1);
 
     const pa = byStaff.get(p.id) || [];
@@ -213,7 +215,7 @@ export function computeFairness({
   // Build per-staff eligible shift type sets
   const staffEligible = new Map<string, Set<string> | null>();
   for (const p of staff) {
-    if (!p.isActive || !p.isAutoScheduled) continue;
+    if (!p.isActive || !p.isAutoScheduled || !p.inFairness) continue;
     staffEligible.set(p.id, p.eligibleShiftTypeIds ? new Set(p.eligibleShiftTypeIds) : null);
   }
 

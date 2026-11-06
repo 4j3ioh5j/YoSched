@@ -29,7 +29,7 @@ vi.mock("@/lib/build-auto-schedule-input", async (importOriginal) => {
     ignoresWorkingDays: false, category: "clinical", autoSchedulable: true, ...extra,
   });
   const staff = (id: string, initials: string) => ({
-    id, initials, ftePercentage: 1, eligibleShiftTypeIds: ["orc", "free", "off"],
+    id, initials, ftePercentage: 1, fixedHoursPerPp: null, inFairness: true, eligibleShiftTypeIds: ["orc", "free", "off"],
     availabilityRules: [0, 1, 2, 3, 4, 5, 6].map((d) => ({ type: "available" as const, strength: "rule" as const, ...wEvery(d) })),
     isActive: true, isAutoScheduled: true, specialQualifications: [], shiftMinimumTargets: id === "s1" ? fixture.staffTargets : [],
   });

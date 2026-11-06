@@ -1,0 +1,14 @@
+-- Rollback for 20261107000000_employment_type_flags_fixed_hours (card #71 Phase A).
+--
+-- ROLLBACK IS CODE-ONLY: redeploy the previous commit (3be1388) and run NOTHING here.
+-- The migration is additive: the previous code never reads usesFtePercentage / allowsFixedHours /
+-- includedInFairness / fixedHoursPerPp, and its `prisma migrate deploy` succeeds with this migration
+-- recorded (verified on a trial copy of live with populated values, 2026-11-06). Keeping the columns
+-- and the _prisma_migrations row means a later redeploy of the new code finds every setting and
+-- every fixed-hours value people entered exactly as they left them.
+--
+-- The one data change (staff of types without an FTE % stored as 0 — only NH, 1 -> 0) is also left
+-- in place: 0 is the right value for them under the previous code too (no hours target).
+--
+-- Do NOT drop the columns as part of a rollback: that deletes what users configured.
+SELECT 'card-71 phase A rollback is code-only; nothing to run' AS note;

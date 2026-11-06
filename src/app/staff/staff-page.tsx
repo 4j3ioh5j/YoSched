@@ -10,6 +10,7 @@ import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen, standingTo
 import { RecurrencePicker } from "./recurrence-picker";
 import { FrequencyPicker } from "./frequency-picker";
 import { describeFrequency, type ShiftMinTarget } from "@/lib/shift-eligibility";
+import { isValidFixedHours } from "@/lib/fte";
 
 // Login-setup badge shown per staff row. Credentials/activation are managed on /users
 // (deep links below, for users:edit only); the link itself can also be changed in the
@@ -183,6 +184,8 @@ type Staff = {
   employmentTypeId: string;
   employmentTypeName: string;
   ftePercentage: number;
+  /** Card #71: fixed hours per pay period; null = unchecked. Only for types that allow fixed hours. */
+  fixedHoursPerPp: number | null;
   availabilityRules: AvailabilityRule[];
   eligibleShiftTypeIds: string[];
   shiftEligibilityRules: ShiftEligibilityRuleData[];
@@ -205,6 +208,9 @@ type EmploymentType = {
   name: string;
   defaultIsAutoScheduled: boolean;
   defaultFtePercentage: number;
+  /** Card #71: the type's settings — what it means is never read from its name. */
+  usesFtePercentage: boolean;
+  allowsFixedHours: boolean;
   defaultEligibleShiftTypeIds: string[];
   defaultAvailabilityRules: DefaultAvailabilityRule[];
 };
@@ -979,6 +985,21 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
     setStaff((prev) => prev.map((p) => p.id === id ? { ...p, [field]: value } : p));
   }
 
+  // Card #71: what a person's type means comes from its settings, never its name.
+  function typeOf(p: Staff): EmploymentType | undefined {
+    return employmentTypes.find((t) => t.id === p.employmentTypeId);
+  }
+  function fteColumnLabel(p: Staff): string {
+    const t = typeOf(p);
+    if (t?.usesFtePercentage) return p.ftePercentage % 1 === 0 ? p.ftePercentage.toFixed(1) : String(p.ftePercentage);
+    if (t?.allowsFixedHours && p.fixedHoursPerPp != null) return `${p.fixedHoursPerPp} h`;
+    return "—";
+  }
+  // Checked fixed hours must carry a valid number before Save (the API refuses it otherwise).
+  function fixedHoursOk(p: Staff): boolean {
+    return !typeOf(p)?.allowsFixedHours || p.fixedHoursPerPp == null || isValidFixedHours(p.fixedHoursPerPp);
+  }
+
   function changeEmploymentType(id: string, newTypeId: string) {
     const et = employmentTypes.find((t) => t.id === newTypeId);
     if (!et) return;
@@ -987,7 +1008,9 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
       employmentTypeId: et.id,
       employmentTypeName: et.name,
       isAutoScheduled: et.defaultIsAutoScheduled,
-      ftePercentage: et.defaultFtePercentage,
+      // Card #71: a type without an FTE % stores 0; fixed hours start unchecked on a type change.
+      ftePercentage: et.usesFtePercentage ? et.defaultFtePercentage : 0,
+      fixedHoursPerPp: null,
       eligibleShiftTypeIds: et.defaultEligibleShiftTypeIds,
       availabilityRules: et.defaultAvailabilityRules.map((r) => ({
         type: r.type,
@@ -1116,7 +1139,8 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
         initials: created.initials,
         employmentTypeId: created.employmentTypeId,
         employmentTypeName: created.employmentType?.name ?? defaultType?.name ?? "",
-        ftePercentage: created.ftePercentage ?? 1.0,
+        ftePercentage: created.ftePercentage ?? 0,
+        fixedHoursPerPp: created.fixedHoursPerPp ?? null,
         availabilityRules: (created.availabilityRules ?? []).map((ar: AvailabilityRule) => ({
           type: ar.type,
           strength: ar.strength,
@@ -1286,7 +1310,7 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
                       </td>
                       <td className="py-2 px-3 text-center">
                         <span className="text-xs text-slate-400 font-mono">
-                          {p.employmentTypeName !== "FTE" ? "—" : p.ftePercentage % 1 === 0 ? p.ftePercentage.toFixed(1) : String(p.ftePercentage)}
+                          {fteColumnLabel(p)}
                         </span>
                       </td>
                       <td className="py-2 px-3">
@@ -1396,7 +1420,7 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
                   ))}
                 </select>
               </FieldRow>
-              {ep.employmentTypeName === "FTE" && (
+              {typeOf(ep)?.usesFtePercentage && (
                 <FieldRow label="FTE" description="Target hours = FTE x pay period hours">
                   <input
                     type="number"
@@ -1410,6 +1434,41 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
                       if (!isNaN(v) && v >= 0 && v <= 9.999) updateField(ep.id, "ftePercentage", Math.round(v * 1000) / 1000);
                     }}
                   />
+                </FieldRow>
+              )}
+              {typeOf(ep)?.allowsFixedHours && (
+                <FieldRow label="Fixed hours per pay period" description="Unchecked: no hours target, no PP colours or hours alerts">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      aria-label="Fixed hours per pay period"
+                      checked={ep.fixedHoursPerPp != null}
+                      onChange={(e) => updateField(ep.id, "fixedHoursPerPp", e.target.checked ? 0 : null)}
+                      className="rounded border-slate-600 w-4 h-4"
+                    />
+                    {ep.fixedHoursPerPp != null && (
+                      <>
+                        <input
+                          type="number"
+                          step="0.25"
+                          min="0.25"
+                          max="999"
+                          aria-label="Hours per pay period"
+                          className={`w-20 bg-slate-700 border rounded px-2 py-1 text-sm font-mono ${isValidFixedHours(ep.fixedHoursPerPp) ? "border-slate-600" : "border-red-500"}`}
+                          value={ep.fixedHoursPerPp === 0 ? "" : ep.fixedHoursPerPp}
+                          placeholder="hours"
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            updateField(ep.id, "fixedHoursPerPp", Number.isFinite(v) ? v : 0);
+                          }}
+                        />
+                        <span className="text-xs text-slate-500">hrs</span>
+                        {!isValidFixedHours(ep.fixedHoursPerPp) && (
+                          <span className="text-xs text-red-400">Enter hours above 0 (max 999)</span>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </FieldRow>
               )}
               <FieldRow label="Active" description="Inactive staff are hidden from the schedule">
@@ -1470,7 +1529,7 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
                 {canEdit && (
                   <button
                     onClick={() => saveStaff(ep)}
-                    disabled={saving}
+                    disabled={saving || !fixedHoursOk(ep)}
                     className="px-4 py-1.5 text-sm bg-emerald-700 hover:bg-emerald-600 rounded transition-colors font-medium"
                   >
                     {saving ? "Saving..." : "Save"}
