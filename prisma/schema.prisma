@@ -647,14 +647,12 @@ model DepartmentShiftTarget {
 // A column on the schedule grid counting, per day, the staff on any of its shifts.
 // Linked to the shifts by id (an ordered array; DB triggers stand in for the FK an
 // array cannot carry: every id must exist, and a shift a column names cannot be
-// deleted). `shiftCodes` is the Phase A compat array, derived from the ids by a
-// trigger for a pre-slice build; it goes in Phase B. Readers derive the current codes.
+// deleted). Readers derive the shifts' current codes (deriveCountColumnCodes).
 model CountColumn {
   id           String   @id @default(cuid())
   label        String
   sortOrder    Int      @default(0)
   shiftTypeIds String[] @default([])
-  shiftCodes   String[]
 
   @@map("count_columns")
 }

@@ -3,20 +3,19 @@ import type { NextRequest } from "next/server";
 
 // Count columns are linked to the shifts' IDs. In-memory stand-in for the tables these routes
 // touch; $transaction runs the callback against the same store and restores a snapshot if it
-// throws. The stand-in mimics the Phase A bridge: a created row's shiftCodes are its shifts' codes.
-type Row = { id: string; label: string; sortOrder: number; shiftTypeIds: string[]; shiftCodes: string[] };
+// throws. Rows hold only the ids (Phase B dropped the compat code column); codes are derived at read time.
+type Row = { id: string; label: string; sortOrder: number; shiftTypeIds: string[] };
 type Shift = { id: string; code: string; name: string };
 const db = vi.hoisted(() => ({ rows: [] as Row[], shifts: [] as Shift[], seq: 0 }));
 
 vi.mock("@/lib/auth-guard", () => ({ getSession: async () => ({ error: null, session: { user: { id: "u" } } }) }));
 vi.mock("@/lib/prisma", () => {
-  const codesOf = (ids: string[]) => ids.map((id) => db.shifts.find((s) => s.id === id)?.code).filter((c): c is string => !!c);
   const countColumn = {
-    findMany: async () => [...db.rows].sort((a, b) => a.sortOrder - b.sortOrder).map((r) => ({ ...r, shiftTypeIds: [...r.shiftTypeIds], shiftCodes: [...r.shiftCodes] })),
+    findMany: async () => [...db.rows].sort((a, b) => a.sortOrder - b.sortOrder).map((r) => ({ ...r, shiftTypeIds: [...r.shiftTypeIds] })),
     count: async (a: { where: { shiftTypeIds: { has: string } } }) => db.rows.filter((r) => r.shiftTypeIds.includes(a.where.shiftTypeIds.has)).length,
     deleteMany: async () => { db.rows = []; },
-    createMany: async (a: { data: Omit<Row, "id" | "shiftCodes">[] }) => {
-      for (const d of a.data) db.rows.push({ id: `c${++db.seq}`, shiftCodes: codesOf(d.shiftTypeIds), ...d });
+    createMany: async (a: { data: Omit<Row, "id">[] }) => {
+      for (const d of a.data) db.rows.push({ id: `c${++db.seq}`, ...d });
     },
   };
   const shiftType = {
@@ -25,7 +24,6 @@ vi.mock("@/lib/prisma", () => {
     update: async (a: { where: { id: string }; data: Partial<Shift> }) => {
       const s = db.shifts.find((x) => x.id === a.where.id)!;
       Object.assign(s, a.data);
-      for (const r of db.rows) r.shiftCodes = codesOf(r.shiftTypeIds); // bridge: rename re-derives the compat array
       return { ...s };
     },
     delete: async (a: { where: { id: string } }) => { db.shifts = db.shifts.filter((x) => x.id !== a.where.id); },
@@ -60,13 +58,13 @@ beforeEach(() => {
     { id: ORL, code: "ORL", name: "OR Late" },
     { id: PAIN, code: "PAIN", name: "Pain" },
   ];
-  db.rows = [{ id: "c-or", label: "OR", sortOrder: 0, shiftTypeIds: [OR, ORC, ORL], shiftCodes: ["OR", "ORC", "ORL"] }];
+  db.rows = [{ id: "c-or", label: "OR", sortOrder: 0, shiftTypeIds: [OR, ORC, ORL] }];
   db.seq = 0;
 });
 
 describe("GET /api/settings/count-columns", () => {
   it("returns rows with shiftTypeIds and the shifts' CURRENT codes, in order", async () => {
-    db.shifts[1].code = "ORCX"; // renamed; stored compat column still says ORC
+    db.shifts[1].code = "ORCX"; // renamed
     const body = await (await getColumns()).json();
     expect(body).toEqual([{ id: "c-or", label: "OR", sortOrder: 0, shiftTypeIds: [OR, ORC, ORL], shiftCodes: ["OR", "ORCX", "ORL"] }]);
   });
@@ -77,7 +75,7 @@ describe("PUT /api/settings/count-columns/by-shift-id", () => {
     const res = await putById(req({ columns: [col("Call", [ORC]), col("OR", [ORL, OR])] }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.map((c: Row) => [c.label, c.sortOrder, c.shiftTypeIds, c.shiftCodes])).toEqual([
+    expect(body.map((c: Row & { shiftCodes: string[] }) => [c.label, c.sortOrder, c.shiftTypeIds, c.shiftCodes])).toEqual([
       ["Call", 0, [ORC], ["ORC"]],
       ["OR", 1, [ORL, OR], ["ORL", "OR"]],
     ]);
@@ -125,7 +123,7 @@ describe("PUT /api/settings/count-columns/by-shift-id", () => {
     expect(res.status).toBe(200);
     expect(db.rows).toHaveLength(1);
     expect(db.rows[0].shiftTypeIds).toEqual([OR, ORC, ORL]);
-    expect(db.rows[0].shiftCodes).toEqual(["OR", "ORCX", "ORL"]);
+    expect((await res.json())[0].shiftCodes).toEqual(["OR", "ORCX", "ORL"]);
     expect(db.rows[0].shiftTypeIds).not.toContain("st-new");
   });
 });
