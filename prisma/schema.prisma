@@ -670,11 +670,13 @@ model PrintColumnRule {
   employmentTypeIds String[] @default([]) // empty = any employment type
   minFtePercentage  Float? // null = no lower bound
   maxFtePercentage  Float? // null = no upper bound
-  shiftCodes        String[] @default([]) // legacy single shift selector — superseded by `conditions`; kept for back-compat synth
-  shiftMatch        String   @default("any") // legacy "any" | "all" — superseded by `conditions`
   // Shift conditions (ANDed): each is { quantifier: has_any|has_none|has_all,
-  // categories: (work|leave|off)[], codes: string[], except: string[] }. Expresses
-  // e.g. "no work shift except ICU/CARD" or "any work or leave". See print-column-visibility.ts.
+  // categories: (work|leave|off)[], shiftTypeIds: string[], exceptIds: string[] } — shifts by
+  // ShiftType.id, so a renamed code changes nothing; the codes shown to the admin are derived
+  // at read time (print-conditions.ts). Expresses e.g. "no work shift except ICU/CARD" or
+  // "any work or leave". See print-column-visibility.ts. Json cannot carry a foreign key, so
+  // DB triggers stand in (every id must exist; a shift a rule names cannot be deleted).
+  // (The legacy shiftCodes/shiftMatch selector was folded into `conditions` by migration 20261106090000.)
   conditions        Json     @default("[]")
 
   @@map("print_column_rules")
@@ -706,8 +708,8 @@ model PrintAggregateColumn {
   employmentTypeIds String[] @default([]) // empty = any employment type
   minFtePercentage  Float? // null = no lower bound
   maxFtePercentage  Float? // null = no upper bound
-  // Shift conditions (ANDed): same shape as PrintColumnRule.conditions. Ignored for the
-  // isOther column. See print-column-visibility.ts for the condition semantics.
+  // Shift conditions (ANDed): same shape as PrintColumnRule.conditions (shifts by id). Ignored
+  // for the isOther column. See print-column-visibility.ts for the condition semantics.
   conditions        Json     @default("[]")
   // How the shift conditions are evaluated: "month" (default) = match over the whole
   // printed month, then list the member on every scheduled day; "day" = match per day,
