@@ -43,3 +43,47 @@ describe("activation panel save flow (card #77)", () => {
     expect(panel).toMatch(/min-h-\[\d+rem\]/);
   });
 });
+
+import { activationAlreadyCommitted } from "@/lib/activation-retry";
+// Card #78: when the activation saved but a later step failed, a retry redoes only the rest.
+describe("activation panel retry after a partial save (card #78)", () => {
+  const src = readFileSync(join(__dirname, "../../app/settings/settings-page.tsx"), "utf8");
+  const panel = src.slice(src.indexOf("function ActivationPanel("), src.indexOf("function ShiftTypesSection("));
+  const save = src.slice(src.indexOf("async function saveShift("), src.indexOf("async function deleteShift("));
+
+  it("activationAlreadyCommitted matches only the same shift and the same panel version", () => {
+    expect(activationAlreadyCommitted({ shiftId: "S", version: "v1" }, "S", "v1")).toBe(true);
+    expect(activationAlreadyCommitted({ shiftId: "S", version: "v1" }, "S", "v2")).toBe(false);
+    expect(activationAlreadyCommitted({ shiftId: "S", version: "v1" }, "T", "v1")).toBe(false);
+    expect(activationAlreadyCommitted(null, "S", "v1")).toBe(false);
+    expect(activationAlreadyCommitted({ shiftId: "S", version: "v1" }, "S", undefined)).toBe(false);
+  });
+  it("saveShift skips the activation POST when it is already committed", () => {
+    expect(save).toMatch(/const alreadyCommitted = activationAlreadyCommitted\(committed, shift\.id, activation\?\.version\);/);
+    expect(save).toMatch(/if \(activation && !alreadyCommitted\) \{\s*const res = await fetch\("\/api\/settings\/shift-types\/activation"/);
+    expect(save).toMatch(/\} else if \(!activation\) \{\s*const res = await fetch\("\/api\/settings\/shift-types", \{\s*method: "PUT"/);
+  });
+  it("right after the activation commits: recorded, made the saved row, Undo offered — before the later steps", () => {
+    const post = save.indexOf('fetch("/api/settings/shift-types/activation"');
+    const rec = save.indexOf("setCommitted({ shiftId: shift.id, version: activation.version });");
+    const undo = save.indexOf("if (prev) pushActivationUndo(prev, activationUndo, shift);");
+    const follow = save.indexOf('fetch("/api/settings/shift-follow-rules"');
+    expect(post).toBeGreaterThan(-1);
+    expect(rec).toBeGreaterThan(post);
+    expect(undo).toBeGreaterThan(rec);
+    expect(follow).toBeGreaterThan(undo);
+    expect(save.slice(rec, undo)).toMatch(/setLastSaved\(/);
+  });
+  it("the activation Undo is pushed only at commit (not again at the end), and cleared state on success/cancel/open", () => {
+    expect(save.match(/pushActivationUndo\(/g)).toHaveLength(1);
+    expect(save).toMatch(/if \(!activation && prev\) \{\s*pushUndo\(\{\s*label: `Updated \$\{shift\.code\}`/);
+    expect(save).toMatch(/setStatus\("saved"\);\s*setCommitted\(null\);/);
+    expect(save).toMatch(/setCommitted\(null\);\s*setActivating\(shift\);/);
+    expect(src).toMatch(/onCancel=\{\(\) => \{ setCommitted\(null\); setActivating\(null\); \}\}/);
+  });
+  it("the panel freezes its choices and offers Retry once the activation is saved", () => {
+    expect(src).toMatch(/committed=\{committed\?\.shiftId === activating\.id\}/);
+    expect(panel).toMatch(/<fieldset disabled=\{committed \|\| saving\}/);
+    expect(panel).toMatch(/committed \? "Retry"/);
+  });
+});

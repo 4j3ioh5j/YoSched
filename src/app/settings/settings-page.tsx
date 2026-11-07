@@ -1,5 +1,6 @@
 "use client";
 
+import { activationAlreadyCommitted, type CommittedActivation } from "@/lib/activation-retry";
 import { appliedDiff, undoList, type ListApplied } from "@/lib/eligibility-undo";
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useEscape } from "@/lib/use-escape";
@@ -664,7 +665,7 @@ const NEW_HIRE_LABELS = { keep: "Leave as saved", match: "Types of the people ti
 // every row can be changed. Cancel saves nothing.
 // onConfirm resolves to null when saved (the parent then closes the panel and the edit window
 // together) or to an error message, shown here with the panel left open (card #77).
-function ActivationPanel({ shift, onCancel, onConfirm }: { shift: ShiftType; onCancel: () => void; onConfirm: (c: ActivationChoice) => Promise<string | null> }) {
+function ActivationPanel({ shift, committed, onCancel, onConfirm }: { shift: ShiftType; committed: boolean; onCancel: () => void; onConfirm: (c: ActivationChoice) => Promise<string | null> }) {
   const [data, setData] = useState<ActivationData | null>(null);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -747,8 +748,11 @@ function ActivationPanel({ shift, onCancel, onConfirm }: { shift: ShiftType; onC
         <div className="p-4 overflow-y-auto flex-1 space-y-4 min-h-[20rem]">
           {loadError && <p className="text-red-400 text-sm">{loadError}</p>}
           {!data && !loadError && <p className="text-slate-400 text-sm">Finding who has worked {shift.code}…</p>}
+          {committed && (
+            <p className="text-amber-300 text-sm">Who gets {shift.code} is saved, and its auto-schedule is on. The rest of the shift&apos;s settings did not save; press Retry to save them.</p>
+          )}
           {data && (
-            <>
+            <fieldset disabled={committed || saving} className="space-y-4 min-w-0">
               <div className="grid sm:grid-cols-2 gap-3">
                 <label className="text-sm">People who have worked {shift.code} ({workedPeople.length})
                   <select value={worked} onChange={(e) => { const v = e.target.value as typeof worked; setWorked(v); setTicked(groupTicks(data, v, never)); }} className="mt-1 w-full bg-slate-800 border border-slate-600 rounded px-2 py-1">
@@ -787,7 +791,7 @@ function ActivationPanel({ shift, onCancel, onConfirm }: { shift: ShiftType; onC
                   ))}
                 </div>
               </div>
-            </>
+            </fieldset>
           )}
         </div>
         <div className="p-4 border-t border-slate-700 flex items-center justify-end gap-2">
@@ -797,7 +801,7 @@ function ActivationPanel({ shift, onCancel, onConfirm }: { shift: ShiftType; onC
             disabled={!data || saving}
             onClick={() => data && !saving && void confirm({ version: data.version, eligibleStaffIds: [...ticked], defaultEmploymentTypeIds: [...typesTicked] })}
             className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm disabled:opacity-50"
-          >{saving ? "Saving…" : `Turn on (${ticked.size} eligible)`}</button>
+          >{saving ? "Saving…" : committed ? "Retry" : `Turn on (${ticked.size} eligible)`}</button>
         </div>
       </div>
     </div>
@@ -851,18 +855,49 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
   // Card #75: turning Auto-schedule ON opens the activation panel first (who becomes eligible,
   // which employment types give it to new hires); the save then goes through its endpoint.
   const [activating, setActivating] = useState<ShiftType | null>(null);
+  // Card #78: the panel's choice that is already saved (who gets the shift) when a LATER step of
+  // the same save failed. A retry then redoes only the remaining steps, never the activation
+  // again (its version is spent: it would 409).
+  const [committed, setCommitted] = useState<CommittedActivation>(null);
+
+  // The Undo of a committed activation: puts back the flag, the shift's other fields, everyone's
+  // eligibility and the new-hire defaults (refused, 409, when anyone changed them since).
+  function pushActivationUndo(prev: ShiftType, undo: ActivationUndo, shift: ShiftType) {
+      pushUndo({
+        label: `Turned on ${shift.code}`,
+        execute: async () => {
+          // Puts back the flag, everyone's eligibility and the new-hire defaults — refused (409)
+          // when anyone changed them since, and then nothing is reverted.
+          const res = await fetch("/api/settings/shift-types/activation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: prev.id, version: undo.version, ...undo.inverse, shift: prev }),
+          }).catch(() => null);
+          if (!res?.ok) {
+            const j = await res?.json().catch(() => null);
+            setError(j?.error ?? "Undo failed");
+            setStatus("error");
+            return;
+          }
+          window.dispatchEvent(new CustomEvent(TYPE_DEFAULTS_EVENT, { detail: { shiftTypeId: prev.id, typeIds: undo.inverse.defaultEmploymentTypeIds } }));
+          setShifts((cur) => cur.map((s) => s.id === prev.id ? prev : s));
+          setLastSaved((cur) => cur.map((s) => s.id === prev.id ? prev : s));
+        },
+      });
+  }
 
   // Resolves to null when saved, else the error message (the activation panel shows it).
   async function saveShift(shift: ShiftType, activation?: ActivationChoice): Promise<string | null> {
     const prev = lastSaved.find((s) => s.id === shift.id) ?? shifts.find((s) => s.id === shift.id);
     if (!activation && prev && !prev.autoSchedulable && shift.autoSchedulable) {
+      setCommitted(null);
       setActivating(shift);
       return null;
     }
     setStatus("saving");
     try {
-      let activationUndo: ActivationUndo | null = null;
-      if (activation) {
+      const alreadyCommitted = activationAlreadyCommitted(committed, shift.id, activation?.version);
+      if (activation && !alreadyCommitted) {
         const res = await fetch("/api/settings/shift-types/activation", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -870,9 +905,14 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
         });
         const j = await res.json().catch(() => null);
         if (!res.ok) throw new Error(j?.error ?? `Save failed (${res.status})`);
-        activationUndo = { inverse: j.inverse, version: j.state.version };
+        const activationUndo: ActivationUndo = { inverse: j.inverse, version: j.state.version };
         window.dispatchEvent(new CustomEvent(TYPE_DEFAULTS_EVENT, { detail: { shiftTypeId: shift.id, typeIds: activation.defaultEmploymentTypeIds } }));
-      } else {
+        // Saved: from here on the shift IS on. Record it (a retry skips this step), make it the
+        // saved row (Cancel returns to it) and offer its Undo now, whatever the later steps do.
+        setCommitted({ shiftId: shift.id, version: activation.version });
+        setLastSaved((cur) => cur.some((s) => s.id === shift.id) ? cur.map((s) => s.id === shift.id ? shift : s) : [...cur, shift]);
+        if (prev) pushActivationUndo(prev, activationUndo, shift);
+      } else if (!activation) {
         const res = await fetch("/api/settings/shift-types", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -929,34 +969,12 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
       }
 
       setStatus("saved");
+      setCommitted(null);
       setEditingId(null);
       setLastSaved((cur) => cur.some((s) => s.id === shift.id) ? cur.map((s) => s.id === shift.id ? shift : s) : [...cur, shift]);
       setTimeout(() => setStatus("idle"), 2000);
 
-      if (prev && activationUndo) {
-        const undo = activationUndo;
-        pushUndo({
-          label: `Turned on ${shift.code}`,
-          execute: async () => {
-            // Puts back the flag, everyone's eligibility and the new-hire defaults — refused (409)
-            // when anyone changed them since, and then nothing is reverted.
-            const res = await fetch("/api/settings/shift-types/activation", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ id: prev.id, version: undo.version, ...undo.inverse, shift: prev }),
-            }).catch(() => null);
-            if (!res?.ok) {
-              const j = await res?.json().catch(() => null);
-              setError(j?.error ?? "Undo failed");
-              setStatus("error");
-              return;
-            }
-            window.dispatchEvent(new CustomEvent(TYPE_DEFAULTS_EVENT, { detail: { shiftTypeId: prev.id, typeIds: undo.inverse.defaultEmploymentTypeIds } }));
-            setShifts((cur) => cur.map((s) => s.id === prev.id ? prev : s));
-            setLastSaved((cur) => cur.map((s) => s.id === prev.id ? prev : s));
-          },
-        });
-      } else if (prev) {
+      if (!activation && prev) {
         pushUndo({
           label: `Updated ${shift.code}`,
           execute: async () => {
@@ -1147,7 +1165,8 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
     {activating && (
       <ActivationPanel
         shift={activating}
-        onCancel={() => setActivating(null)}
+        committed={committed?.shiftId === activating.id}
+        onCancel={() => { setCommitted(null); setActivating(null); }}
         onConfirm={async (c) => {
           // The panel stays open ("Saving…") until the save finishes; then it and the edit window
           // close together. On an error it stays open with the message (card #77).
