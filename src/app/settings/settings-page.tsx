@@ -725,7 +725,8 @@ function ActivationPanel({ shift, onCancel, onConfirm }: { shift: ShiftType; onC
   );
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`Turn on ${shift.code}`}>
+    // z-[60]: above the shift's edit window (z-50), which stays open behind it so Cancel returns there.
+    <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`Turn on ${shift.code}`}>
       <div className="bg-slate-900 border border-slate-700 rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
         <div className="p-4 border-b border-slate-700">
           <h3 className="text-lg font-semibold">Turn on auto-scheduling for {shift.code}</h3>
@@ -1081,7 +1082,8 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
     if (orig) setShifts((prev) => prev.map((s) => s.id === editingId ? orig : s));
     setEditingId(null);
   }, [editingId, lastSaved, setShifts]);
-  useEscape(cancelEdit);
+  // While the activation panel is open, Escape closes only the panel (not the edit window too).
+  useEscape(() => { if (!activating) cancelEdit(); });
 
   const editingShift = editingId ? shifts.find((s) => s.id === editingId) : null;
 
