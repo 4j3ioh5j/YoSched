@@ -662,15 +662,25 @@ const NEW_HIRE_LABELS = { keep: "Leave as saved", match: "Types of the people ti
 // Card #75: who becomes eligible when a shift's Auto-schedule is turned on. Starting ticks come
 // from Settings → Scheduling (people who have worked the shift / everyone else / new hires);
 // every row can be changed. Cancel saves nothing.
-function ActivationPanel({ shift, onCancel, onConfirm }: { shift: ShiftType; onCancel: () => void; onConfirm: (c: ActivationChoice) => void }) {
+// onConfirm resolves to null when saved (the parent then closes the panel and the edit window
+// together) or to an error message, shown here with the panel left open (card #77).
+function ActivationPanel({ shift, onCancel, onConfirm }: { shift: ShiftType; onCancel: () => void; onConfirm: (c: ActivationChoice) => Promise<string | null> }) {
   const [data, setData] = useState<ActivationData | null>(null);
   const [loadError, setLoadError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  async function confirm(c: ActivationChoice) {
+    setSaving(true);
+    setSaveError("");
+    const err = await onConfirm(c);
+    if (err) { setSaveError(err); setSaving(false); }
+  }
   const [worked, setWorked] = useState<ActivationData["defaults"]["worked"]>("eligible");
   const [never, setNever] = useState<ActivationData["defaults"]["never"]>("not_eligible");
   const [newHire, setNewHire] = useState<ActivationData["defaults"]["newHire"]>("keep");
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [typeTicks, setTypeTicks] = useState<Set<string> | null>(null); // null = follow the new-hire rule
-  useEscape(onCancel);
+  useEscape(() => { if (!saving) onCancel(); });
 
   useEffect(() => {
     let live = true;
@@ -726,15 +736,17 @@ function ActivationPanel({ shift, onCancel, onConfirm }: { shift: ShiftType; onC
 
   return (
     // z-[60]: above the shift's edit window (z-50), which stays open behind it so Cancel returns there.
-    <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`Turn on ${shift.code}`}>
-      <div className="bg-slate-900 border border-slate-700 rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
+    // Light backdrop: the edit window (already dimmed) stays visible behind the panel.
+    <div className="fixed inset-0 z-[60] bg-black/30 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`Turn on ${shift.code}`}>
+      <div className="bg-slate-900 border border-slate-700 rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
         <div className="p-4 border-b border-slate-700">
           <h3 className="text-lg font-semibold">Turn on auto-scheduling for {shift.code}</h3>
           <p className="text-sm text-slate-400 mt-1">Choose who the scheduler may give {shift.code} to. Nothing is saved until you press Turn on.</p>
         </div>
-        <div className="p-4 overflow-y-auto flex-1 space-y-4">
+        {/* Fixed minimum height: the panel opens at its size instead of growing once the list loads. */}
+        <div className="p-4 overflow-y-auto flex-1 space-y-4 min-h-[20rem]">
           {loadError && <p className="text-red-400 text-sm">{loadError}</p>}
-          {!data && !loadError && <p className="text-slate-400 text-sm">Loading…</p>}
+          {!data && !loadError && <p className="text-slate-400 text-sm">Finding who has worked {shift.code}…</p>}
           {data && (
             <>
               <div className="grid sm:grid-cols-2 gap-3">
@@ -778,13 +790,14 @@ function ActivationPanel({ shift, onCancel, onConfirm }: { shift: ShiftType; onC
             </>
           )}
         </div>
-        <div className="p-4 border-t border-slate-700 flex justify-end gap-2">
-          <button onClick={onCancel} className="px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-sm">Cancel</button>
+        <div className="p-4 border-t border-slate-700 flex items-center justify-end gap-2">
+          {saveError && <p className="text-red-400 text-sm mr-auto">{saveError}</p>}
+          <button onClick={onCancel} disabled={saving} className="px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-sm disabled:opacity-50">Cancel</button>
           <button
-            disabled={!data}
-            onClick={() => data && onConfirm({ version: data.version, eligibleStaffIds: [...ticked], defaultEmploymentTypeIds: [...typesTicked] })}
+            disabled={!data || saving}
+            onClick={() => data && !saving && void confirm({ version: data.version, eligibleStaffIds: [...ticked], defaultEmploymentTypeIds: [...typesTicked] })}
             className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-sm disabled:opacity-50"
-          >Turn on ({ticked.size} eligible)</button>
+          >{saving ? "Saving…" : `Turn on (${ticked.size} eligible)`}</button>
         </div>
       </div>
     </div>
@@ -839,11 +852,12 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
   // which employment types give it to new hires); the save then goes through its endpoint.
   const [activating, setActivating] = useState<ShiftType | null>(null);
 
-  async function saveShift(shift: ShiftType, activation?: ActivationChoice) {
+  // Resolves to null when saved, else the error message (the activation panel shows it).
+  async function saveShift(shift: ShiftType, activation?: ActivationChoice): Promise<string | null> {
     const prev = lastSaved.find((s) => s.id === shift.id) ?? shifts.find((s) => s.id === shift.id);
     if (!activation && prev && !prev.autoSchedulable && shift.autoSchedulable) {
       setActivating(shift);
-      return;
+      return null;
     }
     setStatus("saving");
     try {
@@ -956,9 +970,12 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
           },
         });
       }
+      return null;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed");
+      const msg = e instanceof Error ? e.message : "Failed";
+      setError(msg);
       setStatus("error");
+      return msg;
     }
   }
 
@@ -1131,7 +1148,13 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
       <ActivationPanel
         shift={activating}
         onCancel={() => setActivating(null)}
-        onConfirm={(c) => { const sh = activating; setActivating(null); void saveShift(sh, c); }}
+        onConfirm={async (c) => {
+          // The panel stays open ("Saving…") until the save finishes; then it and the edit window
+          // close together. On an error it stays open with the message (card #77).
+          const err = await saveShift(activating, c);
+          if (!err) setActivating(null);
+          return err;
+        }}
       />
     )}
     <CollapsibleSection

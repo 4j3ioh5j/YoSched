@@ -18,3 +18,28 @@ describe("activation panel layering (card #76)", () => {
     expect(src).toMatch(/useEscape\(\(\) => \{ if \(!activating\) cancelEdit\(\); \}\);/);
   });
 });
+
+// Card #77: the panel used to close on "Turn on" and the save ran behind it, so the edit window
+// flashed back (long enough to press Save again) and then closed by itself.
+describe("activation panel save flow (card #77)", () => {
+  const src = readFileSync(join(__dirname, "../../app/settings/settings-page.tsx"), "utf8");
+  const panel = src.slice(src.indexOf("function ActivationPanel("), src.indexOf("function ShiftTypesSection("));
+  it("the parent closes the panel only after the save succeeded, never before awaiting it", () => {
+    expect(src).toMatch(/const err = await saveShift\(activating, c\);\s*if \(!err\) setActivating\(null\);\s*return err;/);
+    expect(src).not.toMatch(/setActivating\(null\); void saveShift\(/);
+  });
+  it("saveShift reports failure to the panel", () => {
+    expect(src).toMatch(/async function saveShift\(shift: ShiftType, activation\?: ActivationChoice\): Promise<string \| null>/);
+    expect(src).toMatch(/setStatus\("error"\);\s*return msg;/);
+  });
+  it("while saving: Turn on and Cancel are disabled, Escape is ignored, the error is shown on failure", () => {
+    expect(panel).toMatch(/disabled=\{!data \|\| saving\}/);
+    expect(panel).toMatch(/onClick=\{onCancel\} disabled=\{saving\}/);
+    expect(panel).toMatch(/useEscape\(\(\) => \{ if \(!saving\) onCancel\(\); \}\);/);
+    expect(panel).toMatch(/if \(err\) \{ setSaveError\(err\); setSaving\(false\); \}/);
+    expect(panel).toMatch(/\{saveError && /);
+  });
+  it("opens at its full size while loading (no small window that then grows)", () => {
+    expect(panel).toMatch(/min-h-\[\d+rem\]/);
+  });
+});
