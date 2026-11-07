@@ -295,6 +295,10 @@ type PickerState = {
   y: number;
 } | null;
 
+// Hover marker for the staff header and the date: a light-blue outline drawn
+// inside the cell, so it never reads as the solid-blue selection.
+const HOVER_OUTLINE: React.CSSProperties = { boxShadow: "inset 0 0 0 2px #60a5fa" };
+
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -556,6 +560,9 @@ export function ScheduleGrid({
   // first-class grid cells, on par with staff cells.
   const [activeDedCol, setActiveDedCol] = useState<string | null>(null);
   const [hoverCol, setHoverCol] = useState<string | null>(null);
+  // The date row under the mouse. Hover outlines the staff header and the date
+  // (HOVER_OUTLINE); a selected header or date keeps its solid fill (card #81).
+  const [hoverRow, setHoverRow] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [autoLoading, setAutoLoading] = useState(false);
 
@@ -4202,7 +4209,7 @@ export function ScheduleGrid({
                     key={p.id}
                     data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
                     className="px-1 py-1 text-center text-xs font-medium border-b border-slate-700 w-[44px] min-w-[44px] transition-colors cursor-pointer bg-slate-800"
-                    style={isActiveCol || hoverCol === p.id ? { backgroundColor: "rgba(29,78,216,0.7)" } : undefined}
+                    style={isActiveCol ? { backgroundColor: "rgba(29,78,216,0.7)" } : hoverCol === p.id ? HOVER_OUTLINE : undefined}
                     onClick={() => { clearDedFocus(); setActiveCol(activeCol === p.id ? null : p.id); }}
                     onMouseEnter={(e) => {
                       setHoverCol(p.id);
@@ -4348,11 +4355,12 @@ export function ScheduleGrid({
                     data-print-bg={isHoliday && holidayPrintBg ? "" : undefined}
                     style={{
                       background: isActiveRow ? "rgba(29,78,216,0.7)" : isOutsideMonth ? "#0d1321" : isWeekend ? "#1a2236" : "#0f172a",
+                      ...(!isActiveRow && hoverRow === date ? HOVER_OUTLINE : null),
                       ...(isHoliday && holidayPrintBg ? { "--print-bg": holidayPrintBg } : null),
                     } as React.CSSProperties}
                     onClick={() => setActiveRow(activeRow === date ? null : date)}
-                    onMouseEnter={isHoliday ? (e) => showTip(setTooltip, holidayNames.get(date) ?? "", e) : undefined}
-                    onMouseLeave={isHoliday ? () => setTooltip(null) : undefined}
+                    onMouseEnter={(e) => { setHoverRow(date); if (isHoliday) showTip(setTooltip, holidayNames.get(date) ?? "", e); }}
+                    onMouseLeave={() => { setHoverRow(null); if (isHoliday) setTooltip(null); }}
                   >
                     <span className={isActiveRow ? "text-blue-200 font-bold" : isWeekend ? "text-slate-500" : "text-slate-300"}>
                       {label.day}
@@ -4434,9 +4442,10 @@ export function ScheduleGrid({
                         onMouseEnter={(e) => {
                           handleCellMouseEnter(p.id, date);
                           setHoverCol(p.id);
+                          setHoverRow(date);
                           if (showEmptyTip) showTip(setTooltip, cellTooltip(p.initials, date, null, reqsForTip), e);
                         }}
-                        onMouseLeave={() => { setHoverCol(null); if (showEmptyTip) setTooltip(null); }}
+                        onMouseLeave={() => { setHoverCol(null); setHoverRow(null); if (showEmptyTip) setTooltip(null); }}
                         onClick={(e) => handleCellClick(p.id, date, e)}
                         onContextMenu={(e) => handleCellContextMenu(p.id, date, e)}
                         onDragOver={(e) => handleDragOver(p.id, date, e)}
@@ -4538,8 +4547,8 @@ export function ScheduleGrid({
                         } as React.CSSProperties}
                         title={canEdit && !isEditing ? `Click to select · click again or Enter to edit (type initials for ${st.code})` : undefined}
                         onMouseDown={!isEditing ? (e) => handleDedCellMouseDown(st.id, date, e) : undefined}
-                        onMouseEnter={!isEditing ? (e) => { handleDedCellMouseEnter(st.id, date); if (inits.length) showTip(setTooltip, `${st.code}: ${inits.join(", ")}`, e); } : undefined}
-                        onMouseLeave={!isEditing ? () => setTooltip(null) : undefined}
+                        onMouseEnter={(e) => { setHoverRow(date); if (isEditing) return; handleDedCellMouseEnter(st.id, date); if (inits.length) showTip(setTooltip, `${st.code}: ${inits.join(", ")}`, e); }}
+                        onMouseLeave={() => { setHoverRow(null); if (!isEditing) setTooltip(null); }}
                         onClick={!isEditing ? (e) => handleDedCellClick(st.id, date, e) : undefined}
                       >
                         {isEditing ? (
