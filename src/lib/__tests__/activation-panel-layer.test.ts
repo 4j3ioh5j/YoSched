@@ -79,11 +79,27 @@ describe("activation panel retry after a partial save (card #78)", () => {
     expect(save).toMatch(/if \(!activation && prev\) \{\s*pushUndo\(\{\s*label: `Updated \$\{shift\.code\}`/);
     expect(save).toMatch(/setStatus\("saved"\);\s*setCommitted\(null\);/);
     expect(save).toMatch(/setCommitted\(null\);\s*setActivating\(shift\);/);
-    expect(src).toMatch(/onCancel=\{\(\) => \{ setCommitted\(null\); setActivating\(null\); \}\}/);
+    expect(src).toMatch(/onCancel=\{\(\) => \{ setCommitted\(null\); setActivating\(null\);/);
   });
   it("the panel freezes its choices and offers Retry once the activation is saved", () => {
     expect(src).toMatch(/committed=\{committed\?\.shiftId === activating\.id\}/);
     expect(panel).toMatch(/<fieldset disabled=\{committed \|\| saving\}/);
     expect(panel).toMatch(/committed \? "Retry"/);
+  });
+});
+
+// Card #80: the turn-on Undo is held while the panel covers its toast, and offered (with its full
+// countdown) when the panel closes — after the save finishes, or on Cancel after a partial save.
+describe("turn-on Undo is offered when the panel closes (card #80)", () => {
+  const src = readFileSync(join(__dirname, "../../app/settings/settings-page.tsx"), "utf8");
+  const helper = src.slice(src.indexOf("function pushActivationUndo("), src.indexOf("function offerHeldActivationUndo("));
+  it("committing holds the Undo instead of showing it", () => {
+    expect(helper).toMatch(/pendingActivationUndo\.current = \{/);
+    expect(helper).not.toMatch(/pushUndo\(/);
+    expect(src).toMatch(/function offerHeldActivationUndo\(\) \{\s*const held = pendingActivationUndo\.current;\s*pendingActivationUndo\.current = null;\s*if \(held\) pushUndo\(held\);/);
+  });
+  it("it is offered on a finished save and on Cancel", () => {
+    expect(src).toMatch(/setStatus\("saved"\);\s*setCommitted\(null\);\s*offerHeldActivationUndo\(\);/);
+    expect(src).toMatch(/onCancel=\{\(\) => \{ setCommitted\(null\); setActivating\(null\); offerHeldActivationUndo\(\); \}\}/);
   });
 });

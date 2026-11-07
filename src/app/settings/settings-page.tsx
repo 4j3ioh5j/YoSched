@@ -859,11 +859,14 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
   // the same save failed. A retry then redoes only the remaining steps, never the activation
   // again (its version is spent: it would 409).
   const [committed, setCommitted] = useState<CommittedActivation>(null);
+  const pendingActivationUndo = useRef<UndoAction | null>(null);
 
   // The Undo of a committed activation: puts back the flag, the shift's other fields, everyone's
   // eligibility and the new-hire defaults (refused, 409, when anyone changed them since).
+  // Card #80: HELD while the panel is open (its toast would be covered and its countdown would run
+  // out during slow remaining steps or a Retry); offered when the panel closes.
   function pushActivationUndo(prev: ShiftType, undo: ActivationUndo, shift: ShiftType) {
-      pushUndo({
+      pendingActivationUndo.current = {
         label: `Turned on ${shift.code}`,
         execute: async () => {
           // Puts back the flag, everyone's eligibility and the new-hire defaults — refused (409)
@@ -883,7 +886,13 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
           setShifts((cur) => cur.map((s) => s.id === prev.id ? prev : s));
           setLastSaved((cur) => cur.map((s) => s.id === prev.id ? prev : s));
         },
-      });
+      };
+  }
+
+  function offerHeldActivationUndo() {
+    const held = pendingActivationUndo.current;
+    pendingActivationUndo.current = null;
+    if (held) pushUndo(held);
   }
 
   // Resolves to null when saved, else the error message (the activation panel shows it).
@@ -970,6 +979,7 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
 
       setStatus("saved");
       setCommitted(null);
+      offerHeldActivationUndo(); // the panel closes now (its parent awaits this save)
       setEditingId(null);
       setLastSaved((cur) => cur.some((s) => s.id === shift.id) ? cur.map((s) => s.id === shift.id ? shift : s) : [...cur, shift]);
       setTimeout(() => setStatus("idle"), 2000);
@@ -1166,7 +1176,7 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
       <ActivationPanel
         shift={activating}
         committed={committed?.shiftId === activating.id}
-        onCancel={() => { setCommitted(null); setActivating(null); }}
+        onCancel={() => { setCommitted(null); setActivating(null); offerHeldActivationUndo(); }}
         onConfirm={async (c) => {
           // The panel stays open ("Saving…") until the save finishes; then it and the edit window
           // close together. On an error it stays open with the message (card #77).
