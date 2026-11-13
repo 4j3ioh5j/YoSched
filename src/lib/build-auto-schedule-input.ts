@@ -295,6 +295,7 @@ export async function buildAutoScheduleInput(
           window: mt.window as "week" | "pay_period" | "month" | "days",
           windowDays: mt.windowDays,
           windowCount: mt.windowCount,
+          strength: mt.strength === "preference" ? "preference" : "rule",
         })),
         deptTargets,
         effectiveFte(p, p.employmentType) ?? 0,

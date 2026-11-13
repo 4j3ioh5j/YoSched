@@ -85,6 +85,7 @@ export default async function Staff() {
             window: mt.window,
             windowDays: mt.windowDays,
             windowCount: mt.windowCount,
+            strength: mt.strength,
           })),
           standingCommitments: p.standingCommitments.map((sc) => ({
             shiftTypeId: sc.shiftTypeId,

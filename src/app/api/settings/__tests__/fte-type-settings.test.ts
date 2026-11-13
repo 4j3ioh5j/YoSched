@@ -10,7 +10,8 @@ type Staff = { id: string; name: string; initials: string; employmentTypeId: str
 
 type Elig = { staffId: string; shiftTypeId: string };
 type TypeDefault = { employmentTypeId: string; shiftTypeId: string };
-const store = { types: [] as Type[], staff: [] as Staff[], elig: [] as Elig[], typeDefaults: [] as TypeDefault[], locks: 0, seq: 0, failNextStaffUpdateMany: false };
+type Target = { staffId: string; shiftTypeId: string; minCount: number; maxCount: number | null; window: string; windowDays?: number | null; windowCount: number; strength?: string };
+const store = { types: [] as Type[], staff: [] as Staff[], elig: [] as Elig[], typeDefaults: [] as TypeDefault[], targets: [] as Target[], locks: 0, seq: 0, failNextStaffUpdateMany: false };
 // Equality and `{ in: [...] }` filters, as the eligibility writers use them.
 const hit = (row: Record<string, unknown>, where: Record<string, unknown> = {}) =>
   Object.entries(where).every(([k, v]) => (v && typeof v === "object" && "in" in v ? (v as { in: unknown[] }).in.includes(row[k]) : row[k] === v));
@@ -73,9 +74,15 @@ function client() {
       createMany: async ({ data }: { data: Elig[] }) => { store.elig.push(...copy(data)); return { count: data.length }; },
       deleteMany: async ({ where }: { where: Record<string, unknown> }) => { store.elig = store.elig.filter((r) => !hit(r, where)); return { count: 0 }; },
     },
+    shiftMinimumTarget: {
+      findMany: async ({ where }: { where?: Record<string, unknown> } = {}) => copy(store.targets.filter((r) => hit(r, where))),
+      // Prisma fills the column default ("rule") when a row is created without it.
+      createMany: async ({ data }: { data: Target[] }) => { store.targets.push(...copy(data).map((t) => ({ ...t, strength: t.strength ?? "rule" }))); return { count: data.length }; },
+      deleteMany: async ({ where }: { where: Record<string, unknown> }) => { store.targets = store.targets.filter((r) => !hit(r, where)); return { count: 0 }; },
+    },
     async $executeRaw() { store.locks++; return 0; }, // card #75: the eligibility advisory lock
     async $transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
-      const snap = structuredClone({ types: store.types, staff: store.staff, elig: store.elig, typeDefaults: store.typeDefaults });
+      const snap = structuredClone({ types: store.types, staff: store.staff, elig: store.elig, typeDefaults: store.typeDefaults, targets: store.targets });
       try { return await fn(this); } catch (e) { Object.assign(store, snap); throw e; }
     },
   };
@@ -98,6 +105,7 @@ beforeEach(() => {
   store.failNextStaffUpdateMany = false;
   store.elig = [];
   store.typeDefaults = [];
+  store.targets = [];
   // Deliberately odd names: behaviour must follow the settings, not "FTE" / "Fee Basis".
   store.types = [
     { id: "t-ft", name: "Staff Nurse", defaultIsAutoScheduled: true, defaultFtePercentage: 0.9, usesFtePercentage: true, allowsFixedHours: false, includedInFairness: true, sortOrder: 0 },
@@ -139,6 +147,29 @@ describe("PUT /api/staff", () => {
   it("fixed hours sent for an FTE type are not stored", async () => {
     await putStaff(req({ id: "ab", fixedHoursPerPp: 40 }));
     expect(staffRow("ab").fixedHoursPerPp).toBeNull();
+  });
+});
+
+describe("card #189: PUT /api/staff saves a count target's Hard/Prefer", () => {
+  const T = (o: Record<string, unknown> = {}) => ({ shiftTypeId: "orc", minCount: 1, maxCount: null, window: "pay_period", windowDays: null, windowCount: 1, ...o });
+  it("saves Prefer and Hard", async () => {
+    expect((await putStaff(req({ id: "ab", shiftMinimumTargets: [T({ strength: "preference" }), T({ shiftTypeId: "orl", strength: "rule" })] }))).status).toBe(200);
+    expect(store.targets.map((t) => [t.shiftTypeId, t.strength])).toEqual([["orc", "preference"], ["orl", "rule"]]);
+  });
+  it("an unknown value is 400 and nothing changes", async () => {
+    await putStaff(req({ id: "ab", shiftMinimumTargets: [T({ strength: "preference" })] }));
+    expect((await putStaff(req({ id: "ab", shiftMinimumTargets: [T({ strength: "maybe" })] }))).status).toBe(400);
+    expect(store.targets.map((t) => t.strength)).toEqual(["preference"]);
+  });
+  it("an old cached page (no strength key) keeps the saved Prefer of the same target; a new target is Hard", async () => {
+    await putStaff(req({ id: "ab", shiftMinimumTargets: [T({ strength: "preference" })] }));
+    expect((await putStaff(req({ id: "ab", shiftMinimumTargets: [T({ minCount: 2 }), T({ shiftTypeId: "orl" })] }))).status).toBe(200);
+    expect(store.targets.map((t) => [t.shiftTypeId, t.minCount, t.strength])).toEqual([["orc", 2, "preference"], ["orl", 1, "rule"]]);
+  });
+  it("another person's targets are not read for the old-page fallback", async () => {
+    store.targets.push({ staffId: "nh", shiftTypeId: "orc", minCount: 1, maxCount: null, window: "pay_period", windowDays: null, windowCount: 1, strength: "preference" });
+    await putStaff(req({ id: "ab", shiftMinimumTargets: [T()] }));
+    expect(store.targets.find((t) => t.staffId === "ab")?.strength).toBe("rule");
   });
 });
 

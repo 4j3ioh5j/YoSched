@@ -261,8 +261,11 @@ function makeClient(tag: string, undo: Undo[] | null) {
       return { ...db.prefs };
     },
   };
-  const shiftMinimumTarget = { findMany: async () => { log("shiftMinimumTarget.findMany"); return db.minTargets.map((t) => ({ ...t })); } };
-  const departmentShiftTarget = { findMany: async () => { log("departmentShiftTarget.findMany"); return db.deptTargets.map((t) => ({ ...t })); } };
+  // Honours `select` like Prisma does, so a reader that forgets a column sees it missing (card #189).
+  const selected = (t: Record<string, unknown>, select?: Record<string, boolean>) =>
+    select ? Object.fromEntries(Object.keys(select).filter((k) => select[k]).map((k) => [k, t[k]])) : { ...t };
+  const shiftMinimumTarget = { findMany: async (a?: { select?: Record<string, boolean> }) => { log("shiftMinimumTarget.findMany"); return db.minTargets.map((t) => selected(t, a?.select)); } };
+  const departmentShiftTarget = { findMany: async (a?: { select?: Record<string, boolean> }) => { log("departmentShiftTarget.findMany"); return db.deptTargets.map((t) => selected(t, a?.select)); } };
   const user = { findMany: async () => { log("user.findMany"); return db.users.map((u) => ({ ...u })); } };
   const scheduleVersion = {
     findUnique: async (a: { where: { id: string } }) => { log("scheduleVersion.findUnique"); const v = db.versions.find((x) => x.id === a.where.id); return v ? { ...v } : null; },

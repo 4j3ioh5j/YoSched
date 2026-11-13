@@ -461,3 +461,34 @@ describe("card #185 r2: an off follower on a holiday still leaves the HOL owed",
     expect(ppHours(inp, r, "ab")).toBeLessThanOrEqual(80);
   });
 });
+
+describe("card #189: a person's count target can be Prefer — only when it fits their hours", () => {
+  // AR (24 h) is already full by hand. "At least 1 ORC per pay period". CD has room.
+  const build = (strength?: "rule" | "preference") => input({
+    staff: [
+      staff("ar", "AR", { ftePercentage: 0.3, shiftMinimumTargets: [{ shiftTypeId: "st-orc", minCount: 1, maxCount: null, window: "pay_period", windowDays: null, windowCount: 1, ...(strength ? { strength } : {}) }] }),
+      staff("cd", "CD"),
+    ],
+    existingAssignments: W1.slice(0, 3).map((d) => manual("ar", d, "st-or", "OR")),
+    staffingRequirements: [{ shiftTypeId: "st-orc", shiftCode: "ORC", dayKey: "1", minCount: 1, preferredCount: 1, maxCount: 1 }],
+  });
+  const orcs = (r: ReturnType<typeof autoSchedule>, who: string) => r.suggestions.filter((s) => s.staffId === who && s.shiftTypeId === "st-orc").length;
+
+  it("Hard (and no strength, as before): AR still gets an ORC and ends 16 h over", () => {
+    for (const s of ["rule", undefined] as const) {
+      const inp = build(s);
+      const r = autoSchedule(inp);
+      expect(orcs(r, "ar"), String(s)).toBe(1);
+      expect(ppHours(inp, r, "ar"), String(s)).toBe(40);
+    }
+  });
+
+  it("Prefer: AR gets no ORC, stays on 24 h, no warning; the ORCs go to CD", () => {
+    const inp = build("preference");
+    const r = autoSchedule(inp);
+    expect(orcs(r, "ar")).toBe(0);
+    expect(ppHours(inp, r, "ar")).toBe(24);
+    expect(orcs(r, "cd")).toBe(2);
+    expect(r.warnings.filter((w) => w.startsWith("AR:"))).toEqual([]);
+  });
+});

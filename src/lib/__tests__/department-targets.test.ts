@@ -83,6 +83,14 @@ describe("effectiveTargetsForStaff", () => {
     expect(result[0]).toMatchObject({ shiftTypeId: ORL, minCount: 5, source: "staff", strength: "rule" });
   });
 
+  it("card #189: a per-staff Prefer target reaches the engine as preference; no strength stays Hard", () => {
+    const pref: ShiftMinTarget = { shiftTypeId: ORL, minCount: 1, maxCount: null, window: "pay_period", windowDays: null, windowCount: 1, strength: "preference" };
+    const bare: ShiftMinTarget = { shiftTypeId: OR, minCount: 1, maxCount: null, window: "pay_period", windowDays: null, windowCount: 1 };
+    const result = effectiveTargetsForStaff([pref, bare], [], 1.0);
+    expect(result.find((t) => t.shiftTypeId === ORL)).toMatchObject({ strength: "preference", source: "staff" });
+    expect(result.find((t) => t.shiftTypeId === OR)).toMatchObject({ strength: "rule", source: "staff" });
+  });
+
   it("keeps department defaults for OTHER keys while honoring an override on one", () => {
     const staffTarget: ShiftMinTarget = { shiftTypeId: ORL, minCount: 5, maxCount: null, window: "pay_period", windowDays: null, windowCount: 1 };
     const result = effectiveTargetsForStaff(

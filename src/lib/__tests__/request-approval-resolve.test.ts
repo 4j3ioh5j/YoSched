@@ -94,6 +94,17 @@ describe("paddingDays", () => {
   });
 });
 
+describe("card #189: a person's Prefer count target doesn't widen the approval's lock pad", () => {
+  it("a Hard 1-per-3-pay-periods target pads 42 days", async () => {
+    db.minTargets = [{ window: "pay_period", windowDays: null, windowCount: 3, strength: "rule" }];
+    expect((await resolveApproval(req(), "orc", "u1", finishUpdate)).range.pad).toBe(42);
+  });
+  it("the same target as Prefer pads 1 day", async () => {
+    db.minTargets = [{ window: "pay_period", windowDays: null, windowCount: 3, strength: "preference" }];
+    expect((await resolveApproval(req(), "orc", "u1", finishUpdate)).range.pad).toBe(1);
+  });
+});
+
 describe("resolveApproval — lock protocol", () => {
   it("locks the padded covering range (pay period ± 1 day, last day included) before any read, inside the tx", async () => {
     await resolveApproval(req(), "orc", "u1", finishUpdate);

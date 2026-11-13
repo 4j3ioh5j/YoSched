@@ -75,7 +75,7 @@ export type LockPlan = { pad: number; ppLength: number; effectiveStart: string; 
 export async function planLocks(startDate: string, endDate: string): Promise<LockPlan> {
   const payPeriods: PayPeriodLike[] = await getPayPeriods();
   const [minTargets, deptTargets, prefsBefore] = await Promise.all([
-    prisma.shiftMinimumTarget.findMany({ select: { window: true, windowDays: true, windowCount: true } }),
+    prisma.shiftMinimumTarget.findMany({ select: { window: true, windowDays: true, windowCount: true, strength: true } }), // card #189: Prefer pads nothing
     prisma.departmentShiftTarget.findMany({ select: { window: true, windowDays: true, windowCount: true, strength: true } }),
     prisma.schedulingPreferences.findFirst({ select: { payPeriodLengthDays: true } }),
   ]);

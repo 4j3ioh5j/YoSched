@@ -156,6 +156,7 @@ type ShiftMinimumTargetData = {
   window: string;
   windowDays?: number | null;
   windowCount?: number | null;
+  strength?: string; // card #189: "rule" (Hard) | "preference" (Prefer)
 };
 
 // StandingCommitment carries the unified WHEN columns (slice 7 dropped its legacy

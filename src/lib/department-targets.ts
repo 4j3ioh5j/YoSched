@@ -84,7 +84,8 @@ export function effectiveTargetsForStaff(
   const covered = new Set(perStaffTargets.map(targetKey));
   const result: EffectiveTarget[] = perStaffTargets.map((t) => ({
     ...t,
-    strength: "rule",
+    // Card #189: a person's target can be Prefer; without a saved strength it is Hard.
+    strength: t.strength === "preference" ? "preference" : "rule",
     source: "staff",
   }));
   for (const d of departmentTargets) {

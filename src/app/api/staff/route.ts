@@ -147,10 +147,26 @@ export async function PUT(req: NextRequest) {
     }
 
     if (Array.isArray(shiftMinimumTargets)) {
+      // Card #189: Hard ("rule") or Prefer ("preference"). A page from before the setting sends
+      // no strength: it keeps the saved strength of the same target (read before the delete),
+      // so an old cached page can't quietly turn a Prefer back into Hard. A new one is Hard.
+      const keyOf = (t: { shiftTypeId: unknown; window: unknown; windowCount?: unknown }) =>
+        `${t.shiftTypeId}|${t.window}|${(t.windowCount as number | null | undefined) ?? 1}`;
+      const saved = new Map(
+        (await tx.shiftMinimumTarget.findMany({ where: { staffId: id }, select: { shiftTypeId: true, window: true, windowCount: true, strength: true } }))
+          .map((t) => [keyOf(t), t.strength]),
+      );
+      const strengthOf = (t: Record<string, unknown>): string => {
+        if (!Object.prototype.hasOwnProperty.call(t, "strength") || t.strength == null) return saved.get(keyOf(t as { shiftTypeId: unknown; window: unknown; windowCount?: unknown })) ?? "rule";
+        if (t.strength === "rule" || t.strength === "preference") return t.strength;
+        throw new TypeError("A count target must be Hard or Prefer");
+      };
+      const strengths = shiftMinimumTargets.map((t: Record<string, unknown>) => strengthOf(t));
       await tx.shiftMinimumTarget.deleteMany({ where: { staffId: id } });
       if (shiftMinimumTargets.length > 0) {
         await tx.shiftMinimumTarget.createMany({
-          data: shiftMinimumTargets.map((t: Record<string, unknown>) => ({
+          data: shiftMinimumTargets.map((t: Record<string, unknown>, i: number) => ({
+            strength: strengths[i],
             staffId: id,
             shiftTypeId: t.shiftTypeId as string,
             minCount: t.minCount as number,

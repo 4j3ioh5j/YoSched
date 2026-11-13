@@ -20,6 +20,27 @@ type Target = {
   window: string;
   windowDays?: number | null;
   windowCount?: number | null;
+  strength?: string; // card #189: "rule" (Hard) | "preference" (Prefer)
+};
+
+// The target a count/mode edit commits: the window and the Hard/Prefer choice carry over
+// (card #189: an edit must never quietly turn a Prefer back into Hard). "" / 0 deletes.
+export function committedTarget(t: Target, shiftTypeId: string, minCount: number, maxCount: number | null): Target | undefined {
+  if (minCount <= 0 && (maxCount == null || maxCount <= 0)) return undefined;
+  return {
+    shiftTypeId,
+    minCount: Math.max(0, minCount),
+    maxCount: maxCount == null ? null : Math.max(0, maxCount),
+    window: t.window,
+    windowDays: t.window === "days" ? t.windowDays ?? 7 : null,
+    windowCount: t.window === "days" ? 1 : t.windowCount ?? 1,
+    strength: t.strength === "preference" ? "preference" : "rule",
+  };
+}
+
+const STRENGTH_HINT: Record<string, string> = {
+  rule: "Hard: always kept — an “at least” is met even past their hours, an “at most” is never exceeded; warns if it can't be.",
+  preference: "Prefer: aimed for only when it fits their hours; an “at most” is only discouraged; no warning.",
 };
 
 const MODE_OPTIONS: { value: FrequencyMode; label: string }[] = [
@@ -53,6 +74,7 @@ export function FrequencyPicker({
     window: "pay_period",
     windowDays: null,
     windowCount: 1,
+    strength: "rule",
   };
   const mode = frequencyModeOf(t);
   const isBetween = mode === "between";
@@ -64,18 +86,12 @@ export function FrequencyPicker({
 
   // Preserve the current window selection on every commit; "" / 0 deletes.
   function commit(minCount: number, maxCount: number | null) {
-    if (minCount <= 0 && (maxCount == null || maxCount <= 0)) {
-      onChange(undefined);
-      return;
-    }
-    onChange({
-      shiftTypeId,
-      minCount: Math.max(0, minCount),
-      maxCount: maxCount == null ? null : Math.max(0, maxCount),
-      window: t.window,
-      windowDays: t.window === "days" ? t.windowDays ?? 7 : null,
-      windowCount: t.window === "days" ? 1 : t.windowCount ?? 1,
-    });
+    onChange(committedTarget(t, shiftTypeId, minCount, maxCount));
+  }
+
+  function changeStrength(strength: string) {
+    if (!target) return;
+    onChange({ ...t, strength });
   }
 
   function changeMode(m: FrequencyMode) {
@@ -126,6 +142,12 @@ export function FrequencyPicker({
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-1.5 text-xs flex-wrap">
+        {has && (
+          <select value={t.strength === "preference" ? "preference" : "rule"} onChange={(e) => changeStrength(e.target.value)} className={selCls} title="Hard or Prefer">
+            <option value="rule">Hard</option>
+            <option value="preference">Prefer</option>
+          </select>
+        )}
         <select value={mode} onChange={(e) => changeMode(e.target.value as FrequencyMode)} className={selCls}>
           {MODE_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
@@ -180,6 +202,7 @@ export function FrequencyPicker({
         )}
       </div>
       {has && <div className="text-[10px] text-slate-400 italic">{describeFrequency(t as ShiftMinTarget)}</div>}
+      {has && <div className="text-[10px] text-slate-500">{STRENGTH_HINT[t.strength === "preference" ? "preference" : "rule"]}</div>}
     </div>
   );
 }
