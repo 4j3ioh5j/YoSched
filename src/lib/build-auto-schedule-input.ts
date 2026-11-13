@@ -59,13 +59,17 @@ export function writableFromOf(runMonth: string): string {
 // Card #174: the forward spill an EARLIER month's run left in this month (unlocked
 // auto cells stamped with an earlier autoMonth, dated on/after the month's 1st) is
 // this run's to redo, so it is left out of the engine's fixed context. Manual,
-// imported, request and locked rows, rows of this or a later run, and anything
-// before the month's 1st stay fixed.
+// imported, request and locked rows, rows of this or a later run, anything before
+// the month's 1st, and the cells of staff this run will not schedule (inactive or
+// no longer auto-scheduled: the run would never redo them, yet their saved shift
+// still counts toward the day's caps) stay fixed.
 export function isPriorRunSpill(
   row: { date: string; isLocked: boolean; source: string | null; autoMonth: string | null },
   runMonth: string,
+  staffIsScheduled = true,
 ): boolean {
   return (
+    staffIsScheduled &&
     row.source === "auto" &&
     !row.isLocked &&
     row.autoMonth !== null &&
@@ -167,6 +171,8 @@ export async function buildAutoScheduleInput(
     cur.setDate(cur.getDate() + 1);
   }
 
+  // Card #179: only staff this run schedules (active — the query — and auto-scheduled).
+  const scheduledStaffIds = new Set(staff.filter((p) => p.isAutoScheduled).map((p) => p.id));
   // ONE shift snapshot for the whole input: every code below (assignments, staffing
   // requirements, equity factors) is derived from this list, never from a per-row join,
   // so a shift renamed between two queries cannot appear under two codes in one run.
@@ -328,6 +334,7 @@ export async function buildAutoScheduleInput(
       .filter((a) => !opts.runMonth || !isPriorRunSpill(
         { date: a.date.toISOString().split("T")[0], isLocked: a.isLocked, source: a.source, autoMonth: a.autoMonth },
         opts.runMonth,
+        scheduledStaffIds.has(a.staffId),
       ))
       .map((a) => ({
         staffId: a.staffId,

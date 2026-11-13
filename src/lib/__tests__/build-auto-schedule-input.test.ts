@@ -11,6 +11,7 @@ const db = vi.hoisted(() => ({
   reqs: [] as { shiftTypeId: string; dayKey: string; minCount: number; preferredCount: number; maxCount: number | null }[],
   factors: [] as { factorType: string; shiftTypeId: string | null; weight: number; enabled: boolean }[],
   // Rows as the DB returns them; a stale joined `shiftType` is planted to prove nothing reads it.
+  staff: [] as { id: string; isAutoScheduled: boolean }[],
   assignments: [] as { staffId: string; date: string; shiftTypeId: string; isLocked: boolean; source: string; autoMonth?: string | null }[],
 }));
 
@@ -52,7 +53,14 @@ vi.mock("@/lib/prisma", () => {
         })
         .map((r) => ({ ...r, date: new Date(r.date + "T00:00:00Z"), shiftType: { id: r.shiftTypeId, code: "STALE-JOIN" } })),
   };
-  const prisma = new Proxy({ shiftType, staffingRequirement, equityFactor, assignment } as Record<string, unknown>, {
+  const staff = {
+    findMany: async () =>
+      db.staff.map((p) => ({
+        id: p.id, initials: p.id, isActive: true, isAutoScheduled: p.isAutoScheduled, ftePercentage: 1,
+        employmentType: { usesFtePercentage: true, includedInFairness: true, defaultFtePercentage: 1 },
+      })),
+  };
+  const prisma = new Proxy({ shiftType, staffingRequirement, equityFactor, assignment, staff } as Record<string, unknown>, {
     get: (t, k: string) => t[k] ?? empty,
   });
   return { prisma };
@@ -154,6 +162,7 @@ describe("auto-schedule input bundle: staffing requirements carry both keys", ()
       { staffId: "c", date: "2026-11-02", shiftTypeId: "st-or", isLocked: false, source: "manual", autoMonth: null }, // manual: kept
       { staffId: "d", date: "2026-11-02", shiftTypeId: "st-or", isLocked: false, source: "auto", autoMonth: "2026-11" }, // own run: kept
     ];
+    db.staff = ["a", "b", "c", "d"].map((id) => ({ id, isAutoScheduled: true }));
     const withMonth = await buildAutoScheduleInput("2026-10-25", "2026-11-30", { runMonth: "2026-11" });
     expect(withMonth.writableFrom).toBe("2026-11-01");
     expect(withMonth.existingAssignments.map((a) => `${a.staffId}:${a.date}`)).toEqual(["a:2026-10-30", "b:2026-11-02", "c:2026-11-02", "d:2026-11-02"]);
@@ -162,5 +171,21 @@ describe("auto-schedule input bundle: staffing requirements carry both keys", ()
     expect(plain.writableFrom).toBeUndefined();
     expect(plain.existingAssignments).toHaveLength(5);
     db.assignments = [];
+  });
+
+  it("card #179: the spill of staff this run won't schedule stays as fixed context", async () => {
+    db.shifts = [{ id: "st-orc", code: "ORC" }];
+    db.reqs = [];
+    db.factors = [];
+    db.staff = [{ id: "on", isAutoScheduled: true }, { id: "off", isAutoScheduled: false }];
+    db.assignments = [
+      { staffId: "on", date: "2026-11-02", shiftTypeId: "st-orc", isLocked: false, source: "auto", autoMonth: "2026-10" }, // redone
+      { staffId: "off", date: "2026-11-03", shiftTypeId: "st-orc", isLocked: false, source: "auto", autoMonth: "2026-10" }, // no longer auto-scheduled: kept
+      { staffId: "gone", date: "2026-11-04", shiftTypeId: "st-orc", isLocked: false, source: "auto", autoMonth: "2026-10" }, // inactive (not in the roster): kept
+    ];
+    const input = await buildAutoScheduleInput("2026-10-25", "2026-11-30", { runMonth: "2026-11" });
+    expect(input.existingAssignments.map((a) => `${a.staffId}:${a.date}`)).toEqual(["off:2026-11-03", "gone:2026-11-04"]);
+    db.assignments = [];
+    db.staff = [];
   });
 });

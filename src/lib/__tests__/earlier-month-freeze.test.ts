@@ -102,6 +102,7 @@ describe("builder: the earlier run's forward spill is this run's to redo (card #
     expect(isPriorRunSpill(r({ autoMonth: "2025-06" }), "2025-06")).toBe(false); // this run's own
     expect(isPriorRunSpill(r({ autoMonth: "2025-07" }), "2025-06")).toBe(false);
     expect(isPriorRunSpill(r({ autoMonth: null }), "2025-06")).toBe(false); // legacy
+    expect(isPriorRunSpill(r({}), "2025-06", false)).toBe(false); // staff not scheduled by this run (card #179)
   });
 });
 
