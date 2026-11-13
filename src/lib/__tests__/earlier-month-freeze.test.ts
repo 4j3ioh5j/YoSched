@@ -159,3 +159,42 @@ describe("Live / scenario: the earlier month is never freed or pinned (card #174
     expect(out.grid.filter((c) => c.date >= FROM && c.shiftTypeId === "st-or")).toEqual([]);
   });
 });
+
+describe("Live: never frees the cells of staff the engine won't refill (card #180)", () => {
+  const none = { has: () => false };
+  it("an auto cell of a staff no longer auto-scheduled, or not on the roster, is never freed", () => {
+    const inp = input({
+      staff: [staff("p1", "AB"), staff("p2", "CD", { isAutoScheduled: false })],
+      existingAssignments: [autoOR("p1", JUNE[0]), autoOR("p2", JUNE[0]), autoOR("gone", JUNE[0])],
+    });
+    for (const ring of [1, 2, 3]) {
+      expect(freesForRing(inp, none, new Set([JUNE[0]]), ring)).toEqual([{ staffId: "p1", date: JUNE[0] }]);
+    }
+  });
+
+  it("a day-scope edit that must widen keeps their capped shift in the preview", () => {
+    // Monday needs one OR and one ORC (Max 1). p2 (no longer auto-scheduled) holds the
+    // ORC; p1 the OR; p3 is off. Pinning p1 off opens an OR gap, so the re-solve widens
+    // to the day and frees what it may — never p2's ORC, which it could not refill.
+    const ORC = shift("st-orc", "ORC", { schedulePriority: 0 });
+    const both = ["st-or", "st-off", "st-orc"];
+    const inp = input({
+      shiftTypes: [OR, OFF, ORC],
+      staff: [staff("p1", "AB", { eligibleShiftTypeIds: both }), staff("p2", "CD", { isAutoScheduled: false, eligibleShiftTypeIds: both }), staff("p3", "EF", { eligibleShiftTypeIds: both })],
+      staffingRequirements: [
+        { shiftTypeId: "st-orc", shiftCode: "ORC", dayKey: "1", minCount: 1, preferredCount: 1, maxCount: 1 },
+        { shiftTypeId: "st-or", shiftCode: "OR", dayKey: "1", minCount: 1, preferredCount: 1, maxCount: null },
+      ] as AutoScheduleInput["staffingRequirements"],
+      existingAssignments: [
+        { staffId: "p1", date: JUNE[0], shiftTypeId: "st-or", code: "OR", isLocked: false, source: "auto" },
+        { staffId: "p2", date: JUNE[0], shiftTypeId: "st-orc", code: "ORC", isLocked: false, source: "auto" },
+        { staffId: "p3", date: JUNE[0], shiftTypeId: "st-off", code: "X", isLocked: false, source: "auto" },
+      ],
+    });
+    const out = applyScenarioExpanding(inp, [{ staffId: "p1", date: JUNE[0], shiftTypeId: "st-off" }], [], new Set([JUNE[0]]), { has: (k: string) => k === `p1:${JUNE[0]}` }, "day");
+    expect(out.applied).toBe(true);
+    expect(out.grid.find((c) => c.staffId === "p2" && c.date === JUNE[0])?.shiftTypeId).toBe("st-orc");
+    expect(out.grid.filter((c) => c.date === JUNE[0] && c.shiftTypeId === "st-orc")).toHaveLength(1);
+  });
+});
+

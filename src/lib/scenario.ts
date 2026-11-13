@@ -366,9 +366,14 @@ export function freesForRing(
     if (ring === 1) return touchedDates.has(date);
     return ppRanges.some((pp) => pp.startDate <= date && date <= pp.endDate);
   };
+  // Card #180: only the engine's own staff (active and auto-scheduled, as
+  // auto-scheduler.ts schedules them) can be refilled; anyone else's cell freed
+  // here would simply vanish from the preview while still counting on save.
+  const scheduled = new Set(input.staff.filter((p) => p.isActive && p.isAutoScheduled).map((p) => p.id));
   const frees: ScenarioFree[] = [];
   for (const a of input.existingAssignments) {
     const k = keyOf(a.staffId, a.date);
+    if (!scheduled.has(a.staffId)) continue;
     // Card #174: an earlier, completed month is fixed context — never freed, so its
     // cells stay as locked survivors and keep counting toward pay-period hours.
     if (input.writableFrom && a.date < input.writableFrom) continue;
