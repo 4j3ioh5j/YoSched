@@ -2122,11 +2122,6 @@ export function autoSchedule({
         const candidateDates = windowDates.filter((d) =>
           !holidaySet.has(d) && !isAssigned(staff.id, d) && isAvailable(staff, d, st)
         );
-        // Card #177: days that would make a soft-avoided pair go last (stable: date order otherwise).
-        if (avoidSet.size > 0) {
-          const av = new Map(candidateDates.map((d) => [d, avoidedPairs(staff.id, d, st.id)]));
-          candidateDates.sort((x, y) => av.get(x)! - av.get(y)!);
-        }
         if (candidateDates.length === 0) {
           // Soft (preference) targets bias but never warn — only hard minimums do.
           if (targetIsHard(target)) {
@@ -2135,7 +2130,19 @@ export function autoSchedule({
           continue;
         }
 
-        for (const candidate of candidateDates) {
+        // Card #177/#187: each pick takes the day that makes the fewest soft-avoided pairs
+        // (date order otherwise), re-scored after every placement so the second ORC sees the first.
+        const remaining = [...candidateDates];
+        const nextCandidate = (): string => {
+          let best = 0;
+          if (avoidSet.size > 0) {
+            let bestAv = Infinity;
+            remaining.forEach((d, i) => { const av = avoidedPairs(staff.id, d, st.id); if (av < bestAv) { bestAv = av; best = i; } });
+          }
+          return remaining.splice(best, 1)[0];
+        };
+        while (remaining.length > 0) {
+          const candidate = nextCandidate();
           if (countInWindow() >= target.minCount) break;
           // Rolling max is date-dependent: a candidate too close to an earlier
           // placement is capped, but a LATER one in this block may be fine — so

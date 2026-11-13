@@ -130,3 +130,18 @@ describe("day choice steers away from an avoided pair (card #177)", () => {
     expect(r.warnings.filter((w) => w.includes("avoided pair"))).toEqual([]);
   });
 });
+
+describe("minimum-target days are re-scored after each placement (card #187)", () => {
+  it("two owed ORCs with ORC→ORC avoided don't land on consecutive days", () => {
+    const MIN2 = { shiftMinimumTargets: [{ shiftTypeId: "st-orc", minCount: 2, maxCount: null, window: "pay_period", windowDays: null }] } as Partial<ScheduleStaff>;
+    const inp = input({ staff: [staff("ab", MIN2)], payPeriods: [{ ...PP, targetHours: 32 }] });
+    const orcDays = (r: ReturnType<typeof autoSchedule>) => r.suggestions.filter((s) => s.shiftTypeId === "st-orc").map((s) => s.date).sort();
+    expect(orcDays(autoSchedule(inp))).toEqual([W1[0], W1[1]]); // without the rule: the first two days
+    const r = autoSchedule({ ...inp, followAvoids: [{ sourceShiftId: "st-orc", avoidShiftId: "st-orc" }] });
+    const days = orcDays(r);
+    expect(days).toHaveLength(2);
+    expect(days[0]).toBe(W1[0]);
+    expect(days[1]).not.toBe(W1[1]);
+    expect(r.warnings.filter((w) => w.includes("avoided pair"))).toEqual([]);
+  });
+});
