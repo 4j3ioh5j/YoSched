@@ -940,6 +940,16 @@ export function autoSchedule({
     return n;
   }
 
+  // Card #188: a staff card's Prefer eligibility rules rank, never gate — "eligible · Prefer"
+  // favours those days (+1 each), "ineligible · Prefer" steers away (−1 each).
+  const eligPpRanges = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
+  const preferRuleKeys = new Set(staff.flatMap((p) => (p.shiftEligibilityRules ?? []).filter((r) => r.strength === "preference").map((r) => `${p.id}:${r.shiftTypeId}`)));
+  /** The person's soft eligibility score for `stId` on `date` (0 without Prefer rules). */
+  function eligPreference(p: ScheduleStaff, stId: string, date: string): number {
+    if (!preferRuleKeys.has(`${p.id}:${stId}`)) return 0;
+    return evaluateShiftEligibility(p.shiftEligibilityRules ?? [], stId, date, eligPpRanges)?.weight ?? 0;
+  }
+
   function isAssigned(staffId: string, date: string): boolean {
     const cell = grid.get(`${staffId}:${date}`);
     if (!cell) return false;
@@ -972,7 +982,7 @@ export function autoSchedule({
         staff.shiftEligibilityRules, st.id, date,
         payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
       );
-      if (eligResult !== null && !eligResult.eligible && !(eligResult.weight < 0 && eligResult.weight > -10)) return false;
+      if (eligResult !== null && !eligResult.eligible) return false; // card #188: Prefer never closes a day
     }
     if (!st.ignoresWorkingDays) {
       const avail = evaluateAvailability(
@@ -1132,7 +1142,7 @@ export function autoSchedule({
           p.shiftEligibilityRules, st.id, date,
           payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
         );
-        if (result !== null) return result.eligible || (result.weight < 0 && result.weight > -10);
+        if (result !== null) return result.eligible; // card #188: Prefer never closes a day
       }
       return eligibleShiftSets.get(p.id)?.has(st.id) ?? false;
     });
@@ -1638,7 +1648,7 @@ export function autoSchedule({
         const eligResult = evaluateShiftEligibility(
           member.shiftEligibilityRules, st.id, date, scPayPeriods,
         );
-        if (eligResult !== null && !eligResult.eligible && !(eligResult.weight < 0 && eligResult.weight > -10)) continue;
+        if (eligResult !== null && !eligResult.eligible) continue; // card #188
       }
 
       if (isAtMaximum(member, st, date)) continue;
@@ -1730,7 +1740,18 @@ export function autoSchedule({
 
     // `loadOf` (card #178): the spread load to rank by, when the caller knows the person's
     // actual dates (a paired group); otherwise spreadLoad on `date`.
-    function pickStaff(pool: ScheduleStaff[], date?: string, loadOf?: (p: ScheduleStaff) => number): ScheduleStaff {
+    // `datesOf` (cards #178/#188): the dates a candidate would actually get when it differs
+    // from `date` (a weekend pair, a paired group); null = it can't host. Prefer rules and the
+    // spread load are scored over those dates.
+    function pickStaff(pool: ScheduleStaff[], date?: string, datesOf?: (p: ScheduleStaff) => string[] | null): ScheduleStaff {
+      const datesFor = (p: ScheduleStaff): string[] | null => (datesOf ? datesOf(p) : date ? [date] : null);
+      const preferOf = new Map<string, number>();
+      if (date || datesOf) {
+        for (const p of pool) {
+          const ds = datesFor(p);
+          preferOf.set(p.id, ds ? ds.reduce((n, d) => n + eligPreference(p, st.id, d), 0) : 0);
+        }
+      }
       // Option B (long-shift fit): for shifts longer than the fill shift, break
       // ties among equally-shared candidates by who the long shift serves best.
       // Two tiers, lower key wins:
@@ -1793,12 +1814,19 @@ export function autoSchedule({
           const biasB = requestBias(b.id, date, st);
           if (biasA !== biasB) return biasB - biasA;
         }
+        // Card #188: a staff card's Prefer rules — favoured days first, steered-away days last.
+        // Below explicit requests, above share fairness (a "favour" that loses to round-robin
+        // would do nothing).
+        const prefA = preferOf.get(a.id) ?? 0;
+        const prefB = preferOf.get(b.id) ?? 0;
+        if (prefA !== prefB) return prefB - prefA;
         const countDiff = shareCount(a) - shareCount(b);
         if (Math.abs(countDiff) > 1e-9) return countDiff;
         // Card #178: among equally-shared candidates, the one with fewer marked shifts close by.
-        if (st.spreadOverMonth && (date || loadOf)) {
-          const la = loadOf ? loadOf(a) : spreadLoad(a.id, date!);
-          const lb = loadOf ? loadOf(b) : spreadLoad(b.id, date!);
+        if (st.spreadOverMonth && (date || datesOf)) {
+          const load = (p: ScheduleStaff) => { const ds = datesFor(p); return ds ? ds.reduce((n, d) => n + spreadLoad(p.id, d), 0) : Infinity; };
+          const la = load(a);
+          const lb = load(b);
           if (la !== lb) return la - lb;
         }
         // Option B long-shift fit (see fitMap above): among equally-shared
@@ -1866,7 +1894,8 @@ export function autoSchedule({
             canFillCoverageOverLimits(p, sat, st) && canFillCoverageOverLimits(p, sun, st) && pairOk(p)
         );
         if (pool.length === 0) continue;
-        const chosen = pickStaff(pool, sat);
+        // Card #188: with Prefer rules in play, score the whole weekend each person would get.
+        const chosen = pool.some((p) => preferRuleKeys.has(`${p.id}:${st.id}`)) ? pickStaff(pool, sat, () => [sat, sun]) : pickStaff(pool, sat);
         assign(chosen.id, sat, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
         if (coverageBeatsHardLimits || !isAtMaximum(chosen, st, sun)) {
           assign(chosen.id, sun, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
@@ -2031,10 +2060,12 @@ export function autoSchedule({
             for (const tier of coverageBeatsOverHours ? [fits, hostable] : [fits]) {
               let poolList = [...tier];
               while (poolList.length > 0) {
-                // Card #178: rank hosts by the spread load of the group each would actually get.
-                const groups = st.spreadOverMonth ? new Map(poolList.map((p) => [p.id, completeGroupFor(p, remainDates)])) : null;
+                // Cards #178/#188: rank hosts by the group each would actually get (spread load,
+                // Prefer rules) — remainDates[0] may be a day a host won't work.
+                const groups = st.spreadOverMonth || poolList.some((p) => preferRuleKeys.has(`${p.id}:${st.id}`))
+                  ? new Map(poolList.map((p) => [p.id, completeGroupFor(p, remainDates)])) : null;
                 const chosen = groups
-                  ? pickStaff(poolList, remainDates[0], (p) => { const g = groups.get(p.id); return g ? g.reduce((n, d) => n + spreadLoad(p.id, d), 0) : Infinity; })
+                  ? pickStaff(poolList, remainDates[0], (p) => groups.get(p.id) ?? null)
                   : pickStaff(poolList, remainDates[0]);
                 const group = groups ? groups.get(chosen.id)! : completeGroupFor(chosen, remainDates);
                 if (group) {
@@ -2200,10 +2231,11 @@ export function autoSchedule({
         // Card #178: then, for a marked shift, the day with fewer marked shifts close by.
         const nextCandidate = (): string => {
           let best = 0;
-          if (avoidSet.size > 0 || st.spreadOverMonth) {
+          // Card #188: then the person's Prefer days (and away from soft-ineligible ones).
+          if (avoidSet.size > 0 || st.spreadOverMonth || preferRuleKeys.has(`${staff.id}:${st.id}`)) {
             let bestKey = Infinity;
             remaining.forEach((d, i) => {
-              const key = avoidedPairs(staff.id, d, st.id) * 1000 + (st.spreadOverMonth ? spreadLoad(staff.id, d) : 0);
+              const key = avoidedPairs(staff.id, d, st.id) * 1e6 - eligPreference(staff, st.id, d) * 1000 + (st.spreadOverMonth ? spreadLoad(staff.id, d) : 0);
               if (key < bestKey) { bestKey = key; best = i; }
             });
           }
@@ -2637,7 +2669,9 @@ export function autoSchedule({
     let eligible = eligibleShiftSets.get(staff.id)?.has(st.id) ?? false;
     if (staff.shiftEligibilityRules && staff.shiftEligibilityRules.length > 0) {
       const r = evaluateShiftEligibility(staff.shiftEligibilityRules, st.id, date, ppRangesAll);
-      if (r !== null) eligible = r.eligible || (r.weight < 0 && r.weight > -10);
+      // Card #188: rules only narrow — an eligible rule never re-opens a shift unticked in the
+      // activation panel.
+      if (r !== null) eligible = eligible && r.eligible;
     }
     if (!eligible) return false;
     if (requestBlocksWork(staff.id, date, st)) return false;

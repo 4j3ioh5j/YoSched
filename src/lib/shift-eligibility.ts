@@ -116,6 +116,15 @@ export function describeFrequency(t: ShiftMinTarget): string {
   return `${count} per ${describeWindow(t)}`;
 }
 
+// Card #188 (David, decision #35: "Favour those days, allow others"). For a person's rules on
+// one shift and one date:
+//   1. a matching Hard ineligible rule → not eligible;
+//   2. else a matching Hard eligible rule → eligible;
+//   3. else, if the shift has ANY Hard eligible rule (on other days) → not eligible — Hard
+//      eligible means "only these days", and a Prefer rule never widens it;
+//   4. else → eligible.
+// `weight` is the soft score only: +1 per matching eligible·Prefer rule, −1 per matching
+// ineligible·Prefer rule. It never gates; the scheduler ranks by it (favour / steer away).
 export function evaluateShiftEligibility(
   rules: ShiftEligibilityRule[],
   shiftTypeId: string,
@@ -127,26 +136,26 @@ export function evaluateShiftEligibility(
 
   let hardEligible = false;
   let hardIneligible = false;
+  let anyHardEligible = false;
   let weight = 0;
 
-  // matchesWhen applies the weekday gate, so iterate all rules for this shift.
-  // No matching rule → weight 0 → {eligible:false, weight:0}, matching the old
-  // "no rule for this day-of-week" early return.
   for (const rule of shiftRules) {
+    const hard = rule.strength === "rule";
+    if (hard && rule.type === "eligible") anyHardEligible = true;
+    // matchesWhen applies the weekday gate.
     if (!matchesWhen(ruleToWhen(rule), dateStr, payPeriods)) continue;
-
     if (rule.type === "eligible") {
-      if (rule.strength === "rule") hardEligible = true;
+      if (hard) hardEligible = true;
       else weight += 1;
     } else {
-      if (rule.strength === "rule") hardIneligible = true;
+      if (hard) hardIneligible = true;
       else weight -= 1;
     }
   }
 
-  if (hardIneligible) return { eligible: false, weight: -10 };
-  if (hardEligible) return { eligible: true, weight: weight + 10 };
-  return { eligible: weight > 0, weight };
+  if (hardIneligible) return { eligible: false, weight };
+  if (hardEligible) return { eligible: true, weight };
+  return { eligible: !anyHardEligible, weight };
 }
 
 export function getWindowBounds(

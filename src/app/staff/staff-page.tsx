@@ -588,6 +588,13 @@ function ShiftHoursOverrideEditor({
   );
 }
 
+// Card #188: what each eligibility rule combination does, in the scheduler's terms.
+function eligibilityRuleHint(type: string, strength: string): string {
+  const prefer = strength === "preference";
+  if (type === "ineligible") return prefer ? "Avoided on these days, still allowed when needed." : "Never on these days.";
+  return prefer ? "Favoured on these days; other days stay allowed." : "Only on these days.";
+}
+
 function ShiftEligibilityEditor({
   shiftType,
   rules,
@@ -641,6 +648,7 @@ function ShiftEligibilityEditor({
             value={ruleToWhen(rule)}
             onChange={(w) => updateRule(idx, { ...whenToColumns(w) })}
           />
+          <div className="text-[10px] text-slate-500">{eligibilityRuleHint(rule.type, rule.strength)}</div>
         </div>
       ))}
       <button onClick={addRule} className="text-xs text-blue-400 hover:text-blue-300">+ Add rule</button>

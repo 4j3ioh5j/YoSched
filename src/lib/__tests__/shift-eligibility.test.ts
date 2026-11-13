@@ -65,7 +65,7 @@ describe("evaluateShiftEligibility", () => {
     const rules = [rule("st-or", 1)]; // Monday
     const result = evaluateShiftEligibility(rules, "st-or", "2025-05-12", PP);
     expect(result!.eligible).toBe(true);
-    expect(result!.weight).toBeGreaterThanOrEqual(10);
+    expect(result!.weight).toBe(0); // card #188: the weight is the soft score only
   });
 
   it("hard ineligible overrides hard eligible", () => {
@@ -75,7 +75,7 @@ describe("evaluateShiftEligibility", () => {
     ];
     const result = evaluateShiftEligibility(rules, "st-or", "2025-05-12", PP);
     expect(result!.eligible).toBe(false);
-    expect(result!.weight).toBe(-10);
+    expect(result!.weight).toBe(0); // card #188: the weight is the soft score only
   });
 
   it("preferences accumulate weight", () => {
@@ -88,13 +88,38 @@ describe("evaluateShiftEligibility", () => {
     expect(result!.weight).toBe(2);
   });
 
-  it("negative preference weight means ineligible", () => {
+  it("card #188: ineligible · Prefer steers away but stays allowed (weight −1)", () => {
     const rules = [
       rule("st-or", 1, { type: "ineligible", strength: "preference" }),
     ];
     const result = evaluateShiftEligibility(rules, "st-or", "2025-05-12", PP);
-    expect(result!.eligible).toBe(false);
-    expect(result!.weight).toBe(-1);
+    expect(result).toEqual({ eligible: true, weight: -1 });
+  });
+
+  describe("card #188: eligible · Prefer favours those days, allows the others", () => {
+    // 2025-05-12 Mon, 2025-05-13 Tue, 2025-05-14 Wed
+    it("eligible · Prefer · Tue: Tuesday favoured (+1), Monday allowed (0)", () => {
+      const rules = [rule("st-or", 2, { strength: "preference" })];
+      expect(evaluateShiftEligibility(rules, "st-or", "2025-05-13", PP)).toEqual({ eligible: true, weight: 1 });
+      expect(evaluateShiftEligibility(rules, "st-or", "2025-05-12", PP)).toEqual({ eligible: true, weight: 0 });
+    });
+    it("ineligible · Prefer · Mon alone leaves the other days open", () => {
+      const rules = [rule("st-or", 1, { type: "ineligible", strength: "preference" })];
+      expect(evaluateShiftEligibility(rules, "st-or", "2025-05-13", PP)).toEqual({ eligible: true, weight: 0 });
+    });
+    it("Hard eligible · Tue + Prefer · Wed: Wednesday stays closed (Prefer never widens Hard)", () => {
+      const rules = [rule("st-or", 2), rule("st-or", 3, { strength: "preference" })];
+      expect(evaluateShiftEligibility(rules, "st-or", "2025-05-14", PP)).toEqual({ eligible: false, weight: 1 });
+      expect(evaluateShiftEligibility(rules, "st-or", "2025-05-13", PP)).toEqual({ eligible: true, weight: 0 });
+    });
+    it("Hard ineligible · Mon + Prefer · Mon: never on Monday", () => {
+      const rules = [rule("st-or", 1, { type: "ineligible" }), rule("st-or", 1, { strength: "preference" })];
+      expect(evaluateShiftEligibility(rules, "st-or", "2025-05-12", PP)!.eligible).toBe(false);
+    });
+    it("Hard ineligible · Mon alone: the other days stay open", () => {
+      const rules = [rule("st-or", 1, { type: "ineligible" })];
+      expect(evaluateShiftEligibility(rules, "st-or", "2025-05-13", PP)!.eligible).toBe(true);
+    });
   });
 
   describe("patterns", () => {
