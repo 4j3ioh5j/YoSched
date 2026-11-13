@@ -271,6 +271,21 @@ describe("compound trades keep the end state legal (card #176)", () => {
     for (const d of W2) if (works("ef", d)) expect(works("bc", d), d).toBe(true);
   });
 
+  it("card #185: the same holds when EF is scheduled by hand (not auto-scheduled)", () => {
+    const base = bcShape();
+    const cond = [1, 2, 3, 4, 5].map((d) => ({ type: "available" as const, strength: "rule" as const, conditionStaffId: "bc", conditionType: "working" as const, ...wEvery(d) }));
+    const ef = staff("ef", "EF", { availabilityRules: cond, isAutoScheduled: false });
+    // EF's whole fortnight is typed in by hand, on the days BC works before the repair.
+    const pre = autoSchedule({ ...base, skipCompoundRepairForTest: true });
+    const bcWorks = (d: string) => { const c = codeAt(base, pre, "bc", d); return !!c && c !== "X"; };
+    const efDays = [...W1, ...W2].filter(bcWorks).map((d) => manual("ef", d, "st-or", "OR"));
+    const inp = { ...base, staff: [...base.staff, ef], existingAssignments: [...base.existingAssignments, ...efDays] };
+    const r = autoSchedule(inp);
+    wellFormed(inp, r);
+    const works = (who: string, d: string) => { const c = codeAt(inp, r, who, d); return !!c && c !== "X"; };
+    for (const d of [...W1, ...W2]) if (works("ef", d)) expect(works("bc", d), d).toBe(true);
+  });
+
   it("prohibited over-hours: the repair never takes anyone further over target", () => {
     const order = [{ key: "overHours", sortOrder: 0, enabled: true, hoursPolicy: "prohibited" as const }];
     const inp = { ...bcShape(), factorOrder: order };
@@ -398,4 +413,51 @@ describe("under-target Prohibited (the live ranking): Phase A may pass through i
       for (const k of Object.keys(after)) expect(-after[k], k).toBeLessThanOrEqual(Math.max(0, -without[k]));
     });
   }
+});
+
+describe("card #185: a work follower that can't land on a holiday isn't counted against the hours", () => {
+  // AB (80 h) has 56 h by hand. Monday W2's ORC (16) + Tuesday's holiday HOL (8) = 80 exactly.
+  // ORC's required follower ADM is a work shift, never placed on a holiday, so the ORC fits.
+  const ADM = shift("st-adm", "ADM", { autoSchedulable: false, defaultHoursHoliday: 8 });
+  const build = () => input({
+    shiftTypes: [OR, OFF, ORC, ORL, HOL, ADM],
+    staff: [staff("ab", "AB", { eligibleShiftTypeIds: ["st-or", "st-off", "st-orc", "st-hol", "st-adm"] })],
+    holidays: [{ date: W2[1] }],
+    existingAssignments: [...W1, W2[2], W2[3]].map((d) => ({ staffId: "ab", date: d, shiftTypeId: "st-or", code: "OR", isLocked: false, source: "manual" as const })),
+    staffingRequirements: [{ shiftTypeId: "st-orc", shiftCode: "ORC", dayKey: "1", minCount: 1, preferredCount: 1, maxCount: 1 }],
+    requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-adm", scope: "each_day", countsTowardTargets: true }],
+    factorOrder: [{ key: "overHours", sortOrder: 0, enabled: true, hoursPolicy: "prohibited" as const }],
+  });
+
+  it("AB gets the ORC and the HOL, lands on 80, and no ADM is placed on the holiday", () => {
+    const inp = build();
+    const r = autoSchedule(inp);
+    const at = (d: string) => r.suggestions.find((s) => s.staffId === "ab" && s.date === d)?.code;
+    expect(at(W2[0])).toBe("ORC");
+    expect(at(W2[1])).toBe("HOL");
+    expect(ppHours(inp, r, "ab")).toBe(80);
+  });
+});
+
+describe("card #185 r2: an off follower on a holiday still leaves the HOL owed", () => {
+  // AB (80 h) has 64 h by hand. Tuesday W2 is a holiday (HOL 8 → 72). Monday's ORC (16) would
+  // reach 88. Its follower X is an off cell the holiday later turns into HOL, so the HOL stays owed
+  // and, with over-hours Prohibited, AB must not get the ORC.
+  const build = () => input({
+    shiftTypes: [OR, OFF, ORC, ORL, HOL],
+    staff: [staff("ab", "AB", { eligibleShiftTypeIds: ["st-or", "st-off", "st-orc", "st-hol"] })],
+    holidays: [{ date: W2[1] }],
+    existingAssignments: [...W1, W2[2], W2[3], W2[4]].map((d) => ({ staffId: "ab", date: d, shiftTypeId: "st-or", code: "OR", isLocked: false, source: "manual" as const })),
+    staffingRequirements: [{ shiftTypeId: "st-orc", shiftCode: "ORC", dayKey: "1", minCount: 1, preferredCount: 1, maxCount: 1 }],
+    requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: false }],
+    factorOrder: [{ key: "overHours", sortOrder: 0, enabled: true, hoursPolicy: "prohibited" as const }],
+  });
+
+  it("AB does not get the ORC and ends at 80 at most", () => {
+    const inp = build();
+    const r = autoSchedule(inp);
+    const at = (d: string) => r.suggestions.find((s) => s.staffId === "ab" && s.date === d)?.code;
+    expect(at(W2[0])).not.toBe("ORC");
+    expect(ppHours(inp, r, "ab")).toBeLessThanOrEqual(80);
+  });
 });

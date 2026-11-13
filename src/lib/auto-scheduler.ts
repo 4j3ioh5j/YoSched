@@ -1026,30 +1026,45 @@ export function autoSchedule({
   // WORK follower, warns) when the next day falls outside the window, is already
   // filled, is a holiday, or the staff is unavailable. An off-shift follower (a
   // recovery day) skips silently — an unavailable next day is already off.
-  function placeFollowerAfter(staffId: string, afterDate: string, sourceShift: ScheduleShiftType) {
+  // Whether the required follower of `sourceShift` on `afterDate` would be placed now:
+  // null = it lands; "" = silently not placed; otherwise the reason (warned for a work
+  // follower). Card #185: the ONE rule both the placement and the hours projection
+  // (ppHoursBlock) read, so the projection never counts a follower that won't land.
+  function followerBlock(staffId: string, afterDate: string, sourceShift: ScheduleShiftType): string | null {
     const spec = followerBySource.get(sourceShift.id);
-    if (!spec) return;
+    if (!spec) return "";
     const next = nextDate(afterDate);
-    if (!dateSet.has(next)) return; // follower would land outside the scheduling window
+    if (!dateSet.has(next)) return ""; // follower would land outside the scheduling window
     const isWorkFollower = !spec.follower.isOffShift && !spec.follower.isLeave;
     const member = activeStaff.find((p) => p.id === staffId);
-    if (!member) return;
-    const warn = (why: string) => {
-      if (isWorkFollower) warnings.push(`${member.initials}: could not place required ${spec.follower.code} after ${sourceShift.code} on ${next} (${why})`);
-    };
-    if (isAssigned(staffId, next)) { warn("cell already filled"); return; }
+    if (!member) return "";
+    if (isAssigned(staffId, next)) return "cell already filled";
     // Card #75: a WORK follower is a shift like any other — never for a person not eligible for
     // it (unticked in the activation panel). A recovery day off is always fine.
-    if (isWorkFollower && !member.eligibleShiftTypeIds.includes(spec.follower.id)) { warn(`not eligible for ${spec.follower.code}`); return; }
+    if (isWorkFollower && !member.eligibleShiftTypeIds.includes(spec.follower.id)) return `not eligible for ${spec.follower.code}`;
     // A WORK follower must not overwrite a day the staff holds off via an effective-hard
     // day-off-strategy request. This path assigns directly (it never flows through
     // isAvailable), so the requestBlocksWork hold wouldn't catch it — check here too.
     // An off-shift follower is fine (the day is meant to be off anyway).
-    if (isWorkFollower && heldDayOffOrder(staffId, next)) { warn("staff requested this day off"); return; }
+    if (isWorkFollower && heldDayOffOrder(staffId, next)) return "staff requested this day off";
     const avail = evaluateAvailability(member.availabilityRules, next, payPeriods, (pid, d) => isWorking(pid, d));
-    if (!avail.available) { warn("staff unavailable"); return; }
-    if (holidaySet.has(next) && isWorkFollower) { warn("holiday"); return; }
-    if (dayFull(spec.follower, next)) { warn(`Max for ${spec.follower.code} that day already reached`); return; }
+    if (!avail.available) return "staff unavailable";
+    if (holidaySet.has(next) && isWorkFollower) return "holiday";
+    if (dayFull(spec.follower, next)) return `Max for ${spec.follower.code} that day already reached`;
+    return null;
+  }
+
+  function placeFollowerAfter(staffId: string, afterDate: string, sourceShift: ScheduleShiftType) {
+    const spec = followerBySource.get(sourceShift.id);
+    if (!spec) return;
+    const next = nextDate(afterDate);
+    const why = followerBlock(staffId, afterDate, sourceShift);
+    if (why !== null) {
+      const member = activeStaff.find((p) => p.id === staffId);
+      const isWorkFollower = !spec.follower.isOffShift && !spec.follower.isLeave;
+      if (why && member && isWorkFollower) warnings.push(`${member.initials}: could not place required ${spec.follower.code} after ${sourceShift.code} on ${next} (${why})`);
+      return;
+    }
     assign(staffId, next, spec.follower, `Required follower after ${sourceShift.code}`, "follower", 0.95, !spec.countsTowardTargets);
   }
 
@@ -1398,7 +1413,10 @@ export function autoSchedule({
     // each_run followers are shared across a run; their hours land via
     // ppHoursForStaff once placed, and Slice 2 refines their projection.
     const followerSpec = followerBySource.get(st.id);
-    const eachDayFollower = followerSpec?.scope === "each_day" ? followerSpec : null;
+    // Card #185: only a follower that would actually land (the placement's own rule) — a work
+    // follower is never placed on a holiday, so that day keeps its owed HOL instead.
+    // A follower past the end of the run ("" = not placed by THIS run) still counts, as before.
+    const eachDayFollower = followerSpec?.scope === "each_day" && !followerBlock(staffId, date, st) ? followerSpec : null;
     const hasFollowerDay = !!eachDayFollower;
     if (!st.countsTowardFte && !hasFollowerDay) return null;
 
@@ -1415,7 +1433,9 @@ export function autoSchedule({
     const followerHrs = eachDayFollower && eachDayFollower.follower.countsTowardFte && sameFollowerPP
       ? getShiftHours(staffId, eachDayFollower.follower, overrideMap, followerDate ? dayTypeOf(followerDate, holidaySet) : "weekday") : 0;
     const addHours = (st.countsTowardFte ? getShiftHours(staffId, st, overrideMap, dayTypeOf(date, holidaySet)) : 0) + followerHrs;
-    // Card #176: owed-but-not-yet-granted HOL counts (see pendingHolidayHours).
+    // Card #176: owed-but-not-yet-granted HOL counts (see pendingHolidayHours). Card #185 r2: a
+    // follower day keeps its owed HOL — a work follower never lands on a holiday, and an off
+    // follower (X) stays fillable and is later replaced by the HOL.
     const current = ppHoursForStaff(staffId, pp) + pendingHolidayHours(staff, pp, date);
     if (current + addHours > target) return "over";
 
@@ -2970,7 +2990,9 @@ export function autoSchedule({
         return true;
       }
       type Before = { devs: Map<string, number>; cover: Map<string, number>; avail: Set<string> };
-      const condOwners = activeStaff.filter((p) => p.availabilityRules.some((r) => r.conditionStaffId && r.conditionType));
+      // Card #185: every active person's rules, hand-scheduled ones too — a trade that takes BC's
+      // day off must not leave a hand-placed 'EF only when BC works' day standing alone.
+      const condOwners = staff.filter((p) => p.isActive && p.availabilityRules.some((r) => r.conditionStaffId && r.conditionType));
       function availBroken(): Set<string> {
         // Working cells this run may move whose availability no longer holds (conditional rules).
         const out = new Set<string>();
