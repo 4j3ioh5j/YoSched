@@ -1,5 +1,6 @@
 "use client";
 
+import { followAvoidsChanged, type FollowAvoidData } from "@/lib/follow-avoids";
 import { activationAlreadyCommitted, type CommittedActivation } from "@/lib/activation-retry";
 import { appliedDiff, undoList, type ListApplied } from "@/lib/eligibility-undo";
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -157,6 +158,7 @@ type EquityFactorData = {
   sortOrder: number;
 };
 
+
 type FollowRuleData = {
   id: string;
   sourceShiftId: string;
@@ -218,6 +220,7 @@ type Props = {
   autoGenProfiles: AutoGenProfileData[];
   shiftCodes: string[];
   followRules: FollowRuleData[];
+  followAvoids?: FollowAvoidData[];
   requiredFollowers: RequiredFollowerData[];
   countColumns: { id: string; label: string; shiftTypeIds: string[] }[];
   printColumnRules: PrintColumnRuleData[];
@@ -573,6 +576,43 @@ function FollowRulesEditor({ sourceShiftId, allShifts, state, onChange }: {
   );
 }
 
+// Card #177: "avoid after this shift" — soft, so any shift may be ticked (off and leave too).
+function FollowAvoidEditor({ allShifts, checkedIds, onChange }: {
+  allShifts: ShiftType[];
+  checkedIds: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const canEdit = useCanEdit();
+  return (
+    <div className="space-y-2">
+      <FieldRow label="Avoid after this shift (soft)" description="The scheduler steers away from these the day after, but still uses one when it's the only way to fill a day.">
+        <span />
+      </FieldRow>
+      <div className="ml-4 pl-4 border-l-2 border-slate-700 space-y-2">
+        {allShifts.map((s) => (
+          <label key={s.id} className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              disabled={!canEdit}
+              checked={checkedIds.has(s.id)}
+              onChange={(e) => {
+                const next = new Set(checkedIds);
+                if (e.target.checked) next.add(s.id);
+                else next.delete(s.id);
+                onChange(next);
+              }}
+              className="rounded border-slate-600 w-3.5 h-3.5 disabled:opacity-50"
+            />
+            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
+            <span className="text-slate-300">{s.code}</span>
+            <span className="text-slate-600 text-xs">{s.name}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 type RequiredFollowerState = {
   enabled: boolean;
   followerShiftId: string;
@@ -810,7 +850,7 @@ function ActivationPanel({ shift, committed, onCancel, onConfirm }: { shift: Shi
   );
 }
 
-function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initialFollowRules, initialRequiredFollowers }: { shifts: ShiftType[]; onShiftsChange: React.Dispatch<React.SetStateAction<ShiftType[]>>; pushUndo: (a: UndoAction) => void; initialFollowRules: FollowRuleData[]; initialRequiredFollowers: RequiredFollowerData[] }) {
+function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initialFollowRules, initialFollowAvoids, initialRequiredFollowers }: { shifts: ShiftType[]; onShiftsChange: React.Dispatch<React.SetStateAction<ShiftType[]>>; pushUndo: (a: UndoAction) => void; initialFollowRules: FollowRuleData[]; initialFollowAvoids: FollowAvoidData[]; initialRequiredFollowers: RequiredFollowerData[] }) {
   const canEdit = useCanEdit();
   // Each shift as last SAVED (not page-load props): Cancel reverts to it and Undo restores it.
   const [lastSaved, setLastSaved] = useState(shifts);
@@ -818,6 +858,8 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [followRules, setFollowRules] = useState(initialFollowRules);
+  // The avoid rows as last SAVED: the editor resets from these, and Save compares against them.
+  const [followAvoids, setFollowAvoids] = useState(initialFollowAvoids);
   const [requiredFollowers, setRequiredFollowers] = useState(initialRequiredFollowers);
   const dragIdx = useRef<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
@@ -947,6 +989,21 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
         setFollowRules((prev) => [
           ...prev.filter((r) => r.sourceShiftId !== shift.id),
           ...saved.map((r) => ({ id: r.id, sourceShiftId: r.sourceShiftId, allowedShiftId: r.allowedShiftId, allowOffShifts: r.allowOffShifts, mode: r.mode })),
+        ]);
+      }
+
+      // Card #177: soft avoids — written only when the ticked set differs from the saved rows.
+      if (followAvoidsChanged(followAvoids, shift.id, avoidIds)) {
+        const faRes = await fetch("/api/settings/shift-follow-avoids", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sourceShiftId: shift.id, avoidShiftIds: [...avoidIds] }),
+        });
+        if (!faRes.ok) throw new Error(await faRes.text());
+        const saved = await faRes.json() as FollowAvoidData[];
+        setFollowAvoids((prev) => [
+          ...prev.filter((r) => r.sourceShiftId !== shift.id),
+          ...saved.map((r) => ({ id: r.id, sourceShiftId: r.sourceShiftId, avoidShiftId: r.avoidShiftId })),
         ]);
       }
 
@@ -1152,6 +1209,14 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
     }
   }, [editingId, followRules]);
 
+  const [avoidIds, setAvoidIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!editingId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset editor state when the edited shift changes
+    setAvoidIds(new Set(followAvoids.filter((r) => r.sourceShiftId === editingId).map((r) => r.avoidShiftId)));
+  }, [editingId, followAvoids]);
+
   const [requiredFollowerState, setRequiredFollowerState] = useState<RequiredFollowerState>({ enabled: false, followerShiftId: "", scope: "each_day", countsTowardTargets: false });
 
   useEffect(() => {
@@ -1325,6 +1390,7 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
                 state={followRuleState}
                 onChange={setFollowRuleState}
               />
+              <FollowAvoidEditor allShifts={shifts} checkedIds={avoidIds} onChange={setAvoidIds} />
               <RequiredFollowerEditor
                 sourceShiftId={editingShift.id}
                 allShifts={shifts}
@@ -5308,7 +5374,7 @@ function StaffColumnOrderSection({ initial, staff }: { initial: StaffOrderCriter
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, staffColumnOrder, orderableStaff, canEdit = true, canEditAutoGenPriority = false }: Props) {
+export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, followAvoids: initialFollowAvoids = [], requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, staffColumnOrder, orderableStaff, canEdit = true, canEditAutoGenPriority = false }: Props) {
   const undo = useUndo();
   // One shift list for the whole page: Shift Types edits it, every other section reads it.
   const [shiftTypes, setShiftTypes] = useState(initialShiftTypes);
@@ -5331,7 +5397,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
 
         <SectionGroup label="Definitions" />
         <div className="space-y-4 mb-8 mt-3">
-          <ShiftTypesSection shifts={shiftTypes} onShiftsChange={setShiftTypes} pushUndo={undo.push} initialFollowRules={initialFollowRules} initialRequiredFollowers={initialRequiredFollowers} />
+          <ShiftTypesSection shifts={shiftTypes} onShiftsChange={setShiftTypes} pushUndo={undo.push} initialFollowRules={initialFollowRules} initialFollowAvoids={initialFollowAvoids} initialRequiredFollowers={initialRequiredFollowers} />
           <EmploymentTypesSection initial={employmentTypes} pushUndo={undo.push} shiftTypes={shiftTypes} />
         </div>
 

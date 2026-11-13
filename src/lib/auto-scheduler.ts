@@ -550,6 +550,8 @@ export type AutoScheduleInput = {
   schedulingPreferences: SchedulingPreferences;
   equityFactors: EquityFactor[];
   followRules?: FollowRuleRow[];
+  // Card #177: soft follow rules — "avoid `avoidShiftId` the day after `sourceShiftId`".
+  followAvoids?: { sourceShiftId: string; avoidShiftId: string }[];
   scheduleRequests?: ScheduleRequestData[];
   requiredFollowers?: RequiredFollowerRow[];
   // Admin-configured objective factor order (#252, Slice 1). Absent/invalid ⇒ the
@@ -590,6 +592,7 @@ export function autoSchedule({
   schedulingPreferences,
   equityFactors,
   followRules,
+  followAvoids,
   scheduleRequests,
   requiredFollowers,
   factorOrder,
@@ -890,6 +893,30 @@ export function autoSchedule({
     const cell = grid.get(`${staffId}:${date}`);
     if (cell && isFillableOffCell(cell)) return undefined;
     return cell;
+  }
+
+  // ── Card #177: soft "avoid B the day after A" ──
+  // A preference only: it orders choices (who, which day, which trade) and never blocks a
+  // placement. Block/allow rules (followMap) stay the hard gate.
+  const avoidSet = new Set((followAvoids ?? []).map((a) => `${a.sourceShiftId}>${a.avoidShiftId}`));
+  const isAvoidedPair = (a: string | null | undefined, b: string | null | undefined): boolean =>
+    !!a && !!b && avoidSet.has(`${a}>${b}`);
+  /** Avoided pairs that `stId` on `date` would make with the staffer's cells either side. */
+  function avoidedPairs(staffId: string, date: string, stId: string): number {
+    if (avoidSet.size === 0) return 0;
+    let n = 0;
+    if (isAvoidedPair(grid.get(`${staffId}:${prevDate(date)}`)?.shiftTypeId, stId)) n++;
+    if (isAvoidedPair(stId, grid.get(`${staffId}:${nextDate(date)}`)?.shiftTypeId)) n++;
+    return n;
+  }
+  /** Avoided pairs in a staffer's run of days, reading `cellAt` (a proposed state) for each day. */
+  function avoidedInRun(days: Iterable<string>, cellAt: (d: string) => string | null | undefined): number {
+    if (avoidSet.size === 0) return 0;
+    const pairs = new Set<string>();
+    for (const d of days) { pairs.add(prevDate(d)); pairs.add(d); }
+    let n = 0;
+    for (const a of pairs) if (isAvoidedPair(cellAt(a), cellAt(nextDate(a)))) n++;
+    return n;
   }
 
   function isAssigned(staffId: string, date: string): boolean {
@@ -1712,6 +1739,11 @@ export function autoSchedule({
           const overA = isOverSoftMaximum(a, st, date) ? 1 : 0;
           const overB = isOverSoftMaximum(b, st, date) ? 1 : 0;
           if (overA !== overB) return overA - overB;
+          // Card #177: a soft "avoid B after A" rule — someone for whom this shift would make
+          // an avoided pair with the day before/after sorts behind (never excluded).
+          const avA = avoidedPairs(a.id, date, st.id);
+          const avB = avoidedPairs(b.id, date, st.id);
+          if (avA !== avB) return avA - avB;
           // Soft request preference: a staff who prefers this shift sorts ahead of
           // one who's indifferent; one who soft-avoids it (or prefers off) behind.
           const biasA = requestBias(a.id, date, st);
@@ -1898,8 +1930,13 @@ export function autoSchedule({
               }
               return false;
             };
-            const picked = bestSpread(provAvailDates, pairingFactor, anchorDates, (p, c) => !violatesFollow(p, c),
-                seedNum ? (combo) => seedTie(`${chosen.id}|${combo.join(",")}`) : undefined)
+            // Among equally spread groups: fewer soft-avoided pairs first (card #177), then the seed.
+            const groupAvoided = (combo: string[]): number =>
+              avoidedInRun(combo, (d) => (combo.includes(d) ? st.id : grid.get(`${chosen.id}:${d}`)?.shiftTypeId));
+            const tieKey = seedNum || avoidSet.size > 0
+              ? (combo: string[]) => groupAvoided(combo) * 1e10 + (seedNum ? seedTie(`${chosen.id}|${combo.join(",")}`) : 0)
+              : undefined;
+            const picked = bestSpread(provAvailDates, pairingFactor, anchorDates, (p, c) => !violatesFollow(p, c), tieKey)
               .filter((d) => !isAtMaximum(chosen, st, d));
             return picked.length >= pairingFactor ? picked.slice(0, pairingFactor) : null;
           };
@@ -2085,6 +2122,11 @@ export function autoSchedule({
         const candidateDates = windowDates.filter((d) =>
           !holidaySet.has(d) && !isAssigned(staff.id, d) && isAvailable(staff, d, st)
         );
+        // Card #177: days that would make a soft-avoided pair go last (stable: date order otherwise).
+        if (avoidSet.size > 0) {
+          const av = new Map(candidateDates.map((d) => [d, avoidedPairs(staff.id, d, st.id)]));
+          candidateDates.sort((x, y) => av.get(x)! - av.get(y)!);
+        }
         if (candidateDates.length === 0) {
           // Soft (preference) targets bias but never warn — only hard minimums do.
           if (targetIsHard(target)) {
@@ -2294,6 +2336,9 @@ export function autoSchedule({
     // so it can tip day-off selection, but it only acts within the slack the FTE
     // target leaves — it never creates a day off that hours don't allow.
     const SOFT_REQUEST_OFF_WEIGHT = 5;
+    // Card #177: the cost of one soft-avoided pair in a fill combination — the same scale as a
+    // soft request, so it only steers within the slack the hours target leaves.
+    const SOFT_AVOID_FOLLOW_WEIGHT = 5;
 
     function softOffBonus(staffId: string, offDays: Set<string>): number {
       if (requestList.length === 0) return 0;
@@ -2405,6 +2450,13 @@ export function autoSchedule({
           // (bodies placed + expected share of staff still to be processed), so the
           // minimum stays protected while early staff can place their days off
           // deliberately. Legacy semantics are untouched when no preferred count is set.
+          // Card #177: avoided pairs the WHOLE combination makes — its fill days and its X days
+          // against each other and against the fixed cells around them (an empty day ends as X).
+          const availSet = new Set(availableDates);
+          const comboAvoided = (offSet: Set<string>): number => avoidedInRun(availableDates, (d) => {
+            if (availSet.has(d)) return offSet.has(d) ? offShift?.id : fillShift.id;
+            return grid.get(`${staff.id}:${d}`)?.shiftTypeId ?? (dateSet.has(d) && !isFrozen(d) ? offShift?.id : undefined);
+          });
           const gateCount = (date: string): number =>
             dayBalanceActive ? (projected.get(date) ?? fillStaffedCount(date)) : fillStaffedCount(date);
 
@@ -2424,7 +2476,8 @@ export function autoSchedule({
             const offSet = new Set<string>(offIndices.map((i: number) => availableDates[i]));
             const shortfall = offShortfall(offSet);
             const score = scoreOffDays(offSet, availableDates, getBaseWorkDays(staff.availabilityRules))
-              + softOffBonus(staff.id, offSet);
+              + softOffBonus(staff.id, offSet)
+              - (avoidSet.size > 0 ? SOFT_AVOID_FOLLOW_WEIGHT * comboAvoided(offSet) : 0);
             if (shortfall < bestShortfall || (shortfall === bestShortfall && score > bestScore)) {
               bestShortfall = shortfall;
               bestScore = score;
@@ -2577,7 +2630,7 @@ export function autoSchedule({
           dev.set(p.id, ppHoursForStaff(p.id, pp) - target);
         }
 
-        type Swap = { aId: string; bId: string; date: string; aSt: ScheduleShiftType; bSt: ScheduleShiftType; gain: number; pref: number };
+        type Swap = { aId: string; bId: string; date: string; aSt: ScheduleShiftType; bSt: ScheduleShiftType; gain: number; avoid: number; pref: number };
         let best: Swap | null = null;
 
         for (const date of ppDates) {
@@ -2609,8 +2662,11 @@ export function autoSchedule({
               if (swapBreaksHardMin(A.staff, A.st, date, ppRangesAll)) continue;
               if (swapBreaksHardMin(B.staff, B.st, date, ppRangesAll)) continue;
               const pref = softPrefDelta(A.staff, B.st, A.st, date) + softPrefDelta(B.staff, A.st, B.st, date);
-              if (!best || gain > best.gain || (gain === best.gain && pref > best.pref)) {
-                best = { aId: A.id, bId: B.id, date, aSt: A.st, bSt: B.st, gain, pref };
+              // Card #177: hours first; among equal gains, the swap adding fewer soft-avoided pairs.
+              const avoid = avoidedPairs(A.id, date, B.st.id) - avoidedPairs(A.id, date, A.st.id)
+                + avoidedPairs(B.id, date, A.st.id) - avoidedPairs(B.id, date, B.st.id);
+              if (!best || gain > best.gain || (gain === best.gain && (avoid < best.avoid || (avoid === best.avoid && pref > best.pref)))) {
+                best = { aId: A.id, bId: B.id, date, aSt: A.st, bSt: B.st, gain, avoid, pref };
               }
             }
           }
@@ -2962,6 +3018,28 @@ export function autoSchedule({
         changed.push({ p: A, d });
         return true;
       }
+      // Card #177: change in soft-avoided pairs if these cells took these shifts (null = cleared,
+      // which ends as X). A tiebreak only: hours gain/score always decides first.
+      type Change = [ScheduleStaff, string, string | null];
+      const cellNow = (p: ScheduleStaff, d: string): string | undefined =>
+        grid.get(`${p.id}:${d}`)?.shiftTypeId ?? (dateSet.has(d) && !isFrozen(d) ? offShift?.id : undefined);
+      function avoidDelta(changes: Change[]): number {
+        if (avoidSet.size === 0) return 0;
+        const byPerson = new Map<ScheduleStaff, Map<string, string | undefined>>();
+        for (const [p, d, id] of changes) {
+          if (!byPerson.has(p)) byPerson.set(p, new Map());
+          byPerson.get(p)!.set(d, id ?? offShift?.id);
+        }
+        let delta = 0;
+        for (const [p, over] of byPerson) {
+          delta += avoidedInRun(over.keys(), (d) => (over.has(d) ? over.get(d) : cellNow(p, d)))
+            - avoidedInRun(over.keys(), (d) => cellNow(p, d));
+        }
+        return delta;
+      }
+      const swapChanges = (d: string, X: ScheduleStaff, Y: ScheduleStaff): Change[] =>
+        [[X, d, cellOf(Y, d)!.shiftTypeId], [Y, d, cellOf(X, d)!.shiftTypeId]];
+
       type Step = () => boolean;
       /** Try a compound: apply its steps in order, then the end-state checks; roll back on any failure. */
       function attempt(steps: Step[], bounds = true): boolean {
@@ -2979,7 +3057,7 @@ export function autoSchedule({
         for (;;) {
           let odd = people.filter((p) => !done.has(p.id) && isOdd(p)).sort((a, b) => Math.abs(devOf(b)) - Math.abs(devOf(a)) || (a.id < b.id ? -1 : 1));
           if (odd.length > LIMITS.odd) { capHit.add("odd"); odd = odd.slice(0, LIMITS.odd); }
-          type Cand = { score: number; size: number; tag: string; steps: Step[]; ids: string[] };
+          type Cand = { score: number; avoid: number; size: number; tag: string; steps: Step[]; ids: string[] };
           const cands: Cand[] = [];
           const swapDelta = (d: string, X: ScheduleStaff, Y: ScheduleStaff): number | null => {
             const cx = cellOf(X, d), cy = cellOf(Y, d);
@@ -2993,7 +3071,7 @@ export function autoSchedule({
               if (x === null) continue;
               const y = hrsOf(Q, stById.get(cellOf(P, d)!.shiftTypeId)!, d) - hrsOf(Q, stById.get(cellOf(Q, d)!.shiftTypeId)!, d);
               if (isOdd(P, dP + x) || isOdd(Q, dQ + y)) continue;
-              cands.push({ score: Math.abs(dP + x) + Math.abs(dQ + y) - Math.abs(dP) - Math.abs(dQ), size: 2, tag: `a${P.id}${Q.id}${d}`, steps: [() => swap(d, P, Q)], ids: [P.id, Q.id] });
+              cands.push({ score: Math.abs(dP + x) + Math.abs(dQ + y) - Math.abs(dP) - Math.abs(dQ), avoid: avoidDelta(swapChanges(d, P, Q)), size: 2, tag: `a${P.id}${Q.id}${d}`, steps: [() => swap(d, P, Q)], ids: [P.id, Q.id] });
             }
             let gs = people.filter((G) => G.id !== P.id && G.id !== Q.id && !isOdd(G));
             if (gs.length > LIMITS.intermediaries) { capHit.add("intermediaries"); gs = gs.slice(0, LIMITS.intermediaries); }
@@ -3009,12 +3087,12 @@ export function autoSchedule({
                 const dG = devOf(G);
                 if (isOdd(G, dG + g1 + g2)) continue;
                 const score = Math.abs(dP + x1) + Math.abs(dQ + x2) + Math.abs(dG + g1 + g2) - Math.abs(dP) - Math.abs(dQ) - Math.abs(dG);
-                cands.push({ score, size: 4, tag: `b${P.id}${Q.id}${G.id}${d1}${d2}`, steps: [() => swap(d1, P, G), () => swap(d2, Q, G)], ids: [P.id, Q.id] });
+                cands.push({ score, avoid: avoidDelta([...swapChanges(d1, P, G), ...swapChanges(d2, Q, G)]), size: 4, tag: `b${P.id}${Q.id}${G.id}${d1}${d2}`, steps: [() => swap(d1, P, G), () => swap(d2, Q, G)], ids: [P.id, Q.id] });
               }
             }
           }
           if (cands.length === 0) return;
-          cands.sort((a, b) => a.score - b.score || a.size - b.size || (a.tag < b.tag ? -1 : 1));
+          cands.sort((a, b) => a.score - b.score || a.avoid - b.avoid || a.size - b.size || (a.tag < b.tag ? -1 : 1));
           let applied: Cand | null = null, checks = 0;
           for (const c of cands) {
             if (++checks > LIMITS.checksPerStep) { capHit.add("checks"); break; }
@@ -3032,7 +3110,7 @@ export function autoSchedule({
           const devNow = new Map(people.map((p) => [p.id, devOf(p)]));
           const off = people.filter((p) => devNow.get(p.id) !== 0);
           if (off.length === 0) return;
-          type Cand = { gain: number; size: number; tag: string; steps: Step[] };
+          type Cand = { gain: number; avoid: number; size: number; tag: string; steps: Step[] };
           const cands: Cand[] = [];
           const gainOf = (deltas: [ScheduleStaff, number][]): number => {
             const acc = new Map<string, number>();
@@ -3051,23 +3129,23 @@ export function autoSchedule({
                 if (!cb || !isSwappableCell(cb) || cb.shiftTypeId === ca.shiftTypeId) continue;
                 const bSt = stById.get(cb.shiftTypeId)!;
                 const gain = gainOf([[A, hrsOf(A, bSt, d) - hrsOf(A, aSt, d)], [B, hrsOf(B, aSt, d) - hrsOf(B, bSt, d)]]);
-                if (gain > 0) cands.push({ gain, size: 2, tag: `s${A.id}${B.id}${d}`, steps: [() => swap(d, A, B)] });
+                if (gain > 0) cands.push({ gain, avoid: avoidDelta(swapChanges(d, A, B)), size: 2, tag: `s${A.id}${B.id}${d}`, steps: [() => swap(d, A, B)] });
               }
             }
             if (isFillCell(A, d)) {
               if (devNow.get(A.id)! > 0) {
                 const g = gainOf([[A, -fillH(A, d)]]);
-                if (g > 0) cands.push({ gain: g, size: 1, tag: `d${A.id}${d}`, steps: [() => drop(d, A)] });
+                if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, d, null]]), size: 1, tag: `d${A.id}${d}`, steps: [() => drop(d, A)] });
               }
               for (const B of people) { // MOVE A→B
                 if (B.id === A.id || !isOpen(B, d)) continue;
                 const g = gainOf([[A, -fillH(A, d)], [B, fillH(B, d)]]);
-                if (g > 0) cands.push({ gain: g, size: 2, tag: `m${A.id}${B.id}${d}`, steps: [() => move(d, A, B)] });
+                if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, d, null], [B, d, fill.id]]), size: 2, tag: `m${A.id}${B.id}${d}`, steps: [() => move(d, A, B)] });
               }
             }
             if (isOpen(A, d) && devNow.get(A.id)! < 0) {
               const g = gainOf([[A, fillH(A, d)]]);
-              if (g > 0) cands.push({ gain: g, size: 1, tag: `+${A.id}${d}`, steps: [() => add(d, A)] });
+              if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, d, fill.id]]), size: 1, tag: `+${A.id}${d}`, steps: [() => add(d, A)] });
             }
           }
           // Two-hop MOVE: A (over) → G on e1, G → B (under) on e2; G's own hours move by
@@ -3082,12 +3160,12 @@ export function autoSchedule({
               for (const e2 of ppDates) {
                 if (e2 === e1 || !isFillCell(G, e2) || !isOpen(B, e2)) continue;
                 const g = gainOf([[A, -fillH(A, e1)], [G, fillH(G, e1) - fillH(G, e2)], [B, fillH(B, e2)]]);
-                if (g > 0) cands.push({ gain: g, size: 4, tag: `h${A.id}${G.id}${B.id}${e1}${e2}`, steps: [() => move(e1, A, G), () => move(e2, G, B)] });
+                if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, e1, null], [G, e1, fill.id], [G, e2, null], [B, e2, fill.id]]), size: 4, tag: `h${A.id}${G.id}${B.id}${e1}${e2}`, steps: [() => move(e1, A, G), () => move(e2, G, B)] });
               }
             }
           }
           if (cands.length === 0) return;
-          cands.sort((a, b) => b.gain - a.gain || a.size - b.size || (a.tag < b.tag ? -1 : 1));
+          cands.sort((a, b) => b.gain - a.gain || a.avoid - b.avoid || a.size - b.size || (a.tag < b.tag ? -1 : 1));
           let ok = false, checks = 0;
           for (const c of cands) {
             if (++checks > LIMITS.checksPerStep) { capHit.add("checks"); break; }
@@ -3928,6 +4006,26 @@ export function autoSchedule({
   // Card #174 backstop: nothing before writableFrom ever leaves the engine.
   if (writableFrom) {
     for (let i = suggestions.length - 1; i >= 0; i--) if (isFrozen(suggestions[i].date)) suggestions.splice(i, 1);
+  }
+
+  // Card #177: name every soft-avoided pair the run placed (one side is an engine cell),
+  // so the scheduler can see where the preference gave way.
+  if (avoidSet.size > 0) {
+    const placed = new Set(suggestions.map((x) => `${x.staffId}:${x.date}`));
+    const seen = new Set<string>();
+    const initialsOf = new Map(staff.map((p) => [p.id, p.initials]));
+    for (const x of [...suggestions].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.staffId < b.staffId ? -1 : 1))) {
+      for (const first of [prevDate(x.date), x.date]) {
+        const second = nextDate(first);
+        const key = `${x.staffId}:${first}`;
+        if (seen.has(key)) continue;
+        const a = grid.get(`${x.staffId}:${first}`), b = grid.get(`${x.staffId}:${second}`);
+        if (!a || !b || !isAvoidedPair(a.shiftTypeId, b.shiftTypeId)) continue;
+        if (!placed.has(`${x.staffId}:${first}`) && !placed.has(`${x.staffId}:${second}`)) continue;
+        seen.add(key);
+        warnings.push(`${initialsOf.get(x.staffId) ?? x.staffId} ${second}: ${b.code} after ${a.code} (an avoided pair)`);
+      }
+    }
   }
 
   return {

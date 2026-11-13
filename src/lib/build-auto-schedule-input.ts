@@ -113,6 +113,7 @@ export async function buildAutoScheduleInput(
     scheduleRequests,
     requiredFollowers,
     autoGenFactors,
+    followAvoids,
   ] = await Promise.all([
     db.staff.findMany({ where: { isActive: true }, include: { employmentType: true } }),
     db.shiftType.findMany(),
@@ -156,6 +157,7 @@ export async function buildAutoScheduleInput(
     }),
     db.requiredFollower.findMany(),
     db.autoGenFactor.findMany({ orderBy: { sortOrder: "asc" } }),
+    db.shiftFollowAvoid.findMany(), // card #177: soft "avoid B after A"
   ]);
 
   const payPeriods = allPayPeriods;
@@ -426,6 +428,7 @@ export async function buildAutoScheduleInput(
       allowOffShifts: r.allowOffShifts,
       mode: r.mode,
     })),
+    followAvoids: followAvoids.map((r) => ({ sourceShiftId: r.sourceShiftId, avoidShiftId: r.avoidShiftId })),
     scheduleRequests: scheduleRequests.map((r) => ({
       id: r.id,
       staffId: r.staffId,

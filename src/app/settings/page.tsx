@@ -23,7 +23,7 @@ export default async function Settings() {
   if (error) redirect("/");
   const canEditSettings = permissions!.includes("settings:edit");
   const canEditAutoGenPriority = permissions!.includes("settings:autogen-priority");
-  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, departmentTargets, employmentTypes, equityFactors, followRules, requiredFollowers, countColumns, printColumnRules, printAggregateColumns, autoGenFactors, autoGenProfiles, staffRows] = await Promise.all([
+  const [shiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefsRow, departmentTargets, employmentTypes, equityFactors, followRules, followAvoids, requiredFollowers, countColumns, printColumnRules, printAggregateColumns, autoGenFactors, autoGenProfiles, staffRows] = await Promise.all([
     prisma.shiftType.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.staffingRequirement.findMany({ orderBy: [{ shiftTypeId: "asc" }, { dayKey: "asc" }] }),
     getPayPeriods(),
@@ -37,6 +37,7 @@ export default async function Settings() {
     }),
     prisma.equityFactor.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.shiftFollowRule.findMany(),
+    prisma.shiftFollowAvoid.findMany(),
     prisma.requiredFollower.findMany(),
     prisma.countColumn.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.printColumnRule.findMany({ orderBy: { sortOrder: "asc" } }),
@@ -203,6 +204,7 @@ export default async function Settings() {
           allowOffShifts: r.allowOffShifts,
           mode: r.mode,
         }))}
+        followAvoids={followAvoids.map((r) => ({ id: r.id, sourceShiftId: r.sourceShiftId, avoidShiftId: r.avoidShiftId }))}
         requiredFollowers={requiredFollowers.map((r) => ({
           id: r.id,
           sourceShiftId: r.sourceShiftId,

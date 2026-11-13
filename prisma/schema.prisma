@@ -104,6 +104,8 @@ model ShiftType {
   followRulesAsAllowed ShiftFollowRule[] @relation("followRuleAllowed")
   requiredFollowerAsSource   RequiredFollower[] @relation("requiredFollowerSource")
   requiredFollowerAsFollower RequiredFollower[] @relation("requiredFollowerFollower")
+  followAvoidsAsSource       ShiftFollowAvoid[] @relation("followAvoidSource")
+  followAvoidsAsAvoided      ShiftFollowAvoid[] @relation("followAvoidAvoided")
   shiftEligibilityRules        ShiftEligibilityRule[]
   shiftMinimumTargets          ShiftMinimumTarget[]
   departmentTargets            DepartmentShiftTarget[]
@@ -558,6 +560,22 @@ model ShiftFollowRule {
 
   @@unique([sourceShiftId, allowedShiftId])
   @@map("shift_follow_rules")
+}
+
+// Card #177: a SOFT follow rule — "avoid `avoidShift` the day after `sourceShift`".
+// The engine steers away from the pair but still uses it when nothing better fills the
+// day. A separate table (not a mode on shift_follow_rules) so code without it ignores it.
+model ShiftFollowAvoid {
+  id            String   @id @default(cuid())
+  sourceShiftId String
+  avoidShiftId  String
+  createdAt     DateTime @default(now())
+
+  sourceShift ShiftType @relation("followAvoidSource", fields: [sourceShiftId], references: [id], onDelete: Cascade)
+  avoidShift  ShiftType @relation("followAvoidAvoided", fields: [avoidShiftId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceShiftId, avoidShiftId])
+  @@map("shift_follow_avoids")
 }
 
 // A REQUIRED follower: after a source shift the engine auto-places `followerShift`
