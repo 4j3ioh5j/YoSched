@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { autoSchedule, type AutoScheduleInput, type ScheduleStaff, type ScheduleAssignment } from "../auto-scheduler";
-import { applyScenario, applyScenarioExpanding, freesForRing } from "../scenario";
+import { applyScenario, applyScenarioExpanding, freesForRing, freesForScopeWithExplicit } from "../scenario";
 import { isPriorRunSpill, writableFromOf } from "../build-auto-schedule-input";
 import { whenToColumns, legacyPatternToWhen } from "../recurrence";
 import { withDayCaps, type TestShift } from "./test-day-caps";
@@ -195,6 +195,34 @@ describe("Live: never frees the cells of staff the engine won't refill (card #18
     expect(out.applied).toBe(true);
     expect(out.grid.find((c) => c.staffId === "p2" && c.date === JUNE[0])?.shiftTypeId).toBe("st-orc");
     expect(out.grid.filter((c) => c.date === JUNE[0] && c.shiftTypeId === "st-orc")).toHaveLength(1);
+  });
+});
+
+describe("Day/PP/Range: the user's own clears always reach the re-solve (card #180)", () => {
+  const inp = () => input({
+    writableFrom: FROM,
+    staff: [staff("p1", "AB"), staff("p2", "CD", { isAutoScheduled: false })],
+    existingAssignments: [autoOR("p1", JUNE[0]), autoOR("p2", JUNE[0]), autoOR("p1", MAY[0])],
+  });
+
+  it("merges explicit frees with the scope's frees, once per cell", () => {
+    const pinned = { has: () => false };
+    const frees = freesForScopeWithExplicit(inp(), pinned, new Set([JUNE[0]]), "day", [{ staffId: "p2", date: JUNE[0] }, { staffId: "p1", date: JUNE[0] }]);
+    expect(frees.map((f) => `${f.staffId}:${f.date}`).sort()).toEqual([`p1:${JUNE[0]}`, `p2:${JUNE[0]}`]);
+  });
+
+  it("clearing a non-auto-scheduled staffer's cell at Day scope empties it", () => {
+    const explicit = [{ staffId: "p2", date: JUNE[0] }];
+    const out = applyScenario(inp(), [], freesForScopeWithExplicit(inp(), { has: () => false }, new Set([JUNE[0]]), "day", explicit));
+    expect(out.applied).toBe(true);
+    expect(out.grid.find((c) => c.staffId === "p2" && c.date === JUNE[0])).toBeUndefined();
+  });
+
+  it("clearing an earlier-month cell at PP scope is refused (earlier-month), not silently ignored", () => {
+    const explicit = [{ staffId: "p1", date: MAY[0] }];
+    const out = applyScenario(inp(), [], freesForScopeWithExplicit(inp(), { has: () => false }, new Set([MAY[0]]), "pp", explicit));
+    expect(out.applied).toBe(false);
+    expect(out.rejected).toEqual([{ staffId: "p1", date: MAY[0], shiftTypeId: "st-or", reason: "earlier-month" }]);
   });
 });
 

@@ -8,7 +8,7 @@ import { staffPpTarget, ppDiffCell } from "@/lib/fte";
 import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, ALERT_CATEGORIES, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
-import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForScope, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
+import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForScopeWithExplicit, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, DEFAULT_LIVE_SCOPE, type LiveScope } from "@/lib/live-scope";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { liveBundleProblem } from "@/lib/live-bundle";
@@ -3696,7 +3696,7 @@ export function ScheduleGrid({
     // but it rebalances PP hours (the pre-Option-4 behavior).
     const outcome = liveScope === "limited"
       ? applyScenarioExpanding(base, pinsArray(nextPins), [...nextFrees].map(pinKeyParts), nextTouched, nextPins, "range")
-      : applyScenario(base, pinsArray(nextPins), freesForScope(base, nextPins, nextTouched, liveScope));
+      : applyScenario(base, pinsArray(nextPins), freesForScopeWithExplicit(base, nextPins, nextTouched, liveScope, [...nextFrees].map(pinKeyParts)));
     if (!outcome.applied) {
       // Hard-illegal pin: snap back (keep current grid + pins) and surface WHY.
       // The banner note alone was too easy to miss, so a refused keystroke read as
@@ -3725,7 +3725,7 @@ export function ScheduleGrid({
     // only as coverage needs; day/pp/range free everything in scope (full rebalance).
     const outcome = scope === "limited"
       ? applyScenarioExpanding(base, pinsArray(livePinsRef.current), [...liveFreesRef.current].map(pinKeyParts), liveTouchedRef.current, livePinsRef.current, "range")
-      : applyScenario(base, pinsArray(livePinsRef.current), freesForScope(base, livePinsRef.current, liveTouchedRef.current, scope));
+      : applyScenario(base, pinsArray(livePinsRef.current), freesForScopeWithExplicit(base, livePinsRef.current, liveTouchedRef.current, scope, [...liveFreesRef.current].map(pinKeyParts)));
     if (outcome.applied) { clearReject(); setLiveOutcome(outcome); }
   }
 

@@ -397,6 +397,25 @@ export function freesForScope(
   return freesForRing(input, pinned, touchedDates, SCOPE_RING[scope]);
 }
 
+// Card #180: the frees for a Day/PP/Range re-solve — the user's own explicit
+// frees (cells they emptied) PLUS every freeable cell in scope. The explicit ones
+// must be passed through: freesForRing never auto-frees a cell the engine won't
+// refill (a non-auto-scheduled staffer's, an earlier month's), so without them a
+// user's clear of such a cell would silently do nothing (or, for an earlier-month
+// cell, skip applyScenario's "earlier-month" refusal). Deduped by cell.
+export function freesForScopeWithExplicit(
+  input: AutoScheduleInput,
+  pinned: { has(key: string): boolean },
+  touchedDates: ReadonlySet<string>,
+  scope: "day" | "pp" | "range",
+  explicitFrees: ScenarioFree[],
+): ScenarioFree[] {
+  const out = new Map<string, ScenarioFree>();
+  for (const f of explicitFrees) out.set(keyOf(f.staffId, f.date), f);
+  for (const f of freesForScope(input, pinned, touchedDates, scope)) out.set(keyOf(f.staffId, f.date), f);
+  return [...out.values()];
+}
+
 // Expanding (minimal-perturbation) re-solve — #248 Option 4. Instead of freeing the
 // whole scope at once, free the user's explicit frees plus an ever-widening ring of
 // discretionary cells, stopping at the SMALLEST ring that doesn't introduce a new

@@ -21,4 +21,11 @@ describe("earlier-month freeze wiring (card #174)", () => {
     expect(grid).toContain('if (r.reason === "earlier-month")');
     expect(grid).toContain("is in an earlier month and can't be changed by auto-generate${more}");
   });
+
+  it("Day/PP/Range re-solves (edit and scope change) pass the user's explicit frees (card #180)", () => {
+    const grid = read("schedule-grid.tsx");
+    expect(grid).toContain("freesForScopeWithExplicit(base, nextPins, nextTouched, liveScope, [...nextFrees].map(pinKeyParts))");
+    expect(grid).toContain("freesForScopeWithExplicit(base, livePinsRef.current, liveTouchedRef.current, scope, [...liveFreesRef.current].map(pinKeyParts))");
+    expect(grid).not.toMatch(/applyScenario\([^)]*freesForScope\(/);
+  });
 });
