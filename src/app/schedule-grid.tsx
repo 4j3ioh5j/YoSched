@@ -13,6 +13,7 @@ import { LIVE_SCOPES, LIVE_SCOPE_LABELS, DEFAULT_LIVE_SCOPE, type LiveScope } fr
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { liveBundleProblem } from "@/lib/live-bundle";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
+import { printStampText, unsavedPrintWarning } from "@/lib/print-stamp";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
@@ -700,6 +701,33 @@ export function ScheduleGrid({
     [localAssignments, viewYear, viewMonth],
   );
   const monthModified = focalVersion ? focalVersion.snapshotHash !== liveMonthHash : false;
+
+  // Card #173 — printing. The print date/time is written straight into the footer
+  // span on `beforeprint` (fires for the Print button AND the browser's own print),
+  // so it is current without waiting for a React render. The Print button and
+  // Ctrl/Cmd+P both go through printMonth, which first warns when the month has
+  // edits not in its saved version.
+  const printStampRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const stamp = () => { if (printStampRef.current) printStampRef.current.textContent = printStampText(new Date(), dateFormat); };
+    window.addEventListener("beforeprint", stamp);
+    return () => window.removeEventListener("beforeprint", stamp);
+  }, [dateFormat]);
+  const printMonth = useCallback(() => {
+    const warning = unsavedPrintWarning(focalVersion ? focalVersion.versionNumber : null, monthModified);
+    if (warning && !window.confirm(warning)) return;
+    window.print();
+  }, [focalVersion, monthModified]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        printMonth();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [printMonth]);
 
   // Load the version list whenever the panel is open and the focal month changes.
   useEffect(() => {
@@ -3980,6 +4008,19 @@ export function ScheduleGrid({
             </>
           )}
         </div>
+        {/* Card #173: a visible way to approve every pending request in the selected
+            cells — the same action as the + key (requestApproveRef). Same gates as the
+            key: edit rights, not Live, a staff-cell selection or active cell. */}
+        {canEdit && (
+          <button
+            onClick={() => requestApproveRef.current("approved")}
+            disabled={liveMode || !!activeDedCol || !(selection.size > 0 || (activeRow && activeCol))}
+            className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:hover:bg-slate-700 rounded transition-colors text-slate-300"
+            title={liveMode ? "Exit Live to approve requests" : "Approve every pending request in the selected cells (+)"}
+          >
+            Approve selected
+          </button>
+        )}
         <button
           onClick={() => setShowVersions(true)}
           disabled={liveMode}
@@ -3995,7 +4036,7 @@ export function ScheduleGrid({
           )}
         </button>
         <button
-          onClick={() => window.print()}
+          onClick={printMonth}
           className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
           title="Print this month"
         >
@@ -4218,10 +4259,10 @@ export function ScheduleGrid({
                     }}
                     onMouseLeave={() => { setHoverCol(null); setTooltip(null); }}
                   >
-                    <span className={[
-                      !p.isAutoScheduled ? "text-amber-400" : "text-slate-300",
-                      isActiveCol ? "!text-blue-200 font-bold" : "",
-                    ].join(" ")}>
+                    {/* No !important colour utility here: print CSS forces header text
+                        black, and a layered !important would beat it (a selected column
+                        printed pale blue, reading as greyed out — card #173). */}
+                    <span className={isActiveCol ? "text-blue-200 font-bold" : !p.isAutoScheduled ? "text-amber-400" : "text-slate-300"}>
                       {p.initials}
                     </span>
                   </th>
@@ -4612,15 +4653,17 @@ export function ScheduleGrid({
         {focalVersion ? (
           <>
             <span className="font-semibold text-slate-200">Version {focalVersion.versionNumber}</span>
-            <span className="text-slate-500">·</span>
-            <span>saved {formatDate(parseDate(focalVersion.savedAt.slice(0, 10)), dateFormat)}</span>
+            {/* Print shows only "Version n" and the print time; the rest is screen-only.
+                The unsaved-edits notice became a confirm before printing (card #173). */}
+            <span data-print-hide className="text-slate-500">·</span>
+            <span data-print-hide>saved {formatDate(parseDate(focalVersion.savedAt.slice(0, 10)), dateFormat)}</span>
             {focalVersion.comment && (
-              <span className="text-slate-500 italic truncate max-w-md" title={focalVersion.comment}>
+              <span data-print-hide className="text-slate-500 italic truncate max-w-md" title={focalVersion.comment}>
                 — {focalVersion.comment}
               </span>
             )}
             {monthModified && (
-              <span data-version-modified className="text-amber-500 font-semibold">
+              <span data-print-hide data-version-modified className="text-amber-500 font-semibold">
                 · includes unsaved edits not in this version
               </span>
             )}
@@ -4628,6 +4671,7 @@ export function ScheduleGrid({
         ) : (
           <span className="text-slate-500">No saved version for {MONTH_NAMES[viewMonth]} {viewYear}</span>
         )}
+        <span data-print-stamp ref={printStampRef} className="hidden" />
       </div>
 
       {/* Request save error — partial/failed saves are surfaced, not silent */}

@@ -54,12 +54,18 @@ input[type="checkbox"]:disabled {
 }
 
 @media print {
+  /* Zero page margin: browsers only draw their own header/footer (URL, page title,
+     print date) inside the page margin, so with none they print nothing there
+     (card #173). The 0.4in margin moves onto the body instead; the schedule is a
+     single page, so the once-per-document body padding gives the same layout. The
+     app prints its own date/time next to the version number ([data-print-stamp]). */
   @page {
     size: landscape;
-    margin: 0.4in;
+    margin: 0;
   }
 
   body {
+    padding: 0.4in !important;
     background: white !important;
     color: black !important;
     -webkit-print-color-adjust: exact;
@@ -89,7 +95,7 @@ input[type="checkbox"]:disabled {
   }
   [data-print-brand] {
     display: block !important;
-    font-size: 22px !important;
+    font-size: 17px !important;
     font-weight: 800 !important;
     letter-spacing: 0.01em;
     text-align: center !important;
@@ -124,11 +130,13 @@ input[type="checkbox"]:disabled {
      per-column widths (w-[88px]/w-[44px]/w-[32px]) AND min-widths must both be
      overridden — otherwise their sum still overflows the page and the browser
      shrinks the whole table again. width:auto lets fixed layout share 100% evenly. */
+  /* clip, not ellipsis: a code that is a hair too wide loses a sliver of its last
+     letter rather than becoming "R…" (card #173). */
   thead th, tbody td {
     width: auto !important;
     min-width: 0 !important;
     overflow: hidden !important;
-    text-overflow: ellipsis !important;
+    text-overflow: clip !important;
   }
   /* Center every cell's content both ways. Table cells default to
      vertical-align:baseline, so in the fixed-height rows the text otherwise sits low
@@ -170,14 +178,23 @@ input[type="checkbox"]:disabled {
     background: #f1f5f9 !important;
   }
 
-  /* Column headers (staff initials) — bold for print legibility. */
+  /* Column headers (staff initials) — bold for print legibility. Sized for print
+     (the on-screen text-xs 12px cut "RMc"/"ADh" to "R…"/"A…" in the narrow equal-share
+     columns), and any on-screen selection/hover outline (an inline box-shadow) is
+     dropped so the selected or hovered column never prints marked (card #173). */
   thead th {
     background: #f1f5f9 !important;
     color: #1e293b !important;
     border: 1px solid #cbd5e1 !important;
-    padding: 3px 2px !important;
+    padding: 3px 0 !important;
     position: static !important;
     font-weight: 700 !important;
+    font-size: 8px !important;
+    letter-spacing: -0.02em !important;
+    box-shadow: none !important;
+  }
+  tbody td:first-child {
+    box-shadow: none !important;
   }
 
   tbody tr {
@@ -197,7 +214,7 @@ input[type="checkbox"]:disabled {
        is empty), so a geometrically-centered box reads ~1px high. Shifting the content box
        down by biasing the padding compensates. Vertical total stays 2px (was 1+1) so the
        fixed row height / 31-day one-page fit is unchanged. */
-    padding: 2px 3px 0 !important;
+    padding: 2px 1px 0 !important;
     background: white !important;
     position: static !important;
     height: 0.19in !important;
@@ -241,7 +258,8 @@ input[type="checkbox"]:disabled {
     background: transparent !important;
     color: #000 !important;
     font-weight: 400 !important;
-    font-size: 10px !important;
+    font-size: 9px !important;
+    letter-spacing: -0.02em !important;
     border-radius: 0 !important;
     padding: 0 !important;
   }
@@ -329,11 +347,11 @@ input[type="checkbox"]:disabled {
   [data-version-footer] span {
     color: #1e293b !important;
   }
-  /* The "unsaved edits" warning must remain conspicuous in print so a printed
-     schedule never silently implies it matches the named version. */
-  [data-version-footer] [data-version-modified] {
-    font-weight: 700 !important;
-    color: #000 !important;
+  /* Print date/time, to the right of "Version n" (card #173). The unsaved-edits
+     notice no longer prints; printing a modified month asks first instead. */
+  [data-version-footer] [data-print-stamp] {
+    display: inline !important;
+    margin-left: 12px !important;
   }
 }
 

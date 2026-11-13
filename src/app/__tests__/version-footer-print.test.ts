@@ -1,36 +1,94 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { printStampText, unsavedPrintWarning } from "@/lib/print-stamp";
 
-// Regression guard for the Code-Review finding: "print footer hides the
-// unsaved-edits state." A printed schedule that shows "Version N" while the live
-// month has drifted would be misleading, so the unsaved-edits marker MUST remain
-// visible in print. These checks fail if someone re-hides it.
+// History: an earlier Code-Review finding required that a printout never silently
+// imply it matches "Version N" while the month has drifted. That used to be a printed
+// "includes unsaved edits" notice. Card #173 (David's decision): the notice no longer
+// prints; instead EVERY print path asks the scheduler first (OK/Cancel) when the month
+// has unsaved edits. These checks keep that guarantee.
 
 const SRC = path.resolve(__dirname, "..");
 const grid = readFileSync(path.join(SRC, "schedule-grid.tsx"), "utf8");
 const css = readFileSync(path.join(SRC, "globals.css"), "utf8");
+const printBlock = css.slice(css.indexOf("@media print"));
 
-describe("version footer print visibility", () => {
-  it("renders a dedicated unsaved-edits marker in the footer", () => {
-    expect(grid).toContain("data-version-modified");
+describe("unsaved edits: warned before printing, not printed (card #173)", () => {
+  it("warns only when the month differs from a saved version", () => {
+    expect(unsavedPrintWarning(3, true)).toMatch(/not saved in Version 3/);
+    expect(unsavedPrintWarning(3, true)).toMatch(/Print anyway\?/);
+    expect(unsavedPrintWarning(3, false)).toBeNull();
+    expect(unsavedPrintWarning(null, true)).toBeNull();
+    expect(unsavedPrintWarning(null, false)).toBeNull();
   });
 
-  it("does not mark the unsaved-edits element as print-hidden", () => {
+  it("the only window.print() call sits behind the unsaved-edits confirm", () => {
+    const calls = grid.match(/window\.print\(\)/g) ?? [];
+    expect(calls.length).toBe(1);
+    const fn = grid.slice(grid.indexOf("const printMonth = useCallback"), grid.indexOf("window.print()") + 20);
+    expect(fn).toContain("unsavedPrintWarning(");
+    expect(fn).toMatch(/if \(warning && !window\.confirm\(warning\)\) return;/);
+  });
+
+  it("the Print button and Ctrl/Cmd+P both go through printMonth", () => {
+    expect(grid).toContain("onClick={printMonth}");
+    expect(grid).toMatch(/\(e\.metaKey \|\| e\.ctrlKey\)[^\n]*e\.key\.toLowerCase\(\) === "p"[\s\S]{0,80}e\.preventDefault\(\);\s*printMonth\(\);/);
+  });
+
+  it("the on-screen notice stays, but is print-hidden", () => {
     const idx = grid.indexOf("data-version-modified");
-    // Inspect the element's opening tag (a small window around the attribute).
-    const around = grid.slice(idx - 60, idx + 60);
-    expect(around).not.toContain("data-print-hide");
+    expect(idx).toBeGreaterThan(-1);
+    expect(grid.slice(idx - 60, idx + 60)).toContain("data-print-hide");
   });
 
-  it("keeps the footer visible (not display:none) in the print stylesheet", () => {
-    const printStart = css.indexOf("@media print");
-    expect(printStart).toBeGreaterThan(-1);
-    const printBlock = css.slice(printStart);
+  it("the footer still prints, showing the version and the print time", () => {
     expect(printBlock).toContain("[data-version-footer]");
-    // The footer must not be hidden in print.
     expect(printBlock).not.toMatch(/\[data-version-footer\][^{]*\{[^}]*display:\s*none/);
-    // And the modified marker must have its own conspicuous print styling.
-    expect(printBlock).toContain("[data-version-modified]");
+    expect(printBlock).toMatch(/\[data-print-stamp\][^{]*\{[^}]*display:\s*inline !important/);
+    // "Version n" itself is not print-hidden; the saved date and comment are.
+    const v = grid.indexOf(">Version {focalVersion.versionNumber}</span>");
+    expect(v).toBeGreaterThan(-1);
+    expect(grid.slice(v - 80, v)).not.toContain("data-print-hide");
+    expect(grid).toContain("<span data-print-hide>saved {formatDate(");
+    expect(grid).toMatch(/<span data-print-hide className="text-slate-500 italic truncate max-w-md" title=\{focalVersion\.comment\}>/);
+  });
+
+  it("stamps the print time on beforeprint, 24-hour", () => {
+    expect(grid).toMatch(/addEventListener\("beforeprint", stamp\)/);
+    expect(printStampText(new Date(2027, 1, 3, 7, 5), "YYYY-MM-DD")).toBe("Printed 2027-02-03 07:05");
+    expect(printStampText(new Date(2027, 1, 3, 19, 41), "MMMM D, YYYY")).toBe("Printed February 3, 2027 19:41");
+  });
+});
+
+describe("print layout (card #173)", () => {
+  it("zero page margin (no browser URL/title/date) with the margin moved to the body", () => {
+    expect(printBlock).toMatch(/@page \{\s*size: landscape;\s*margin: 0;\s*\}/);
+    expect(printBlock).toMatch(/body \{\s*padding: 0\.4in !important;/);
+  });
+
+  it("smaller YoSched title", () => {
+    expect(printBlock).toMatch(/\[data-print-brand\] \{[^}]*font-size: 17px !important;/);
+  });
+
+  it("header initials sized for print, clipped not ellipsised, no outline", () => {
+    expect(printBlock).toMatch(/thead th \{[^}]*font-size: 8px !important;[^}]*box-shadow: none !important;/);
+    expect(printBlock).toMatch(/thead th, tbody td \{[^}]*text-overflow: clip !important;/);
+    expect(printBlock).not.toMatch(/text-overflow:\s*ellipsis/);
+  });
+
+  it("a selected column's header has no !important colour that beats print black", () => {
+    expect(grid).not.toContain("!text-blue-200");
+    expect(printBlock).toMatch(/thead th, thead th \*,[\s\S]{0,80}color: #000 !important;/);
+  });
+});
+
+describe("Approve selected button (card #173)", () => {
+  it("runs the same approve action as the + key, with the same gates", () => {
+    const i = grid.indexOf("Approve selected");
+    expect(i).toBeGreaterThan(-1);
+    const btn = grid.slice(grid.lastIndexOf("{canEdit && (", i), i);
+    expect(btn).toContain('onClick={() => requestApproveRef.current("approved")}');
+    expect(btn).toContain("disabled={liveMode || !!activeDedCol || !(selection.size > 0 || (activeRow && activeCol))}");
   });
 });
