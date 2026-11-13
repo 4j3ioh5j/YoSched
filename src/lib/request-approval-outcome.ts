@@ -120,6 +120,10 @@ export function reasonFromRejection(
       return "the staff member is not on the active roster";
     case "unknown-shift":
       return "the requested shift no longer exists";
+    // Card #174: approval re-solves never set writableFrom, so this is not reached
+    // today; kept so the sentence exists if one ever does.
+    case "earlier-month":
+      return `${day} is in an earlier month and can't be changed`;
   }
 }
 

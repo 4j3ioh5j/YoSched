@@ -543,6 +543,11 @@ export type AutoScheduleInput = {
   // autoScheduleCandidates filters those out (it never surfaces a candidate worse
   // than canonical on the inviolable tier). Use that, not raw seeds, for options.
   seed?: number;
+  // Card #174: the first date this run may write (YYYY-MM-DD, the run month's 1st).
+  // Earlier dates are read-only context: their cells still count (PP hours, follow
+  // rules, rolling windows), but the engine never places anything on them. A run
+  // never changes any part of an earlier, completed month. Absent ⇒ no limit.
+  writableFrom?: string;
 };
 
 export function autoSchedule({
@@ -565,7 +570,9 @@ export function autoSchedule({
   requiredFollowers,
   factorOrder,
   seed,
+  writableFrom,
 }: AutoScheduleInput): AutoScheduleResult {
+  const isFrozen = (date: string): boolean => !!writableFrom && date < writableFrom;
   // Seeded final tiebreak helper (Slice 4b). seed 0/undefined ⇒ returns 0 for
   // every key, so all seeded comparisons are no-ops and the engine produces its
   // canonical output unchanged. seed > 0 ⇒ a per-key deterministic hash applied
@@ -844,6 +851,7 @@ export function autoSchedule({
   // cap (Staffing Rules Max), one-shift-per-day — still applies. Hard MIN is not an availability
   // gate (it lives in the objective/floor), so only the MAX needs a waiver (Codex #1779).
   function isAvailable(staff: ScheduleStaff, date: string, st: ScheduleShiftType, opts?: { ignoreHardMax?: boolean }): boolean {
+    if (isFrozen(date)) return false;
     if (isAssigned(staff.id, date)) return false;
     // Approved hard requests (OFF / NEGATE_SHIFT) gate every placement that flows
     // through isAvailable (staffing fills, minimum targets, FTE fill shift).
@@ -886,6 +894,7 @@ export function autoSchedule({
     confidence: number,
     noCount = false
   ) {
+    if (isFrozen(date)) return;
     const key = `${staffId}:${date}`;
     const existing = grid.get(key);
     if (existing && !isFillableOffCell(existing)) return;
@@ -3412,6 +3421,11 @@ export function autoSchedule({
       factorOrder,
     ),
   };
+
+  // Card #174 backstop: nothing before writableFrom ever leaves the engine.
+  if (writableFrom) {
+    for (let i = suggestions.length - 1; i >= 0; i--) if (isFrozen(suggestions[i].date)) suggestions.splice(i, 1);
+  }
 
   return {
     suggestions,

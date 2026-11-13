@@ -11,7 +11,7 @@ const db = vi.hoisted(() => ({
   reqs: [] as { shiftTypeId: string; dayKey: string; minCount: number; preferredCount: number; maxCount: number | null }[],
   factors: [] as { factorType: string; shiftTypeId: string | null; weight: number; enabled: boolean }[],
   // Rows as the DB returns them; a stale joined `shiftType` is planted to prove nothing reads it.
-  assignments: [] as { staffId: string; date: string; shiftTypeId: string; isLocked: boolean; source: string }[],
+  assignments: [] as { staffId: string; date: string; shiftTypeId: string; isLocked: boolean; source: string; autoMonth?: string | null }[],
 }));
 
 vi.mock("@/lib/pay-periods-server", () => ({ getPayPeriods: async () => [] }));
@@ -140,6 +140,27 @@ describe("auto-schedule input bundle: staffing requirements carry both keys", ()
     expect(input.existingAssignments.map((a) => [a.date, a.shiftTypeId, a.code])).toEqual([["2026-11-02", "st-orc", "ORC"]]);
     expect(input.historicalAssignments.map((a) => [a.date, a.shiftTypeId, a.code])).toEqual([["2026-10-05", "st-orc", "ORC"]]);
     expect(JSON.stringify(input)).not.toContain("STALE-JOIN");
+    db.assignments = [];
+  });
+
+  it("card #174: with runMonth, writableFrom is the 1st and an earlier run's in-month spill is left out", async () => {
+    db.shifts = [{ id: "st-or", code: "OR" }];
+    db.reqs = [];
+    db.factors = [];
+    db.assignments = [
+      { staffId: "a", date: "2026-10-30", shiftTypeId: "st-or", isLocked: false, source: "auto", autoMonth: "2026-10" }, // earlier month: kept (context)
+      { staffId: "a", date: "2026-11-02", shiftTypeId: "st-or", isLocked: false, source: "auto", autoMonth: "2026-10" }, // October's spill: dropped
+      { staffId: "b", date: "2026-11-02", shiftTypeId: "st-or", isLocked: true, source: "auto", autoMonth: "2026-10" }, // locked: kept
+      { staffId: "c", date: "2026-11-02", shiftTypeId: "st-or", isLocked: false, source: "manual", autoMonth: null }, // manual: kept
+      { staffId: "d", date: "2026-11-02", shiftTypeId: "st-or", isLocked: false, source: "auto", autoMonth: "2026-11" }, // own run: kept
+    ];
+    const withMonth = await buildAutoScheduleInput("2026-10-25", "2026-11-30", { runMonth: "2026-11" });
+    expect(withMonth.writableFrom).toBe("2026-11-01");
+    expect(withMonth.existingAssignments.map((a) => `${a.staffId}:${a.date}`)).toEqual(["a:2026-10-30", "b:2026-11-02", "c:2026-11-02", "d:2026-11-02"]);
+    // Without runMonth (request-approval-resolve): unchanged — no freeze, nothing dropped.
+    const plain = await buildAutoScheduleInput("2026-10-25", "2026-11-30");
+    expect(plain.writableFrom).toBeUndefined();
+    expect(plain.existingAssignments).toHaveLength(5);
     db.assignments = [];
   });
 });

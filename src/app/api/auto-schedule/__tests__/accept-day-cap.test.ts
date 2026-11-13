@@ -119,3 +119,47 @@ describe("PUT /api/auto-schedule (Accept) re-checks per-day caps on the server",
     expect(db.rows).toEqual([]);
   });
 });
+
+describe("PUT /api/auto-schedule never writes an earlier month (card #174)", () => {
+  // The viewed November range opens in late October (the first pay period); the
+  // run's month is 2026-11, so nothing before 2026-11-01 may be written.
+  const RANGE = { startDate: "2026-10-25", endDate: "2026-12-05" };
+  const OCT = "2026-10-26"; // a Monday
+
+  it("skips an earlier-month suggestion as earlier-month and writes the rest", async () => {
+    const res = await acceptRun(req({ ...RANGE, suggestions: [sug("a", OCT, "st-or"), sug("b", TUE, "st-or")] }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.applied.map((a: { staffId: string; date: string }) => `${a.staffId}:${a.date}`)).toEqual([`b:${TUE}`]);
+    expect(body.skipped).toEqual([{ staffId: "a", date: OCT, reason: "earlier-month" }]);
+    expect(db.rows.map((r) => r.date.toISOString().slice(0, 10))).toEqual([TUE]);
+    expect(db.rows[0].autoMonth).toBe("2026-11");
+  });
+
+  it("an earlier-month suggestion that would break a day cap does not refuse the valid batch", async () => {
+    db.caps.push({ shiftTypeId: "st-orc", dayKey: "1", maxCount: 1 });
+    db.rows = [row("z", OCT, "st-orc")]; // October's Monday already has its one ORC
+    const res = await acceptRun(req({ ...RANGE, suggestions: [sug("a", OCT, "st-orc"), sug("b", MON, "st-orc")] }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.skipped).toEqual([{ staffId: "a", date: OCT, reason: "earlier-month" }]);
+    expect(body.applied).toHaveLength(1);
+    expect(db.rows.find((r) => r.staffId === "z")!.shiftTypeId).toBe("st-orc");
+    expect(db.rows.find((r) => r.staffId === "a")).toBeUndefined();
+  });
+
+  it("a batch that is entirely earlier-month writes nothing and reports every skip", async () => {
+    const res = await acceptRun(req({ ...RANGE, suggestions: [sug("a", OCT, "st-or"), sug("b", "2026-10-27", "st-or")] }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.applied).toEqual([]);
+    expect(body.skipped.map((s: { reason: string }) => s.reason)).toEqual(["earlier-month", "earlier-month"]);
+    expect(db.rows).toEqual([]);
+  });
+
+  it("without a viewed range (legacy client) nothing is skipped as earlier-month", async () => {
+    const res = await acceptRun(req({ suggestions: [sug("a", OCT, "st-or")] }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).skipped).toEqual([]);
+  });
+});

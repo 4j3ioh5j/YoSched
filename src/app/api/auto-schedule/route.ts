@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { autoSchedule } from "@/lib/auto-scheduler";
-import { buildAutoScheduleInput } from "@/lib/build-auto-schedule-input";
+import { buildAutoScheduleInput, writableFromOf } from "@/lib/build-auto-schedule-input";
 import { syncRequestApprovalsAfterCommit, visibleRequestChanges } from "@/lib/request-sync";
 import { owningMonthKey, isValidDateRange } from "@/lib/auto-clear";
 import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, refusalResponse, isTxTimeout, busyResponse } from "@/lib/day-cap-db";
@@ -26,7 +26,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const input = await buildAutoScheduleInput(startDate, endDate);
+  // Card #174: a month's run never writes before the month's 1st.
+  const runMonth = isValidDateRange(startDate, endDate) ? owningMonthKey(startDate, endDate) : undefined;
+  const input = await buildAutoScheduleInput(startDate, endDate, { runMonth });
   return NextResponse.json(autoSchedule(input));
 }
 
@@ -51,19 +53,6 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Each suggestion needs staffId, date (YYYY-MM-DD) and shiftTypeId" }, { status: 400 });
   }
 
-  // Per-day cap (Staffing Rules "Max"), re-checked here because the server is the
-  // authority: the browser engine honours the caps itself, but its copy of the rules
-  // or of the saved grid can be stale by the time the user accepts. Counted against
-  // the SAVED rows on the touched dates, minus the cells the batch overwrites; a
-  // suggestion onto a locked cell is skipped below, so it neither replaces nor adds.
-  // Refuse the WHOLE batch (nothing written) and name the offending cell(s) so the
-  // grid can show the same red-border rejection as a manual over-cap edit.
-  const dates = [...new Set(suggestions.map((s) => s.date))];
-  const caps = await loadDayCaps(dates);
-
-  const shiftTypes = await prisma.shiftType.findMany();
-  const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
-
   // The calendar month this run targets (the applied view), stamped on every
   // row written below so "Clear Auto" of that month can remove its overflow
   // into adjacent months by origin — see auto-clear.ts and the DELETE handler.
@@ -72,6 +61,32 @@ export async function PUT(req: NextRequest) {
     startDate && endDate && isValidDateRange(startDate, endDate)
       ? owningMonthKey(startDate, endDate)
       : null;
+
+  // Card #174: never write any part of an earlier, completed month. A suggestion
+  // dated before the run month's 1st (e.g. from a cached old client whose engine
+  // still filled the first pay period's earlier-month days) is skipped, and it is
+  // set aside BEFORE the cap check so it can't refuse the valid rest of the batch.
+  const writableFrom = autoMonth ? writableFromOf(autoMonth) : null;
+  const earlierSkips = suggestions
+    .filter((s) => writableFrom !== null && s.date < writableFrom)
+    .map((s) => ({ staffId: s.staffId, date: s.date, reason: "earlier-month" }));
+  const writable = writableFrom === null ? suggestions : suggestions.filter((s) => s.date >= writableFrom);
+  if (writable.length === 0) {
+    return NextResponse.json({ applied: [], skipped: earlierSkips, requestChanges: [] });
+  }
+
+  // Per-day cap (Staffing Rules "Max"), re-checked here because the server is the
+  // authority: the browser engine honours the caps itself, but its copy of the rules
+  // or of the saved grid can be stale by the time the user accepts. Counted against
+  // the SAVED rows on the touched dates, minus the cells the batch overwrites; a
+  // suggestion onto a locked cell is skipped below, so it neither replaces nor adds.
+  // Refuse the WHOLE batch (nothing written) and name the offending cell(s) so the
+  // grid can show the same red-border rejection as a manual over-cap edit.
+  const dates = [...new Set(writable.map((s) => s.date))];
+  const caps = await loadDayCaps(dates);
+
+  const shiftTypes = await prisma.shiftType.findMany();
+  const stMap = new Map(shiftTypes.map((st) => [st.id, st]));
 
   // The cap check and every upsert run in ONE transaction under the touched dates'
   // advisory locks (src/lib/day-cap-db.ts): a manual edit on one of those dates
@@ -89,7 +104,7 @@ export async function PUT(req: NextRequest) {
       });
       const current = onDates.map((a) => ({ staffId: a.staffId, date: dateKey(a.date), shiftTypeId: a.shiftTypeId }));
       const lockedKeys = new Set(onDates.filter((a) => a.isLocked).map((a) => `${a.staffId}:${dateKey(a.date)}`));
-      const proposed = suggestions
+      const proposed = writable
         .filter((s) => !lockedKeys.has(`${s.staffId}:${s.date}`))
         .map((s) => ({ staffId: s.staffId, date: s.date, shiftTypeId: s.shiftTypeId }));
       const violations = dayCapViolations(proposed, current, caps.capOf);
@@ -99,8 +114,8 @@ export async function PUT(req: NextRequest) {
       }
 
       const applied: AppliedRow[] = [];
-      const skipped: { staffId: string; date: string; reason: string }[] = [];
-      for (const s of suggestions) {
+      const skipped: { staffId: string; date: string; reason: string }[] = [...earlierSkips];
+      for (const s of writable) {
         if (lockedKeys.has(`${s.staffId}:${s.date}`)) {
           skipped.push({ staffId: s.staffId, date: s.date, reason: "locked" });
           continue;

@@ -50,10 +50,34 @@ export function coveringRange(payPeriods: readonly PayPeriodLike[], startDate: s
   return { effectiveStart, effectiveEnd };
 }
 
+// Card #174: a month's run (runMonth "YYYY-MM") never writes before the month's 1st;
+// earlier dates are read-only context. The engine enforces it via writableFrom.
+export function writableFromOf(runMonth: string): string {
+  return `${runMonth}-01`;
+}
+
+// Card #174: the forward spill an EARLIER month's run left in this month (unlocked
+// auto cells stamped with an earlier autoMonth, dated on/after the month's 1st) is
+// this run's to redo, so it is left out of the engine's fixed context. Manual,
+// imported, request and locked rows, rows of this or a later run, and anything
+// before the month's 1st stay fixed.
+export function isPriorRunSpill(
+  row: { date: string; isLocked: boolean; source: string | null; autoMonth: string | null },
+  runMonth: string,
+): boolean {
+  return (
+    row.source === "auto" &&
+    !row.isLocked &&
+    row.autoMonth !== null &&
+    row.autoMonth < runMonth &&
+    row.date >= writableFromOf(runMonth)
+  );
+}
+
 export async function buildAutoScheduleInput(
   startDate: string,
   endDate: string,
-  opts: { client?: InputReadClient; payPeriods?: readonly PayPeriodLike[] } = {},
+  opts: { client?: InputReadClient; payPeriods?: readonly PayPeriodLike[]; runMonth?: string } = {},
 ): Promise<AutoScheduleInput> {
   // Every table read goes through `db`; the pay periods come from the caller when it already read
   // them under its own locks (getPayPeriods may regenerate rows in a transaction of its own, so it
@@ -300,14 +324,19 @@ export async function buildAutoScheduleInput(
       category: st.category,
       autoSchedulable: st.autoSchedulable,
     })),
-    existingAssignments: existingAssignments.map((a) => ({
-      staffId: a.staffId,
-      date: a.date.toISOString().split("T")[0],
-      shiftTypeId: a.shiftTypeId,
-      code: shiftCodeMap.get(a.shiftTypeId) ?? "?",
-      isLocked: a.isLocked,
-      source: a.source,
-    })),
+    existingAssignments: existingAssignments
+      .filter((a) => !opts.runMonth || !isPriorRunSpill(
+        { date: a.date.toISOString().split("T")[0], isLocked: a.isLocked, source: a.source, autoMonth: a.autoMonth },
+        opts.runMonth,
+      ))
+      .map((a) => ({
+        staffId: a.staffId,
+        date: a.date.toISOString().split("T")[0],
+        shiftTypeId: a.shiftTypeId,
+        code: shiftCodeMap.get(a.shiftTypeId) ?? "?",
+        isLocked: a.isLocked,
+        source: a.source,
+      })),
     payPeriods: payPeriods.map((pp) => ({
       startDate: pp.startDate.toISOString().split("T")[0],
       endDate: pp.endDate.toISOString().split("T")[0],
@@ -416,5 +445,6 @@ export async function buildAutoScheduleInput(
       enabled: f.enabled,
       hoursPolicy: parseHoursPolicy(f.hoursPolicy),
     })),
+    ...(opts.runMonth ? { writableFrom: writableFromOf(opts.runMonth) } : {}),
   };
 }

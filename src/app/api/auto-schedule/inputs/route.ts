@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-guard";
 import { buildAutoScheduleInput } from "@/lib/build-auto-schedule-input";
+import { owningMonthKey, isValidDateRange } from "@/lib/auto-clear";
 
 // Serves the engine input bundle (same data the POST generator runs on) so Live
 // mode can run client-side what-if re-solves without a round-trip per edit (#231).
@@ -20,6 +21,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "start and end query params required" }, { status: 400 });
   }
 
-  const input = await buildAutoScheduleInput(startDate, endDate);
+  // Card #174: Live re-solves see the same frozen earlier month as POST/PUT.
+  const runMonth = isValidDateRange(startDate, endDate) ? owningMonthKey(startDate, endDate) : undefined;
+  const input = await buildAutoScheduleInput(startDate, endDate, { runMonth });
   return NextResponse.json(input);
 }

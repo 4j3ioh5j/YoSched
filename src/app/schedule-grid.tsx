@@ -3587,6 +3587,9 @@ export function ScheduleGrid({
     // Manual-cell lock: a hand-placed shift can't be changed in auto-generate mode.
     if (r.reason === "manual-locked")
       return `${who}'s ${code} on ${day} was set manually and can't be changed in auto-generate${more}`;
+    // Card #174: an earlier, completed month is never changed by auto-generate.
+    if (r.reason === "earlier-month")
+      return `${who}'s ${code} on ${day} is in an earlier month and can't be changed by auto-generate${more}`;
     // Per-day cap: this date already holds the max allowed of this shift.
     if (r.reason === "day-full") {
       return dayFullPopoverText({

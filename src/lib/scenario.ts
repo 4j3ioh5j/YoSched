@@ -57,7 +57,9 @@ export type ScenarioPinRejection = {
   // targets a hand-placed cell is refused so auto-generate can't overwrite/move it.
   // "day-full" means the pin would exceed the shift's per-day cap (Staffing Rules Max)
   // — e.g. a second ORC/ORL/ICU on a date that already has its one allowed.
-  reason: "ineligible" | "unavailable" | "request-blocked" | "unknown-staff" | "unknown-shift" | "manual-locked" | "day-full";
+  // "earlier-month" (card #174): the edit would change a cell dated before the run
+  // month's 1st (input.writableFrom); an earlier, completed month is never changed.
+  reason: "ineligible" | "unavailable" | "request-blocked" | "unknown-staff" | "unknown-shift" | "manual-locked" | "day-full" | "earlier-month";
 };
 
 export type ScenarioOutcome = {
@@ -182,7 +184,25 @@ export function applyScenario(
   // Validate every pin's HARD legality BEFORE applying. Any rejection snaps the
   // whole edit back (an edit is atomic — a half-applied move is never shown).
   const rejected: ScenarioPinRejection[] = [];
+  // Card #174: nothing before writableFrom may change — not a pin (away pins
+  // included, so this runs before the `away` bypass), not an explicit free of a
+  // cell that exists. Freeing an EMPTY frozen cell changes nothing, so it is ignored.
+  const frozen = (date: string): boolean => !!input.writableFrom && date < input.writableFrom;
+  const frozenPinKeys = new Set<string>();
   for (const pin of pins) {
+    if (!frozen(pin.date)) continue;
+    frozenPinKeys.add(keyOf(pin.staffId, pin.date));
+    rejected.push({ ...pin, reason: "earlier-month" });
+  }
+  for (const f of frees) {
+    if (!frozen(f.date)) continue;
+    const base = baseMap.get(keyOf(f.staffId, f.date));
+    if (base && !frozenPinKeys.has(keyOf(f.staffId, f.date))) {
+      rejected.push({ staffId: f.staffId, date: f.date, shiftTypeId: base.shiftTypeId, reason: "earlier-month" });
+    }
+  }
+  for (const pin of pins) {
+    if (frozen(pin.date)) continue;
     const staff = staffById.get(pin.staffId);
     const st = stById.get(pin.shiftTypeId);
     if (!staff) { rejected.push({ ...pin, reason: "unknown-staff" }); continue; }
@@ -349,6 +369,9 @@ export function freesForRing(
   const frees: ScenarioFree[] = [];
   for (const a of input.existingAssignments) {
     const k = keyOf(a.staffId, a.date);
+    // Card #174: an earlier, completed month is fixed context — never freed, so its
+    // cells stay as locked survivors and keep counting toward pay-period hours.
+    if (input.writableFrom && a.date < input.writableFrom) continue;
     // Never free a hand-placed cell: the engine compensates by reshuffling its
     // own discretionary fills, not by undoing the user's manual assignments.
     if (a.source === "manual") continue;
