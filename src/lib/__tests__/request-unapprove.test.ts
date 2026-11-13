@@ -22,8 +22,10 @@ vi.mock("@/lib/build-auto-schedule-input", async (importOriginal) => {
   const real = await importOriginal<typeof import("../build-auto-schedule-input")>();
   const { whenToColumns, legacyPatternToWhen } = await import("../recurrence");
   const wEvery = (d: number) => whenToColumns(legacyPatternToWhen({ dayOfWeek: d, pattern: "every" }));
+  // Weekend hours = weekday hours: with unpaid weekends the fill leaves everyone short, and the
+  // card #176 hours repair would (rightly) top CD up on their freed Monday, which is not what these undo tests are about.
   const shift = (id: string, code: string, extra: Record<string, unknown> = {}) => ({
-    id, code, name: code, defaultHours: 8, defaultHoursWeekend: 0, defaultHoursHoliday: 0, countsTowardFte: true, countsAsHolidayWork: true,
+    id, code, name: code, defaultHours: 8, defaultHoursWeekend: 8, defaultHoursHoliday: 0, countsTowardFte: true, countsAsHolidayWork: true,
     isLeave: false, isOffShift: false, isFillShift: false, sortOrder: 0, schedulePriority: null, weekendPaired: false, holidayWeekendPaired: false,
     ignoresWorkingDays: false, category: "clinical", autoSchedulable: true, ...extra,
   });

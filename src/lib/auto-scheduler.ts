@@ -555,6 +555,9 @@ export type AutoScheduleInput = {
   // Admin-configured objective factor order (#252, Slice 1). Absent/invalid ⇒ the
   // engine uses DEFAULT_FACTOR_ORDER, so default output is unchanged.
   factorOrder?: AutoGenFactorConfig[];
+  // Tests only (card #176): skip the compound hours repair, so a test can compare a run with it
+  // against the same run without it. Never set by the input builder.
+  skipCompoundRepairForTest?: boolean;
   // Multi-option candidate seed (Slice 4b). 0/undefined ⇒ the canonical schedule,
   // byte-for-byte identical to the pre-4b output (guaranteed by snapshot test).
   // A positive seed appends a deterministic hash AFTER every existing tiebreak
@@ -592,6 +595,7 @@ export function autoSchedule({
   factorOrder,
   seed,
   writableFrom,
+  skipCompoundRepairForTest,
 }: AutoScheduleInput): AutoScheduleResult {
   const isFrozen = (date: string): boolean => !!writableFrom && date < writableFrom;
   // Seeded final tiebreak helper (Slice 4b). seed 0/undefined ⇒ returns 0 for
@@ -786,6 +790,37 @@ export function autoSchedule({
   const dwMap = new Map<string, number>();
   for (const dw of desirabilityWeights) {
     dwMap.set(`${dw.shiftTypeId}:${dw.dayOfWeek}`, dw.weight);
+  }
+
+  const holidayPolicy: HolidayPolicy = schedulingPreferences.holidayPolicy ?? "entitlement";
+  const holShift = holidayPolicy === "none"
+    ? null
+    : shiftTypes.find((st) => st.code === "HOL" && st.countsTowardFte) ?? null;
+
+  // Card #176: STEP 2.75 grants HOL on a holiday a person normally works. Until it has
+  // run, the hours checks (ppHoursBlock) must already see that owed HOL, or STEP 2
+  // fills a part-timer to target with coverage (a preferred ORC) and the later HOL
+  // pushes them over. ONE predicate for both the grant and the reservation.
+  let holidaysGranted = false;
+  function owedHoliday(staff: ScheduleStaff, date: string, pp: { targetHours: number }): boolean {
+    if (holidayPolicy !== "entitlement" || !holShift) return false;
+    if (!holidaySet.has(date) || isFrozen(date)) return false;
+    if (targetFor(staff, pp) <= 0) return false;
+    if (isAssigned(staff.id, date)) return false;
+    return evaluateAvailability(staff.availabilityRules, date, payPeriods, (pid, d) => isWorking(pid, d)).available;
+  }
+  /** HOL hours `staff` will be granted in `pp` by STEP 2.75 (0 once it has run), not
+   *  counting the dates being projected — working the holiday itself means no HOL there. */
+  function pendingHolidayHours(staff: ScheduleStaff, pp: { startDate: string; endDate: string; targetHours: number }, exclude: string | readonly string[]): number {
+    if (holidaysGranted || !holShift) return 0;
+    const skip = new Set(typeof exclude === "string" ? [exclude] : exclude);
+    let h = 0;
+    for (const d of dates) {
+      if (d < pp.startDate || d > pp.endDate || skip.has(d)) continue;
+      if (!owedHoliday(staff, d, pp)) continue;
+      h += holShift.countsTowardFte ? getShiftHours(staff.id, holShift, overrideMap, dayTypeOf(d, holidaySet)) : 0;
+    }
+    return h;
   }
 
   const prefMap = new Map<string, string>();
@@ -1243,7 +1278,7 @@ export function autoSchedule({
     }
     for (const [pp, add] of addByPP) {
       const target = targetFor(p, pp);
-      if (target > 0 && ppHoursForStaff(p.id, pp) + add > target) return true;
+      if (target > 0 && ppHoursForStaff(p.id, pp) + pendingHolidayHours(p, pp, group) + add > target) return true; // card #176: owed HOL
     }
     return false;
   }
@@ -1275,7 +1310,7 @@ export function autoSchedule({
     const pp = findPPForDate(date);
     if (!pp || !fillShift) return true;
     const target = targetFor(p, pp);
-    const current = ppHoursForStaff(p.id, pp);
+    const current = ppHoursForStaff(p.id, pp) + pendingHolidayHours(p, pp, date); // card #176: owed HOL
     if (target <= 0 || current >= target) return true;
     const reachableHrs = maxReachableDailyHours(p, shiftTypes, overrideMap);
     const perDayHrs = reachableHrs > 0 ? reachableHrs : maxShiftHours(p.id, fillShift, overrideMap);
@@ -1332,7 +1367,8 @@ export function autoSchedule({
     const followerHrs = eachDayFollower && eachDayFollower.follower.countsTowardFte && sameFollowerPP
       ? getShiftHours(staffId, eachDayFollower.follower, overrideMap, followerDate ? dayTypeOf(followerDate, holidaySet) : "weekday") : 0;
     const addHours = (st.countsTowardFte ? getShiftHours(staffId, st, overrideMap, dayTypeOf(date, holidaySet)) : 0) + followerHrs;
-    const current = ppHoursForStaff(staffId, pp);
+    // Card #176: owed-but-not-yet-granted HOL counts (see pendingHolidayHours).
+    const current = ppHoursForStaff(staffId, pp) + pendingHolidayHours(staff, pp, date);
     if (current + addHours > target) return "over";
 
     // Value each remaining open day at the staff's longest reachable shift, not
@@ -1650,7 +1686,7 @@ export function autoSchedule({
           for (const p of pool) {
             const target = targetFor(p, pp);
             if (target <= 0) { fitMap.set(p.id, Infinity); continue; }
-            const current = ppHoursForStaff(p.id, pp);
+            const current = ppHoursForStaff(p.id, pp) + pendingHolidayHours(p, pp, date); // card #176: owed HOL
             const projected = current + getShiftHours(p.id, st, overrideMap, dayTypeOf(date, holidaySet));
             const remaining = target - current;
             const fillMultiple = Math.round(remaining / fillHrsForFit) * fillHrsForFit;
@@ -1887,7 +1923,9 @@ export function autoSchedule({
               // pre-check stays conservative and never overfills a staffer.
               const perDayHrs = maxShiftHours(p.id, st, overrideMap);
               const groupHrs = pairingFactor * perDayHrs;
-              return !(target > 0 && ppHoursForStaff(p.id, pp) + groupHrs > target) || (hardMinBeatsOverHours && hasUnmetMinimum(p, st, remainDates[0]));
+              // Card #176: owed HOL counts; the group's own days may be holidays it works.
+              const owed = pendingHolidayHours(p, pp, remainDates);
+              return !(target > 0 && ppHoursForStaff(p.id, pp) + owed + groupHrs > target) || (hardMinBeatsOverHours && hasUnmetMinimum(p, st, remainDates[0]));
             });
 
             let placed = false;
@@ -2098,10 +2136,7 @@ export function autoSchedule({
   // Under "fill" nothing happens here (legacy: HOL only when the hours fill lands on
   // the holiday). Under "none" the engine never places HOL at all (STEP 3 also skips
   // holidays), so a holiday is a plain day off.
-  const holidayPolicy: HolidayPolicy = schedulingPreferences.holidayPolicy ?? "entitlement";
-  const holShift = holidayPolicy === "none"
-    ? null
-    : shiftTypes.find((st) => st.code === "HOL" && st.countsTowardFte) ?? null;
+  // (holidayPolicy / holShift are declared before STEP 0: ppHoursBlock reads them, card #176.)
 
   // Idempotent (every occupied cell is skipped), so it is called again after request
   // reconciliation: a holiday cell freed by a revoked tentative request is re-granted
@@ -2115,15 +2150,13 @@ export function autoSchedule({
       const pp = findPPForDate(date);
       if (!pp) continue;
       for (const staff of activeStaff) {
-        if (targetFor(staff, pp) <= 0) continue;
-        if (isAssigned(staff.id, date)) continue;
-        const avail = evaluateAvailability(staff.availabilityRules, date, payPeriods, (pid, d) => isWorking(pid, d));
-        if (!avail.available) continue;
+        if (!owedHoliday(staff, date, pp)) continue;
         assign(staff.id, date, holShift, "Holiday entitlement (normally scheduled day)", "holiday", 0.9);
       }
     }
   }
   grantHolidayEntitlement();
+  holidaysGranted = true;
 
   // ── STEP 3: Fill shift to hit FTE hour targets (day-off clustering) ──
 
@@ -2697,8 +2730,391 @@ export function autoSchedule({
   // it terminates. It NEVER worsens hours, breaks coverage, or violates a hard
   // constraint (eligibility, availability, follow rules, hard min/max). Residual
   // gaps it can't legally close are reported by the audit below (Class 2).
+
+  // ── Card #176: compound hours repair (after the single-swap loop above) ──
+  //
+  // The single-swap hill-climb stops when every one swap worsens the total, which is
+  // what leaves people a few hours over: BC worked an ORL in the frozen earlier month,
+  // so this month must be one ORL + three ORs, but STEP 3 gave five ORs. Clearing that
+  // takes a COMBINATION — BC takes an ORL from someone at target (both worse), then
+  // gives up a fill day (both fixed). Two phases per pay period:
+  //   A. "odd" people — whose deviation no number of their fill days can close (it is
+  //      not a multiple of their fill-day hours) — are paired by shift-type swaps, direct
+  //      or through one intermediary, so each becomes a multiple of their fill hours;
+  //   B. a strictly-improving hill-climb over SWAP, MOVE (a fill day from A to B, same
+  //      day), DROP (a fill day above the day's minimum), ADD (a fill day on an open,
+  //      legal day) and two-hop MOVEs.
+  // Every change goes through repairSet() and an undo journal; a compound is committed
+  // only if its end state passes every hard check (participants' prohibited-hours
+  // bounds, follow rules around each changed cell, conditional dependents, coverage
+  // minimums, per-day caps). The pay period's result is kept only if its total
+  // |hours − target| strictly drops; otherwise it is rolled back exactly (grid,
+  // suggestions in order, byStep) and only the strictly-improving Phase B runs.
+  // A dropped fill day is CLEARED (STEP 4 writes its single X); legality treats a
+  // cleared cell as the off shift.
+
+  type GridCell = NonNullable<ReturnType<typeof grid.get>>;
+  type JournalEntry =
+    | { kind: "updated"; key: string; prev: GridCell | undefined; sug: Suggestion; old: Suggestion }
+    | { kind: "inserted"; key: string; prev: GridCell | undefined; sug: Suggestion }
+    | { kind: "removed"; key: string; prev: GridCell | undefined; idx: number; sug: Suggestion }
+    | { kind: "grid"; key: string; prev: GridCell | undefined };
+  const journal: JournalEntry[] = [];
+  type Mark = { len: number; steps: Record<string, number> };
+  const mark = (): Mark => ({ len: journal.length, steps: { ...byStep } });
+  function rollback(m: Mark): void {
+    while (journal.length > m.len) {
+      const e = journal.pop()!;
+      if (e.prev) grid.set(e.key, { ...e.prev }); else grid.delete(e.key);
+      if (e.kind === "updated") Object.assign(e.sug, e.old);
+      else if (e.kind === "inserted") { const i = suggestions.lastIndexOf(e.sug); if (i >= 0) suggestions.splice(i, 1); }
+      else if (e.kind === "removed") suggestions.splice(e.idx, 0, e.sug);
+    }
+    for (const k of Object.keys(byStep)) delete byStep[k];
+    Object.assign(byStep, m.steps);
+  }
+  const sugIndex = (staffId: string, date: string): number => {
+    for (let i = suggestions.length - 1; i >= 0; i--) if (suggestions[i].staffId === staffId && suggestions[i].date === date) return i;
+    return -1;
+  };
+  /** The single writer of the compound repair: sets (st) or clears (null) one cell,
+   *  keeping exactly one matching suggestion, and journals the prior state. */
+  function repairSet(staffId: string, date: string, st: ScheduleShiftType | null, step: string, reason: string): void {
+    const key = `${staffId}:${date}`;
+    const prevCell = grid.get(key);
+    const prev = prevCell ? { ...prevCell } : undefined;
+    const idx = sugIndex(staffId, date);
+    if (prev?.step) byStep[prev.step] = Math.max(0, (byStep[prev.step] ?? 0) - 1);
+    if (st === null) {
+      grid.delete(key);
+      if (idx >= 0) journal.push({ kind: "removed", key, prev, idx, sug: suggestions.splice(idx, 1)[0] });
+      else journal.push({ kind: "grid", key, prev });
+      return;
+    }
+    grid.set(key, { shiftTypeId: st.id, code: st.code, locked: false, noCount: false, step });
+    byStep[step] = (byStep[step] ?? 0) + 1;
+    if (idx >= 0) {
+      const sug = suggestions[idx];
+      journal.push({ kind: "updated", key, prev, sug, old: { ...sug } });
+      Object.assign(sug, { shiftTypeId: st.id, code: st.code, reason, step, confidence: 0.65 });
+    } else {
+      const sug: Suggestion = { staffId, date, shiftTypeId: st.id, code: st.code, reason, step, confidence: 0.65 };
+      suggestions.push(sug);
+      journal.push({ kind: "inserted", key, prev, sug });
+    }
+  }
+
+  // Hours are compared in hundredths so fractional overrides (7.5 h) stay exact.
+  const cents = (h: number): number => Math.round(h * 100);
+
+  function compoundHoursRepair(fill: ScheduleShiftType): void {
+    const ppRangesAll: PayPeriodRange[] = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
+    const repairPPs = payPeriods.filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate));
+    const LIMITS = { odd: 12, intermediaries: 40, checksPerStep: 200, phaseBIters: 500 };
+    const capHit = new Set<string>();
+
+    for (const pp of repairPPs) {
+      const ppDates = dates.filter((d) => d >= pp.startDate && d <= pp.endDate && !isFrozen(d));
+      if (ppDates.length === 0) continue;
+      const people = activeStaff.filter((p) => targetFor(p, pp) > 0);
+      const devOf = (p: ScheduleStaff): number => cents(ppHoursForStaff(p.id, pp) - targetFor(p, pp));
+      const total = (): number => people.reduce((s, p) => s + Math.abs(devOf(p)), 0);
+      const fillH = (p: ScheduleStaff, d: string): number => cents(countedHrs(p.id, fill, d));
+      const hrsOf = (p: ScheduleStaff, st: ScheduleShiftType, d: string): number => cents(countedHrs(p.id, st, d));
+      // A person's fill-day granularity in this pay period (gcd of their possible fill-day hours).
+      const grain = new Map<string, number>();
+      for (const p of people) {
+        let g = 0;
+        for (const d of ppDates) {
+          const h = fillH(p, d);
+          if (h <= 0) continue;
+          // Only days they could hold the fill on: a day they work now, or an empty day they're
+          // available for it. (A Saturday they never work mustn't make 12 h count for them.)
+          const c = grid.get(`${p.id}:${d}`);
+          if (c ? !isAwayShift(c.shiftTypeId) : isAvailable(p, d, fill)) g = gcd(g, h);
+        }
+        grain.set(p.id, g);
+      }
+      const isOdd = (p: ScheduleStaff, dev = devOf(p)): boolean => { const g = grain.get(p.id) ?? 0; return g > 0 && dev % g !== 0; };
+      const cellOf = (p: ScheduleStaff, d: string) => grid.get(`${p.id}:${d}`);
+      const isFillCell = (p: ScheduleStaff, d: string): boolean => {
+        const c = cellOf(p, d);
+        return !!c && c.shiftTypeId === fill.id && isSwappableCell(c);
+      };
+      const isOpen = (p: ScheduleStaff, d: string): boolean => { const c = cellOf(p, d); return !c || isFillableOffCell(c); };
+
+      // ── end-state hard checks for one compound ──
+      const changed: { p: ScheduleStaff; d: string }[] = [];
+      function neighboursOk(p: ScheduleStaff, d: string): boolean {
+        const shiftAt = (x: string): { id: string; off: boolean } | null => {
+          const c = grid.get(`${p.id}:${x}`);
+          if (!c) return offShift && dateSet.has(x) ? { id: offShift.id, off: true } : null; // cleared ⇒ X
+          const st = stById.get(c.shiftTypeId);
+          return { id: c.shiftTypeId, off: !!st?.isOffShift };
+        };
+        const me = shiftAt(d), prev = shiftAt(prevDate(d)), next = shiftAt(nextDate(d));
+        if (!me) return true;
+        if (prev && !isShiftAllowedAfter(followMap, prev.id, me.id, me.off)) return false;
+        if (next && !isShiftAllowedAfter(followMap, me.id, next.id, next.off)) return false;
+        return true;
+      }
+      type Before = { devs: Map<string, number>; cover: Map<string, number>; avail: Set<string> };
+      const condOwners = activeStaff.filter((p) => p.availabilityRules.some((r) => r.conditionStaffId && r.conditionType));
+      function availBroken(): Set<string> {
+        // Working cells this run may move whose availability no longer holds (conditional rules).
+        const out = new Set<string>();
+        for (const p of condOwners) for (const d of ppDates) {
+          const c = cellOf(p, d);
+          if (!c || !isWorking(p.id, d)) continue;
+          const st = stById.get(c.shiftTypeId);
+          if (st?.ignoresWorkingDays) continue;
+          if (!evaluateAvailability(p.availabilityRules, d, payPeriods, (pid, x) => isWorking(pid, x)).available) out.add(`${p.id}:${d}`);
+        }
+        return out;
+      }
+      const coverKey = (st: ScheduleShiftType, d: string) => `${st.id}:${d}`;
+      function snapshotBefore(): Before {
+        const cover = new Map<string, number>();
+        for (const d of ppDates) for (const st of shiftTypes) cover.set(coverKey(st, d), countAssigned(st.code, d));
+        return { devs: new Map(people.map((p) => [p.id, devOf(p)])), cover, avail: availBroken() };
+      }
+      /** Would anyone end further over (or under) target than in `start`, on a side the
+       *  admin has made Prohibited? */
+      function boundsBroken(start: Map<string, number>): boolean {
+        for (const p of people) {
+          const a = start.get(p.id)!, b = devOf(p);
+          if (overHoursPolicy === "prohibited" && b > Math.max(0, a)) return true;
+          if (underHoursPolicy === "prohibited" && -b > Math.max(0, -a)) return true;
+        }
+        return false;
+      }
+      // `bounds` false only for Phase A: its trades may pass through a prohibited side (the
+      // intermediary 8 h under until Phase B gives a day back); the pay period's end state
+      // is held to the bounds instead (see the commit below).
+      function endStateOk(before: Before, bounds = true): boolean {
+        if (bounds && boundsBroken(before.devs)) return false;
+        for (const { p, d } of changed) {
+          if (!neighboursOk(p, d)) return false;
+          const c = cellOf(p, d);
+          if (c && isWorking(p.id, d)) {
+            const st = stById.get(c.shiftTypeId);
+            if (st && !st.ignoresWorkingDays && !evaluateAvailability(p.availabilityRules, d, payPeriods, (pid, x) => isWorking(pid, x)).available) return false;
+          }
+        }
+        for (const k of availBroken()) if (!before.avail.has(k)) return false;
+        const days = new Set(changed.map((c) => c.d));
+        for (const d of days) for (const st of shiftTypes) {
+          const was = before.cover.get(coverKey(st, d)) ?? 0, now = countCoverage(st.code, d), phys = countAssigned(st.code, d);
+          const min = getRequiredCount(st, d);
+          if (now < min && now < was) return false; // never takes a day below (or further below) its minimum
+          const cap = capOf(st.id, d);
+          if (cap != null && phys > cap && phys > was) return false; // never over a day's Max
+        }
+        return true;
+      }
+
+      // ── primitives (each checks its own placement legality on the grid as it stands) ──
+      function swap(d: string, A: ScheduleStaff, B: ScheduleStaff): boolean {
+        const ca = cellOf(A, d), cb = cellOf(B, d);
+        if (!ca || !cb || !isSwappableCell(ca) || !isSwappableCell(cb) || ca.shiftTypeId === cb.shiftTypeId) return false;
+        const aSt = stById.get(ca.shiftTypeId)!, bSt = stById.get(cb.shiftTypeId)!;
+        if (swapBreaksHardMin(A, aSt, d, ppRangesAll) || swapBreaksHardMin(B, bSt, d, ppRangesAll)) return false;
+        // Legality of each side is judged with the other side's cell still in place.
+        if (!canHoldForSwap(A, bSt, d, ppRangesAll) || !canHoldForSwap(B, aSt, d, ppRangesAll)) return false;
+        repairSet(A.id, d, bSt, "repair", `${bSt.code} (hour-balance repair)`);
+        repairSet(B.id, d, aSt, "repair", `${aSt.code} (hour-balance repair)`);
+        changed.push({ p: A, d }, { p: B, d });
+        return true;
+      }
+      // A fill day is only ever placed where STEP 3 itself could place one: an open cell
+      // passing every isAvailable gate (requests, availability, follow rules, the day's
+      // Max, rolling max) plus eligibility — never on a holiday (HOL's day).
+      // A soft "prefers off" / "avoid this fill shift" request on the day is honoured
+      // too: STEP 3 steers fill days away from it, and the repair never undoes that.
+      const softAvoids = (B: ScheduleStaff, d: string): boolean => {
+        if (requestList.length === 0) return false;
+        const f = foldFor(B.id, d);
+        return f.avoidWorking || f.avoidedShiftIds.has(fill.id);
+      };
+      const canReceiveFill = (B: ScheduleStaff, d: string): boolean =>
+        !holidaySet.has(d) && !softAvoids(B, d) && isAvailable(B, d, fill) && canHoldForSwap(B, fill, d, ppRangesAll);
+      function move(d: string, A: ScheduleStaff, B: ScheduleStaff): boolean {
+        if (!isFillCell(A, d) || !isOpen(B, d)) return false;
+        if (swapBreaksHardMin(A, fill, d, ppRangesAll)) return false;
+        repairSet(A.id, d, null, "", ""); // free the slot first: the day's count is unchanged by the move
+        changed.push({ p: A, d });
+        if (!canReceiveFill(B, d)) return false; // attempt() rolls back
+        repairSet(B.id, d, fill, "fill", `${fill.code} (hours repair)`);
+        changed.push({ p: B, d });
+        return true;
+      }
+      function drop(d: string, A: ScheduleStaff): boolean {
+        if (!isFillCell(A, d)) return false;
+        if (countCoverage(fill.code, d) - 1 < getRequiredCount(fill, d)) return false;
+        if (swapBreaksHardMin(A, fill, d, ppRangesAll)) return false;
+        repairSet(A.id, d, null, "", "");
+        changed.push({ p: A, d });
+        return true;
+      }
+      function add(d: string, A: ScheduleStaff): boolean {
+        if (!isOpen(A, d) || !canReceiveFill(A, d)) return false;
+        repairSet(A.id, d, fill, "fill", `${fill.code} (hours repair)`);
+        changed.push({ p: A, d });
+        return true;
+      }
+      type Step = () => boolean;
+      /** Try a compound: apply its steps in order, then the end-state checks; roll back on any failure. */
+      function attempt(steps: Step[], bounds = true): boolean {
+        const m = mark();
+        changed.length = 0;
+        const before = snapshotBefore();
+        for (const s of steps) if (!s()) { rollback(m); return false; }
+        if (!endStateOk(before, bounds)) { rollback(m); return false; }
+        return true;
+      }
+
+      // ── Phase A: pair the odd ones ──
+      function phaseA(): void {
+        const done = new Set<string>();
+        for (;;) {
+          let odd = people.filter((p) => !done.has(p.id) && isOdd(p)).sort((a, b) => Math.abs(devOf(b)) - Math.abs(devOf(a)) || (a.id < b.id ? -1 : 1));
+          if (odd.length > LIMITS.odd) { capHit.add("odd"); odd = odd.slice(0, LIMITS.odd); }
+          type Cand = { score: number; size: number; tag: string; steps: Step[]; ids: string[] };
+          const cands: Cand[] = [];
+          const swapDelta = (d: string, X: ScheduleStaff, Y: ScheduleStaff): number | null => {
+            const cx = cellOf(X, d), cy = cellOf(Y, d);
+            if (!cx || !cy || !isSwappableCell(cx) || !isSwappableCell(cy) || cx.shiftTypeId === cy.shiftTypeId) return null;
+            return hrsOf(X, stById.get(cy.shiftTypeId)!, d) - hrsOf(X, stById.get(cx.shiftTypeId)!, d);
+          };
+          for (let i = 0; i < odd.length; i++) for (let j = i + 1; j < odd.length; j++) {
+            const P = odd[i], Q = odd[j], dP = devOf(P), dQ = devOf(Q);
+            for (const d of ppDates) { // (a) direct
+              const x = swapDelta(d, P, Q);
+              if (x === null) continue;
+              const y = hrsOf(Q, stById.get(cellOf(P, d)!.shiftTypeId)!, d) - hrsOf(Q, stById.get(cellOf(Q, d)!.shiftTypeId)!, d);
+              if (isOdd(P, dP + x) || isOdd(Q, dQ + y)) continue;
+              cands.push({ score: Math.abs(dP + x) + Math.abs(dQ + y) - Math.abs(dP) - Math.abs(dQ), size: 2, tag: `a${P.id}${Q.id}${d}`, steps: [() => swap(d, P, Q)], ids: [P.id, Q.id] });
+            }
+            let gs = people.filter((G) => G.id !== P.id && G.id !== Q.id && !isOdd(G));
+            if (gs.length > LIMITS.intermediaries) { capHit.add("intermediaries"); gs = gs.slice(0, LIMITS.intermediaries); }
+            for (const G of gs) for (const d1 of ppDates) {
+              const x1 = swapDelta(d1, P, G);
+              if (x1 === null || isOdd(P, dP + x1)) continue;
+              const g1 = hrsOf(G, stById.get(cellOf(P, d1)!.shiftTypeId)!, d1) - hrsOf(G, stById.get(cellOf(G, d1)!.shiftTypeId)!, d1);
+              for (const d2 of ppDates) {
+                if (d2 === d1) continue;
+                const x2 = swapDelta(d2, Q, G);
+                if (x2 === null || isOdd(Q, dQ + x2)) continue;
+                const g2 = hrsOf(G, stById.get(cellOf(Q, d2)!.shiftTypeId)!, d2) - hrsOf(G, stById.get(cellOf(G, d2)!.shiftTypeId)!, d2);
+                const dG = devOf(G);
+                if (isOdd(G, dG + g1 + g2)) continue;
+                const score = Math.abs(dP + x1) + Math.abs(dQ + x2) + Math.abs(dG + g1 + g2) - Math.abs(dP) - Math.abs(dQ) - Math.abs(dG);
+                cands.push({ score, size: 4, tag: `b${P.id}${Q.id}${G.id}${d1}${d2}`, steps: [() => swap(d1, P, G), () => swap(d2, Q, G)], ids: [P.id, Q.id] });
+              }
+            }
+          }
+          if (cands.length === 0) return;
+          cands.sort((a, b) => a.score - b.score || a.size - b.size || (a.tag < b.tag ? -1 : 1));
+          let applied: Cand | null = null, checks = 0;
+          for (const c of cands) {
+            if (++checks > LIMITS.checksPerStep) { capHit.add("checks"); break; }
+            if (attempt(c.steps, false)) { applied = c; break; }
+          }
+          if (!applied) return;
+          for (const id of applied.ids) done.add(id);
+        }
+      }
+
+      // ── Phase B: strictly improving ──
+      function phaseB(): void {
+        for (let it = 0; ; it++) {
+          if (it >= LIMITS.phaseBIters) { capHit.add("phaseB"); return; }
+          const devNow = new Map(people.map((p) => [p.id, devOf(p)]));
+          const off = people.filter((p) => devNow.get(p.id) !== 0);
+          if (off.length === 0) return;
+          type Cand = { gain: number; size: number; tag: string; steps: Step[] };
+          const cands: Cand[] = [];
+          const gainOf = (deltas: [ScheduleStaff, number][]): number => {
+            const acc = new Map<string, number>();
+            for (const [p, x] of deltas) acc.set(p.id, (acc.get(p.id) ?? 0) + x);
+            let g = 0;
+            for (const [id, x] of acc) { const dv = devNow.get(id)!; g += Math.abs(dv) - Math.abs(dv + x); }
+            return g;
+          };
+          for (const A of off) for (const d of ppDates) {
+            const ca = cellOf(A, d);
+            if (ca && isSwappableCell(ca)) { // SWAP with anyone
+              const aSt = stById.get(ca.shiftTypeId)!;
+              for (const B of people) {
+                if (B.id === A.id) continue;
+                const cb = cellOf(B, d);
+                if (!cb || !isSwappableCell(cb) || cb.shiftTypeId === ca.shiftTypeId) continue;
+                const bSt = stById.get(cb.shiftTypeId)!;
+                const gain = gainOf([[A, hrsOf(A, bSt, d) - hrsOf(A, aSt, d)], [B, hrsOf(B, aSt, d) - hrsOf(B, bSt, d)]]);
+                if (gain > 0) cands.push({ gain, size: 2, tag: `s${A.id}${B.id}${d}`, steps: [() => swap(d, A, B)] });
+              }
+            }
+            if (isFillCell(A, d)) {
+              if (devNow.get(A.id)! > 0) {
+                const g = gainOf([[A, -fillH(A, d)]]);
+                if (g > 0) cands.push({ gain: g, size: 1, tag: `d${A.id}${d}`, steps: [() => drop(d, A)] });
+              }
+              for (const B of people) { // MOVE A→B
+                if (B.id === A.id || !isOpen(B, d)) continue;
+                const g = gainOf([[A, -fillH(A, d)], [B, fillH(B, d)]]);
+                if (g > 0) cands.push({ gain: g, size: 2, tag: `m${A.id}${B.id}${d}`, steps: [() => move(d, A, B)] });
+              }
+            }
+            if (isOpen(A, d) && devNow.get(A.id)! < 0) {
+              const g = gainOf([[A, fillH(A, d)]]);
+              if (g > 0) cands.push({ gain: g, size: 1, tag: `+${A.id}${d}`, steps: [() => add(d, A)] });
+            }
+          }
+          // Two-hop MOVE: A (over) → G on e1, G → B (under) on e2; G's own hours move by
+          // fillH(e1) − fillH(e2), usually 0.
+          const overs = off.filter((p) => devNow.get(p.id)! > 0), unders = off.filter((p) => devNow.get(p.id)! < 0);
+          let gs = people;
+          if (gs.length > LIMITS.intermediaries) { capHit.add("intermediaries"); gs = gs.slice(0, LIMITS.intermediaries); }
+          for (const A of overs) for (const B of unders) for (const G of gs) {
+            if (G.id === A.id || G.id === B.id) continue;
+            for (const e1 of ppDates) {
+              if (!isFillCell(A, e1) || !isOpen(G, e1)) continue;
+              for (const e2 of ppDates) {
+                if (e2 === e1 || !isFillCell(G, e2) || !isOpen(B, e2)) continue;
+                const g = gainOf([[A, -fillH(A, e1)], [G, fillH(G, e1) - fillH(G, e2)], [B, fillH(B, e2)]]);
+                if (g > 0) cands.push({ gain: g, size: 4, tag: `h${A.id}${G.id}${B.id}${e1}${e2}`, steps: [() => move(e1, A, G), () => move(e2, G, B)] });
+              }
+            }
+          }
+          if (cands.length === 0) return;
+          cands.sort((a, b) => b.gain - a.gain || a.size - b.size || (a.tag < b.tag ? -1 : 1));
+          let ok = false, checks = 0;
+          for (const c of cands) {
+            if (++checks > LIMITS.checksPerStep) { capHit.add("checks"); break; }
+            if (attempt(c.steps)) { ok = true; break; }
+          }
+          if (!ok) return;
+        }
+      }
+
+      const start = total();
+      if (start === 0) continue;
+      const startDevs = new Map(people.map((p) => [p.id, devOf(p)]));
+      const m = mark();
+      phaseA();
+      phaseB();
+      if (total() >= start || boundsBroken(startDevs)) {
+        rollback(m);
+        phaseB(); // strictly improving on its own, so always kept
+      }
+      journal.length = 0; // committed
+    }
+    for (const what of capHit) warnings.push(`Hours repair: search limit reached (${what}); some hours may stay off target`);
+  }
+
   if (fillShift) {
     repairPayPeriodHours();
+    if (!skipCompoundRepairForTest) compoundHoursRepair(fillShift);
   }
 
   // ── Coverage repair by one-level rearrangement ──
