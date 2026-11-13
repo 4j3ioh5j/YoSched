@@ -590,8 +590,10 @@ export function checkRequestConflict({
         // When the leave shift is known, a mismatch conflicts regardless of off/working
         // (a *different* off/leave shift must not silently bypass). When unknown, only a
         // working shift is unambiguously wrong.
+        // Card #175: an off shift (X) honours leave — the day was off anyway, or past
+        // the hours target — so it is never a conflict (assignmentSatisfiesRequestOnDate).
         const leaveId = r.leaveShiftTypeId;
-        const mismatch = leaveId ? assignedShiftTypeId !== leaveId : working;
+        const mismatch = isOffShift ? false : leaveId ? assignedShiftTypeId !== leaveId : working;
         if (mismatch) {
           const leaveCode = leaveId ? codeOf(leaveId) : "leave";
           conflicts.push({
@@ -648,7 +650,9 @@ export function eachDateInclusive(start: string, end: string): string[] {
 /** Does the shift assigned on a single date satisfy this request for that date?
  *  `assignedShiftTypeId` is the cell's shift (null = blank). A blank cell never
  *  satisfies — nothing is scheduled yet, including for NEGATE/OFF.
- *   - LEAVE         → the requested leave shift is placed
+ *   - LEAVE         → the requested leave shift is placed, or an off shift (card #175:
+ *                     a leave day the person would not have worked is X — they are
+ *                     off either way, and no leave is charged)
  *   - OFF           → an off shift is placed
  *   - REQUEST_SHIFT → one of the wanted shifts is placed
  *   - NEGATE_SHIFT  → some shift is placed and it is NOT a negated one */
@@ -660,7 +664,7 @@ export function assignmentSatisfiesRequestOnDate(
   if (!assignedShiftTypeId) return false;
   switch (req.kind) {
     case "LEAVE":
-      return req.leaveShiftTypeId != null && assignedShiftTypeId === req.leaveShiftTypeId;
+      return (req.leaveShiftTypeId != null && assignedShiftTypeId === req.leaveShiftTypeId) || isOffShift(assignedShiftTypeId);
     case "OFF":
       return isOffShift(assignedShiftTypeId);
     case "REQUEST_SHIFT":
@@ -745,7 +749,30 @@ export function releasableDates(
   if (!placement) return [];
   const claimed = new Set<string>();
   for (const o of otherApproved) {
-    if (resolveRequestPlacement(o, offShiftTypeId) !== placement) continue;
+    // Card #175: an approved LEAVE is satisfied by X too, so it claims a released X
+    // (deleting an OFF must not yank the X a LEAVE still relies on).
+    const claims = resolveRequestPlacement(o, offShiftTypeId) === placement
+      || (o.kind === "LEAVE" && offShiftTypeId != null && placement === offShiftTypeId);
+    if (!claims) continue;
+    for (const d of eachDateInclusive(o.startDate, o.endDate)) claimed.add(d);
+  }
+  return eachDateInclusive(target.startDate, target.endDate).filter((d) => !claimed.has(d));
+}
+
+/** Card #175: a LEAVE request's approval may have pinned the off shift (X) on days
+ *  the requester wouldn't work. On unapprove/decline/delete those request-placed X
+ *  cells are released too — on the covered dates no OTHER still-approved request is
+ *  satisfied by X (an OFF, or another LEAVE). Other kinds release nothing extra. Pure. */
+export function releasableOffDates(
+  target: Pick<ScheduleRequestData, "kind" | "startDate" | "endDate">,
+  otherApproved: Array<Pick<ScheduleRequestData, "kind" | "shiftTypeIds" | "leaveShiftTypeId" | "startDate" | "endDate">>,
+  offShiftTypeId: string | null
+): string[] {
+  if (target.kind !== "LEAVE" || !offShiftTypeId) return [];
+  const isOff = (id: string) => id === offShiftTypeId;
+  const claimed = new Set<string>();
+  for (const o of otherApproved) {
+    if (!assignmentSatisfiesRequestOnDate(o, offShiftTypeId, isOff)) continue;
     for (const d of eachDateInclusive(o.startDate, o.endDate)) claimed.add(d);
   }
   return eachDateInclusive(target.startDate, target.endDate).filter((d) => !claimed.has(d));

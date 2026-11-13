@@ -25,7 +25,8 @@
 // an approved request, are NEVER written (the never-write set NW); the write set is
 // an allow-list of pins, frees and the engine's own follower placements.
 
-import { type AutoScheduleInput, type ScheduleShiftType } from "./auto-scheduler";
+import { countedHoursFn, targetFor, type AutoScheduleInput, type ScheduleShiftType } from "./auto-scheduler";
+import { couldWorkOn, excessLeaveDays } from "./leave-policy";
 import { applyScenario, freesForRing, pinHardLegality, type ScenarioFree, type ScenarioPin, type ScenarioPinRejection } from "./scenario";
 import { buildDayCapLookup, type DayCapLookup } from "./day-cap";
 import { dayCapViolations } from "./max-per-day";
@@ -404,9 +405,19 @@ export function decideApproval(
   if (!placementSt) return impossible("the requested shift no longer exists");
 
   // ── B. covered days → pins ──
+  // Card #175 (leave policy "up-to-target"): a LEAVE request is charged only for days
+  // the requester would work, and never past their pay-period target. Per covered day
+  // the pin is the leave shift, or the off shift (X) when the day already holds X, when
+  // their availability rules say they don't work it, or when the leave would take them
+  // past target (latest days first). X honours a LEAVE request (they are off either way).
+  const offSt = input.shiftTypes.find((s) => s.isOffShift) ?? null;
+  const capLeave = req.kind === "LEAVE" && (input.schedulingPreferences.leaveHoursPolicy ?? "up-to-target") === "up-to-target" && offSt !== null;
+  const pinShift = new Map<string, string>(); // covered date → the shift pinned there
   const pins: ScenarioPin[] = [];
   const pinnedKeys = new Set<string>();
   const coveredPinned: string[] = [];
+  const otherApprovalsAllow = (d: string, shiftTypeId: string): boolean =>
+    approvedCovering(req.staffId, d, req.id).every((R) => assignmentSatisfiesRequestOnDate(R, shiftTypeId, isOff));
   for (const d of covered) {
     if (!dateSet.has(d)) return impossible(`${dayLabel(d)} is outside the scheduling range`);
     const cell = baseline.get(keyOf(req.staffId, d));
@@ -414,15 +425,53 @@ export function decideApproval(
       if (assignmentSatisfiesRequestOnDate(req, cell.shiftTypeId, isOff)) continue; // untouched
       return impossible(`${dayLabel(d)} is locked and holds ${codeOf(cell.shiftTypeId)} for ${requester.initials}`);
     }
+    let shift = placement;
+    if (capLeave) {
+      if (cell && isOff(cell.shiftTypeId)) shift = cell.shiftTypeId; // already off: keep that X
+      else if (!couldWorkOn(requester.availabilityRules, d, input.payPeriods)) shift = offSt!.id;
+    }
     // V4-1: the requester's OTHER approvals on this day are hard rules too.
     for (const R of approvedCovering(req.staffId, d, req.id)) {
-      if (!assignmentSatisfiesRequestOnDate(R, placement, isOff)) {
+      if (!assignmentSatisfiesRequestOnDate(R, shift, isOff)) {
         return impossible(`${requester.initials} is already approved for ${describeRequest(R, codeOf)} on ${dayLabel(d)}`);
       }
     }
-    pins.push({ staffId: req.staffId, date: d, shiftTypeId: placement, away: isAway(placement) });
-    pinnedKeys.add(keyOf(req.staffId, d));
+    pinShift.set(d, shift);
     coveredPinned.push(d);
+  }
+  if (capLeave) {
+    // Past the target: per pay period, over the grid with these pins applied (a pin over a
+    // worked day replaces its hours), turn the latest leave pins into X while still over.
+    const hoursOf = countedHoursFn(input);
+    for (const pp of input.payPeriods) {
+      const leave = coveredPinned
+        .filter((d) => d >= pp.startDate && d <= pp.endDate && pinShift.get(d) === placement)
+        .map((d) => ({ date: d, hours: hoursOf(req.staffId, placement, d) }));
+      if (leave.length === 0) continue;
+      let other = 0;
+      for (const [k, c] of base) {
+        const i = k.lastIndexOf(":");
+        if (k.slice(0, i) !== req.staffId) continue;
+        const d = k.slice(i + 1);
+        if (d < pp.startDate || d > pp.endDate) continue;
+        if (pinShift.has(d)) continue; // replaced by its pin
+        other += hoursOf(req.staffId, c.shiftTypeId, d);
+      }
+      for (const d of coveredPinned) {
+        const s = pinShift.get(d)!;
+        if (d >= pp.startDate && d <= pp.endDate && s !== placement) other += hoursOf(req.staffId, s, d);
+      }
+      // A leave day another approval forbids as X stays leave: its hours are fixed, and
+      // it must not use up the excess an earlier, convertible day could take.
+      const convertible = leave.filter((l) => otherApprovalsAllow(l.date, offSt!.id));
+      for (const l of leave) if (!convertible.includes(l)) other += l.hours;
+      for (const d of excessLeaveDays(targetFor(requester, pp), other, convertible)) pinShift.set(d, offSt!.id);
+    }
+  }
+  for (const d of coveredPinned) {
+    const shift = pinShift.get(d)!;
+    pins.push({ staffId: req.staffId, date: d, shiftTypeId: shift, away: isAway(shift) });
+    pinnedKeys.add(keyOf(req.staffId, d));
   }
 
   // ── D. never-free (never-write: isNW, in buildApprovalVerifier) ──
@@ -551,8 +600,9 @@ export function decideApproval(
       const k = keyOf(req.staffId, d);
       if (written.has(k)) continue;
       const b = baseline.get(k);
-      if (b && b.shiftTypeId === placement && b.source === "request") continue;
-      writes.push({ staffId: req.staffId, date: d, shiftTypeId: placement, source: "request" });
+      const shift = pinShift.get(d)!; // card #175: that day's own pin (leave or X), never a blanket placement
+      if (b && b.shiftTypeId === shift && b.source === "request") continue;
+      writes.push({ staffId: req.staffId, date: d, shiftTypeId: shift, source: "request" });
       written.add(k);
     }
 

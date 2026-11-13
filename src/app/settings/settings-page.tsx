@@ -12,6 +12,7 @@ import { COUNT_COLUMNS_SAVE_URL, buildCountColumnsSave, countColumnsSaveErrorMes
 import { PRINT_COLUMN_RULES_SAVE_URL, PRINT_AGGREGATE_COLUMNS_SAVE_URL, buildConditionsSave, printSaveErrorMessage } from "@/lib/print-conditions";
 import { SHIFT_SHARE_BASES, type ShiftShareBasis } from "@/lib/shift-share";
 import { HOLIDAY_POLICIES, type HolidayPolicy } from "@/lib/holiday-policy";
+import { LEAVE_POLICIES, type LeavePolicy } from "@/lib/leave-policy";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
 import { HOURS_POLICIES, HOURS_POLICY_KEYS, parseHoursPolicy, isHoursPolicyKey, type HoursPolicy } from "@/lib/autogen-hours-policy";
 import { reconcileOrder, MAX_PROFILE_NAME_LENGTH } from "@/lib/autogen-profile";
@@ -96,6 +97,7 @@ type SchedulingPrefs = {
   defaultLiveScope: LiveScope;
   shiftShareBasis: ShiftShareBasis;
   holidayPolicy: HolidayPolicy;
+  leaveHoursPolicy: LeavePolicy;
   payPeriodAnchor: string | null;
   payPeriodLengthDays: number;
   activationWorkedDefault: ActivationData["defaults"]["worked"];
@@ -3144,6 +3146,31 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
     }
   }
 
+  // Card #175: how requested leave is charged.
+  const [leaveStatus, setLeaveStatus] = useState<SaveStatus>("idle");
+  async function saveLeavePolicy(value: LeavePolicy) {
+    const prev = prefs.leaveHoursPolicy;
+    setPrefs((p) => ({ ...p, leaveHoursPolicy: value }));
+    setLeaveStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leaveHoursPolicy: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setLeaveStatus("saved");
+      setTimeout(() => setLeaveStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, leaveHoursPolicy: prev }));
+      setLeaveStatus("error");
+    }
+  }
+  const LEAVE_LABELS: Record<LeavePolicy, { label: string; hint: string }> = {
+    "up-to-target": { label: "Up to the hours target", hint: "Leave only on days the person would have worked, and never past their pay-period target; other requested leave days become X (still honoured — they are off)" },
+    always: { label: "Every requested day", hint: "Leave on every requested day, even a normal day off or past the pay-period target" },
+  };
+
   const HOLIDAY_LABELS: Record<HolidayPolicy, { label: string; hint: string }> = {
     entitlement: { label: "Scheduled workday", hint: "Anyone normally scheduled on the holiday's weekday gets HOL; it counts toward pay-period hours and replaces a work day. Staff working the holiday keep their shift" },
     fill: { label: "Hours fill only", hint: "HOL only when the hours fill happens to land on the holiday; staff already at target get X" },
@@ -3397,6 +3424,36 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
               >
                 <span className="text-sm font-medium">{HOLIDAY_LABELS[policy].label}</span>
                 <span className="text-[11px] text-slate-500 mt-0.5">{HOLIDAY_LABELS[policy].hint}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="pt-2 border-t border-slate-700/50">
+          <div className="text-sm font-medium text-slate-200">Requested leave</div>
+          <div className="text-xs text-slate-400">
+            How requested leave (AL and other leave shifts) is charged when the auto-scheduler places it or a request is approved. Leave already on the schedule is not changed.
+            {leaveStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
+            {leaveStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
+            {leaveStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
+          </div>
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            {LEAVE_POLICIES.map((policy) => (
+              <button
+                key={policy}
+                onClick={() => canEdit && saveLeavePolicy(policy)}
+                disabled={!canEdit}
+                title={LEAVE_LABELS[policy].hint}
+                className={[
+                  "flex flex-col items-start px-3 py-2 rounded-lg border text-left transition-colors",
+                  prefs.leaveHoursPolicy === policy
+                    ? "bg-blue-600/20 border-blue-500 text-blue-300"
+                    : "bg-slate-700/30 border-slate-600/50 text-slate-300 hover:border-slate-500",
+                  !canEdit ? "opacity-60 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                <span className="text-sm font-medium">{LEAVE_LABELS[policy].label}</span>
+                <span className="text-[11px] text-slate-500 mt-0.5">{LEAVE_LABELS[policy].hint}</span>
               </button>
             ))}
           </div>

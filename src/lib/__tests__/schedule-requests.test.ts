@@ -339,17 +339,27 @@ describe("checkRequestConflict", () => {
     expect(ok).toEqual([]);
   });
 
-  it("LEAVE flags a DIFFERENT off/leave shift, not just working shifts", () => {
-    // Requested AL leave but placed a different off-shift (OFF) — must still conflict.
+  it("LEAVE flags a DIFFERENT leave shift, not just working shifts", () => {
+    // Requested AL leave but placed another leave shift — must still conflict.
     const reqs = [req({ kind: "LEAVE", leaveShiftTypeId: "al" })];
     const hit = checkRequestConflict({
+      ...base,
+      requests: reqs,
+      assignedShiftTypeId: "sl",
+    });
+    expect(hit).toHaveLength(1);
+    expect(hit[0].message).toContain("AL leave");
+  });
+
+  it("LEAVE + the off shift (X) is no conflict: X honours the leave (card #175)", () => {
+    const reqs = [req({ kind: "LEAVE", leaveShiftTypeId: "al" })];
+    const ok = checkRequestConflict({
       ...base,
       isOffShift: true,
       requests: reqs,
       assignedShiftTypeId: "off",
     });
-    expect(hit).toHaveLength(1);
-    expect(hit[0].message).toContain("AL leave");
+    expect(ok).toEqual([]);
   });
 
   it("REQUEST_SHIFT conflicts when a different working shift is assigned", () => {
@@ -860,11 +870,12 @@ describe("assignmentSatisfiesRequestOnDate", () => {
     }
   });
 
-  it("LEAVE: satisfied only by the requested leave shift", () => {
+  it("LEAVE: satisfied by the requested leave shift or an off shift (card #175), never by work or a blank", () => {
     const r = req({ kind: "LEAVE", leaveShiftTypeId: "al" });
     expect(assignmentSatisfiesRequestOnDate(r, "al", isOff)).toBe(true);
+    expect(assignmentSatisfiesRequestOnDate(r, "off", isOff)).toBe(true);
     expect(assignmentSatisfiesRequestOnDate(r, "orc", isOff)).toBe(false);
-    expect(assignmentSatisfiesRequestOnDate(r, "off", isOff)).toBe(false);
+    expect(assignmentSatisfiesRequestOnDate(r, null, isOff)).toBe(false);
   });
 
   it("OFF: satisfied by any off shift, not by a working shift", () => {

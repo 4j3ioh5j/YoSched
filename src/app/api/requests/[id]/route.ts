@@ -7,7 +7,7 @@ import { resolveApproval, ApprovalRetry } from "@/lib/request-approval-resolve";
 import { busyResponse, isTxTimeout, lockDayCaps, DAY_CAP_TX } from "@/lib/day-cap-db";
 import { unapproveUnderLocks, RippleStale } from "@/lib/request-unapprove";
 import { parseRipple } from "@/lib/request-approval-outcome";
-import { resolveRequestPlacement, releasableDates, eachDateInclusive, isRequestSatisfied, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
+import { resolveRequestPlacement, releasableDates, releasableOffDates, eachDateInclusive, isRequestSatisfied, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
 import { NextRequest, NextResponse } from "next/server";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -66,8 +66,7 @@ const CLEAR_FLAG = { flaggedAt: null, flaggedReason: null, approvalRipple: Prism
 /** Dates of `r` whose request-placed shift is safe to clear when r is removed —
  *  excludes dates another still-approved request also resolves to the same shift,
  *  so removing one request never yanks a shift another still relies on. */
-async function datesToRelease(r: RequestRow, placement: string | null, offId: string | null, db: Prisma.TransactionClient | typeof prisma = prisma): Promise<Date[]> {
-  if (!placement) return [];
+async function otherApprovedOf(r: RequestRow, db: Prisma.TransactionClient | typeof prisma) {
   const days = coveredCells(r).map((c) => c.date);
   const others = await db.scheduleRequest.findMany({
     where: {
@@ -78,18 +77,42 @@ async function datesToRelease(r: RequestRow, placement: string | null, offId: st
       endDate: { gte: new Date(days[0] + "T00:00:00Z") },
     },
   });
-  return releasableDates(
-    { startDate: ymd(r.startDate), endDate: ymd(r.endDate) },
-    placement,
-    others.map((o) => ({
-      kind: o.kind as RequestKind,
-      shiftTypeIds: o.shiftTypeIds,
-      leaveShiftTypeId: o.leaveShiftTypeId,
-      startDate: ymd(o.startDate),
-      endDate: ymd(o.endDate),
-    })),
-    offId
-  ).map((d) => new Date(d + "T00:00:00Z"));
+  return others.map((o) => ({
+    kind: o.kind as RequestKind,
+    shiftTypeIds: o.shiftTypeIds,
+    leaveShiftTypeId: o.leaveShiftTypeId,
+    startDate: ymd(o.startDate),
+    endDate: ymd(o.endDate),
+  }));
+}
+
+async function datesToRelease(r: RequestRow, placement: string | null, offId: string | null, db: Prisma.TransactionClient | typeof prisma = prisma): Promise<Date[]> {
+  if (!placement) return [];
+  return releasableDates({ startDate: ymd(r.startDate), endDate: ymd(r.endDate) }, placement, await otherApprovedOf(r, db), offId)
+    .map((d) => new Date(d + "T00:00:00Z"));
+}
+
+/** Card #175: release a request's placements — its own shift, plus (LEAVE) the X its
+ *  approval pinned on days the requester wouldn't work. Request-placed, unlocked only. */
+async function releaseRequestCells(tx: Prisma.TransactionClient, r: RequestRow, placement: string | null, offId: string | null): Promise<void> {
+  const release = await datesToRelease(r, placement, offId, tx);
+  if (release.length > 0) {
+    await tx.assignment.deleteMany({
+      where: { staffId: r.staffId, source: "request", isLocked: false, shiftTypeId: placement!, date: { in: release } },
+    });
+  }
+  if (placement && offId && offId !== placement) {
+    const offDays = releasableOffDates(
+      { kind: r.kind as RequestKind, startDate: ymd(r.startDate), endDate: ymd(r.endDate) },
+      await otherApprovedOf(r, tx),
+      offId,
+    ).map((d) => new Date(d + "T00:00:00Z"));
+    if (offDays.length > 0) {
+      await tx.assignment.deleteMany({
+        where: { staffId: r.staffId, source: "request", isLocked: false, shiftTypeId: offId, date: { in: offDays } },
+      });
+    }
+  }
 }
 
 // The shifts a just-unapproved request would RE-APPROVE on: returned ONLY when the
@@ -218,18 +241,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         storedRipple: existing.approvalRipple,
         userId: result.userId,
         release: async (tx) => {
-          const release = await datesToRelease(existing, placement, offId, tx);
-          if (release.length > 0) {
-            await tx.assignment.deleteMany({
-              where: {
-                staffId: existing.staffId,
-                source: "request",
-                isLocked: false,
-                shiftTypeId: placement!,
-                date: { in: release },
-              },
-            });
-          }
+          await releaseRequestCells(tx, existing, placement, offId);
         },
         setStatus: (tx) =>
           tx.scheduleRequest.update({
@@ -285,18 +297,7 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   try {
     await prisma.$transaction(async (tx) => {
       await lockDayCaps(tx, cells.map((c) => c.date));
-      const release = await datesToRelease(existing, placement, offId, tx);
-      if (release.length > 0) {
-        await tx.assignment.deleteMany({
-          where: {
-            staffId: existing.staffId,
-            source: "request",
-            isLocked: false,
-            shiftTypeId: placement!,
-            date: { in: release },
-          },
-        });
-      }
+      await releaseRequestCells(tx, existing, placement, offId);
       await tx.scheduleRequest.delete({ where: { id } });
     }, DAY_CAP_TX);
   } catch (e) {

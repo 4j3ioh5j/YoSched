@@ -7,6 +7,7 @@ import { foldRequestsForDate, detectRequestConflicts, coversDate, parseOffStrate
 import { matchesWhen, standingToWhen, ruleToWhen } from "./recurrence";
 import { type ShiftShareBasis } from "./shift-share";
 import { type HolidayPolicy } from "./holiday-policy";
+import { couldWorkOn, excessLeaveDays, type LeavePolicy } from "./leave-policy";
 import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
 
 export type ScheduleStaff = {
@@ -172,7 +173,27 @@ type SchedulingPreferences = {
   requestConflictPolicy?: RequestConflictPolicy; // forced-request contention resolution; default "reconcile"
   shiftShareBasis?: ShiftShareBasis; // split of a scheduled shift's slots across eligible staff: "fte" (default) | "head"
   holidayPolicy?: HolidayPolicy; // who is owed HOL on a holiday: "entitlement" (default) | "fill" (legacy) | "none"
+  leaveHoursPolicy?: LeavePolicy; // card #175: leave only on days they'd work, up to the PP target ("up-to-target", default) | "always"
 };
+
+// Card #175: FTE-counted hours of one cell — the same math as the engine's
+// ppHoursForStaff (countsTowardFte, per-staff hour overrides, day type holiday >
+// weekend > weekday). Shared with request approval so both writers cap leave alike.
+export function countedHoursFn(input: Pick<AutoScheduleInput, "shiftTypes" | "staffOverrides" | "holidays">): (staffId: string, shiftTypeId: string, date: string) => number {
+  const stById = new Map(input.shiftTypes.map((s) => [s.id, s] as const));
+  const overrides = new Map<string, ShiftHourOverride>();
+  for (const o of input.staffOverrides) overrides.set(`${o.staffId}:${o.shiftTypeId}`, resolveShiftHourOverride(o));
+  const holidaySet = new Set(input.holidays.map((h) => h.date));
+  return (staffId, shiftTypeId, date) => {
+    const st = stById.get(shiftTypeId);
+    if (!st?.countsTowardFte) return 0;
+    return getShiftHours(staffId, st, overrides, dayTypeOf(date, holidaySet));
+  };
+}
+
+// Card #175: the step of an off-shift (X) cell the engine placed on a requested
+// leave day instead of the leave shift (the day was off anyway, or past target).
+export const LEAVE_OFF_STEP = "request-leave-off";
 
 export type Suggestion = {
   staffId: string;
@@ -706,6 +727,9 @@ export function autoSchedule({
     if (requestList.length === 0) return false;
     const folded = foldFor(staffId, date);
     if (folded.forbidWorking && !st.isOffShift && !st.isLeave) return true;
+    // Card #175: a hard-leave day is a day off — no work over it, even when the
+    // engine placed X there instead of the leave shift.
+    if (folded.leaveShiftTypeId && !st.isOffShift && !st.isLeave) return true;
     if (folded.forbiddenShiftIds.has(st.id)) return true;
     // An effective-hard PURE-off day-off-strategy request forbids work on its date —
     // the same gate a kind:"OFF" request gets. STEP 0b pre-places the off shift, but
@@ -819,7 +843,11 @@ export function autoSchedule({
   // is fixed — the autoscheduler must never overwrite a manual assignment, even
   // a manual day-off. Auto/imported/engine-placed off cells stay fillable;
   // request-backed days off are held separately via requestBlocksWork().
-  function isFillableOffCell(cell: { shiftTypeId: string; locked: boolean; source?: string }): boolean {
+  function isFillableOffCell(cell: { shiftTypeId: string; locked: boolean; source?: string; step?: string }): boolean {
+    // Card #175: an X standing in for requested leave ("request-leave-off") is the
+    // request's own placement — held like the leave it replaces, never refilled
+    // (not by a fill step, a follower, nor STEP 4's day-off pass).
+    if (cell.step === LEAVE_OFF_STEP) return false;
     return !!offShift && cell.shiftTypeId === offShift.id && !cell.locked && cell.source !== "manual";
   }
 
@@ -1369,6 +1397,12 @@ export function autoSchedule({
     }
   }
 
+  // Card #175: could the person work this date, by their own availability rules
+  // (couldWorkOn reads conditional rules optimistically — STEP 0 runs on an empty grid;
+  // any excess left over target is trimmed after placement, trimLeaveToTarget).
+  const leavePolicy: LeavePolicy = schedulingPreferences.leaveHoursPolicy ?? "up-to-target";
+  const normallyWorks = (p: ScheduleStaff, date: string): boolean => couldWorkOn(p.availabilityRules, date, payPeriods);
+
   // ── STEP 0: Pre-place approved leave requests ──
   // An approved hard LEAVE request pre-places its specific leave shift, exactly
   // like an approved absence. It only fills empty / unlocked-off cells (assign()
@@ -1384,6 +1418,12 @@ export function autoSchedule({
         const leaveSt = stById.get(leaveShiftId);
         if (!leaveSt) {
           warnings.push(`${staff.initials}: leave request on ${date} references an unknown shift type`);
+          continue;
+        }
+        // Card #175: a requested leave day the person would have been off anyway
+        // (their own availability rules) gets X — no leave is charged for a day off.
+        if (leavePolicy === "up-to-target" && offShift && !normallyWorks(staff, date)) {
+          assign(staff.id, date, offShift, `Requested leave on a day off: ${offShift.code} (no leave used)`, LEAVE_OFF_STEP, 1.0);
           continue;
         }
         assign(staff.id, date, leaveSt, `Approved leave request: ${leaveSt.code}`, "request-leave", 1.0);
@@ -2413,7 +2453,7 @@ export function autoSchedule({
   // repair therefore leaves tentative cells alone; reconcileRequests() resolves them.
   // "holiday" (STEP 2.75 entitlement HOL) is leave, so isSwappableCell already rejects
   // it via isLeave; listed here so the intent survives a HOL config change.
-  const NON_SWAPPABLE_STEPS = new Set(["request-leave", "request-shift", "request-tentative", "standing", "follower", "off", "holiday"]);
+  const NON_SWAPPABLE_STEPS = new Set(["request-leave", LEAVE_OFF_STEP, "request-shift", "request-tentative", "standing", "follower", "off", "holiday"]);
 
   function isSwappableCell(cell: { shiftTypeId: string; locked: boolean; noCount?: boolean; step?: string }): boolean {
     if (cell.locked || cell.noCount || !cell.step || NON_SWAPPABLE_STEPS.has(cell.step)) return false;
@@ -2698,10 +2738,49 @@ export function autoSchedule({
     if (c.step) byStep[c.step] = Math.max(0, (byStep[c.step] ?? 0) - 1);
   }
 
+  function trimLeaveToTarget(off: ScheduleShiftType) {
+    for (const pp of payPeriods) {
+      if (!dates.some((d) => d >= pp.startDate && d <= pp.endDate)) continue;
+      for (const p of activeStaff) {
+        const target = targetFor(p, pp);
+        const total = ppHoursForStaff(p.id, pp);
+        if (total <= target) continue;
+        const leave: { date: string; hours: number }[] = [];
+        for (const [key, c] of grid) {
+          if (c.step !== "request-leave") continue;
+          const [sid, d] = [key.slice(0, key.lastIndexOf(":")), key.slice(key.lastIndexOf(":") + 1)];
+          if (sid !== p.id || d < pp.startDate || d > pp.endDate) continue;
+          const st = stById.get(c.shiftTypeId);
+          const hours = st?.countsTowardFte ? getShiftHours(p.id, st, overrideMap, dayTypeOf(d, holidaySet)) : 0;
+          leave.push({ date: d, hours });
+        }
+        if (leave.length === 0) continue;
+        const leaveHours = leave.reduce((s, l) => s + l.hours, 0);
+        for (const d of excessLeaveDays(target, total - leaveHours, leave)) {
+          const key = `${p.id}:${d}`;
+          const c = grid.get(key)!;
+          const idx = suggestions.findIndex((x) => x.staffId === p.id && x.date === d && x.step === "request-leave");
+          grid.set(key, { ...c, shiftTypeId: off.id, code: off.code, step: LEAVE_OFF_STEP });
+          if (idx >= 0) {
+            suggestions[idx] = {
+              ...suggestions[idx],
+              shiftTypeId: off.id,
+              code: off.code,
+              step: LEAVE_OFF_STEP,
+              reason: `Requested leave not needed: already at the pay-period hours target (${off.code})`,
+            };
+          }
+          byStep["request-leave"] = Math.max(0, (byStep["request-leave"] ?? 0) - 1);
+          byStep[LEAVE_OFF_STEP] = (byStep[LEAVE_OFF_STEP] ?? 0) + 1;
+        }
+      }
+    }
+  }
+
   function recheckConditionalRules() {
     const owners = activeStaff.filter((p) => p.availabilityRules.some((r) => r.conditionStaffId && r.conditionType));
     if (owners.length === 0) return;
-    const HUMAN_STEPS = new Set(["request-leave", "request-shift", "request-tentative"]);
+    const HUMAN_STEPS = new Set(["request-leave", LEAVE_OFF_STEP, "request-shift", "request-tentative"]);
     const nameOf = (id: string) => staff.find((p) => p.id === id)?.initials ?? "another staff member";
     // The conditional rules that apply on `date` and currently say "unavailable" (a rule
     // granting availability whose condition fails, or a ban whose condition holds).
@@ -3187,6 +3266,14 @@ export function autoSchedule({
   // freeing AB can break "EF only when AB is working". Before the audits and STEP 4.
   recheckConditionalRules();
 
+  // ── Card #175: leave only up to the pay-period target ──
+  // Fixed hours (loaded cells, required coverage, HOL) can leave a person over target
+  // even after STEP 0 put leave only on days they'd work. Turn this run's own leave
+  // cells into X, latest first, while they are over by at least that day's hours —
+  // never under target. Only cells this run placed (step "request-leave"): never a
+  // loaded, locked or approval-placed cell, never a frozen earlier month.
+  if (leavePolicy === "up-to-target" && offShift) trimLeaveToTarget(offShift);
+
   // ── Post-repair hours audit ──
   // Emit one warning per residual nonzero PP-hour deviation, AFTER the repair so
   // it reflects final state. Tag deviations driven by scarce-eligibility shifts
@@ -3222,7 +3309,7 @@ export function autoSchedule({
       const blockedByApproved = elig.some((p) => {
         const cell = grid.get(`${p.id}:${date}`);
         if (!cell) return false;
-        return cell.locked || cell.step === "request-leave" || cell.step === "request-shift";
+        return cell.locked || cell.step === "request-leave" || cell.step === LEAVE_OFF_STEP || cell.step === "request-shift";
       });
 
       const cause = hasFixableBody
@@ -3320,7 +3407,7 @@ export function autoSchedule({
   if (requestList.length > 0) {
     const requestAwayByDate = new Map<string, Set<string>>();
     for (const s of suggestions) {
-      if (s.step !== "request-leave" && s.step !== "request-shift") continue;
+      if (s.step !== "request-leave" && s.step !== LEAVE_OFF_STEP && s.step !== "request-shift") continue;
       if (!isAwayShift(s.shiftTypeId)) continue;
       let set = requestAwayByDate.get(s.date);
       if (!set) { set = new Set(); requestAwayByDate.set(s.date, set); }

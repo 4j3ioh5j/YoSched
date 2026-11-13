@@ -15,6 +15,7 @@ import { effectiveTargetsForStaff, type DepartmentShiftTarget } from "@/lib/depa
 import { parseHoursPolicy } from "@/lib/autogen-hours-policy";
 import { parseShiftShareBasis } from "@/lib/shift-share";
 import { parseHolidayPolicy } from "@/lib/holiday-policy";
+import { parseLeavePolicy } from "@/lib/leave-policy";
 import { deriveEquityFactorCodes } from "@/lib/equity-factors";
 
 /**
@@ -412,6 +413,7 @@ export async function buildAutoScheduleInput(
       requestConflictPolicy: parseRequestConflictPolicy(schedulingPrefsRow?.requestConflictPolicy),
       shiftShareBasis: parseShiftShareBasis(schedulingPrefsRow?.shiftShareBasis),
       holidayPolicy: parseHolidayPolicy(schedulingPrefsRow?.holidayPolicy),
+      leaveHoursPolicy: parseLeavePolicy(schedulingPrefsRow?.leaveHoursPolicy),
     },
     // Linked by shift id; the code the fairness pass keys on is the shift's CURRENT one.
     equityFactors: deriveEquityFactorCodes(

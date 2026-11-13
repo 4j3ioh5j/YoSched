@@ -1,3 +1,4 @@
+import { isLeavePolicy, LEAVE_POLICIES } from "@/lib/leave-policy";
 import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -26,7 +27,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault } = body;
 
   // Mode is STRICTLY validated on write — a bad value is rejected, never coerced to
   // the default (which would silently turn a typo into "full"). Reads stay lenient.
@@ -47,6 +48,9 @@ export async function PUT(req: NextRequest) {
   }
   if (holidayPolicy !== undefined && !isHolidayPolicy(holidayPolicy)) {
     return NextResponse.json({ error: `holidayPolicy must be one of ${HOLIDAY_POLICIES.join(", ")}` }, { status: 400 });
+  }
+  if (leaveHoursPolicy !== undefined && !isLeavePolicy(leaveHoursPolicy)) {
+    return NextResponse.json({ error: `leaveHoursPolicy must be one of ${LEAVE_POLICIES.join(", ")}` }, { status: 400 });
   }
   for (const [k, v] of [["activationWorkedDefault", activationWorkedDefault], ["activationNeverDefault", activationNeverDefault]] as const) {
     if (v !== undefined && !isActivationGroupDefault(v)) {
@@ -102,6 +106,7 @@ export async function PUT(req: NextRequest) {
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
       ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
       ...(isHolidayPolicy(holidayPolicy) && { holidayPolicy }),
+      ...(isLeavePolicy(leaveHoursPolicy) && { leaveHoursPolicy }),
       ...(columnOrder !== undefined && { staffColumnOrder: columnOrder === null ? Prisma.DbNull : columnOrder }),
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),
@@ -120,6 +125,7 @@ export async function PUT(req: NextRequest) {
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
       ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
       ...(isHolidayPolicy(holidayPolicy) && { holidayPolicy }),
+      ...(isLeavePolicy(leaveHoursPolicy) && { leaveHoursPolicy }),
       ...(columnOrder != null && { staffColumnOrder: columnOrder }),
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),

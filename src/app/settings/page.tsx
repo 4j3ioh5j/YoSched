@@ -9,6 +9,7 @@ import { coerceConditions } from "@/lib/print-column-visibility";
 import { parseLiveScope } from "@/lib/live-scope";
 import { parseShiftShareBasis } from "@/lib/shift-share";
 import { parseHolidayPolicy } from "@/lib/holiday-policy";
+import { parseLeavePolicy } from "@/lib/leave-policy";
 import { parseStaffOrderCriteria } from "@/lib/staff-order";
 import { parseHoursPolicy } from "@/lib/autogen-hours-policy";
 import { parseActivationWorked, parseActivationNever, parseActivationNewHire } from "@/lib/shift-activation";
@@ -69,6 +70,7 @@ export default async function Settings() {
     defaultLiveScope: parseLiveScope(schedulingPrefsRow?.defaultLiveScope),
     shiftShareBasis: parseShiftShareBasis(schedulingPrefsRow?.shiftShareBasis),
     holidayPolicy: parseHolidayPolicy(schedulingPrefsRow?.holidayPolicy),
+    leaveHoursPolicy: parseLeavePolicy(schedulingPrefsRow?.leaveHoursPolicy),
     payPeriodAnchor: schedulingPrefsRow?.payPeriodAnchor?.toISOString().split("T")[0] ?? null,
     payPeriodLengthDays: schedulingPrefsRow?.payPeriodLengthDays ?? 14,
     activationWorkedDefault: parseActivationWorked(schedulingPrefsRow?.activationWorkedDefault),
