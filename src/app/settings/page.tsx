@@ -104,6 +104,7 @@ export default async function Settings() {
           isFillShift: st.isFillShift,
           weekendPaired: st.weekendPaired,
           holidayWeekendPaired: st.holidayWeekendPaired,
+          spreadOverMonth: st.spreadOverMonth,
           ignoresWorkingDays: st.ignoresWorkingDays,
           autoSchedulable: st.autoSchedulable,
           hotkey: st.hotkey,

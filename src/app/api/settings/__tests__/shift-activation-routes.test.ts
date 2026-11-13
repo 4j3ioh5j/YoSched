@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 
 // Card #75: the activation endpoint, the three department defaults, and new shifts starting off.
 
-const calls = { apply: [] as Record<string, unknown>[], upsert: [] as Record<string, unknown>[], created: [] as Record<string, unknown>[], staleNext: false };
+const calls = { apply: [] as Record<string, unknown>[], upsert: [] as Record<string, unknown>[], created: [] as Record<string, unknown>[], updated: [] as Record<string, unknown>[], staleNext: false };
 
 const fake = {
   shiftType: {
@@ -11,6 +11,7 @@ const fake = {
     aggregate: async () => ({ _max: { sortOrder: 3 } }),
     create: async ({ data }: { data: Record<string, unknown> }) => { calls.created.push(data); return { id: "new", ...data }; },
     findMany: async () => [],
+    update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => { calls.updated.push(data); return { id: where.id, ...data }; },
   },
   schedulingPreferences: {
     findFirst: async () => ({ activationWorkedDefault: "bogus", activationNeverDefault: "eligible", activationNewHireDefault: "match" }),
@@ -42,7 +43,7 @@ const req = (body: unknown) => ({ json: async () => body }) as unknown as NextRe
 const getReq = (id: string | null) => ({ nextUrl: new URL(`http://x/a${id ? `?id=${id}` : ""}`) }) as unknown as NextRequest;
 const good = { id: "S", version: "v1", autoSchedulable: true, eligibleStaffIds: ["A"], defaultEmploymentTypeIds: ["FT"] };
 
-beforeEach(() => { calls.apply = []; calls.upsert = []; calls.created = []; calls.staleNext = false; });
+beforeEach(() => { calls.apply = []; calls.upsert = []; calls.created = []; calls.updated = []; calls.staleNext = false; });
 
 describe("GET /api/settings/shift-types/activation", () => {
   it("returns the state with the department defaults (a bad stored value falls back to the default)", async () => {
@@ -102,5 +103,23 @@ describe("POST /api/settings/shift-types", () => {
     const res = await shiftTypes.POST(req({ code: "NEW", name: "New", autoSchedulable: true }));
     expect(res.status).toBeLessThan(300);
     expect(calls.created[0].autoSchedulable).toBe(false);
+  });
+});
+
+describe("Card #178: the \"Spread over the month\" flag reaches every shift-type writer", () => {
+  it("PUT saves it (and only when sent)", async () => {
+    expect((await shiftTypes.PUT(req({ id: "S", spreadOverMonth: true }))).status).toBe(200);
+    expect(calls.updated[0]).toEqual({ spreadOverMonth: true });
+    await shiftTypes.PUT(req({ id: "S", name: "Late" }));
+    expect(calls.updated[1]).toEqual({ name: "Late" });
+  });
+  it("POST stores it, off by default", async () => {
+    await shiftTypes.POST(req({ code: "A", name: "A", spreadOverMonth: true }));
+    await shiftTypes.POST(req({ code: "B", name: "B" }));
+    expect(calls.created.map((c) => c.spreadOverMonth)).toEqual([true, false]);
+  });
+  it("rides along with an activation save", async () => {
+    await activation.POST(req({ ...good, shift: { spreadOverMonth: true } }));
+    expect(calls.apply[0].shiftData).toEqual({ spreadOverMonth: true });
   });
 });

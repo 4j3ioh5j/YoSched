@@ -44,6 +44,8 @@ export type ScheduleShiftType = {
   schedulePriority: number | null;
   weekendPaired: boolean;
   holidayWeekendPaired: boolean;
+  // Card #178: for each person, the marked shifts (together) are spread across the weeks.
+  spreadOverMonth?: boolean;
   ignoresWorkingDays: boolean;
   category: string;
 
@@ -919,6 +921,25 @@ export function autoSchedule({
     return n;
   }
 
+  // ── Card #178: "Spread over the month" ──
+  // The marked shifts form ONE group per person; the engine prefers placements with fewer
+  // of them close by. A preference only: it never blocks and ranks below share fairness.
+  const spreadIds = new Set(shiftTypes.filter((s) => s.spreadOverMonth).map((s) => s.id));
+  const SPREAD_HALF_WINDOW = 3; // a 7-day window centred on the day
+  /** The person's marked cells within SPREAD_HALF_WINDOW days either side of `date` (the day itself excluded). */
+  function spreadLoad(staffId: string, date: string): number {
+    if (spreadIds.size === 0) return 0;
+    let n = 0;
+    for (const step of [prevDate, nextDate]) {
+      let d = date;
+      for (let i = 0; i < SPREAD_HALF_WINDOW; i++) {
+        d = step(d);
+        if (spreadIds.has(grid.get(`${staffId}:${d}`)?.shiftTypeId ?? "")) n++;
+      }
+    }
+    return n;
+  }
+
   function isAssigned(staffId: string, date: string): boolean {
     const cell = grid.get(`${staffId}:${date}`);
     if (!cell) return false;
@@ -1687,7 +1708,9 @@ export function autoSchedule({
       return (runCount.get(p.id) ?? 0) / shareWeight(p);
     }
 
-    function pickStaff(pool: ScheduleStaff[], date?: string): ScheduleStaff {
+    // `loadOf` (card #178): the spread load to rank by, when the caller knows the person's
+    // actual dates (a paired group); otherwise spreadLoad on `date`.
+    function pickStaff(pool: ScheduleStaff[], date?: string, loadOf?: (p: ScheduleStaff) => number): ScheduleStaff {
       // Option B (long-shift fit): for shifts longer than the fill shift, break
       // ties among equally-shared candidates by who the long shift serves best.
       // Two tiers, lower key wins:
@@ -1752,6 +1775,12 @@ export function autoSchedule({
         }
         const countDiff = shareCount(a) - shareCount(b);
         if (Math.abs(countDiff) > 1e-9) return countDiff;
+        // Card #178: among equally-shared candidates, the one with fewer marked shifts close by.
+        if (st.spreadOverMonth && (date || loadOf)) {
+          const la = loadOf ? loadOf(a) : spreadLoad(a.id, date!);
+          const lb = loadOf ? loadOf(b) : spreadLoad(b.id, date!);
+          if (la !== lb) return la - lb;
+        }
         // Option B long-shift fit (see fitMap above): among equally-shared
         // candidates, divisibility need first, then most room to target.
         // Subordinate to the share count so it never concentrates.
@@ -1917,10 +1946,21 @@ export function autoSchedule({
             // Anchor dates: PP boundaries (push toward the middle) plus dates where
             // this staff already has other scheduled shifts in this PP.
             const anchorDates: string[] = [prevDate(pp.startDate), nextDate(pp.endDate)];
-            for (const date of dates) {
-              if (date < pp.startDate || date > pp.endDate) continue;
-              const cell = getCell(chosen.id, date);
-              if (cell && cell.code !== st.code && !stById.get(cell.shiftTypeId)?.isOffShift) anchorDates.push(date);
+            if (st.spreadOverMonth) {
+              // Card #178: keep away from the person's MARKED shifts (this one included), also
+              // just across the pay-period edges.
+              let d = pp.startDate;
+              for (let i = 0; i < SPREAD_HALF_WINDOW; i++) d = prevDate(d);
+              const stop = (() => { let e = pp.endDate; for (let i = 0; i < SPREAD_HALF_WINDOW; i++) e = nextDate(e); return e; })();
+              for (; d <= stop; d = nextDate(d)) {
+                if (spreadIds.has(grid.get(`${chosen.id}:${d}`)?.shiftTypeId ?? "")) anchorDates.push(d);
+              }
+            } else {
+              for (const date of dates) {
+                if (date < pp.startDate || date > pp.endDate) continue;
+                const cell = getCell(chosen.id, date);
+                if (cell && cell.code !== st.code && !stById.get(cell.shiftTypeId)?.isOffShift) anchorDates.push(date);
+              }
             }
             const violatesFollow = (picked: string[], candidate: string): boolean => {
               if (!followMap.has(st.id)) return false;
@@ -1971,8 +2011,12 @@ export function autoSchedule({
             for (const tier of coverageBeatsOverHours ? [fits, hostable] : [fits]) {
               let poolList = [...tier];
               while (poolList.length > 0) {
-                const chosen = pickStaff(poolList, remainDates[0]);
-                const group = completeGroupFor(chosen, remainDates);
+                // Card #178: rank hosts by the spread load of the group each would actually get.
+                const groups = st.spreadOverMonth ? new Map(poolList.map((p) => [p.id, completeGroupFor(p, remainDates)])) : null;
+                const chosen = groups
+                  ? pickStaff(poolList, remainDates[0], (p) => { const g = groups.get(p.id); return g ? g.reduce((n, d) => n + spreadLoad(p.id, d), 0) : Infinity; })
+                  : pickStaff(poolList, remainDates[0]);
+                const group = groups ? groups.get(chosen.id)! : completeGroupFor(chosen, remainDates);
                 if (group) {
                   for (const date of group) {
                     const desirability = dwMap.get(`${st.id}:${getDow(date)}`) ?? 0;
@@ -2133,11 +2177,15 @@ export function autoSchedule({
         // Card #177/#187: each pick takes the day that makes the fewest soft-avoided pairs
         // (date order otherwise), re-scored after every placement so the second ORC sees the first.
         const remaining = [...candidateDates];
+        // Card #178: then, for a marked shift, the day with fewer marked shifts close by.
         const nextCandidate = (): string => {
           let best = 0;
-          if (avoidSet.size > 0) {
-            let bestAv = Infinity;
-            remaining.forEach((d, i) => { const av = avoidedPairs(staff.id, d, st.id); if (av < bestAv) { bestAv = av; best = i; } });
+          if (avoidSet.size > 0 || st.spreadOverMonth) {
+            let bestKey = Infinity;
+            remaining.forEach((d, i) => {
+              const key = avoidedPairs(staff.id, d, st.id) * 1000 + (st.spreadOverMonth ? spreadLoad(staff.id, d) : 0);
+              if (key < bestKey) { bestKey = key; best = i; }
+            });
           }
           return remaining.splice(best, 1)[0];
         };
@@ -4032,6 +4080,35 @@ export function autoSchedule({
         seen.add(key);
         warnings.push(`${initialsOf.get(x.staffId) ?? x.staffId} ${second}: ${b.code} after ${a.code} (an avoided pair)`);
       }
+    }
+  }
+
+  // Card #178: name a person whose marked shifts the run left bunched — 3+ in some 7 days
+  // (one of them engine-placed) while a whole 7 days of the range holds none. Reads the
+  // final grid, so frozen context and the days just across the range's edges count.
+  if (spreadIds.size > 0 && dates.length > 0) {
+    const first = [...dates].sort()[0], last = [...dates].sort()[dates.length - 1];
+    const placedMarked = new Set(suggestions.filter((x) => spreadIds.has(x.shiftTypeId)).map((x) => `${x.staffId}:${x.date}`));
+    const initialsOf = new Map(staff.map((p) => [p.id, p.initials]));
+    const span = (from: string, n: number) => { const out = [from]; for (let i = 1; i < n; i++) out.push(nextDate(out[i - 1])); return out; };
+    let start = first;
+    for (let i = 0; i < 6; i++) start = prevDate(start);
+    const starts: string[] = [];
+    for (let d = start; d <= last; d = nextDate(d)) starts.push(d);
+    for (const p of staff) {
+      if (![...placedMarked].some((k) => k.startsWith(`${p.id}:`))) continue;
+      const marked = (d: string) => spreadIds.has(grid.get(`${p.id}:${d}`)?.shiftTypeId ?? "");
+      let busy: string[] | null = null, busyN = 0;
+      for (const s0 of starts) {
+        const w = span(s0, 7);
+        const n = w.filter(marked).length;
+        if (n > busyN && w.some((d) => placedMarked.has(`${p.id}:${d}`))) { busyN = n; busy = w; }
+      }
+      if (!busy || busyN < 3) continue;
+      // The empty week must be one this run could still fill (inside the range, none of it frozen).
+      const empty = starts.map((s0) => span(s0, 7)).find((w) => w[0] >= first && w[6] <= last && !isFrozen(w[0]) && !w.some(marked));
+      if (!empty) continue;
+      warnings.push(`${initialsOf.get(p.id) ?? p.id}: ${busyN} spread shifts in 7 days (${busy[0].slice(5)}..${busy[6].slice(5)}), none in ${empty[0].slice(5)}..${empty[6].slice(5)}`);
     }
   }
 

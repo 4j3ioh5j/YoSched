@@ -329,6 +329,7 @@ export async function buildAutoScheduleInput(
       schedulePriority: st.schedulePriority,
       weekendPaired: st.weekendPaired,
       holidayWeekendPaired: st.holidayWeekendPaired,
+      spreadOverMonth: st.spreadOverMonth,
       ignoresWorkingDays: st.ignoresWorkingDays,
       category: st.category,
       autoSchedulable: st.autoSchedulable,
