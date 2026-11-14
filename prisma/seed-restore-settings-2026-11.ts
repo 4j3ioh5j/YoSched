@@ -26,6 +26,7 @@
  * Run on the VM from ~/YoSched:  DRY_RUN=1 npx tsx prisma/seed-restore-settings-2026-11.ts
  */
 import "dotenv/config";
+import { linkUntypedHolidays } from "../src/lib/holiday-rules-db";
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, Prisma } from "../src/generated/prisma/client.js";
@@ -155,6 +156,7 @@ async function run(tx: Prisma.TransactionClient, log: (s: string) => void) {
   } else log(`pay-period anchor already ${p.payPeriodAnchor.toISOString().slice(0, 10)}, left alone`);
   const hol = HOLIDAY_YEARS.flatMap((y) => getFederalHolidays(y));
   const h = await tx.holiday.createMany({ data: hol.map((x) => ({ date: d(x.date), name: x.name })), skipDuplicates: true });
+  await linkUntypedHolidays(tx); // card #210: every holiday has a type
   log(`holidays ${HOLIDAY_YEARS[0]}–${HOLIDAY_YEARS.at(-1)}: +${h.count} (of ${hol.length}; existing dates kept)`);
 
   // ---- groups ----

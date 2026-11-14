@@ -4,6 +4,7 @@ import { StatusOpRecorder, undoOrder } from "@/lib/request-undo-ops";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } from "@/lib/constraints";
+import { splitGroupWarnings, type HolidayGroup } from "@/lib/holiday-rules";
 import { staffPpTarget, ppDiffCell } from "@/lib/fte";
 import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, ALERT_CATEGORIES, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
@@ -239,6 +240,8 @@ type Props = {
   shiftTypes: ShiftType[];
   payPeriods: PayPeriod[];
   holidays: Holiday[];
+  /** Card #210: holiday-rule groups (built on the server from the Settings rules); optional for older pages. */
+  holidayRuleGroups?: HolidayGroup[];
   staffOverrides: StaffOverride[];
   staffingMins?: StaffingMin[]; // card #208: ignored (hidden minimums no longer warn); kept optional for older pages
   staffingReqs: StaffingReq[];
@@ -447,6 +450,7 @@ export function ScheduleGrid({
   shiftTypes,
   payPeriods,
   holidays,
+  holidayRuleGroups,
   staffOverrides,
   staffingReqs,
   fairnessData,
@@ -1291,8 +1295,24 @@ export function ScheduleGrid({
         map.set(date, warnings);
       }
     }
+    // Card #210: a holiday rule whose days are held by different people. Shown on the holiday
+    // (or the rule's first day on screen).
+    if (holidayRuleGroups && holidayRuleGroups.length > 0) {
+      const shown = new Set(dates);
+      const holderOf = (d: string, stId: string): string[] =>
+        staff.filter((p) => effectiveAssignmentMap.get(`${p.id}:${d}`)?.shiftTypeId === stId).map((p) => p.id);
+      const label = (id: string): string => staff.find((p) => p.id === id)?.initials ?? "?";
+      const codeOf = (stId: string): string => shiftTypeMap.get(stId)?.code ?? "?";
+      for (const g of holidayRuleGroups) {
+        const at = shown.has(g.holidayDate) ? g.holidayDate : g.slots.find((s) => shown.has(s.date))?.date;
+        if (!at) continue;
+        for (const message of splitGroupWarnings([g], holderOf, label, codeOf)) {
+          map.set(at, [...(map.get(at) ?? []), { type: "holiday-rule", message }]);
+        }
+      }
+    }
     return map;
-  }, [dates, staff, effectiveAssignmentMap, shiftTypeMap, holidaySet, staffingReqs]);
+  }, [dates, staff, effectiveAssignmentMap, shiftTypeMap, holidaySet, staffingReqs, holidayRuleGroups]);
 
   // Count columns name their shifts by id, so count the cells' shiftTypeId (saved grid and
   // Live what-if both carry it) — a renamed shift keeps counting.

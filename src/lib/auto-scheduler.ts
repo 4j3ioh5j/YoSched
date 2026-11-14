@@ -7,6 +7,7 @@ import { foldRequestsForDate, detectRequestConflicts, coversDate, parseOffStrate
 import { matchesWhen, standingToWhen, ruleToWhen } from "./recurrence";
 import { type ShiftShareBasis } from "./shift-share";
 import { type HolidayPolicy, resolveHolidayShift } from "./holiday-policy";
+import { buildHolidayGroups, type HolidayRuleSpec, type HolidayGroup, type HolidayGroupSlot } from "./holiday-rules";
 import { couldWorkOn, excessLeaveDays, type LeavePolicy } from "./leave-policy";
 import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
 import { tallyBalances, sharesOf, spreadPenalty, spreadChange, SPREAD_RADIUS, addDays, type BalanceTally } from "./shift-balance";
@@ -96,7 +97,8 @@ type PayPeriod = {
   targetHours: number;
 };
 
-type Holiday = { date: string };
+// Card #210: holidayTypeId links a dated holiday to its holiday rules (by id).
+type Holiday = { date: string; holidayTypeId?: string | null };
 
 type DesirabilityWeight = {
   shiftTypeId: string;
@@ -601,6 +603,11 @@ export type AutoScheduleInput = {
   balanceRequests?: ScheduleRequestData[];
   balancePayPeriods?: PayPeriodRange[];
   spreadContext?: ScheduleAssignment[];
+  // Card #210: holiday rules (settings data) — each dated holiday of a rule's type makes a group
+  // of (date, shift) days that go to ONE person. holidayRuleContext: read-only cells just after
+  // the run (a hand-entered day of a group that reaches past the end); never written.
+  holidayRules?: HolidayRuleSpec[];
+  holidayRuleContext?: ScheduleAssignment[];
 };
 
 export function autoSchedule({
@@ -628,6 +635,8 @@ export function autoSchedule({
   balanceRequests,
   balancePayPeriods,
   spreadContext,
+  holidayRules,
+  holidayRuleContext,
 }: AutoScheduleInput): AutoScheduleResult {
   const isFrozen = (date: string): boolean => !!writableFrom && date < writableFrom;
   // Seeded final tiebreak helper (Slice 4b). seed 0/undefined ⇒ returns 0 for
@@ -858,6 +867,41 @@ export function autoSchedule({
 
   // Per-day caps (Staffing Rules "Max") — the same resolver the manual edit paths use.
   const capOf = buildDayCapLookup(staffingRequirements, holidays.map((h) => h.date));
+
+  // ── Card #210: holiday-rule groups and the demand they create ──
+  // Every rule day in the run needs one holder of its shift that day, even where the normal
+  // minimum is 0 (Thanksgiving Friday): demand = max(normal minimum, groups on that day+shift),
+  // capped by the day's Max. A Max of 0 means the shift isn't allowed that day: warned, skipped.
+  const ruleGroups: HolidayGroup[] = dates.length > 0 ? buildHolidayGroups(holidays, holidayRules ?? [], dates[0], dates[dates.length - 1]) : [];
+  const slotKey = (shiftTypeId: string, date: string): string => `${shiftTypeId}|${date}`;
+  const ruleDemand = new Map<string, number>();
+  const disallowedSlots = new Set<string>();
+  for (const g of ruleGroups) {
+    for (const s of g.slots) {
+      if (!dateSet.has(s.date)) continue;
+      const k = slotKey(s.shiftTypeId, s.date);
+      if (capOf(s.shiftTypeId, s.date) === 0) {
+        if (!disallowedSlots.has(`${g.key}|${k}`)) {
+          disallowedSlots.add(`${g.key}|${k}`);
+          warnings.push(`${g.ruleName}: ${shiftTypes.find((t) => t.id === s.shiftTypeId)?.code ?? "?"} is not allowed on ${s.date} (its Max that day is 0); that day of the rule is skipped`);
+        }
+        continue;
+      }
+      ruleDemand.set(k, (ruleDemand.get(k) ?? 0) + 1);
+    }
+  }
+  for (const [k, n] of ruleDemand) {
+    const [stId, d] = k.split("|");
+    const cap = capOf(stId, d);
+    if (cap != null) ruleDemand.set(k, Math.min(n, cap));
+  }
+  /** A group's slots that may be placed (shift known, not disallowed by a Max of 0). */
+  const usableSlots = (g: HolidayGroup): HolidayGroupSlot[] =>
+    g.slots.filter((s) => shiftTypes.some((t) => t.id === s.shiftTypeId) && !disallowedSlots.has(`${g.key}|${slotKey(s.shiftTypeId, s.date)}`));
+  // (date, shift) days a group claims in this run: the weekend/bridge pairing skips them and the
+  // residual fill covers them (card #210 r3).
+  const claimedSlots = new Set<string>();
+  for (const g of ruleGroups) for (const s of usableSlots(g)) if (dateSet.has(s.date) && !isFrozen(s.date)) claimedSlots.add(slotKey(s.shiftTypeId, s.date));
 
   // Build staffing requirements lookup: shiftTypeId → Map<dayKey, minCount>
   const reqsByShift = new Map<string, Map<string, number>>();
@@ -1269,9 +1313,8 @@ export function autoSchedule({
 
   function getRequiredCount(st: ScheduleShiftType, date: string): number {
     const dayMap = reqsByShift.get(st.id);
-    if (!dayMap) return 0;
-    const dayKey = holidaySet.has(date) ? "holiday" : String(getDow(date));
-    return dayMap.get(dayKey) ?? 0;
+    const base = dayMap?.get(holidaySet.has(date) ? "holiday" : String(getDow(date))) ?? 0;
+    return Math.max(base, ruleDemand.get(slotKey(st.id, date)) ?? 0); // card #210: rule demand
   }
 
   // Physical count of `code` cells on `date`, INCLUDING non-counting followers —
@@ -1904,6 +1947,166 @@ export function autoSchedule({
     return historicalShiftCounts.get(staffId)?.[shiftCode] ?? 0;
   }
 
+  // ── Card #210: holiday-rule pass (start of STEP 2) ──
+  // Each group's days go to ONE person. A person already holding a day of the group (hand
+  // entry, request, an earlier month, or a day just past the run) is the anchor and gets the
+  // open days; a group whose days are held by different people is a hand split and is left
+  // alone. With no anchor, one person who can take every open day is picked. A group is placed
+  // all at once (followers included) or not at all; what can't be placed is warned and left to
+  // the residual fill in that shift's own pass.
+  const scheduledIds = new Set(scheduledShifts.map((t) => t.id));
+  /** Staff holding `stId` on `date`: the grid for run dates, else history / read-only context. */
+  const ruleContextCells = new Map<string, string[]>();
+  for (const a of holidayRuleContext ?? []) {
+    const k = slotKey(a.shiftTypeId, a.date);
+    ruleContextCells.set(k, [...(ruleContextCells.get(k) ?? []), a.staffId]);
+  }
+  const historyByDay = new Map<string, string[]>();
+  if (ruleGroups.length > 0) {
+    for (const a of historicalAssignments) {
+      const k = slotKey(a.shiftTypeId, a.date);
+      historyByDay.set(k, [...(historyByDay.get(k) ?? []), a.staffId]);
+    }
+  }
+  function slotHolders(date: string, stId: string): string[] {
+    if (dateSet.has(date)) {
+      const out: string[] = [];
+      for (const [k, v] of grid.entries()) if (v.shiftTypeId === stId && k.endsWith(`:${date}`)) out.push(k.slice(0, k.indexOf(":")));
+      return out;
+    }
+    return ruleContextCells.get(slotKey(stId, date)) ?? historyByDay.get(slotKey(stId, date)) ?? [];
+  }
+  const initialsOf = (id: string): string => staff.find((p) => p.id === id)?.initials ?? id;
+  /** Card #210 r3: hours of the group's new days, priced per day's OWN shift (overrides, day type,
+   *  each_day follower as ppHoursBlock prices it), per pay period, against the target. */
+  function groupWouldExceed(p: ScheduleStaff, open: readonly HolidayGroupSlot[]): boolean {
+    const addByPP = new Map<PayPeriod, number>();
+    const add = (pp: PayPeriod | null, h: number) => { if (pp && h > 0) addByPP.set(pp, (addByPP.get(pp) ?? 0) + h); };
+    for (const s of open) {
+      const st = stById.get(s.shiftTypeId)!;
+      const pp = findPPForDate(s.date);
+      if (st.countsTowardFte) add(pp, getShiftHours(p.id, st, overrideMap, dayTypeOf(s.date, holidaySet)));
+      const spec = followerBySource.get(st.id);
+      if (spec?.scope === "each_day" && spec.follower.countsTowardFte && !followerBlock(p.id, s.date, st)) {
+        const fd = nextDate(s.date);
+        const fpp = findPPForDate(fd);
+        if (fpp && pp && fpp.startDate === pp.startDate) add(fpp, getShiftHours(p.id, spec.follower, overrideMap, dayTypeOf(fd, holidaySet)));
+      }
+    }
+    const groupDates = open.map((s) => s.date);
+    for (const [pp, h] of addByPP) {
+      const target = targetFor(p, pp);
+      if (target > 0 && ppHoursForStaff(p.id, pp) + pendingHolidayHours(p, pp, groupDates) + h > target) return true;
+    }
+    return false;
+  }
+  type GroupTier = "strict" | "fallback" | "anchor";
+  /** Can `p` take one open day under the tier's gate? (eligibility ticks + rules are checked
+   *  separately: isAvailable doesn't check the ticks.) */
+  function slotOk(p: ScheduleStaff, s: HolidayGroupSlot, tier: GroupTier): boolean {
+    const st = stById.get(s.shiftTypeId)!;
+    if (tier === "fallback") return canFillCoverageOverLimits(p, s.date, st);
+    if (!isAvailable(p, s.date, st)) return false;
+    return tier === "anchor" || ppHoursBlock(p.id, s.date, st) === null;
+  }
+  /** Why `p` can't take all the open days, or null. */
+  function groupBlock(p: ScheduleStaff, open: readonly HolidayGroupSlot[], tier: GroupTier): string | null {
+    for (const s of open) {
+      const st = stById.get(s.shiftTypeId)!;
+      if (!eligibleStaff(st, s.date).some((e) => e.id === p.id)) return `not eligible for ${st.code} on ${s.date}`;
+    }
+    for (const s of open) if (!slotOk(p, s, tier)) return `can't take ${stById.get(s.shiftTypeId)!.code} on ${s.date}`;
+    if (!coverageBeatsOverHours && groupWouldExceed(p, open)) return "would go over their hours for the pay period";
+    return null;
+  }
+  /** Place the open days for `p` (date order, followers inside the trial); all or nothing. */
+  function placeGroup(p: ScheduleStaff, g: HolidayGroup, open: readonly HolidayGroupSlot[], tier: GroupTier): string | null {
+    const snap = snapshotFor(p.id, []);
+    let why: string | null = null;
+    for (const s of open) {
+      const st = stById.get(s.shiftTypeId)!;
+      if (!slotOk(p, s, tier)) { why = `can't take ${st.code} on ${s.date}`; break; }
+      assign(p.id, s.date, st, `Holiday rule ${g.ruleName} (${p.initials})`, "holiday-rule", 0.95);
+      placeEachDayFollower(p.id, s.date, st);
+    }
+    if (!why) {
+      for (const s of open) {
+        const c = grid.get(`${p.id}:${s.date}`);
+        if (!c || c.shiftTypeId !== s.shiftTypeId || c.step !== "holiday-rule") { why = `a required follower lands on ${s.date}`; break; }
+      }
+    }
+    if (why) { restoreSnapshot(snap); return why; }
+    return null;
+  }
+  /** Card #210 r3: the group's ranking — pickStaff's keys, summed over the group's days; an
+   *  even-across-months shift ranks by its balance (card #203), never raw all-time counts. */
+  function rankGroup(pool: ScheduleStaff[], open: readonly HolidayGroupSlot[]): ScheduleStaff[] {
+    const bal = new Map<string, EvenBalance>();
+    const shareOfShift = (p: ScheduleStaff, st: ScheduleShiftType): number => {
+      let n = 0;
+      for (const [k, v] of grid.entries()) {
+        if (v.shiftTypeId !== st.id || v.noCount || !k.startsWith(`${p.id}:`)) continue;
+        if (dateSet.has(k.slice(k.indexOf(":") + 1))) n++;
+      }
+      return n / shareWeight(p);
+    };
+    const keyOf = (p: ScheduleStaff): number[] => {
+      let hard = 0, soft = 0, over = 0, av = 0, bias = 0, pref = 0, share = 0, spread = 0, carried = 0, hist = 0;
+      for (const s of open) {
+        const st = stById.get(s.shiftTypeId)!;
+        hard += getMinimumDeficit(p, st, s.date, "rule");
+        soft += getMinimumDeficit(p, st, s.date, "preference");
+        over += isOverSoftMaximum(p, st, s.date) ? 1 : 0;
+        av += avoidedPairs(p.id, s.date, st.id);
+        bias += requestBias(p.id, s.date, st);
+        pref += eligPreference(p, st.id, s.date);
+        if (st.spreadOverMonth) spread += spreadLoad(p.id, s.date);
+        if (st.evenAcrossMonths) {
+          if (!bal.has(st.id)) bal.set(st.id, evenBalance(st));
+          const b = bal.get(st.id)!;
+          share += b.run.get(p.id) ?? 0;
+          carried += b.carried.get(p.id) ?? 0;
+        } else {
+          share += shareOfShift(p, st);
+          hist += historicalCount(p.id, st.code);
+        }
+      }
+      return [-hard, -soft, over, av, -bias, -pref, share, spread, carried, hist, seedTie(p.id)];
+    };
+    const keys = new Map(pool.map((p) => [p.id, keyOf(p)] as const));
+    return [...pool].sort((a, b) => cmpTuple(keys.get(a.id)!, keys.get(b.id)!));
+  }
+
+  for (const g of ruleGroups) {
+    const slots = usableSlots(g);
+    if (slots.length < 2) continue;
+    const held = slots.map((s) => slotHolders(s.date, s.shiftTypeId));
+    const anchors = new Set(held.flat());
+    const open = slots.filter((s, i) => held[i].length === 0 && dateSet.has(s.date) && !isFrozen(s.date) && scheduledIds.has(s.shiftTypeId));
+    if (open.length === 0) continue;
+    if (anchors.size > 1) continue; // a hand split: never reassigned
+    if (anchors.size === 1) {
+      const id = [...anchors][0];
+      const p = activeStaff.find((x) => x.id === id);
+      if (!p) { warnings.push(`${initialsOf(id)}: cannot keep ${g.ruleName} (${g.holidayDate}) — not scheduled automatically`); continue; }
+      const why = groupBlock(p, open, "anchor") ?? placeGroup(p, g, open, "anchor");
+      if (why) warnings.push(`${p.initials}: cannot keep ${g.ruleName} (${g.holidayDate}) — ${why}; that day is filled separately`);
+      continue;
+    }
+    let placed = false;
+    let lastWhy = "nobody can take all of its days";
+    for (const tier of ["strict", "fallback"] as const) {
+      const pool = activeStaff.filter((p) => groupBlock(p, open, tier) === null);
+      for (const p of rankGroup(pool, open)) {
+        const why = placeGroup(p, g, open, tier);
+        if (!why) { placed = true; break; }
+        lastWhy = `${p.initials}: ${why}`;
+      }
+      if (placed) break;
+    }
+    if (!placed) warnings.push(`${g.ruleName} (${g.holidayDate}): ${lastWhy}; its days are filled separately`);
+  }
+
   for (const st of scheduledShifts) {
     const eligible = eligibleStaff(st);
     const stepName = st.code.toLowerCase();
@@ -2075,6 +2278,12 @@ export function autoSchedule({
       lastRunDate.set(staffId, date);
     }
 
+    // Card #210 r3: days the residual fill covers for this shift — every day a holiday-rule
+    // group claims, plus the unclaimed partner of any weekend pair a claim dissolves.
+    const residualDays = new Set<string>();
+    for (const d of dates) if (claimedSlots.has(slotKey(st.id, d))) residualDays.add(d);
+    const isClaimed = (d: string): boolean => claimedSlots.has(slotKey(st.id, d));
+
     if (st.weekendPaired) {
       const saturdayDates = dates.filter((d) => getDow(d) === 6);
 
@@ -2083,6 +2292,12 @@ export function autoSchedule({
         const satRequired = getRequiredCount(st, sat);
         const sunRequired = getRequiredCount(st, sun);
         if (satRequired <= 0 && sunRequired <= 0) continue;
+        // A rule claims a day of this weekend: the Sat/Sun pair is dissolved and each day is
+        // filled on its own by the residual fill below (never paired with the other group).
+        if (isClaimed(sat) || isClaimed(sun)) {
+          for (const d of [sat, sun]) if (dateSet.has(d)) residualDays.add(d);
+          continue;
+        }
         if (!dateSet.has(sun)) continue;
 
         const satCount = countCoverage(st.code, sat);
@@ -2133,6 +2348,7 @@ export function autoSchedule({
         if (st.holidayWeekendPaired) {
           for (const bridge of [prevDate(sat), nextDate(sun)]) {
             if (!dateSet.has(bridge) || !holidaySet.has(bridge)) continue;
+            if (isClaimed(bridge)) continue; // card #210: a rule's day; the group / residual fill owns it
             const bridgeRequired = getRequiredCount(st, bridge);
             if (bridgeRequired <= 0) continue;
             if (countCoverage(st.code, bridge) >= bridgeRequired) continue;
@@ -2153,6 +2369,7 @@ export function autoSchedule({
 
       for (const date of dates) {
         if (!holidaySet.has(date) || isWeekend(date)) continue;
+        if (isClaimed(date)) continue; // card #210: filled by the residual fill below
         const required = getRequiredCount(st, date);
         if (required <= 0) continue;
         const current = countCoverage(st.code, date);
@@ -2412,6 +2629,24 @@ export function autoSchedule({
           }
         }
       }
+    }
+
+    // ── Card #210 r3: residual fill ── each day a rule claims (or a dissolved weekend leaves
+    // open) that is still short, one day at a time, with the holiday pass's single-day gate.
+    for (const date of [...residualDays].sort()) {
+      if (!dateSet.has(date) || isFrozen(date)) continue;
+      const required = getRequiredCount(st, date);
+      if (required <= 0 || countCoverage(st.code, date) >= required) continue;
+      let available = eligible.filter((p) => !isAssigned(p.id, date) && isAvailable(p, date, st) && !wouldBreakPPHours(p.id, date, st));
+      if (available.length === 0) available = eligible.filter((p) => !isAssigned(p.id, date) && canFillCoverageOverLimits(p, date, st));
+      if (available.length === 0) {
+        warnings.push(`No eligible ${st.code} staff for ${date}`);
+        continue;
+      }
+      const chosen = pickStaff(available, date);
+      assign(chosen.id, date, st, `${st.code} (day of a holiday rule, filled on its own — ${chosen.initials})`, `holiday-rule-fill-${stepName}`, 0.75);
+      recordAssignment(chosen.id, date);
+      placeEachDayFollower(chosen.id, date, st);
     }
 
     // each_run followers (e.g. a CALL weekend → one ADM) are placed here, after
@@ -2903,7 +3138,7 @@ export function autoSchedule({
   // repair therefore leaves tentative cells alone; reconcileRequests() resolves them.
   // "holiday" (STEP 2.75 entitlement HOL) is leave, so isSwappableCell already rejects
   // it via isLeave; listed here so the intent survives a HOL config change.
-  const NON_SWAPPABLE_STEPS = new Set(["request-leave", LEAVE_OFF_STEP, "request-shift", "request-tentative", "standing", "follower", "off", "holiday"]);
+  const NON_SWAPPABLE_STEPS = new Set(["request-leave", LEAVE_OFF_STEP, "request-shift", "request-tentative", "standing", "follower", "off", "holiday", "holiday-rule"]);
 
   function isSwappableCell(cell: { shiftTypeId: string; locked: boolean; noCount?: boolean; step?: string }): boolean {
     if (cell.locked || cell.noCount || !cell.step || NON_SWAPPABLE_STEPS.has(cell.step)) return false;
@@ -3684,6 +3919,7 @@ export function autoSchedule({
       if (cell.step === "standing") return "standing commitment";
       if (cell.step === "follower") return "required follower";
       if (cell.step === "holiday") return "holiday entitlement";
+      if (cell.step === "holiday-rule") return "holiday pair"; // card #210: never freed alone
       if (cell.noCount) return "does not count toward targets";
       if (followerBySource.has(cell.shiftTypeId)) return "it has a required follower";
       if (st.weekendPaired && (isWeekend(date) || (st.holidayWeekendPaired && holidaySet.has(date)))) return "weekend pair";

@@ -18,6 +18,8 @@ import { canonicalUrl } from "@/lib/base-path";
 import type { Metadata } from "next";
 import { effectiveFte, effectiveFixedHours } from "@/lib/fte";
 import { dayShadingFrom } from "@/lib/day-shading";
+import { buildHolidayGroups } from "@/lib/holiday-rules";
+import { loadHolidayRules } from "@/lib/holiday-rules-db";
 
 // This route is reachable at two live addresses (apex proxy + tunnel alias), so it has to
 // say which one is real. og:url is not a canonical signal to Google — only <link rel=canonical> is.
@@ -95,6 +97,11 @@ export default async function Home() {
       // silenced alerts stay out of the counts for everyone.
       prisma.mutedAlert.findMany({ select: { alertKey: true } }),
     ]);
+  // Card #210: holiday-rule groups for the grid's "rule pairs these days" warning.
+  const holidayRuleGroups = buildHolidayGroups(
+    holidays.map((h) => ({ date: h.date.toISOString().split("T")[0], holidayTypeId: h.holidayTypeId })),
+    await loadHolidayRules(prisma),
+  );
 
   // Approver names for request tooltips — schedulers (schedule:edit) only, NAME
   // only, and only the approvers actually referenced. Plain viewers get null.
@@ -251,6 +258,7 @@ export default async function Home() {
           date: h.date.toISOString().split("T")[0],
           name: h.name,
         }))}
+        holidayRuleGroups={holidayRuleGroups}
         staffOverrides={staffOverrides.map((o) => ({
           staffId: o.staffId,
           shiftTypeId: o.shiftTypeId,

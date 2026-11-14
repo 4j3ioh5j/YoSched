@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { loadHolidayRules, holidayRulesVersion } from "@/lib/holiday-rules-db";
 import { deriveEquityFactorCodes } from "@/lib/equity-factors";
 import { getPayPeriods } from "@/lib/pay-periods-server";
 import { SettingsPage } from "./settings-page";
@@ -51,6 +52,11 @@ export default async function Settings() {
       orderBy: { sortOrder: "asc" },
       include: { employmentType: { select: { sortOrder: true, name: true, usesFtePercentage: true, allowsFixedHours: true, includedInFairness: true, defaultFtePercentage: true } } },
     }),
+  ]);
+  // Card #210: holiday types and holiday rules (settings data).
+  const [holidayTypes, holidayRuleList] = await Promise.all([
+    prisma.holidayType.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
+    loadHolidayRules(prisma),
   ]);
 
   // Lenient read of the dept-default day-off order: drop tokens for since-deleted
@@ -134,7 +140,10 @@ export default async function Settings() {
           id: h.id,
           date: h.date.toISOString().split("T")[0],
           name: h.name,
+          holidayTypeId: h.holidayTypeId,
         }))}
+        holidayTypes={holidayTypes}
+        holidayRules={{ version: holidayRulesVersion(holidayRuleList), rules: holidayRuleList }}
         desirabilityWeights={desirabilityWeights.map((dw) => ({
           id: dw.id,
           shiftTypeId: dw.shiftTypeId,

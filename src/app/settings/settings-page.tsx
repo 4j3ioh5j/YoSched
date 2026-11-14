@@ -1,6 +1,7 @@
 "use client";
 
 import { followAvoidsChanged, type FollowAvoidData } from "@/lib/follow-avoids";
+import { saveErrorMessage } from "@/lib/stale-client";
 import { activationAlreadyCommitted, type CommittedActivation } from "@/lib/activation-retry";
 import { appliedDiff, undoList, type ListApplied } from "@/lib/eligibility-undo";
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -13,6 +14,8 @@ import { COUNT_COLUMNS_SAVE_URL, buildCountColumnsSave, countColumnsSaveErrorMes
 import { PRINT_COLUMN_RULES_SAVE_URL, PRINT_AGGREGATE_COLUMNS_SAVE_URL, buildConditionsSave, printSaveErrorMessage } from "@/lib/print-conditions";
 import { SHIFT_SHARE_BASES, type ShiftShareBasis } from "@/lib/shift-share";
 import { HOLIDAY_POLICIES, type HolidayPolicy, isHolidayCreditShift } from "@/lib/holiday-policy";
+import { holidayRulesVersion } from "@/lib/holiday-rules-db";
+import { buildHolidayGroups, RULE_OFFSET_MIN, RULE_OFFSET_MAX, RULE_NAME_MAX, type HolidayRuleSpec } from "@/lib/holiday-rules";
 import { createLatestWriter, type LatestWriter } from "@/lib/latest-writer";
 import { LEAVE_POLICIES, type LeavePolicy } from "@/lib/leave-policy";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
@@ -78,7 +81,9 @@ type Holiday = {
   id: string;
   date: string;
   name: string;
+  holidayTypeId?: string | null; // card #210: which kind of holiday (links to holiday rules by id)
 };
+type HolidayTypeData = { id: string; name: string };
 
 type DesirabilityWeight = {
   id: string;
@@ -219,6 +224,8 @@ type Props = {
   staffingReqs: StaffingReq[];
   payPeriods: PayPeriod[];
   holidays: Holiday[];
+  holidayTypes?: HolidayTypeData[];
+  holidayRules?: { version: string; rules: HolidayRuleSpec[] };
   desirabilityWeights: DesirabilityWeight[];
   schedulingPrefs: SchedulingPrefs;
   departmentTargets: DeptTargetData[];
@@ -2065,9 +2072,30 @@ function PayPeriodsSection({ initial, initialAnchor, initialLengthDays, pushUndo
 
 // ─── Holidays Section ───────────────────────────────────────────────────────
 
-function HolidaysSection({ initial, payPeriods, pushUndo, dateFormat }: { initial: Holiday[]; payPeriods: PayPeriod[]; pushUndo: (a: UndoAction) => void; dateFormat: DateFormatKey }) {
+// Card #210: the holidays list, the holiday types and the holiday rules share one state owner so a
+// type rename/delete shows everywhere at once.
+function HolidaysBlock({ initialHolidays, initialTypes, initialRules, shiftTypes, payPeriods, pushUndo, dateFormat }: {
+  initialHolidays: Holiday[]; initialTypes: HolidayTypeData[]; initialRules: { version: string; rules: HolidayRuleSpec[] };
+  shiftTypes: ShiftType[]; payPeriods: PayPeriod[]; pushUndo: (a: UndoAction) => void; dateFormat: DateFormatKey;
+}) {
+  const [holidays, setHolidays] = useState(initialHolidays);
+  const [types, setTypes] = useState(initialTypes);
+  // Bumped when a type is deleted (its rules go with it): the rules section re-reads the server.
+  const [rulesReload, setRulesReload] = useState(0);
+  return (
+    <>
+      <HolidaysSection holidays={holidays} setHolidays={setHolidays} types={types} payPeriods={payPeriods} pushUndo={pushUndo} dateFormat={dateFormat} />
+      <HolidayTypesSection types={types} setTypes={setTypes} holidays={holidays} setHolidays={setHolidays} onTypeDeleted={() => setRulesReload((n) => n + 1)} />
+      <HolidayRulesSection initial={initialRules} reloadKey={rulesReload} types={types} holidays={holidays} shiftTypes={shiftTypes} dateFormat={dateFormat} />
+    </>
+  );
+}
+
+function HolidaysSection({ holidays, setHolidays, types, payPeriods, pushUndo, dateFormat }: {
+  holidays: Holiday[]; setHolidays: React.Dispatch<React.SetStateAction<Holiday[]>>; types: HolidayTypeData[];
+  payPeriods: PayPeriod[]; pushUndo: (a: UndoAction) => void; dateFormat: DateFormatKey;
+}) {
   const canEdit = useCanEdit();
-  const [holidays, setHolidays] = useState(initial);
   const [newDate, setNewDate] = useState("");
   const [newName, setNewName] = useState("");
   const [status, setStatus] = useState<SaveStatus>("idle");
@@ -2156,6 +2184,38 @@ function HolidaysSection({ initial, payPeriods, pushUndo, dateFormat }: { initia
     }
   }
 
+  // Card #210: which kind of holiday a row is (rules link to the type). null = no type.
+  async function setHolidayType(h: Holiday, holidayTypeId: string | null) {
+    const before = h.holidayTypeId ?? null;
+    setStatus("saving");
+    try {
+      const res = await fetch("/api/settings/holidays", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: h.date, name: h.name, holidayTypeId }),
+      });
+      if (!res.ok) throw new Error(saveErrorMessage(res.status, await res.text()));
+      const saved: Holiday = await res.json();
+      setHolidays((cur) => cur.map((x) => (x.id === h.id ? { ...x, holidayTypeId: saved.holidayTypeId ?? null } : x)));
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+      pushUndo({
+        label: `Changed the type of ${h.name}`,
+        execute: async () => {
+          const r = await fetch("/api/settings/holidays", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ date: h.date, name: h.name, holidayTypeId: before }),
+          });
+          if (r.ok) setHolidays((cur) => cur.map((x) => (x.id === h.id ? { ...x, holidayTypeId: before } : x)));
+        },
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
+      setStatus("error");
+    }
+  }
+
   async function removeHoliday(id: string) {
     const removed = holidays.find((h) => h.id === id);
     setStatus("saving");
@@ -2177,7 +2237,7 @@ function HolidaysSection({ initial, payPeriods, pushUndo, dateFormat }: { initia
             const res = await fetch("/api/settings/holidays", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ date: removed.date, name: removed.name }),
+              body: JSON.stringify({ date: removed.date, name: removed.name, holidayTypeId: removed.holidayTypeId ?? null }),
             });
             const restored = await res.json();
             setHolidays((cur) => [...cur, restored].sort((a, b) => a.date.localeCompare(b.date)));
@@ -2247,6 +2307,17 @@ function HolidaysSection({ initial, payPeriods, pushUndo, dateFormat }: { initia
                   <span className="text-sm font-mono text-slate-400">{formatDateStr(h.date, dateFormat)}</span>
                   <span className="text-sm text-slate-200">{h.name}</span>
                 </div>
+                <div className="flex items-center gap-3">
+                <select
+                  aria-label={`Type of ${h.name}`}
+                  disabled={!canEdit}
+                  className="bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-xs text-slate-300 disabled:opacity-50"
+                  value={h.holidayTypeId ?? ""}
+                  onChange={(e) => setHolidayType(h, e.target.value || null)}
+                >
+                  <option value="">No type</option>
+                  {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
                 {canEdit && (
                   <button
                     onClick={() => removeHoliday(h.id)}
@@ -2255,11 +2326,279 @@ function HolidaysSection({ initial, payPeriods, pushUndo, dateFormat }: { initia
                     Remove
                   </button>
                 )}
+                </div>
               </div>
             ))}
           </div>
         </ScrollContainer>
       )}
+    </CollapsibleSection>
+  );
+}
+
+// ─── Holiday Types (card #210) ──────────────────────────────────────────────
+
+function HolidayTypesSection({ types, setTypes, holidays, setHolidays, onTypeDeleted }: {
+  types: HolidayTypeData[]; setTypes: React.Dispatch<React.SetStateAction<HolidayTypeData[]>>;
+  holidays: Holiday[]; setHolidays: React.Dispatch<React.SetStateAction<Holiday[]>>; onTypeDeleted: () => void;
+}) {
+  const canEdit = useCanEdit();
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+  const [newName, setNewName] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const sorted = [...types].sort((a, b) => a.name.localeCompare(b.name));
+
+  async function call(method: string, body: unknown): Promise<HolidayTypeData | null> {
+    setStatus("saving");
+    setError("");
+    const res = await fetch("/api/settings/holiday-types", { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) {
+      setError(saveErrorMessage(res.status, await res.text()));
+      setStatus("error");
+      return null;
+    }
+    setStatus("saved");
+    setTimeout(() => setStatus("idle"), 2000);
+    return method === "DELETE" ? null : ((await res.json()) as HolidayTypeData);
+  }
+  async function add() {
+    const name = newName.trim();
+    if (!name) return;
+    const t = await call("POST", { name });
+    if (t) { setTypes((cur) => [...cur, t]); setNewName(""); }
+  }
+  async function rename(t: HolidayTypeData) {
+    const name = (drafts[t.id] ?? t.name).trim();
+    if (name === t.name) return;
+    const saved = await call("PATCH", { id: t.id, name });
+    if (saved) setTypes((cur) => cur.map((x) => (x.id === t.id ? saved : x)));
+    setDrafts((d) => { const n = { ...d }; delete n[t.id]; return n; });
+  }
+  async function remove(t: HolidayTypeData) {
+    const used = holidays.filter((h) => h.holidayTypeId === t.id).length;
+    if (!confirm(`Delete the holiday type "${t.name}"? Its holiday rules are deleted too, and ${used} holiday${used === 1 ? "" : "s"} in the list will have no type.`)) return;
+    setStatus("saving");
+    const res = await fetch("/api/settings/holiday-types", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: t.id }) });
+    if (!res.ok) { setError(saveErrorMessage(res.status, await res.text())); setStatus("error"); return; }
+    setTypes((cur) => cur.filter((x) => x.id !== t.id));
+    setHolidays((cur) => cur.map((h) => (h.holidayTypeId === t.id ? { ...h, holidayTypeId: null } : h)));
+    onTypeDeleted();
+    setStatus("saved");
+    setTimeout(() => setStatus("idle"), 2000);
+  }
+
+  return (
+    <CollapsibleSection
+      id="holiday-types"
+      title="Holiday Types"
+      description="What each holiday is, so a rule applies to it every year (for example Thanksgiving Day). Each holiday in the list above has a type."
+      status={status}
+      error={error}
+    >
+      {canEdit && (
+        <div className="flex gap-2 mb-4">
+          <input
+            type="text"
+            maxLength={60}
+            placeholder="New holiday type"
+            className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm flex-1 max-w-xs"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && add()}
+          />
+          <button onClick={add} disabled={!newName.trim()} className="px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed rounded transition-colors">Add</button>
+        </div>
+      )}
+      {sorted.length === 0 ? (
+        <p className="text-sm text-slate-500 italic">No holiday types</p>
+      ) : (
+        <ScrollContainer maxClass="max-h-[320px]">
+          <div className="space-y-1">
+            {sorted.map((t) => (
+              <div key={t.id} className="flex items-center justify-between gap-3 py-1 px-3 rounded hover:bg-slate-700/30">
+                <input
+                  aria-label={`Name of ${t.name}`}
+                  disabled={!canEdit}
+                  maxLength={60}
+                  className="bg-transparent border border-transparent hover:border-slate-600 focus:border-slate-500 rounded px-2 py-0.5 text-sm text-slate-200 flex-1 max-w-sm disabled:opacity-80"
+                  value={drafts[t.id] ?? t.name}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [t.id]: e.target.value }))}
+                  onBlur={() => rename(t)}
+                  onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+                />
+                <span className="text-xs text-slate-500">{holidays.filter((h) => h.holidayTypeId === t.id).length} in the list</span>
+                {canEdit && <button onClick={() => remove(t)} className="text-xs text-red-400 hover:text-red-300 transition-colors">Delete</button>}
+              </div>
+            ))}
+          </div>
+        </ScrollContainer>
+      )}
+    </CollapsibleSection>
+  );
+}
+
+// ─── Holiday Rules (card #210) ──────────────────────────────────────────────
+
+type RuleDraft = { key: string; id?: string; name: string; holidayTypeId: string; days: { offset: number; shiftTypeId: string }[] };
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+let ruleDraftSeq = 0;
+const EMPTY_HOLIDAY_RULES = { version: holidayRulesVersion([]), rules: [] as HolidayRuleSpec[] };
+const toDrafts = (rules: HolidayRuleSpec[]): RuleDraft[] =>
+  rules.map((r) => ({ key: r.id, id: r.id, name: r.name, holidayTypeId: r.holidayTypeId, days: r.days.map((d) => ({ ...d })) }));
+
+function HolidayRulesSection({ initial, reloadKey, types, holidays, shiftTypes, dateFormat }: {
+  initial: { version: string; rules: HolidayRuleSpec[] }; reloadKey: number; types: HolidayTypeData[];
+  holidays: Holiday[]; shiftTypes: ShiftType[]; dateFormat: DateFormatKey;
+}) {
+  const canEdit = useCanEdit();
+  const [saved, setSaved] = useState(initial);
+  const [drafts, setDrafts] = useState<RuleDraft[]>(() => toDrafts(initial.rules));
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+  const dirty = JSON.stringify(drafts.map(({ key: _k, ...r }) => r)) !== JSON.stringify(toDrafts(saved.rules).map(({ key: _k, ...r }) => r));
+
+  // A deleted holiday type took its rules with it: re-read the saved rules (and drop the draft).
+  useEffect(() => {
+    if (reloadKey === 0) return;
+    let live = true;
+    fetch("/api/settings/holiday-rules").then(async (res) => {
+      if (!live || !res.ok) return;
+      const next = (await res.json()) as { version: string; rules: HolidayRuleSpec[] };
+      if (!live) return;
+      setSaved(next);
+      setDrafts(toDrafts(next.rules));
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [reloadKey]);
+
+  const workShifts = shiftTypes.filter((s) => !s.isOffShift && !s.isLeave);
+  const codeOf = (id: string) => shiftTypes.find((s) => s.id === id)?.code ?? "?";
+  const today = new Date().toISOString().slice(0, 10);
+  const preview = (r: RuleDraft): string | null => {
+    const next = holidays.filter((h) => h.holidayTypeId === r.holidayTypeId && h.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
+    if (!next || r.days.length === 0) return null;
+    const [g] = buildHolidayGroups([{ date: next.date, holidayTypeId: r.holidayTypeId }], [{ id: "p", name: r.name, holidayTypeId: r.holidayTypeId, days: r.days }]);
+    if (!g) return null;
+    return g.slots.map((s) => `${WEEKDAY_SHORT[new Date(s.date + "T12:00:00").getDay()]} ${formatDateStr(s.date, dateFormat)} ${codeOf(s.shiftTypeId)}`).join(" + ");
+  };
+  const update = (key: string, fn: (r: RuleDraft) => RuleDraft) => setDrafts((cur) => cur.map((r) => (r.key === key ? fn(r) : r)));
+
+  function addRule() {
+    const typeId = types[0]?.id ?? "";
+    const shiftId = workShifts[0]?.id ?? "";
+    setDrafts((cur) => [...cur, { key: `new-${++ruleDraftSeq}`, name: "", holidayTypeId: typeId, days: [{ offset: 0, shiftTypeId: shiftId }, { offset: 1, shiftTypeId: shiftId }] }]);
+  }
+  async function save() {
+    setStatus("saving");
+    setError("");
+    const res = await fetch("/api/settings/holiday-rules", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseVersion: saved.version, rules: drafts.map((r) => ({ id: r.id, name: r.name, holidayTypeId: r.holidayTypeId, days: r.days })) }),
+    });
+    if (!res.ok) {
+      setError(saveErrorMessage(res.status, await res.text()));
+      setStatus("error");
+      return;
+    }
+    const next = (await res.json()) as { version: string; rules: HolidayRuleSpec[] };
+    setSaved(next);
+    setDrafts(toDrafts(next.rules));
+    setStatus("saved");
+    setTimeout(() => setStatus("idle"), 2000);
+  }
+
+  const weekendPaired = shiftTypes.filter((s) => s.weekendPaired && s.holidayWeekendPaired);
+  return (
+    <CollapsibleSection
+      id="holiday-rules"
+      title="Holiday Rules"
+      description="Days around a holiday that go to the same person. Each rule has a name you choose, the holiday it belongs to, and its days counted from the holiday (0 = the holiday, 1 = the day after, -1 = the day before), each with its shift. The scheduler keeps them together unless someone changes them by hand."
+      status={status}
+      error={error}
+    >
+      {drafts.length === 0 && <p className="text-sm text-slate-500 italic mb-3">No holiday rules</p>}
+      <div className="space-y-3">
+        {drafts.map((r) => {
+          const pv = preview(r);
+          return (
+            <div key={r.key} className="border border-slate-700 rounded p-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  aria-label="Rule name"
+                  disabled={!canEdit}
+                  maxLength={RULE_NAME_MAX}
+                  placeholder="Rule name (for example Thanksgiving 1)"
+                  className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm flex-1 min-w-[12rem] max-w-xs disabled:opacity-50"
+                  value={r.name}
+                  onChange={(e) => update(r.key, (x) => ({ ...x, name: e.target.value }))}
+                />
+                <select
+                  aria-label="Holiday"
+                  disabled={!canEdit}
+                  className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50"
+                  value={r.holidayTypeId}
+                  onChange={(e) => update(r.key, (x) => ({ ...x, holidayTypeId: e.target.value }))}
+                >
+                  {!types.some((t) => t.id === r.holidayTypeId) && <option value="">Choose a holiday</option>}
+                  {[...types].sort((a, b) => a.name.localeCompare(b.name)).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                {canEdit && <button onClick={() => setDrafts((cur) => cur.filter((x) => x.key !== r.key))} className="text-xs text-red-400 hover:text-red-300 ml-auto">Remove rule</button>}
+              </div>
+              {r.days.map((d, i) => (
+                <div key={i} className="flex items-center gap-2 pl-2">
+                  <span className="text-xs text-slate-400 w-10">Day</span>
+                  <input
+                    aria-label="Days from the holiday"
+                    type="number"
+                    min={RULE_OFFSET_MIN}
+                    max={RULE_OFFSET_MAX}
+                    disabled={!canEdit}
+                    className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-center disabled:opacity-50"
+                    value={d.offset}
+                    onChange={(e) => update(r.key, (x) => ({ ...x, days: x.days.map((y, j) => (j === i ? { ...y, offset: parseInt(e.target.value, 10) || 0 } : y)) }))}
+                  />
+                  <select
+                    aria-label="Shift"
+                    disabled={!canEdit}
+                    className="bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm disabled:opacity-50"
+                    value={d.shiftTypeId}
+                    onChange={(e) => update(r.key, (x) => ({ ...x, days: x.days.map((y, j) => (j === i ? { ...y, shiftTypeId: e.target.value } : y)) }))}
+                  >
+                    {!workShifts.some((s) => s.id === d.shiftTypeId) && <option value={d.shiftTypeId}>{codeOf(d.shiftTypeId)}</option>}
+                    {workShifts.map((s) => <option key={s.id} value={s.id}>{s.code}</option>)}
+                  </select>
+                  {canEdit && r.days.length > 2 && (
+                    <button onClick={() => update(r.key, (x) => ({ ...x, days: x.days.filter((_, j) => j !== i) }))} className="text-xs text-slate-400 hover:text-red-300">Remove day</button>
+                  )}
+                </div>
+              ))}
+              {canEdit && (
+                <button
+                  onClick={() => update(r.key, (x) => ({ ...x, days: [...x.days, { offset: Math.min(RULE_OFFSET_MAX, Math.max(...x.days.map((y) => y.offset)) + 1), shiftTypeId: x.days[x.days.length - 1]?.shiftTypeId ?? workShifts[0]?.id ?? "" }] }))}
+                  className="text-xs text-blue-300 hover:text-blue-200 pl-2"
+                >
+                  + Add a day
+                </button>
+              )}
+              <p className="text-xs text-slate-400 pl-2">{pv ? `Next: ${pv}` : "No upcoming holiday of this type in the list."}</p>
+            </div>
+          );
+        })}
+      </div>
+      {canEdit && (
+        <div className="flex items-center gap-2 mt-3">
+          <button onClick={addRule} disabled={types.length === 0} className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded transition-colors text-slate-300">+ Add rule</button>
+          <button onClick={save} disabled={!dirty} className="px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed rounded transition-colors">Save rules</button>
+          {dirty && <button onClick={() => setDrafts(toDrafts(saved.rules))} className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200">Discard changes</button>}
+        </div>
+      )}
+      <p className="text-xs text-slate-500 mt-4">
+        {weekendPaired.length > 0
+          ? `Also kept together: ${weekendPaired.map((s) => s.code).join(", ")} on a Friday or Monday holiday and its weekend (the shift's "Holiday weekend paired" setting under Shift Types).`
+          : `A shift's "Holiday weekend paired" setting (under Shift Types) keeps a Friday or Monday holiday with its weekend.`}
+      </p>
     </CollapsibleSection>
   );
 }
@@ -5570,7 +5909,7 @@ function StaffColumnOrderSection({ initial, staff }: { initial: StaffOrderCriter
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, followAvoids: initialFollowAvoids = [], requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, staffColumnOrder, orderableStaff, canEdit = true, canEditAutoGenPriority = false }: Props) {
+export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, holidayTypes = [], holidayRules = EMPTY_HOLIDAY_RULES, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, followAvoids: initialFollowAvoids = [], requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, staffColumnOrder, orderableStaff, canEdit = true, canEditAutoGenPriority = false }: Props) {
   const undo = useUndo();
   // One shift list for the whole page: Shift Types edits it, every other section reads it.
   const [shiftTypes, setShiftTypes] = useState(initialShiftTypes);
@@ -5619,7 +5958,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
         <SectionGroup label="Calendar" />
         <div className="space-y-4 mb-8 mt-3">
           <PayPeriodsSection initial={payPeriods} initialAnchor={schedulingPrefs.payPeriodAnchor} initialLengthDays={schedulingPrefs.payPeriodLengthDays} pushUndo={undo.push} dateFormat={dateFormat} />
-          <HolidaysSection initial={holidays} payPeriods={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
+          <HolidaysBlock initialHolidays={holidays} initialTypes={holidayTypes} initialRules={holidayRules} shiftTypes={shiftTypes} payPeriods={payPeriods} pushUndo={undo.push} dateFormat={dateFormat} />
         </div>
 
         <SectionGroup label="General & System" />

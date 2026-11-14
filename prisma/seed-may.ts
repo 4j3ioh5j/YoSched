@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { linkUntypedHolidays } from "../src/lib/holiday-rules-db";
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
@@ -92,6 +93,7 @@ async function main() {
       create: { date: new Date(h.date + "T00:00:00Z"), name: h.name },
     });
   }
+  await linkUntypedHolidays(prisma); // card #210: every holiday has a type
   console.log(`Seeded ${federalHolidays.length} federal holidays`);
 
   let created = 0;

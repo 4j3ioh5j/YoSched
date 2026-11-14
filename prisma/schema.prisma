@@ -115,6 +115,7 @@ model ShiftType {
   requestLeaveShifts           ScheduleRequest[] @relation("requestLeaveShift")
   staffingRequirements         StaffingRequirement[]
   equityFactors                EquityFactor[]
+  holidayRuleDays              HolidayRuleDay[]
 
   @@map("shift_types")
 }
@@ -300,8 +301,53 @@ model Holiday {
   id   String   @id @default(cuid())
   date DateTime @unique @db.Date
   name String
+  holidayTypeId String? // card #210: which kind of holiday this is (links dated rows to holiday rules by id)
+  holidayType   HolidayType? @relation(fields: [holidayTypeId], references: [id], onDelete: SetNull)
 
+  @@index([holidayTypeId])
   @@map("holidays")
+}
+
+// Card #210: a kind of holiday (e.g. "Thanksgiving Day"), shared by every year's dated row.
+model HolidayType {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  holidays Holiday[]
+  rules    HolidayRule[]
+
+  @@map("holiday_types")
+}
+
+// Card #210: a user-named rule — the listed days around each holiday of a type go to ONE person.
+model HolidayRule {
+  id            String   @id @default(cuid())
+  name          String
+  holidayTypeId String
+  holidayType   HolidayType @relation(fields: [holidayTypeId], references: [id], onDelete: Cascade)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  days HolidayRuleDay[]
+
+  @@unique([holidayTypeId, name])
+  @@map("holiday_rules")
+}
+
+// Card #210: one day of a rule: offset in days from the holiday (0 = the holiday) and its shift.
+model HolidayRuleDay {
+  id          String @id @default(cuid())
+  ruleId      String
+  rule        HolidayRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  offset      Int
+  shiftTypeId String
+  shiftType   ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, offset])
+  @@map("holiday_rule_days")
 }
 
 // Singleton SMTP config for outbound mail (id always "default"). The password is

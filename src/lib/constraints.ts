@@ -11,7 +11,8 @@ export type Warning = {
     | "over-hours"
     | "under-hours"
     | "shift-count"
-    | "request-violation";
+    | "request-violation"
+    | "holiday-rule"; // card #210: a holiday rule's days are held by different people
   message: string;
 };
 

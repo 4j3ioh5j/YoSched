@@ -6,6 +6,8 @@
 // returned value is plain JSON-serializable data (dates are "YYYY-MM-DD").
 
 import { prisma } from "@/lib/prisma";
+import { ruleSpan } from "./holiday-rules";
+import { loadHolidayRules } from "./holiday-rules-db";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { getPayPeriods } from "@/lib/pay-periods-server";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
@@ -184,6 +186,16 @@ export async function buildAutoScheduleInput(
         })
       : Promise.resolve([] as typeof existingAssignments),
   ]);
+
+  // Card #210: holiday rules (settings data) and, when a rule reaches past the run's end, the
+  // read-only cells just after it (a hand-entered day of a group that straddles the end).
+  const holidayRules = await loadHolidayRules(db);
+  const span = ruleSpan(holidayRules);
+  const ruleContextEnd = new Date(effectiveEnd + "T00:00:00Z");
+  ruleContextEnd.setUTCDate(ruleContextEnd.getUTCDate() + span);
+  const ruleContextRows = holidayRules.length > 0 && span > 0
+    ? await db.assignment.findMany({ where: { date: { gt: new Date(effectiveEnd + "T00:00:00Z"), lte: ruleContextEnd } } })
+    : [];
 
   const start = new Date(effectiveStart + "T12:00:00");
   const end = new Date(effectiveEnd + "T12:00:00");
@@ -387,7 +399,21 @@ export async function buildAutoScheduleInput(
     })),
     holidays: holidays.map((h) => ({
       date: h.date.toISOString().split("T")[0],
+      holidayTypeId: h.holidayTypeId ?? null,
     })),
+    ...(holidayRules.length > 0
+      ? {
+          holidayRules,
+          holidayRuleContext: ruleContextRows.map((a) => ({
+            staffId: a.staffId,
+            date: isoDay(a.date),
+            shiftTypeId: a.shiftTypeId,
+            code: shiftCodeMap.get(a.shiftTypeId) ?? "?",
+            isLocked: a.isLocked,
+            source: a.source,
+          })),
+        }
+      : {}),
     desirabilityWeights: desirabilityWeights.map((dw) => ({
       shiftTypeId: dw.shiftTypeId,
       dayOfWeek: dw.dayOfWeek,
