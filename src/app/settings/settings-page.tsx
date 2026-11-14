@@ -17,7 +17,7 @@ import { HOLIDAY_POLICIES, type HolidayPolicy, isHolidayCreditShift } from "@/li
 import { holidayRulesVersion } from "@/lib/holiday-rules-db";
 import { buildHolidayGroups, RULE_OFFSET_MIN, RULE_OFFSET_MAX, RULE_NAME_MAX, type HolidayRuleSpec } from "@/lib/holiday-rules";
 import { createLatestWriter, type LatestWriter } from "@/lib/latest-writer";
-import { TUNING_DEFAULTS, TUNING_LIMITS, WEEKDAY_NAMES, isWeekendDow, readTuning, tuningError, weekendLabel, weekendSecondDow, type SchedulerTuning, type TuningKey } from "@/lib/scheduler-tuning";
+import { TUNING_DEFAULTS, TUNING_LIMITS, WEEKDAY_NAMES, isWeekendDow, readTuning, tuningError, tuningNeedsSave, weekendLabel, weekendSecondDow, type SchedulerTuning, type TuningKey } from "@/lib/scheduler-tuning";
 import { LEAVE_POLICIES, type LeavePolicy } from "@/lib/leave-policy";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
 import { HOURS_POLICIES, HOURS_POLICY_KEYS, parseHoursPolicy, isHoursPolicyKey, type HoursPolicy } from "@/lib/autogen-hours-policy";
@@ -5388,7 +5388,7 @@ function SchedulerTuningSection({ initial, onSaved }: { initial: SchedulerTuning
                 step={f.step}
                 value={draft[f.key]}
                 onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
-                onBlur={(e) => canEdit && e.target.value !== String(initial[f.key]) && commit(f.key, e.target.value)}
+                onBlur={(e) => canEdit && tuningNeedsSave(e.target.value, initial[f.key], writer.busy(f.key)) && commit(f.key, e.target.value)}
                 className="w-24 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50"
               />
             </FieldRow>

@@ -83,6 +83,15 @@ export function readTuning(row: Partial<Record<TuningKey, unknown>> | null | und
   return out;
 }
 
+/**
+ * Whether a field's committed text must be sent. Card #219: a value equal to the last SAVED
+ * one still has to go while a save of that field is pending (14 → 20 → 14 before the first
+ * save lands): otherwise the server ends on 20 while the page shows 14 "Saved".
+ */
+export function tuningNeedsSave(text: string, saved: number, pending: boolean): boolean {
+  return pending || text !== String(saved);
+}
+
 /** The weekend's second day of the week (the day after its first). */
 export function weekendSecondDow(startDow: number): number {
   return (startDow + 1) % 7;
