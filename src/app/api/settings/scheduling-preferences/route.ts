@@ -8,6 +8,7 @@ import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, R
 import { isLiveScope, LIVE_SCOPES } from "@/lib/live-scope";
 import { isShiftShareBasis, SHIFT_SHARE_BASES } from "@/lib/shift-share";
 import { isHolidayPolicy, HOLIDAY_POLICIES, isHolidayCreditShift } from "@/lib/holiday-policy";
+import { isShadeColor } from "@/lib/day-shading";
 import { validateStaffOrderCriteria } from "@/lib/staff-order";
 import { isActivationGroupDefault, isActivationNewHireDefault, ACTIVATION_GROUP_DEFAULTS, ACTIVATION_NEW_HIRE_DEFAULTS } from "@/lib/shift-activation";
 
@@ -27,7 +28,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor } = body;
   // Card #203: "Count shifts from" — a YYYY-MM-DD date, or null to clear. Strictly validated.
   const balanceFromValid = shiftBalanceFrom === null || (typeof shiftBalanceFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(shiftBalanceFrom) && !Number.isNaN(Date.parse(shiftBalanceFrom + "T00:00:00Z")) && new Date(shiftBalanceFrom + "T00:00:00Z").toISOString().startsWith(shiftBalanceFrom));
   if (shiftBalanceFrom !== undefined && !balanceFromValid) {
@@ -67,6 +68,15 @@ export async function PUT(req: NextRequest) {
     }
   }
   const holidayShiftData = holidayShiftId === undefined ? {} : { holidayShiftId: holidayShiftId as string | null };
+  // Card #209: shading colours — #RRGGBB, or null to switch that shading off. Strict.
+  const shadeData: Record<string, string | null> = {};
+  for (const [k, v] of [["printWeekendColor", printWeekendColor], ["printHolidayColor", printHolidayColor], ["screenHolidayColor", screenHolidayColor]] as const) {
+    if (v === undefined) continue;
+    if (v !== null && !isShadeColor(v)) {
+      return NextResponse.json({ error: `${k} must be a #RRGGBB colour or null` }, { status: 400 });
+    }
+    shadeData[k] = v;
+  }
   if (leaveHoursPolicy !== undefined && !isLeavePolicy(leaveHoursPolicy)) {
     return NextResponse.json({ error: `leaveHoursPolicy must be one of ${LEAVE_POLICIES.join(", ")}` }, { status: 400 });
   }
@@ -127,6 +137,7 @@ export async function PUT(req: NextRequest) {
       ...(isLeavePolicy(leaveHoursPolicy) && { leaveHoursPolicy }),
       ...balanceFromData,
       ...holidayShiftData,
+      ...shadeData,
       ...(columnOrder !== undefined && { staffColumnOrder: columnOrder === null ? Prisma.DbNull : columnOrder }),
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),
@@ -148,6 +159,7 @@ export async function PUT(req: NextRequest) {
       ...(isLeavePolicy(leaveHoursPolicy) && { leaveHoursPolicy }),
       ...balanceFromData,
       ...holidayShiftData,
+      ...shadeData,
       ...(columnOrder != null && { staffColumnOrder: columnOrder }),
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),

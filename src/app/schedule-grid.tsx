@@ -10,7 +10,7 @@ import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForScopeWithExplicit, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, DEFAULT_LIVE_SCOPE, type LiveScope } from "@/lib/live-scope";
-import { holidayPrintBgFor } from "@/lib/holiday-policy";
+import { rowPrintShade, screenHolidayTint, DEFAULT_DAY_SHADING, type DayShading } from "@/lib/day-shading";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { liveBundleProblem } from "@/lib/live-bundle";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
@@ -254,7 +254,7 @@ type Props = {
   printAggregateColumns?: AggregateColumn[];
   dateFormat?: string;
   defaultLiveScope?: LiveScope; // dept default scope for auto-generate edits (#248)
-  holidayShiftId?: string | null; // card #207: the shift credited on a holiday (by id); its print colour shades holidays
+  dayShading?: DayShading; // card #209: weekend/holiday shading colours from Settings (null = off)
   currentVersions?: CurrentVersionMeta[];
   scheduleRequests?: GridRequest[];
   mutedAlertKeys?: string[]; // alert keys muted by any login (shared, single-tenant)
@@ -457,7 +457,7 @@ export function ScheduleGrid({
   printAggregateColumns = [],
   dateFormat: dateFormatProp,
   defaultLiveScope = DEFAULT_LIVE_SCOPE,
-  holidayShiftId = null,
+  dayShading = DEFAULT_DAY_SHADING,
   currentVersions = [],
   scheduleRequests = [],
   mutedAlertKeys = [],
@@ -1037,13 +1037,6 @@ export function ScheduleGrid({
     return map;
   }, [shiftTypes]);
 
-  // The holiday shift's print background color shades the date cell of every holiday on the
-  // PRINTED schedule. Card #207: the holiday shift is the one chosen in Settings (by id),
-  // never found by its code; none chosen or no print colour → no shading.
-  const holidayPrintBg = useMemo(
-    () => holidayPrintBgFor(shiftTypes, holidayShiftId),
-    [shiftTypes, holidayShiftId],
-  );
 
   // Request chrome (boxed border + bare letters + corner badge) surfaces the
   // original requests under the RQ overlay, scoped by `requestFilter`: "all" shows
@@ -4373,6 +4366,9 @@ export function ScheduleGrid({
 
               const dw = dayWarnings.get(date);
               const isActiveRow = activeRow === date;
+              // Card #209: shading colours come from Settings (null = off).
+              const printShade = rowPrintShade(isWeekend, isHoliday, dayShading);
+              const holidayTint = screenHolidayTint(isHoliday, dayShading);
 
               return (
                 <tr
@@ -4381,10 +4377,14 @@ export function ScheduleGrid({
                   data-weekend={isWeekend || undefined}
                   data-holiday={isHoliday || undefined}
                   data-outside-month={isOutsideMonth || undefined}
+                  data-print-shade={printShade ? "" : undefined}
+                  style={{
+                    ...(printShade ? { "--row-print-bg": printShade } : null),
+                    ...(holidayTint ? { background: holidayTint } : null),
+                  } as React.CSSProperties}
                   className={[
                     isOutsideMonth ? "opacity-40" : "",
-                    isWeekend && !isOutsideMonth ? "bg-slate-800/50" : "",
-                    isHoliday ? "bg-amber-950/20" : "",
+                    isWeekend && !isOutsideMonth && !holidayTint ? "bg-slate-800/50" : "",
                     isToday ? "ring-1 ring-inset ring-blue-500/50" : "",
                     flashDate === date ? "ring-2 ring-inset ring-amber-400 bg-amber-500/20" : "",
                     "transition-colors",
@@ -4395,11 +4395,9 @@ export function ScheduleGrid({
                       "sticky left-0 z-[5] px-2 py-1 text-xs font-mono border-r border-slate-700 whitespace-nowrap cursor-pointer hover:brightness-125",
                       isNewPP ? "border-t-2 border-t-indigo-500" : "",
                     ].join(" ")}
-                    data-print-bg={isHoliday && holidayPrintBg ? "" : undefined}
                     style={{
-                      background: isActiveRow ? "rgba(29,78,216,0.7)" : isOutsideMonth ? "#0d1321" : isWeekend ? "#1a2236" : "#0f172a",
+                      background: isActiveRow ? "rgba(29,78,216,0.7)" : isOutsideMonth ? "#0d1321" : holidayTint ?? (isWeekend ? "#1a2236" : "#0f172a"),
                       ...(!isActiveRow && hoverRow === date ? HOVER_OUTLINE : null),
-                      ...(isHoliday && holidayPrintBg ? { "--print-bg": holidayPrintBg } : null),
                     } as React.CSSProperties}
                     onClick={() => setActiveRow(activeRow === date ? null : date)}
                     onMouseEnter={(e) => { setHoverRow(date); if (isHoliday) showTip(setTooltip, holidayNames.get(date) ?? "", e); }}

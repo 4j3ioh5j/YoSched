@@ -101,6 +101,9 @@ type SchedulingPrefs = {
   shiftShareBasis: ShiftShareBasis;
   holidayPolicy: HolidayPolicy;
   holidayShiftId: string | null; // card #207: shift credited on a holiday, by id
+  printWeekendColor: string | null; // card #209: null = no weekend shading in print
+  printHolidayColor: string | null; // card #209: null = no holiday shading in print
+  screenHolidayColor: string | null; // card #209: null = no holiday tint on screen
   leaveHoursPolicy: LeavePolicy;
   shiftBalanceFrom?: string | null;
   payPeriodAnchor: string | null;
@@ -4951,6 +4954,96 @@ type EditAggCol = {
 // columns. A column with the "Catch-all" (isOther) flag has no rule and lists the
 // residual — staff who appear in no other column. Catch-all is just a per-column toggle:
 // columns are otherwise identical and all freely editable / movable / deletable.
+// ─── Weekend and Holiday Shading (card #209) ─────────────────────────────────
+
+type ShadeKey = "printWeekendColor" | "printHolidayColor" | "screenHolidayColor";
+const SHADE_FIELDS: { key: ShadeKey; label: string; description: string; fallback: string }[] = [
+  { key: "printWeekendColor", label: "Weekends (printed)", description: "Shade of every Saturday and Sunday row on the printed schedule.", fallback: "#EBEBEB" },
+  { key: "printHolidayColor", label: "Holidays (printed)", description: "Shade of every date in the Holidays list on the printed schedule. Wins over the weekend shade.", fallback: "#D0D0D0" },
+  { key: "screenHolidayColor", label: "Holidays (on screen)", description: "Tint of every date in the Holidays list on the schedule grid.", fallback: "#4A3410" },
+];
+
+function DayShadingSection({ initial }: { initial: Pick<SchedulingPrefs, ShadeKey> }) {
+  const canEdit = useCanEdit();
+  const [vals, setVals] = useState<Pick<SchedulingPrefs, ShadeKey>>({ ...initial });
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState<string | undefined>();
+
+  // Last value the server accepted per field (rollback target), and a per-field debounce so
+  // dragging the colour picker sends one save, not one per pixel.
+  const saved = useRef<Pick<SchedulingPrefs, ShadeKey>>({ ...initial });
+  const timers = useRef<Partial<Record<ShadeKey, ReturnType<typeof setTimeout>>>>({});
+  useEffect(() => () => { for (const t of Object.values(timers.current)) if (t) clearTimeout(t); }, []);
+
+  function saveSoon(key: ShadeKey, value: string) {
+    setVals((v) => ({ ...v, [key]: value }));
+    const t = timers.current[key];
+    if (t) clearTimeout(t);
+    timers.current[key] = setTimeout(() => { delete timers.current[key]; void save(key, value); }, 400);
+  }
+
+  async function save(key: ShadeKey, value: string | null) {
+    const prev = saved.current[key];
+    const t = timers.current[key];
+    if (t) { clearTimeout(t); delete timers.current[key]; }
+    setVals((v) => ({ ...v, [key]: value }));
+    setStatus("saving");
+    setError(undefined);
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [key]: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      saved.current = { ...saved.current, [key]: value };
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setVals((v) => ({ ...v, [key]: prev }));
+      setStatus("error");
+      setError(e instanceof Error ? e.message : "Save failed");
+    }
+  }
+
+  return (
+    <CollapsibleSection
+      id="print-day-shading"
+      title="Weekend and Holiday Shading"
+      description="Background shading for weekends and holidays. Untick one to switch that shading off. A shift's own print background still wins over these in its cells."
+      status={status}
+      error={error}
+    >
+      <div className="space-y-2">
+        {SHADE_FIELDS.map((f) => (
+          <FieldRow key={f.key} label={f.label} description={f.description}>
+            <div className="flex items-center gap-2">
+              <input
+                disabled={!canEdit}
+                type="checkbox"
+                aria-label={`${f.label} on`}
+                checked={vals[f.key] != null}
+                onChange={(e) => canEdit && save(f.key, e.target.checked ? (initial[f.key] ?? f.fallback) : null)}
+                className="rounded border-slate-600 w-4 h-4 disabled:opacity-50"
+              />
+              {vals[f.key] != null && (
+                <input
+                  disabled={!canEdit}
+                  type="color"
+                  aria-label={f.label}
+                  className="w-8 h-8 rounded cursor-pointer border-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                  value={vals[f.key]!}
+                  onChange={(e) => canEdit && saveSoon(f.key, e.target.value.toUpperCase())}
+                />
+              )}
+            </div>
+          </FieldRow>
+        ))}
+      </div>
+    </CollapsibleSection>
+  );
+}
+
 function AdditionalColumnsSection({
   initial,
   shiftTypes,
@@ -5509,6 +5602,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
           <PrintColumnRulesSection initial={initialPrintColumnRules} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
           <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
           <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
+          <DayShadingSection initial={schedulingPrefs} />
         </div>
 
         <SectionGroup label="Calendar" />

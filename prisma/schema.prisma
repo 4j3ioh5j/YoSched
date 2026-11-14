@@ -347,6 +347,9 @@ model SchedulingPreferences {
   shiftShareBasis         String   @default("fte") // auto-scheduler split of a scheduled shift's slots across eligible staff: "fte" (proportional to FTE) | "head" (equal per person) — see src/lib/shift-share.ts
   holidayShiftId          String?  // card #207: the shift credited on a holiday (leave, counts toward FTE); linked by id, never by code. null = none chosen
   holidayShift            ShiftType? @relation("holidayShift", fields: [holidayShiftId], references: [id], onDelete: SetNull)
+  printWeekendColor       String?  @default("#EBEBEB") // card #209: weekend row shade on the PRINTED schedule (null = none)
+  printHolidayColor       String?  @default("#D0D0D0") // card #209: holiday row shade on the PRINTED schedule (null = none); wins over weekend
+  screenHolidayColor      String?  @default("#4A3410") // card #209: holiday row tint on the on-screen grid (null = none)
   holidayPolicy           String   @default("entitlement") // who is owed HOL on a holiday: "entitlement" (scheduled-workday rule, counts toward PP target) | "fill" (legacy hours-fill only) | "none" — see src/lib/holiday-policy.ts
   leaveHoursPolicy        String   @default("up-to-target") // card #175: requested leave charged "up-to-target" (only days they'd work, never past the PP target; the rest become X) | "always" — see src/lib/leave-policy.ts
   activationWorkedDefault  String  @default("eligible")     // card #75: turning a shift's Auto-schedule on — people who have worked it start "eligible" | "not_eligible" | "keep" (see src/lib/shift-activation.ts)

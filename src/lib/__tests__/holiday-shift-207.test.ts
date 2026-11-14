@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isHolidayCreditShift, resolveHolidayShift, holidayPrintBgFor } from "../holiday-policy";
+import { isHolidayCreditShift, resolveHolidayShift } from "../holiday-policy";
 
 // Card #207: one predicate for what may be the holiday shift; lookups by id, never by code.
 
@@ -25,14 +25,5 @@ describe("resolveHolidayShift", () => {
     expect(resolveHolidayShift(shifts, undefined)).toBeNull();
     expect(resolveHolidayShift(shifts, "st-gone")).toBeNull();
     expect(resolveHolidayShift(shifts, "st-work")).toBeNull();
-  });
-});
-
-describe("holidayPrintBgFor (printed schedule shading)", () => {
-  it("uses the chosen shift's print colour after a rename; unset or no colour → none", () => {
-    const shifts = [s("st-hol", "HOLX", { printBackgroundColor: "#e5dbe6" }), s("st-decoy", "HOL", { printBackgroundColor: "#000000" })];
-    expect(holidayPrintBgFor(shifts, "st-hol")).toBe("#e5dbe6");
-    expect(holidayPrintBgFor(shifts, null)).toBeNull();
-    expect(holidayPrintBgFor([s("st-hol", "HOL")], "st-hol")).toBeNull();
   });
 });

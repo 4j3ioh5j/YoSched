@@ -220,15 +220,13 @@ input[type="checkbox"]:disabled {
     height: 0.19in !important;
   }
 
-  /* Weekend row shading */
-  tbody tr[data-weekend="true"] td {
-    background: #f8fafc !important;
+  /* Card #209: weekend / holiday row shading comes from Settings › Printed Schedule. The row
+     carries data-print-shade + an inline --row-print-bg only when a shade applies (holiday
+     wins over weekend); shading switched off → no attribute → plain white. */
+  tbody tr[data-print-shade] td {
+    background: var(--row-print-bg) !important;
   }
 
-  /* Holiday date cell: shaded with the HOL shift's "Print background" color (replaces
-     the old asterisk + hardcoded amber). The cell carries data-print-bg + an inline
-     --print-bg var set from the HOL shift, painted by the tbody td[data-print-bg] rule
-     below. HOL print background cleared → no shading. */
 
   /* Print only the calendar month — hide leading/trailing pay-period padding days */
   tr[data-outside-month] {
@@ -285,7 +283,8 @@ input[type="checkbox"]:disabled {
      `tbody tr[data-weekend="true"] td` (0,1,3) so a shift tint still shows on WEEKEND cells
      — e.g. CALL is a weekend shift and was otherwise overpainted by the pale weekend grey.
      The second selector covers weekday cells. */
-  tbody tr[data-weekend="true"] td[data-print-bg],
+  /* A shift's own print colour wins over the row shade (same-or-higher specificity, later). */
+  tbody tr[data-print-shade] td[data-print-bg],
   tbody td[data-print-bg] {
     background: var(--print-bg) !important;
   }

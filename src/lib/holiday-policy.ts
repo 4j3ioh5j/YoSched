@@ -46,11 +46,3 @@ export function resolveHolidayShift<T extends { id: string; countsTowardFte: boo
   return shiftTypes.find((st) => st.id === holidayShiftId && isHolidayCreditShift(st)) ?? null;
 }
 
-/** Print shading colour for holiday date cells: the chosen holiday shift's print background. */
-export function holidayPrintBgFor(
-  shiftTypes: readonly { id: string; printBackgroundColor?: string | null }[],
-  holidayShiftId: string | null | undefined,
-): string | null {
-  if (!holidayShiftId) return null;
-  return shiftTypes.find((st) => st.id === holidayShiftId)?.printBackgroundColor ?? null;
-}

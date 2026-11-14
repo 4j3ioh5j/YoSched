@@ -17,6 +17,7 @@ import { MarketingLanding } from "./marketing-landing";
 import { canonicalUrl } from "@/lib/base-path";
 import type { Metadata } from "next";
 import { effectiveFte, effectiveFixedHours } from "@/lib/fte";
+import { dayShadingFrom } from "@/lib/day-shading";
 
 // This route is reachable at two live addresses (apex proxy + tunnel alias), so it has to
 // say which one is real. og:url is not a canonical signal to Google — only <link rel=canonical> is.
@@ -300,7 +301,7 @@ export default async function Home() {
         }))}
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
         defaultLiveScope={parseLiveScope(schedPrefs?.defaultLiveScope)}
-        holidayShiftId={schedPrefs?.holidayShiftId ?? null}
+        dayShading={dayShadingFrom(schedPrefs)}
         currentVersions={currentVersions.map((v) => ({
           year: v.year,
           month: v.month,

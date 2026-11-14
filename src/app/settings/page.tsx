@@ -9,6 +9,7 @@ import { coerceConditions } from "@/lib/print-column-visibility";
 import { parseLiveScope } from "@/lib/live-scope";
 import { parseShiftShareBasis } from "@/lib/shift-share";
 import { parseHolidayPolicy } from "@/lib/holiday-policy";
+import { dayShadingFrom } from "@/lib/day-shading";
 import { parseLeavePolicy } from "@/lib/leave-policy";
 import { parseStaffOrderCriteria } from "@/lib/staff-order";
 import { parseHoursPolicy } from "@/lib/autogen-hours-policy";
@@ -72,6 +73,7 @@ export default async function Settings() {
     shiftShareBasis: parseShiftShareBasis(schedulingPrefsRow?.shiftShareBasis),
     holidayPolicy: parseHolidayPolicy(schedulingPrefsRow?.holidayPolicy),
     holidayShiftId: schedulingPrefsRow?.holidayShiftId ?? null,
+    ...dayShadingFrom(schedulingPrefsRow), // card #209: explicit null stays off
     leaveHoursPolicy: parseLeavePolicy(schedulingPrefsRow?.leaveHoursPolicy),
     shiftBalanceFrom: schedulingPrefsRow?.shiftBalanceFrom?.toISOString().split("T")[0] ?? null,
     payPeriodAnchor: schedulingPrefsRow?.payPeriodAnchor?.toISOString().split("T")[0] ?? null,
