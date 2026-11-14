@@ -77,4 +77,13 @@ describe("POST /api/settings/holidays — holiday types", () => {
     expect(rows.every((h) => !!h.holidayTypeId)).toBe(true);
     expect(rows.find((h) => h.name.startsWith("Thanksgiving"))?.holidayTypeId).toBeTruthy();
   });
+
+  it("card #218: a holiday set to No type stays unlinked on a save without a type and on auto-populate", async () => {
+    await post({ date: "2026-11-26", name: "Thanksgiving Day", holidayTypeId: null });
+    expect((await post({ date: "2026-11-26", name: "Thanksgiving Day" })).body.holidayTypeId).toBeNull();
+    const rows = (await (await POST(req({ action: "auto-populate", years: [2026] }))).json()) as { date: string; name: string; holidayTypeId: string | null }[];
+    expect(rows.find((h) => h.name.startsWith("Thanksgiving"))?.holidayTypeId).toBeNull();
+    // A new row is still linked by its name.
+    expect(rows.find((h) => h.name.startsWith("Christmas"))?.holidayTypeId).toBeTruthy();
+  });
 });

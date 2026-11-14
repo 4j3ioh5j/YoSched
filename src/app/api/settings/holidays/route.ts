@@ -22,7 +22,7 @@ async function typeIdForName(name: string): Promise<string | null> {
   return t.id;
 }
 
-/** The type a write should store: the body's choice, else the row's current one, else by name. */
+/** The type a write should store: the body's choice, else the row's current one (null too), else by name for a new row. */
 async function resolveType(date: Date, name: string, requested: unknown): Promise<{ id: string | null } | { error: string }> {
   if (requested === null) return { id: null };
   if (typeof requested === "string") {
@@ -30,8 +30,10 @@ async function resolveType(date: Date, name: string, requested: unknown): Promis
     return t ? { id: t.id } : { error: "That holiday type no longer exists — reload the page" };
   }
   if (requested !== undefined) return { error: "holidayTypeId must be a string or null" };
+  // Card #218: an existing row keeps its type — including "No type" chosen on purpose (or left
+  // by deleting its type); only a new row is linked by its name.
   const existing = await prisma.holiday.findUnique({ where: { date }, select: { holidayTypeId: true } });
-  if (existing?.holidayTypeId) return { id: existing.holidayTypeId };
+  if (existing) return { id: existing.holidayTypeId };
   return { id: await typeIdForName(name) };
 }
 

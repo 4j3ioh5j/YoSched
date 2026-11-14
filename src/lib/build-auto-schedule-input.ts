@@ -7,7 +7,7 @@
 
 import { readTuning } from "./scheduler-tuning";
 import { prisma } from "@/lib/prisma";
-import { ruleSpan } from "./holiday-rules";
+import { ruleReach, ruleSpan } from "./holiday-rules";
 import { loadHolidayRules } from "./holiday-rules-db";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { getPayPeriods } from "@/lib/pay-periods-server";
@@ -192,8 +192,10 @@ export async function buildAutoScheduleInput(
 
   // Card #210: holiday rules (settings data) and, when a rule reaches past the run's end, the
   // read-only cells just after it (a hand-entered day of a group that straddles the end).
+  // Card #218: as far as any group touching the run can reach (its first-to-last day distance),
+  // so a holiday after the run whose early day falls inside it still sees its later holders.
   const holidayRules = await loadHolidayRules(db);
-  const span = ruleSpan(holidayRules);
+  const span = Math.max(ruleSpan(holidayRules), ruleReach(holidayRules)); // never narrower than before
   const ruleContextEnd = new Date(effectiveEnd + "T00:00:00Z");
   ruleContextEnd.setUTCDate(ruleContextEnd.getUTCDate() + span);
   const ruleContextRows = holidayRules.length > 0 && span > 0

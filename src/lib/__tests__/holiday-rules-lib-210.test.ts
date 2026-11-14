@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildHolidayGroups, validateHolidayRules, splitGroupWarnings, holidayTypeNameFor, ruleSpan, shiftDate, type HolidayRuleSpec } from "../holiday-rules";
+import { buildHolidayGroups, validateHolidayRules, splitGroupWarnings, holidayTypeNameFor, ruleSpan, ruleReach, shiftDate, type HolidayRuleSpec } from "../holiday-rules";
 import { holidayRulesVersion } from "../holiday-rules-db";
 
 // Card #210: the group builder, validation and grid warning shared by the engine and Settings.
@@ -34,6 +34,12 @@ describe("buildHolidayGroups", () => {
   it("span is the furthest day from a holiday", () => {
     expect(ruleSpan([TG1, TG2])).toBe(3);
     expect(ruleSpan([])).toBe(0);
+  });
+
+  it("card #218: reach is the widest first-to-last day distance of a rule", () => {
+    expect(ruleReach([TG1, TG2])).toBe(2);
+    expect(ruleReach([{ ...TG1, days: [{ offset: -7, shiftTypeId: "call" }, { offset: 7, shiftTypeId: "call" }] }])).toBe(14);
+    expect(ruleReach([])).toBe(0);
   });
 });
 

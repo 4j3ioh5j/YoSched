@@ -43,6 +43,21 @@ export function ruleSpan(rules: readonly HolidayRuleSpec[]): number {
 }
 
 /**
+ * Card #218: how far past a range's last day a group that touches the range can reach — the
+ * widest distance between a rule's first and last day (a rule from −7 to +7 reaches 14 days:
+ * its holiday can sit 7 days after the range, its last day 7 more). 0 with no rules.
+ */
+export function ruleReach(rules: readonly HolidayRuleSpec[]): number {
+  let reach = 0;
+  for (const r of rules) {
+    if (r.days.length === 0) continue;
+    const offs = r.days.map((d) => d.offset);
+    reach = Math.max(reach, Math.max(...offs) - Math.min(...offs));
+  }
+  return reach;
+}
+
+/**
  * Every group from the dated holidays and the rules. A holiday with no type, or whose type has no
  * rule, makes none. When `from`/`to` are given, only groups with at least one slot in [from, to]
  * are returned (the whole group, slots outside included — they are read-only context).
