@@ -60,12 +60,14 @@ function ppHours(inp: AutoScheduleInput, r: ReturnType<typeof autoSchedule>, who
 describe("a day preference gives way to the hours target, holiday included (card #176)", () => {
   // KZ: 0.4 FTE (32 h), works Mon + Tue, prefers ORC on Tuesdays. Monday W2 is a holiday:
   // KZ is owed HOL (8 h) there, so only ONE Tuesday ORC fits (16 + 8 + 8 = 32).
-  const kz = () => staff("kz", "KZ", { ftePercentage: 0.4, availabilityRules: avail([1, 2]) });
+  // Card #204: the preference is the staff card's visible "eligible · Prefer" rule on Tuesdays
+  // (the hidden day-preference table is retired).
+  const preferTue = { shiftTypeId: "st-orc", type: "eligible" as const, strength: "preference" as const, ...wEvery(2) };
+  const kz = () => staff("kz", "KZ", { ftePercentage: 0.4, availabilityRules: avail([1, 2]), shiftEligibilityRules: [preferTue] });
   const others = () => [staff("p2", "AB"), staff("p3", "CD"), staff("p4", "EF"), staff("p5", "GH"), staff("p6", "IJ")];
   const build = (holidayPolicy?: "entitlement" | "fill" | "none") => input({
     staff: [kz(), ...others()],
     holidays: [{ date: W2[0] }],
-    dayPreferences: [{ staffId: "kz", dayOfWeek: 2, preference: "ORC" }],
     staffingRequirements: [...req("st-orc", "ORC", 1)],
     requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: true }],
   }, holidayPolicy ? { holidayPolicy } : {});

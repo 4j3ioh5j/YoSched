@@ -100,7 +100,6 @@ export async function buildAutoScheduleInput(
     desirabilityWeights,
     standingCommitments,
     staffOverrides,
-    dayPreferences,
     historicalAssignments,
     staffingRequirements,
     schedulingPrefsRow,
@@ -130,7 +129,6 @@ export async function buildAutoScheduleInput(
     db.desirabilityWeight.findMany(),
     db.standingCommitment.findMany(),
     db.staffShiftOverride.findMany(),
-    db.staffDayPreference.findMany(),
     db.assignment.findMany({
       where: {
         date: { lt: new Date(effectiveStart + "T00:00:00Z") },
@@ -414,11 +412,9 @@ export async function buildAutoScheduleInput(
       durationHrsWeekend: po.durationHrsWeekend,
       durationHrsHoliday: po.durationHrsHoliday,
     })),
-    dayPreferences: dayPreferences.map((dp) => ({
-      staffId: dp.staffId,
-      dayOfWeek: dp.dayOfWeek,
-      preference: dp.preference,
-    })),
+    // Card #204: the hidden day-preference table is retired (favoured days are the staff card's
+    // Prefer rules). Always an empty list: a tab still running the old engine iterates it.
+    dayPreferences: [],
     historicalAssignments: historicalAssignments.map((a) => ({
       staffId: a.staffId,
       date: a.date.toISOString().split("T")[0],

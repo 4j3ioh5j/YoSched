@@ -206,17 +206,6 @@ async function main() {
   }
   console.log(`Seeded ${overrides.length} staff shift overrides`);
 
-  // --- KZ day preference ---
-  const kzId = (await prisma.staff.findUnique({ where: { initials: "KZ" } }))!.id;
-  const orcId = (await prisma.shiftType.findUnique({ where: { code: "ORC" } }))!.id;
-
-  await prisma.staffDayPreference.upsert({
-    where: { staffId_dayOfWeek: { staffId: kzId, dayOfWeek: 2 } },
-    update: { preference: "ORC" },
-    create: { staffId: kzId, dayOfWeek: 2, preference: "ORC" },
-  });
-  console.log("Seeded KZ day preference (ORC on Tuesday)");
-
   // --- STa standing commitment (Research) ---
   const staId = (await prisma.staff.findUnique({ where: { initials: "STa" } }))!.id;
   const rsId = (await prisma.shiftType.findUnique({ where: { code: "RS" } }))!.id;
@@ -229,6 +218,7 @@ async function main() {
 
   // --- Desirability Weights ---
   const orlId = (await prisma.shiftType.findUnique({ where: { code: "ORL" } }))!.id;
+  const orcId = (await prisma.shiftType.findUnique({ where: { code: "ORC" } }))!.id;
 
   const callId = (await prisma.shiftType.findUnique({ where: { code: "CALL" } }))!.id;
 

@@ -563,7 +563,8 @@ export type AutoScheduleInput = {
   desirabilityWeights: DesirabilityWeight[];
   standingCommitments: StandingCommitment[];
   staffOverrides: StaffOverride[];
-  dayPreferences: DayPreference[];
+  /** Card #204: ignored (retired hidden table); kept optional so an older caller still type-checks. */
+  dayPreferences?: DayPreference[];
   historicalAssignments: ScheduleAssignment[];
   staffingRequirements: StaffingRequirement[];
   schedulingPreferences: SchedulingPreferences;
@@ -611,7 +612,6 @@ export function autoSchedule({
   desirabilityWeights,
   standingCommitments,
   staffOverrides,
-  dayPreferences,
   historicalAssignments,
   staffingRequirements,
   schedulingPreferences,
@@ -852,11 +852,6 @@ export function autoSchedule({
       h += holShift.countsTowardFte ? getShiftHours(staff.id, holShift, overrideMap, dayTypeOf(d, holidaySet)) : 0;
     }
     return h;
-  }
-
-  const prefMap = new Map<string, string>();
-  for (const dp of dayPreferences) {
-    prefMap.set(`${dp.staffId}:${dp.dayOfWeek}`, dp.preference);
   }
 
   // Per-day caps (Staffing Rules "Max") — the same resolver the manual edit paths use.
@@ -2387,11 +2382,9 @@ export function autoSchedule({
           }
 
           const dow = getDow(date);
-          const preferred = available.filter(
-            (p) => prefMap.get(`${p.id}:${dow}`) === st.code
-          );
-
-          let pool = preferred.length > 0 ? preferred : available;
+          // Card #204: no hidden per-day filter — a person's favoured days are the staff card's
+          // "eligible · Prefer" rules, which rank inside pickStaff and never narrow the pool.
+          let pool = available;
           const desirability = dwMap.get(`${st.id}:${dow}`) ?? 0;
 
           for (let i = 0; i < needed; i++) {
