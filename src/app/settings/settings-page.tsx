@@ -13,6 +13,7 @@ import { COUNT_COLUMNS_SAVE_URL, buildCountColumnsSave, countColumnsSaveErrorMes
 import { PRINT_COLUMN_RULES_SAVE_URL, PRINT_AGGREGATE_COLUMNS_SAVE_URL, buildConditionsSave, printSaveErrorMessage } from "@/lib/print-conditions";
 import { SHIFT_SHARE_BASES, type ShiftShareBasis } from "@/lib/shift-share";
 import { HOLIDAY_POLICIES, type HolidayPolicy, isHolidayCreditShift } from "@/lib/holiday-policy";
+import { createLatestWriter, type LatestWriter } from "@/lib/latest-writer";
 import { LEAVE_POLICIES, type LeavePolicy } from "@/lib/leave-policy";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
 import { HOURS_POLICIES, HOURS_POLICY_KEYS, parseHoursPolicy, isHoursPolicyKey, type HoursPolicy } from "@/lib/autogen-hours-policy";
@@ -4969,41 +4970,51 @@ function DayShadingSection({ initial }: { initial: Pick<SchedulingPrefs, ShadeKe
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState<string | undefined>();
 
-  // Last value the server accepted per field (rollback target), and a per-field debounce so
-  // dragging the colour picker sends one save, not one per pixel.
-  const saved = useRef<Pick<SchedulingPrefs, ShadeKey>>({ ...initial });
+  // What the server holds per field (updated on EVERY successful write, reported or not —
+  // the rollback target), a per-field debounce so dragging the colour picker sends one save,
+  // and card #214's writer: one save at a time per field, newest choice wins, an older
+  // save's late result never changes the page.
   const timers = useRef<Partial<Record<ShadeKey, ReturnType<typeof setTimeout>>>>({});
+  const [writer] = useState<LatestWriter<ShadeKey, string | null>>(() => {
+    let server: Pick<SchedulingPrefs, ShadeKey> = { ...initial };
+    return createLatestWriter<ShadeKey, string | null>(
+      async (key, value) => {
+        const res = await fetch("/api/settings/scheduling-preferences", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [key]: value }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        server = { ...server, [key]: value };
+      },
+      (key, _value, err) => {
+        if (err === null) {
+          setStatus("saved");
+          setTimeout(() => setStatus("idle"), 2000);
+        } else {
+          setVals((v) => ({ ...v, [key]: server[key] }));
+          setStatus("error");
+          setError(err instanceof Error ? err.message : "Save failed");
+        }
+      },
+    );
+  });
   useEffect(() => () => { for (const t of Object.values(timers.current)) if (t) clearTimeout(t); }, []);
 
   function saveSoon(key: ShadeKey, value: string) {
     setVals((v) => ({ ...v, [key]: value }));
     const t = timers.current[key];
     if (t) clearTimeout(t);
-    timers.current[key] = setTimeout(() => { delete timers.current[key]; void save(key, value); }, 400);
+    timers.current[key] = setTimeout(() => { delete timers.current[key]; save(key, value); }, 400);
   }
 
-  async function save(key: ShadeKey, value: string | null) {
-    const prev = saved.current[key];
+  function save(key: ShadeKey, value: string | null) {
     const t = timers.current[key];
     if (t) { clearTimeout(t); delete timers.current[key]; }
     setVals((v) => ({ ...v, [key]: value }));
     setStatus("saving");
     setError(undefined);
-    try {
-      const res = await fetch("/api/settings/scheduling-preferences", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [key]: value }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      saved.current = { ...saved.current, [key]: value };
-      setStatus("saved");
-      setTimeout(() => setStatus("idle"), 2000);
-    } catch (e) {
-      setVals((v) => ({ ...v, [key]: prev }));
-      setStatus("error");
-      setError(e instanceof Error ? e.message : "Save failed");
-    }
+    writer.write(key, value);
   }
 
   return (
