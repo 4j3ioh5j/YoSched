@@ -56,7 +56,7 @@ export default async function Home() {
   // permission (default-granted to level-1+ groups), and the /manual route it opens
   // re-checks the same permission server-side.
   const canViewManual = permissions!.includes("manual:view");
-  const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, staffingMins, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, printColumnRules, printAggregateColumns, currentVersions, scheduleRequests, mutedAlerts] =
+  const [staff, shiftTypes, assignments, payPeriods, holidays, staffOverrides, desirabilityWeights, staffingReqs, schedPrefs, equityFactors, followRules, countColumns, printColumnRules, printAggregateColumns, currentVersions, scheduleRequests, mutedAlerts] =
     await Promise.all([
       prisma.staff.findMany({
         // Active roster + any inactive staff that has assignments, so the grid
@@ -73,7 +73,6 @@ export default async function Home() {
       getPayPeriods(),
       prisma.holiday.findMany({ orderBy: { date: "asc" } }),
       prisma.staffShiftOverride.findMany(),
-      prisma.staffingMinimum.findMany(),
       prisma.desirabilityWeight.findMany(),
       prisma.staffingRequirement.findMany({ orderBy: [{ shiftTypeId: "asc" }, { dayKey: "asc" }] }),
       prisma.schedulingPreferences.findFirst(),
@@ -259,11 +258,9 @@ export default async function Home() {
           durationHrsWeekend: o.durationHrsWeekend,
           durationHrsHoliday: o.durationHrsHoliday,
         }))}
-        staffingMins={staffingMins.map((sm) => ({
-          role: sm.role,
-          dayType: sm.dayType,
-          minimumCount: sm.minimumCount,
-        }))}
+        // Card #208: the hidden staffing minimums no longer warn. An empty list (not the
+        // rows) keeps a tab still running the old grid bundle working, with no warnings.
+        staffingMins={[]}
         staffingReqs={staffingReqs.map((sr) => ({
           shiftTypeId: sr.shiftTypeId,
           dayKey: sr.dayKey,

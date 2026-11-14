@@ -240,7 +240,7 @@ type Props = {
   payPeriods: PayPeriod[];
   holidays: Holiday[];
   staffOverrides: StaffOverride[];
-  staffingMins: StaffingMin[];
+  staffingMins?: StaffingMin[]; // card #208: ignored (hidden minimums no longer warn); kept optional for older pages
   staffingReqs: StaffingReq[];
   fairnessData?: Record<string, FairnessEntry>;
   fairnessAverages?: {
@@ -448,7 +448,6 @@ export function ScheduleGrid({
   payPeriods,
   holidays,
   staffOverrides,
-  staffingMins,
   staffingReqs,
   fairnessData,
   fairnessAverages,
@@ -1272,7 +1271,6 @@ export function ScheduleGrid({
           assignmentMap: effectiveAssignmentMap,
           allStaff: staff,
           holidaySet,
-          staffingMins,
           followRuleMap,
           scheduleRequests: approvedRequests,
         });
@@ -1282,7 +1280,7 @@ export function ScheduleGrid({
       }
     }
     return map;
-  }, [dates, staff, effectiveAssignmentMap, shiftTypeMap, holidaySet, staffingMins, followRuleMap, approvedRequests]);
+  }, [dates, staff, effectiveAssignmentMap, shiftTypeMap, holidaySet, followRuleMap, approvedRequests]);
 
   // Compute per-day staffing warnings
   const dayWarnings = useMemo(() => {
@@ -1294,7 +1292,6 @@ export function ScheduleGrid({
         assignmentMap: effectiveAssignmentMap,
         shiftTypeMap,
         holidaySet,
-        staffingMins,
         staffingReqs,
       });
       if (warnings.length > 0) {
@@ -1302,7 +1299,7 @@ export function ScheduleGrid({
       }
     }
     return map;
-  }, [dates, staff, effectiveAssignmentMap, shiftTypeMap, holidaySet, staffingMins, staffingReqs]);
+  }, [dates, staff, effectiveAssignmentMap, shiftTypeMap, holidaySet, staffingReqs]);
 
   // Count columns name their shifts by id, so count the cells' shiftTypeId (saved grid and
   // Live what-if both carry it) — a renamed shift keeps counting.
@@ -3379,7 +3376,6 @@ export function ScheduleGrid({
         assignmentMap,
         allStaff: staff,
         holidaySet,
-        staffingMins,
         followRuleMap,
         scheduleRequests: approvedRequests,
       });
@@ -3388,7 +3384,7 @@ export function ScheduleGrid({
       }
     }
     return result;
-  }, [picker, staffMap, shiftTypes, shiftTypeMap, assignmentMap, staff, holidaySet, staffingMins, followRuleMap, approvedRequests]);
+  }, [picker, staffMap, shiftTypes, shiftTypeMap, assignmentMap, staff, holidaySet, followRuleMap, approvedRequests]);
 
   // Selection count for picker header
   const selectionCount = selection.size;

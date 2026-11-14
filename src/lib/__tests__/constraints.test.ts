@@ -203,53 +203,35 @@ describe("checkDayStaffing", () => {
   ];
   const holidaySet = new Set<string>();
 
-  describe("legacy staffing minimums", () => {
-    const staffingMins = [{ role: "OR", dayType: "weekday", minimumCount: 2 }];
+  // Card #208: the hidden staffing minimums (a leftover table with no screen) no longer
+  // raise warnings. Only Staffing Rules from Settings do. An older page that still sends
+  // them is ignored, never an error.
+  describe("hidden staffing minimums are ignored (card #208)", () => {
+    const hidden = [
+      { role: "staff", dayType: "weekday", minimumCount: 6 },
+      { role: "staff", dayType: "holiday", minimumCount: 1 },
+    ];
 
-    it("warns when below minimum staffing", () => {
-      const aMap = makeAssignmentMap({
-        "p1:2025-05-12": { shiftTypeId: "st-or", code: "OR" },
-      });
-      const w = checkDayStaffing({
-        date: "2025-05-12", staff, assignmentMap: aMap,
-        shiftTypeMap: stMap, holidaySet, staffingMins,
-      });
-      expect(w.some((w) => w.type === "understaffed")).toBe(true);
+    it("no 'x/6 staffed' warning on an understaffed weekday or an empty holiday", () => {
+      const aMap = makeAssignmentMap({ "p1:2025-05-12": { shiftTypeId: "st-or", code: "OR" } });
+      const weekday = checkDayStaffing({ date: "2025-05-12", staff, assignmentMap: aMap, shiftTypeMap: stMap, holidaySet, staffingMins: hidden });
+      expect(weekday).toEqual([]);
+      const holiday = checkDayStaffing({ date: "2025-05-12", staff, assignmentMap: makeAssignmentMap({}), shiftTypeMap: stMap, holidaySet: new Set(["2025-05-12"]), staffingMins: hidden });
+      expect(holiday).toEqual([]);
     });
 
-    it("no warning when at or above minimum", () => {
-      const aMap = makeAssignmentMap({
-        "p1:2025-05-12": { shiftTypeId: "st-or", code: "OR" },
-        "p2:2025-05-12": { shiftTypeId: "st-or", code: "OR" },
-      });
-      const w = checkDayStaffing({
-        date: "2025-05-12", staff, assignmentMap: aMap,
-        shiftTypeMap: stMap, holidaySet, staffingMins,
-      });
-      expect(w.find((w) => w.type === "understaffed")).toBeUndefined();
+    it("works without the old argument at all", () => {
+      const w = checkDayStaffing({ date: "2025-05-12", staff, assignmentMap: makeAssignmentMap({}), shiftTypeMap: stMap, holidaySet });
+      expect(w).toEqual([]);
     });
 
-    it("does not count off-shifts toward staffing", () => {
-      const aMap = makeAssignmentMap({
-        "p1:2025-05-12": { shiftTypeId: "st-or", code: "OR" },
-        "p2:2025-05-12": { shiftTypeId: "st-off", code: "OFF" },
-      });
+    it("a Staffing Rule from Settings still warns on the same day", () => {
+      const aMap = makeAssignmentMap({ "p1:2025-05-12": { shiftTypeId: "st-or", code: "OR" } });
       const w = checkDayStaffing({
-        date: "2025-05-12", staff, assignmentMap: aMap,
-        shiftTypeMap: stMap, holidaySet, staffingMins,
+        date: "2025-05-12", staff, assignmentMap: aMap, shiftTypeMap: stMap, holidaySet, staffingMins: hidden,
+        staffingReqs: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 2 }],
       });
-      expect(w.some((w) => w.type === "understaffed")).toBe(true);
-    });
-
-    it("matches holiday day type correctly", () => {
-      const hSet = new Set(["2025-05-12"]);
-      const mins = [{ role: "OR", dayType: "holiday", minimumCount: 1 }];
-      const aMap = makeAssignmentMap({});
-      const w = checkDayStaffing({
-        date: "2025-05-12", staff, assignmentMap: aMap,
-        shiftTypeMap: stMap, holidaySet: hSet, staffingMins: mins,
-      });
-      expect(w.some((w) => w.type === "understaffed")).toBe(true);
+      expect(w.map((x) => x.message)).toEqual(["1/2 OR (weekday)"]);
     });
   });
 

@@ -247,20 +247,7 @@ async function main() {
   console.log(`Seeded ${weights.length} desirability weights`);
 
   // --- Staffing Minimums (legacy) ---
-  const staffingMins = [
-    { role: "staff", dayType: "weekday", minimumCount: 6 },
-    { role: "staff", dayType: "weekend", minimumCount: 1 },
-    { role: "staff", dayType: "holiday", minimumCount: 1 },
-  ];
-
-  for (const sm of staffingMins) {
-    await prisma.staffingMinimum.upsert({
-      where: { role_dayType: { role: sm.role, dayType: sm.dayType } },
-      update: sm,
-      create: sm,
-    });
-  }
-  console.log(`Seeded ${staffingMins.length} staffing minimums`);
+  // Card #208: no hidden staffing minimums — Staffing Rules in Settings cover minimums.
 
   // --- Staffing Requirements (per day-of-week grid) ---
   const WEEKDAYS = ["1", "2", "3", "4", "5"]; // Mon-Fri

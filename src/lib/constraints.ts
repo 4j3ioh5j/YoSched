@@ -115,7 +115,6 @@ export function checkCellWarnings({
   assignmentMap,
   allStaff,
   holidaySet,
-  staffingMins,
   followRuleMap,
   scheduleRequests,
 }: {
@@ -127,7 +126,8 @@ export function checkCellWarnings({
   assignmentMap: AssignmentLookup;
   allStaff: Staff[];
   holidaySet: Set<string>;
-  staffingMins: StaffingMinimum[];
+  /** Card #208: unused (never was read here); kept optional for older callers. */
+  staffingMins?: StaffingMinimum[];
   followRuleMap?: FollowRuleMap;
   scheduleRequests?: ScheduleRequestData[]; // approved requests for this staff (optional)
 }): Warning[] {
@@ -208,7 +208,6 @@ export function checkDayStaffing({
   assignmentMap,
   shiftTypeMap,
   holidaySet,
-  staffingMins,
   staffingReqs,
 }: {
   date: string;
@@ -216,7 +215,8 @@ export function checkDayStaffing({
   assignmentMap: AssignmentLookup;
   shiftTypeMap: Map<string, ShiftType>;
   holidaySet: Set<string>;
-  staffingMins: StaffingMinimum[];
+  /** Card #208: the hidden staffing minimums no longer raise warnings — accepted and ignored. */
+  staffingMins?: StaffingMinimum[];
   staffingReqs?: StaffingRequirement[];
 }): Warning[] {
   const warnings: Warning[] = [];
@@ -249,22 +249,6 @@ export function checkDayStaffing({
           message: `${actual}/${req.minCount} ${code} (${dayType})`,
         });
       }
-    }
-  }
-
-  // Legacy staffing minimums (total staff count across tracked shifts)
-  for (const min of staffingMins) {
-    if (min.dayType !== dayType) continue;
-    let staffed = 0;
-    for (const p of staff) {
-      const a = assignmentMap.get(`${p.id}:${date}`);
-      if (a && !isOff(a)) staffed++;
-    }
-    if (staffed < min.minimumCount) {
-      warnings.push({
-        type: "understaffed",
-        message: `${staffed}/${min.minimumCount} ${min.role} staffed (${dayType})`,
-      });
     }
   }
 
