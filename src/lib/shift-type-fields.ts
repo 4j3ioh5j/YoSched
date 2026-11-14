@@ -7,7 +7,7 @@ export const SHIFT_TYPE_EDITABLE_FIELDS = [
   "name", "code", "defaultHours", "defaultHoursWeekend", "defaultHoursHoliday",
   "countsTowardFte", "countsAsHolidayWork",
   "isLeave", "isPaid", "category", "color", "printBackgroundColor", "sortOrder",
-  "schedulePriority", "isOffShift", "isFillShift", "weekendPaired", "holidayWeekendPaired", "spreadOverMonth",
+  "schedulePriority", "isOffShift", "isFillShift", "weekendPaired", "holidayWeekendPaired", "spreadOverMonth", "evenAcrossMonths",
   "ignoresWorkingDays", "autoSchedulable", "hotkey", "dedicatedColumn",
   "boldOnSchedule",
 ] as const;

@@ -9,6 +9,7 @@ import { type ShiftShareBasis } from "./shift-share";
 import { type HolidayPolicy } from "./holiday-policy";
 import { couldWorkOn, excessLeaveDays, type LeavePolicy } from "./leave-policy";
 import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
+import { tallyBalances, sharesOf, spreadPenalty, spreadChange, SPREAD_RADIUS, addDays, type BalanceTally } from "./shift-balance";
 
 export type ScheduleStaff = {
   id: string;
@@ -26,6 +27,14 @@ export type ScheduleStaff = {
   specialQualifications: string[];
   shiftEligibilityRules?: ShiftEligibilityRule[];
   shiftMinimumTargets?: ShiftMinTarget[];
+  // Card #203: when the person joined (staff created; YYYY-MM-DD) and temporary-staff dates.
+  // Before joining (or outside the temp dates) they are not owed a share of any shift.
+  createdOn?: string | null;
+  tempStartDate?: string | null;
+  tempEndDate?: string | null;
+  // Card #203: the day each shift was ticked for them (shiftTypeId → YYYY-MM-DD). They are
+  // owed a share of that shift only from then on. Missing → no limit.
+  eligibleSince?: Record<string, string>;
 };
 
 export type ScheduleShiftType = {
@@ -46,6 +55,9 @@ export type ScheduleShiftType = {
   holidayWeekendPaired: boolean;
   // Card #178: for each person, the marked shifts (together) are spread across the weeks.
   spreadOverMonth?: boolean;
+  // Card #203: "Keep counts even across months" — the running balance (cells since the
+  // department's shiftBalanceFrom) shares this shift out; earlier months only break ties.
+  evenAcrossMonths?: boolean;
   ignoresWorkingDays: boolean;
   category: string;
 
@@ -176,6 +188,7 @@ type SchedulingPreferences = {
   shiftShareBasis?: ShiftShareBasis; // split of a scheduled shift's slots across eligible staff: "fte" (default) | "head"
   holidayPolicy?: HolidayPolicy; // who is owed HOL on a holiday: "entitlement" (default) | "fill" (legacy) | "none"
   leaveHoursPolicy?: LeavePolicy; // card #175: leave only on days they'd work, up to the PP target ("up-to-target", default) | "always"
+  shiftBalanceFrom?: string | null; // card #203: first day counted by "Keep counts even across months" (null = this run only)
 };
 
 // Card #175: FTE-counted hours of one cell — the same math as the engine's
@@ -247,6 +260,10 @@ export type AutoScheduleResult = {
     byStep: Record<string, number>;
   };
   quality: ScheduleQuality;
+  // Card #203: for each "Keep counts even across months" shift, every scheduled person's balance
+  // (got − expected, in shifts) at the end of the run: this calendar month, and carried from
+  // the department's start date to the month's 1st. Absent when no shift is marked.
+  balances?: Record<string, Record<string, { run: number; carried: number }>>;
 };
 
 // Lexicographic comparison of two schedule qualities (lower rank = better).
@@ -576,6 +593,12 @@ export type AutoScheduleInput = {
   // rules, rolling windows), but the engine never places anything on them. A run
   // never changes any part of an earlier, completed month. Absent ⇒ no limit.
   writableFrom?: string;
+  // Card #203: read-only context. Approved requests from shiftBalanceFrom on (who could take a
+  // past slot); pay periods back to shiftBalanceFrom (pay-period rules on past dates); cells in
+  // the two weeks after the covering pay periods (how close a late shift is to next month's).
+  balanceRequests?: ScheduleRequestData[];
+  balancePayPeriods?: PayPeriodRange[];
+  spreadContext?: ScheduleAssignment[];
 };
 
 export function autoSchedule({
@@ -601,6 +624,9 @@ export function autoSchedule({
   seed,
   writableFrom,
   skipCompoundRepairForTest,
+  balanceRequests,
+  balancePayPeriods,
+  spreadContext,
 }: AutoScheduleInput): AutoScheduleResult {
   const isFrozen = (date: string): boolean => !!writableFrom && date < writableFrom;
   // Seeded final tiebreak helper (Slice 4b). seed 0/undefined ⇒ returns 0 for
@@ -921,23 +947,27 @@ export function autoSchedule({
     return n;
   }
 
-  // ── Card #178: "Spread over the month" ──
-  // The marked shifts form ONE group per person; the engine prefers placements with fewer
-  // of them close by. A preference only: it never blocks and ranks below share fairness.
+  // ── Card #178 / #203: "Spread out as much as possible" ──
+  // The marked shifts form ONE group per person; the engine prefers placements furthest from
+  // the person's other marked shifts (spreadPenalty, two weeks either side). A preference only:
+  // it never blocks and ranks below share fairness.
   const spreadIds = new Set(shiftTypes.filter((s) => s.spreadOverMonth).map((s) => s.id));
-  const SPREAD_HALF_WINDOW = 3; // a 7-day window centred on the day
-  /** The person's marked cells within SPREAD_HALF_WINDOW days either side of `date` (the day itself excluded). */
+  // Cells outside the grid, read-only: history (before the covering pay periods) and the two
+  // weeks after them (spreadContext). Never written; the grid always wins for its own dates.
+  const outsideCells = new Map<string, string>();
+  for (const a of historicalAssignments) outsideCells.set(`${a.staffId}:${a.date}`, a.shiftTypeId);
+  for (const a of spreadContext ?? []) outsideCells.set(`${a.staffId}:${a.date}`, a.shiftTypeId);
+  /** The person's shift on any date: the grid's cell, else a history / forward-context cell. */
+  function cellShiftAt(staffId: string, date: string): string | undefined {
+    const key = `${staffId}:${date}`;
+    const g = grid.get(key);
+    if (g) return g.shiftTypeId;
+    return outsideCells.get(key);
+  }
+  /** How bunched a marked shift on `date` would be for the person (0 = nothing within two weeks). */
   function spreadLoad(staffId: string, date: string): number {
     if (spreadIds.size === 0) return 0;
-    let n = 0;
-    for (const step of [prevDate, nextDate]) {
-      let d = date;
-      for (let i = 0; i < SPREAD_HALF_WINDOW; i++) {
-        d = step(d);
-        if (spreadIds.has(grid.get(`${staffId}:${d}`)?.shiftTypeId ?? "")) n++;
-      }
-    }
-    return n;
+    return spreadPenalty((d) => spreadIds.has(cellShiftAt(staffId, d) ?? ""), date);
   }
 
   // Card #188: a staff card's Prefer eligibility rules rank, never gate — "eligible · Prefer"
@@ -1692,6 +1722,178 @@ export function autoSchedule({
     return shareBasis === "fte" && p.ftePercentage > 0 ? p.ftePercentage : 1;
   }
 
+  // ── Card #203: "Keep counts even across months" — the running balance ──
+  // A pure function of the cells (shift-balance.ts): every cell of the shift is a slot, owed
+  // to the people who could have taken it that day by their share weight. Two parts:
+  //   run     — the calendar month this run schedules (never the adjacent months' cells
+  //             that come along with whole pay periods);
+  //   carried — from the department's shiftBalanceFrom up to that month's 1st.
+  // The picker and both hours repairs rank this month's balance first; the carried part
+  // only breaks ties, so earlier months never flood anyone within a month.
+  const evenIds = new Set(shiftTypes.filter((s) => s.evenAcrossMonths).map((s) => s.id));
+  const balanceMonth = ((): string => {
+    if (writableFrom) return writableFrom.slice(0, 7);
+    const n = new Map<string, number>();
+    for (const d of dates) n.set(d.slice(0, 7), (n.get(d.slice(0, 7)) ?? 0) + 1);
+    let best = "", bestN = -1;
+    for (const [m, c] of n) if (c > bestN || (c === bestN && m > best)) { best = m; bestN = c; }
+    return best;
+  })();
+  const monthStart = `${balanceMonth}-01`;
+  const monthDays: string[] = [];
+  for (let d = monthStart; d.slice(0, 7) === balanceMonth; d = addDays(d, 1)) monthDays.push(d);
+  const balanceFrom = schedulingPreferences.shiftBalanceFrom ?? null;
+  const carriedDays: string[] = [];
+  if (balanceFrom && evenIds.size > 0) for (let d = balanceFrom; d < monthStart; d = addDays(d, 1)) carriedDays.push(d);
+  const ablePPs: PayPeriodRange[] = balancePayPeriods && balancePayPeriods.length > 0
+    ? balancePayPeriods : payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
+  const balanceReqs = balanceRequests ?? requestList.filter((r) => r.status === "approved");
+  const ppStartOf = new Map<string, string | null>();
+  function ppStartFor(d: string): string | null {
+    if (!ppStartOf.has(d)) ppStartOf.set(d, ablePPs.find((pp) => d >= pp.startDate && d <= pp.endDate)?.startDate ?? null);
+    return ppStartOf.get(d)!;
+  }
+  const runDateSet = new Set(dates);
+  // On the roster in a past pay period = they have at least one cell in it (saved cells only).
+  const rosterPPs = new Set<string>();
+  if (carriedDays.length > 0) {
+    for (const a of [...historicalAssignments, ...existingAssignments]) {
+      if (a.date < carriedDays[0] || a.date >= monthStart) continue;
+      const pp = ppStartFor(a.date);
+      if (pp) rosterPPs.add(`${a.staffId}|${pp}`);
+    }
+  }
+  const staticAvail = new Map<string, AvailabilityRule[]>();
+  /** Inside the person's time for this shift: joined, ticked for it, within temp dates. */
+  function joinedFor(p: ScheduleStaff, stId: string, d: string): boolean {
+    const since = p.eligibleSince?.[stId];
+    if (since && d < since) return false;
+    if (p.createdOn && d < p.createdOn) return false;
+    if (p.tempStartDate && d < p.tempStartDate) return false;
+    if (p.tempEndDate && d > p.tempEndDate) return false;
+    return true;
+  }
+  /** Could `p` have taken `st` on `d`? STATIC gates only, so a run and next month's replay agree. */
+  function ableFor(p: ScheduleStaff, st: ScheduleShiftType, d: string): boolean {
+    if (!(eligibleShiftSets.get(p.id)?.has(st.id) ?? false)) return false;
+    if (!joinedFor(p, st.id, d)) return false;
+    if (p.shiftEligibilityRules && p.shiftEligibilityRules.length > 0) {
+      const r = evaluateShiftEligibility(p.shiftEligibilityRules, st.id, d, ablePPs);
+      if (r !== null && !r.eligible) return false;
+    }
+    if (!st.ignoresWorkingDays) {
+      // "When X is / isn't working" rules depend on other cells, so they don't move credit.
+      if (!staticAvail.has(p.id)) staticAvail.set(p.id, p.availabilityRules.filter((r) => !r.conditionStaffId));
+      if (!evaluateAvailability(staticAvail.get(p.id)!, d, ablePPs).available) return false;
+    }
+    const c = cellShiftAt(p.id, d);
+    if (c && stById.get(c)?.isLeave) return false;
+    if (balanceReqs.length > 0) {
+      const f = foldRequestsForDate(balanceReqs, p.id, d, isAwayShift, "off");
+      if (f.forbidWorking || f.leaveShiftTypeId || f.forbiddenShiftIds.has(st.id)) return false;
+    }
+    if (d < monthStart && !runDateSet.has(d)) {
+      // A past pay period: on the roster only if they hold a cell in it. Days this run
+      // schedules are on everyone's roster.
+      const pp = ppStartFor(d);
+      if (!pp || !rosterPPs.has(`${p.id}|${pp}`)) return false;
+    }
+    return true;
+  }
+  const shareCache = new Map<string, Map<string, number>>();
+  function shareOn(st: ScheduleShiftType, d: string): Map<string, number> {
+    const key = `${st.id}|${d}`;
+    let m = shareCache.get(key);
+    if (!m) {
+      m = sharesOf(activeStaff.filter((p) => ableFor(p, st, d)).map((p) => ({ id: p.id, weight: shareWeight(p) })));
+      shareCache.set(key, m);
+    }
+    return m;
+  }
+  // Earlier-month days: a day no pay period covers can't be judged (roster), so it counts on
+  // neither side; days inside this run's own range stay live (the run may still write them).
+  const carriedFixedDays = carriedDays.filter((d) => !runDateSet.has(d) && ppStartFor(d) !== null);
+  const carriedLiveDays = carriedDays.filter((d) => runDateSet.has(d) && ppStartFor(d) !== null);
+  const activeIds = activeStaff.map((p) => p.id);
+  const staffById = new Map(activeStaff.map((p) => [p.id, p] as const));
+  const carriedCache = new Map<string, Map<string, BalanceTally>>();
+  type EvenBalance = { run: Map<string, number>; carried: Map<string, number> };
+  /** This month's and the carried balance (got − expected) per person for an even shift. */
+  // A cell held outside the person's time for the shift (before they joined or were ticked
+  // for it, after temp end) is no slot at all: in neither their got nor anyone's expected.
+  const slotCell = (st: ScheduleShiftType, cellAt: (staffId: string, date: string) => string | undefined) =>
+    (id: string, d: string): string | undefined => {
+      const p = staffById.get(id);
+      return p && !joinedFor(p, st.id, d) ? undefined : cellAt(id, d);
+    };
+  function evenBalance(st: ScheduleShiftType, cellAt: (staffId: string, date: string) => string | undefined = cellShiftAt): EvenBalance {
+    // Only days this run can't write are cached; earlier-month days inside the run (an
+    // approval re-solve spanning two months) are re-tallied from the current/proposed cells.
+    let carried = carriedCache.get(st.id);
+    if (!carried) {
+      carried = tallyBalances({ shiftTypeId: st.id, weekendPaired: st.weekendPaired, staffIds: activeIds, dates: carriedFixedDays, cellAt: slotCell(st, cellShiftAt), shareOn: (d) => shareOn(st, d) });
+      carriedCache.set(st.id, carried);
+    }
+    const live = carriedLiveDays.length > 0
+      ? tallyBalances({ shiftTypeId: st.id, weekendPaired: st.weekendPaired, staffIds: activeIds, dates: carriedLiveDays, cellAt: slotCell(st, cellAt), shareOn: (d) => shareOn(st, d) })
+      : null;
+    const run = tallyBalances({ shiftTypeId: st.id, weekendPaired: st.weekendPaired, staffIds: activeIds, dates: monthDays, cellAt: slotCell(st, cellAt), shareOn: (d) => shareOn(st, d) });
+    const out: EvenBalance = { run: new Map(), carried: new Map() };
+    for (const id of activeIds) {
+      const r = run.get(id)!, c = carried.get(id)!, l = live?.get(id);
+      out.run.set(id, r.got - r.expected);
+      out.carried.set(id, c.got - c.expected + (l ? l.got - l.expected : 0));
+    }
+    return out;
+  }
+  /**
+   * Repairs (card #203): how a set of cell changes moves the even shifts' balances —
+   * [Δ Σ|this month's balance|, Δ Σ|this month's + carried|], compared in that order (lower is
+   * better). Everyone is counted, since splitting a weekend pair changes the slot count. Cells
+   * outside the calendar month don't count.
+   */
+  function evenDelta(changes: readonly (readonly [string, string, string | null])[]): [number, number] {
+    if (evenIds.size === 0 || changes.length === 0) return [0, 0];
+    const over = new Map<string, string | null>();
+    for (const [id, d, stId] of changes) over.set(`${id}:${d}`, stId);
+    const cellAfter = (id: string, d: string): string | undefined => {
+      const k = `${id}:${d}`;
+      return over.has(k) ? (over.get(k) ?? undefined) : cellShiftAt(id, d);
+    };
+    let dRun = 0, dTot = 0;
+    for (const stId of evenIds) {
+      const st = stById.get(stId)!;
+      const touched = changes.some(([id, d, to]) => to === stId || cellShiftAt(id, d) === stId);
+      if (!touched) continue;
+      const before = evenBalance(st), after = evenBalance(st, cellAfter);
+      for (const id of activeIds) {
+        const rb = before.run.get(id)!, ra = after.run.get(id)!;
+        const cb = before.carried.get(id)!, ca = after.carried.get(id)!;
+        dRun += Math.abs(ra) - Math.abs(rb);
+        dTot += Math.abs(ra + ca) - Math.abs(rb + cb);
+      }
+    }
+    return [dRun, dTot];
+  }
+  /** Repairs: Δ spread penalty for the people whose cells change (marked shifts only). */
+  /** Repairs: Δ spacing penalty of the whole proposed state, per person (marked shifts only). */
+  function spreadDelta(changes: readonly (readonly [string, string, string | null])[]): number {
+    if (spreadIds.size === 0) return 0;
+    const byPerson = new Map<string, Map<string, boolean>>();
+    for (const [id, d, to] of changes) {
+      if (!byPerson.has(id)) byPerson.set(id, new Map());
+      byPerson.get(id)!.set(d, spreadIds.has(to ?? ""));
+    }
+    let delta = 0;
+    for (const [id, after] of byPerson) delta += spreadChange((d) => spreadIds.has(cellShiftAt(id, d) ?? ""), after);
+    return delta;
+  }
+  const EPS = 1e-9;
+  const cmpTuple = (a: readonly number[], b: readonly number[]): number => {
+    for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > EPS) return a[i] - b[i];
+    return 0;
+  };
+
   const scheduledShifts = shiftTypes
     .filter((st) => st.autoSchedulable && st.schedulePriority != null && !st.isFillShift && !st.isOffShift)
     .sort((a, b) => (a.schedulePriority ?? 0) - (b.schedulePriority ?? 0));
@@ -1786,6 +1988,14 @@ export function autoSchedule({
           }
         }
       }
+      // Card #203: an even-across-months shift ranks by this month's balance with a one-call
+      // band; inside it, spacing, then the carried balance (earlier months: a tie-break only).
+      const evenOn = !!st.evenAcrossMonths;
+      const bal = evenOn ? evenBalance(st) : null;
+      const runBal = (p: ScheduleStaff): number => bal!.run.get(p.id) ?? 0;
+      const minRun = evenOn ? Math.min(...pool.map(runBal)) : 0;
+      const inBand = (p: ScheduleStaff): boolean => runBal(p) < minRun + 1 - EPS;
+      const spreadOf = (p: ScheduleStaff): number => { const ds = datesFor(p); return ds ? ds.reduce((n, d) => n + spreadLoad(p.id, d), 0) : Infinity; };
       pool.sort((a, b) => {
         if (date) {
           // Hard minimum deficit first — a staff who MUST reach a required minimum
@@ -1820,14 +2030,27 @@ export function autoSchedule({
         const prefA = preferOf.get(a.id) ?? 0;
         const prefB = preferOf.get(b.id) ?? 0;
         if (prefA !== prefB) return prefB - prefA;
-        const countDiff = shareCount(a) - shareCount(b);
-        if (Math.abs(countDiff) > 1e-9) return countDiff;
-        // Card #178: among equally-shared candidates, the one with fewer marked shifts close by.
-        if (st.spreadOverMonth && (date || datesOf)) {
-          const load = (p: ScheduleStaff) => { const ds = datesFor(p); return ds ? ds.reduce((n, d) => n + spreadLoad(p.id, d), 0) : Infinity; };
-          const la = load(a);
-          const lb = load(b);
-          if (la !== lb) return la - lb;
+        if (evenOn) {
+          const ia = inBand(a), ib = inBand(b);
+          if (ia !== ib) return ia ? -1 : 1;
+          if (ia) {
+            if (st.spreadOverMonth && (date || datesOf)) {
+              const la = spreadOf(a), lb = spreadOf(b);
+              if (la !== lb) return la - lb;
+            }
+            const carriedDiff = (bal!.carried.get(a.id) ?? 0) - (bal!.carried.get(b.id) ?? 0);
+            if (Math.abs(carriedDiff) > EPS) return carriedDiff;
+          }
+          const runDiff = runBal(a) - runBal(b);
+          if (Math.abs(runDiff) > EPS) return runDiff;
+        } else {
+          const countDiff = shareCount(a) - shareCount(b);
+          if (Math.abs(countDiff) > 1e-9) return countDiff;
+          // Card #178: among equally-shared candidates, the one with marked shifts furthest away.
+          if (st.spreadOverMonth && (date || datesOf)) {
+            const la = spreadOf(a), lb = spreadOf(b);
+            if (la !== lb) return la - lb;
+          }
         }
         // Option B long-shift fit (see fitMap above): among equally-shared
         // candidates, divisibility need first, then most room to target.
@@ -1840,7 +2063,8 @@ export function autoSchedule({
         const lastA = lastRunDate.get(a.id) ?? "";
         const lastB = lastRunDate.get(b.id) ?? "";
         if (lastA !== lastB) return lastA.localeCompare(lastB);
-        const histDiff = historicalCount(a.id, st.code) - historicalCount(b.id, st.code);
+        // Card #203: all-time raw counts favour newcomers; an even shift uses its balance instead.
+        const histDiff = evenOn ? 0 : historicalCount(a.id, st.code) - historicalCount(b.id, st.code);
         if (histDiff !== 0) return histDiff;
         // Final seeded tiebreak (Slice 4b): only reached when every level above
         // is equal — a genuine tie. seed 0 ⇒ both 0 ⇒ stable order preserved.
@@ -1998,11 +2222,10 @@ export function autoSchedule({
             if (st.spreadOverMonth) {
               // Card #178: keep away from the person's MARKED shifts (this one included), also
               // just across the pay-period edges.
-              let d = pp.startDate;
-              for (let i = 0; i < SPREAD_HALF_WINDOW; i++) d = prevDate(d);
-              const stop = (() => { let e = pp.endDate; for (let i = 0; i < SPREAD_HALF_WINDOW; i++) e = nextDate(e); return e; })();
-              for (; d <= stop; d = nextDate(d)) {
-                if (spreadIds.has(grid.get(`${chosen.id}:${d}`)?.shiftTypeId ?? "")) anchorDates.push(d);
+              // Card #203: two weeks either side, history and next month's cells included.
+              const stop = addDays(pp.endDate, SPREAD_RADIUS);
+              for (let d = addDays(pp.startDate, -SPREAD_RADIUS); d <= stop; d = nextDate(d)) {
+                if (spreadIds.has(cellShiftAt(chosen.id, d) ?? "")) anchorDates.push(d);
               }
             } else {
               for (const date of dates) {
@@ -2025,6 +2248,39 @@ export function autoSchedule({
             const tieKey = seedNum || avoidSet.size > 0
               ? (combo: string[]) => groupAvoided(combo) * 1e10 + (seedNum ? seedTie(`${chosen.id}|${combo.join(",")}`) : 0)
               : undefined;
+            if (st.spreadOverMonth) {
+              // Card #203: the group whose days sit furthest from the person's marked shifts AND
+              // from each other (spreadPenalty), then fewer avoided pairs, then the old min-gap
+              // pull toward the pay period's middle, then the seed.
+              const open = provAvailDates.filter((d) => !isAtMaximum(chosen, st, d));
+              const pairW = (a: string, b: string): number => { const g = daysBetween(a, b); return g >= 1 && g <= SPREAD_RADIUS ? (SPREAD_RADIUS + 1 - g) ** 2 : 0; };
+              const minGap = (combo: string[]): number => {
+                let m = Infinity;
+                for (const d of combo) for (const o of [...anchorDates, ...combo]) if (o !== d) m = Math.min(m, daysBetween(d, o));
+                return m;
+              };
+              let best: { combo: string[]; key: number[] } | null = null;
+              const walk = (from: number, combo: string[]): void => {
+                if (combo.length === pairingFactor) {
+                  let pen = 0;
+                  for (let i = 0; i < combo.length; i++) {
+                    pen += spreadLoad(chosen.id, combo[i]);
+                    for (let j = i + 1; j < combo.length; j++) pen += pairW(combo[i], combo[j]);
+                  }
+                  const key = [pen, avoidSet.size > 0 ? groupAvoided(combo) : 0, -minGap(combo), seedNum ? seedTie(`${chosen.id}|${combo.join(",")}`) : 0];
+                  if (!best || cmpTuple(key, best.key) < 0) best = { combo: [...combo], key };
+                  return;
+                }
+                for (let i = from; i <= open.length - (pairingFactor - combo.length); i++) {
+                  if (violatesFollow(combo, open[i])) continue;
+                  combo.push(open[i]);
+                  walk(i + 1, combo);
+                  combo.pop();
+                }
+              };
+              walk(0, []);
+              return best ? (best as { combo: string[] }).combo : null;
+            }
             const picked = bestSpread(provAvailDates, pairingFactor, anchorDates, (p, c) => !violatesFollow(p, c), tieKey)
               .filter((d) => !isAtMaximum(chosen, st, d));
             return picked.length >= pairingFactor ? picked.slice(0, pairingFactor) : null;
@@ -2233,10 +2489,11 @@ export function autoSchedule({
           let best = 0;
           // Card #188: then the person's Prefer days (and away from soft-ineligible ones).
           if (avoidSet.size > 0 || st.spreadOverMonth || preferRuleKeys.has(`${staff.id}:${st.id}`)) {
-            let bestKey = Infinity;
+            // Card #203: a tuple, so a large spread penalty can never outweigh a Prefer day.
+            let bestKey: number[] | null = null;
             remaining.forEach((d, i) => {
-              const key = avoidedPairs(staff.id, d, st.id) * 1e6 - eligPreference(staff, st.id, d) * 1000 + (st.spreadOverMonth ? spreadLoad(staff.id, d) : 0);
-              if (key < bestKey) { bestKey = key; best = i; }
+              const key = [avoidedPairs(staff.id, d, st.id), -eligPreference(staff, st.id, d), st.spreadOverMonth ? spreadLoad(staff.id, d) : 0];
+              if (!bestKey || cmpTuple(key, bestKey) < 0) { bestKey = key; best = i; }
             });
           }
           return remaining.splice(best, 1)[0];
@@ -2739,7 +2996,7 @@ export function autoSchedule({
           dev.set(p.id, ppHoursForStaff(p.id, pp) - target);
         }
 
-        type Swap = { aId: string; bId: string; date: string; aSt: ScheduleShiftType; bSt: ScheduleShiftType; gain: number; avoid: number; pref: number };
+        type Swap = { aId: string; bId: string; date: string; aSt: ScheduleShiftType; bSt: ScheduleShiftType; gain: number; avoid: number; even: [number, number]; spread: number; pref: number };
         let best: Swap | null = null;
 
         for (const date of ppDates) {
@@ -2774,8 +3031,14 @@ export function autoSchedule({
               // Card #177: hours first; among equal gains, the swap adding fewer soft-avoided pairs.
               const avoid = avoidedPairs(A.id, date, B.st.id) - avoidedPairs(A.id, date, A.st.id)
                 + avoidedPairs(B.id, date, A.st.id) - avoidedPairs(B.id, date, B.st.id);
-              if (!best || gain > best.gain || (gain === best.gain && (avoid < best.avoid || (avoid === best.avoid && pref > best.pref)))) {
-                best = { aId: A.id, bId: B.id, date, aSt: A.st, bSt: B.st, gain, avoid, pref };
+              // Card #203: then this month's evenness, the carried balance, spacing (marked shifts).
+              const changes = [[A.id, date, B.st.id], [B.id, date, A.st.id]] as const;
+              const even = evenDelta(changes);
+              const spread = spreadDelta(changes);
+              const better = !best || gain > best.gain || (gain === best.gain && (avoid < best.avoid || (avoid === best.avoid && (
+                cmpTuple(even, best.even) < 0 || (cmpTuple(even, best.even) === 0 && (spread < best.spread || (spread === best.spread && pref > best.pref)))))));
+              if (better) {
+                best = { aId: A.id, bId: B.id, date, aSt: A.st, bSt: B.st, gain, avoid, even, spread, pref };
               }
             }
           }
@@ -3150,6 +3413,13 @@ export function autoSchedule({
       }
       const swapChanges = (d: string, X: ScheduleStaff, Y: ScheduleStaff): Change[] =>
         [[X, d, cellOf(Y, d)!.shiftTypeId], [Y, d, cellOf(X, d)!.shiftTypeId]];
+      // Card #203: the tie-breaks after hours and avoided pairs — this month's evenness and the
+      // carried balance of even shifts, then spacing of marked shifts. A cleared cell ends as X.
+      const evenSpread = (changes: Change[]): { even: [number, number]; spread: number } => {
+        if (evenIds.size === 0 && spreadIds.size === 0) return { even: [0, 0], spread: 0 };
+        const ch = changes.map(([p, d, id]) => [p.id, d, id ?? offShift?.id ?? null] as const);
+        return { even: evenDelta(ch), spread: spreadDelta(ch) };
+      };
 
       type Step = () => boolean;
       /** Try a compound: apply its steps in order, then the end-state checks; roll back on any failure. */
@@ -3168,7 +3438,7 @@ export function autoSchedule({
         for (;;) {
           let odd = people.filter((p) => !done.has(p.id) && isOdd(p)).sort((a, b) => Math.abs(devOf(b)) - Math.abs(devOf(a)) || (a.id < b.id ? -1 : 1));
           if (odd.length > LIMITS.odd) { capHit.add("odd"); odd = odd.slice(0, LIMITS.odd); }
-          type Cand = { score: number; avoid: number; size: number; tag: string; steps: Step[]; ids: string[] };
+          type Cand = { score: number; avoid: number; even: [number, number]; spread: number; size: number; tag: string; steps: Step[]; ids: string[] };
           const cands: Cand[] = [];
           const swapDelta = (d: string, X: ScheduleStaff, Y: ScheduleStaff): number | null => {
             const cx = cellOf(X, d), cy = cellOf(Y, d);
@@ -3182,7 +3452,7 @@ export function autoSchedule({
               if (x === null) continue;
               const y = hrsOf(Q, stById.get(cellOf(P, d)!.shiftTypeId)!, d) - hrsOf(Q, stById.get(cellOf(Q, d)!.shiftTypeId)!, d);
               if (isOdd(P, dP + x) || isOdd(Q, dQ + y)) continue;
-              cands.push({ score: Math.abs(dP + x) + Math.abs(dQ + y) - Math.abs(dP) - Math.abs(dQ), avoid: avoidDelta(swapChanges(d, P, Q)), size: 2, tag: `a${P.id}${Q.id}${d}`, steps: [() => swap(d, P, Q)], ids: [P.id, Q.id] });
+              cands.push({ score: Math.abs(dP + x) + Math.abs(dQ + y) - Math.abs(dP) - Math.abs(dQ), avoid: avoidDelta(swapChanges(d, P, Q)), ...evenSpread(swapChanges(d, P, Q)), size: 2, tag: `a${P.id}${Q.id}${d}`, steps: [() => swap(d, P, Q)], ids: [P.id, Q.id] });
             }
             let gs = people.filter((G) => G.id !== P.id && G.id !== Q.id && !isOdd(G));
             if (gs.length > LIMITS.intermediaries) { capHit.add("intermediaries"); gs = gs.slice(0, LIMITS.intermediaries); }
@@ -3198,12 +3468,12 @@ export function autoSchedule({
                 const dG = devOf(G);
                 if (isOdd(G, dG + g1 + g2)) continue;
                 const score = Math.abs(dP + x1) + Math.abs(dQ + x2) + Math.abs(dG + g1 + g2) - Math.abs(dP) - Math.abs(dQ) - Math.abs(dG);
-                cands.push({ score, avoid: avoidDelta([...swapChanges(d1, P, G), ...swapChanges(d2, Q, G)]), size: 4, tag: `b${P.id}${Q.id}${G.id}${d1}${d2}`, steps: [() => swap(d1, P, G), () => swap(d2, Q, G)], ids: [P.id, Q.id] });
+                cands.push({ score, avoid: avoidDelta([...swapChanges(d1, P, G), ...swapChanges(d2, Q, G)]), ...evenSpread([...swapChanges(d1, P, G), ...swapChanges(d2, Q, G)]), size: 4, tag: `b${P.id}${Q.id}${G.id}${d1}${d2}`, steps: [() => swap(d1, P, G), () => swap(d2, Q, G)], ids: [P.id, Q.id] });
               }
             }
           }
           if (cands.length === 0) return;
-          cands.sort((a, b) => a.score - b.score || a.avoid - b.avoid || a.size - b.size || (a.tag < b.tag ? -1 : 1));
+          cands.sort((a, b) => a.score - b.score || a.avoid - b.avoid || cmpTuple(a.even, b.even) || a.spread - b.spread || a.size - b.size || (a.tag < b.tag ? -1 : 1));
           let applied: Cand | null = null, checks = 0;
           for (const c of cands) {
             if (++checks > LIMITS.checksPerStep) { capHit.add("checks"); break; }
@@ -3221,7 +3491,7 @@ export function autoSchedule({
           const devNow = new Map(people.map((p) => [p.id, devOf(p)]));
           const off = people.filter((p) => devNow.get(p.id) !== 0);
           if (off.length === 0) return;
-          type Cand = { gain: number; avoid: number; size: number; tag: string; steps: Step[] };
+          type Cand = { gain: number; avoid: number; even: [number, number]; spread: number; size: number; tag: string; steps: Step[] };
           const cands: Cand[] = [];
           const gainOf = (deltas: [ScheduleStaff, number][]): number => {
             const acc = new Map<string, number>();
@@ -3240,23 +3510,23 @@ export function autoSchedule({
                 if (!cb || !isSwappableCell(cb) || cb.shiftTypeId === ca.shiftTypeId) continue;
                 const bSt = stById.get(cb.shiftTypeId)!;
                 const gain = gainOf([[A, hrsOf(A, bSt, d) - hrsOf(A, aSt, d)], [B, hrsOf(B, aSt, d) - hrsOf(B, bSt, d)]]);
-                if (gain > 0) cands.push({ gain, avoid: avoidDelta(swapChanges(d, A, B)), size: 2, tag: `s${A.id}${B.id}${d}`, steps: [() => swap(d, A, B)] });
+                if (gain > 0) cands.push({ gain, avoid: avoidDelta(swapChanges(d, A, B)), ...evenSpread(swapChanges(d, A, B)), size: 2, tag: `s${A.id}${B.id}${d}`, steps: [() => swap(d, A, B)] });
               }
             }
             if (isFillCell(A, d)) {
               if (devNow.get(A.id)! > 0) {
                 const g = gainOf([[A, -fillH(A, d)]]);
-                if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, d, null]]), size: 1, tag: `d${A.id}${d}`, steps: [() => drop(d, A)] });
+                if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, d, null]]), ...evenSpread([[A, d, null]]), size: 1, tag: `d${A.id}${d}`, steps: [() => drop(d, A)] });
               }
               for (const B of people) { // MOVE A→B
                 if (B.id === A.id || !isOpen(B, d)) continue;
                 const g = gainOf([[A, -fillH(A, d)], [B, fillH(B, d)]]);
-                if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, d, null], [B, d, fill.id]]), size: 2, tag: `m${A.id}${B.id}${d}`, steps: [() => move(d, A, B)] });
+                if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, d, null], [B, d, fill.id]]), ...evenSpread([[A, d, null], [B, d, fill.id]]), size: 2, tag: `m${A.id}${B.id}${d}`, steps: [() => move(d, A, B)] });
               }
             }
             if (isOpen(A, d) && devNow.get(A.id)! < 0) {
               const g = gainOf([[A, fillH(A, d)]]);
-              if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, d, fill.id]]), size: 1, tag: `+${A.id}${d}`, steps: [() => add(d, A)] });
+              if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, d, fill.id]]), ...evenSpread([[A, d, fill.id]]), size: 1, tag: `+${A.id}${d}`, steps: [() => add(d, A)] });
             }
           }
           // Two-hop MOVE: A (over) → G on e1, G → B (under) on e2; G's own hours move by
@@ -3271,12 +3541,12 @@ export function autoSchedule({
               for (const e2 of ppDates) {
                 if (e2 === e1 || !isFillCell(G, e2) || !isOpen(B, e2)) continue;
                 const g = gainOf([[A, -fillH(A, e1)], [G, fillH(G, e1) - fillH(G, e2)], [B, fillH(B, e2)]]);
-                if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, e1, null], [G, e1, fill.id], [G, e2, null], [B, e2, fill.id]]), size: 4, tag: `h${A.id}${G.id}${B.id}${e1}${e2}`, steps: [() => move(e1, A, G), () => move(e2, G, B)] });
+                if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, e1, null], [G, e1, fill.id], [G, e2, null], [B, e2, fill.id]]), ...evenSpread([[A, e1, null], [G, e1, fill.id], [G, e2, null], [B, e2, fill.id]]), size: 4, tag: `h${A.id}${G.id}${B.id}${e1}${e2}`, steps: [() => move(e1, A, G), () => move(e2, G, B)] });
               }
             }
           }
           if (cands.length === 0) return;
-          cands.sort((a, b) => b.gain - a.gain || a.avoid - b.avoid || a.size - b.size || (a.tag < b.tag ? -1 : 1));
+          cands.sort((a, b) => b.gain - a.gain || a.avoid - b.avoid || cmpTuple(a.even, b.even) || a.spread - b.spread || a.size - b.size || (a.tag < b.tag ? -1 : 1));
           let ok = false, checks = 0;
           for (const c of cands) {
             if (++checks > LIMITS.checksPerStep) { capHit.add("checks"); break; }
@@ -4168,6 +4438,15 @@ export function autoSchedule({
     }
   }
 
+  let balances: AutoScheduleResult["balances"];
+  if (evenIds.size > 0) {
+    balances = {};
+    for (const stId of evenIds) {
+      const b = evenBalance(stById.get(stId)!);
+      balances[stId] = Object.fromEntries(activeIds.map((id) => [id, { run: b.run.get(id)!, carried: b.carried.get(id)! }]));
+    }
+  }
+
   return {
     suggestions,
     warnings,
@@ -4176,6 +4455,7 @@ export function autoSchedule({
       byStep,
     },
     quality,
+    ...(balances ? { balances } : {}),
   };
 }
 

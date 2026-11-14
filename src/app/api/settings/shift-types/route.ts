@@ -72,6 +72,7 @@ export async function POST(req: NextRequest) {
       weekendPaired: data.weekendPaired ?? false,
       holidayWeekendPaired: data.holidayWeekendPaired ?? false,
       spreadOverMonth: data.spreadOverMonth ?? false,
+      evenAcrossMonths: data.evenAcrossMonths ?? false,
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
       // Card #75: always off. Turning it on goes through the activation panel, which chooses who gets
       // it (a deleted shift's Undo re-POSTs its old row; it must not come back "on" with nobody).

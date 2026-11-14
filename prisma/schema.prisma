@@ -83,6 +83,7 @@ model ShiftType {
   isFillShift        Boolean  @default(false)
   schedulePriority   Int?
   weekendPaired      Boolean  @default(false)
+  evenAcrossMonths   Boolean  @default(false) // card #203: share it out by the running balance since schedulingPreferences.shiftBalanceFrom (earlier months only break ties)
   spreadOverMonth    Boolean  @default(false) // card #178: for each person, marked shifts are spread across the weeks (one group)
   holidayWeekendPaired Boolean @default(false) // when weekendPaired, also assign the same person to an adjacent holiday (Fri before / Mon after) for a 3-day holiday weekend
   ignoresWorkingDays Boolean  @default(false)
@@ -341,6 +342,7 @@ model SchedulingPreferences {
   payPeriodAnchor         DateTime? @db.Date // any real period start; with payPeriodLengthDays defines the infinite period ladder (null = legacy manually-generated periods)
   payPeriodLengthDays     Int      @default(14)
   staffColumnOrder        Json?    // ordered criteria stack for schedule column order, [{key, dir?}] (see src/lib/staff-order.ts); null = default (employmentType → ftePercentage desc → alphabetical)
+  shiftBalanceFrom        DateTime? @db.Date // card #203: first day "Keep counts even across months" counts (null = each run on its own)
   shiftShareBasis         String   @default("fte") // auto-scheduler split of a scheduled shift's slots across eligible staff: "fte" (proportional to FTE) | "head" (equal per person) — see src/lib/shift-share.ts
   holidayPolicy           String   @default("entitlement") // who is owed HOL on a holiday: "entitlement" (scheduled-workday rule, counts toward PP target) | "fill" (legacy hours-fill only) | "none" — see src/lib/holiday-policy.ts
   leaveHoursPolicy        String   @default("up-to-target") // card #175: requested leave charged "up-to-target" (only days they'd work, never past the PP target; the rest become X) | "always" — see src/lib/leave-policy.ts
@@ -485,6 +487,7 @@ model StaffEligibleShift {
   id          String @id @default(cuid())
   staffId  String
   shiftTypeId String
+  eligibleSince DateTime? @default(now()) // card #203: when the shift was ticked (NULL on rows older than the column = unknown)
 
   staff  Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
   shiftType ShiftType @relation(fields: [shiftTypeId], references: [id], onDelete: Cascade)

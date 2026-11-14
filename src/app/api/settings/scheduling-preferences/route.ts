@@ -27,7 +27,13 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom } = body;
+  // Card #203: "Count shifts from" — a YYYY-MM-DD date, or null to clear. Strictly validated.
+  const balanceFromValid = shiftBalanceFrom === null || (typeof shiftBalanceFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(shiftBalanceFrom) && !Number.isNaN(Date.parse(shiftBalanceFrom + "T00:00:00Z")) && new Date(shiftBalanceFrom + "T00:00:00Z").toISOString().startsWith(shiftBalanceFrom));
+  if (shiftBalanceFrom !== undefined && !balanceFromValid) {
+    return NextResponse.json({ error: "shiftBalanceFrom must be a YYYY-MM-DD date or null" }, { status: 400 });
+  }
+  const balanceFromData = shiftBalanceFrom === undefined ? {} : { shiftBalanceFrom: shiftBalanceFrom === null ? null : new Date(shiftBalanceFrom + "T00:00:00Z") };
 
   // Mode is STRICTLY validated on write — a bad value is rejected, never coerced to
   // the default (which would silently turn a typo into "full"). Reads stay lenient.
@@ -107,6 +113,7 @@ export async function PUT(req: NextRequest) {
       ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
       ...(isHolidayPolicy(holidayPolicy) && { holidayPolicy }),
       ...(isLeavePolicy(leaveHoursPolicy) && { leaveHoursPolicy }),
+      ...balanceFromData,
       ...(columnOrder !== undefined && { staffColumnOrder: columnOrder === null ? Prisma.DbNull : columnOrder }),
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),
@@ -126,6 +133,7 @@ export async function PUT(req: NextRequest) {
       ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
       ...(isHolidayPolicy(holidayPolicy) && { holidayPolicy }),
       ...(isLeavePolicy(leaveHoursPolicy) && { leaveHoursPolicy }),
+      ...balanceFromData,
       ...(columnOrder != null && { staffColumnOrder: columnOrder }),
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),

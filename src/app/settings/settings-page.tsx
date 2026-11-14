@@ -48,6 +48,7 @@ type ShiftType = {
   weekendPaired: boolean;
   holidayWeekendPaired: boolean;
   spreadOverMonth?: boolean;
+  evenAcrossMonths?: boolean;
   ignoresWorkingDays: boolean;
   autoSchedulable: boolean;
   hotkey: string | null;
@@ -100,6 +101,7 @@ type SchedulingPrefs = {
   shiftShareBasis: ShiftShareBasis;
   holidayPolicy: HolidayPolicy;
   leaveHoursPolicy: LeavePolicy;
+  shiftBalanceFrom?: string | null;
   payPeriodAnchor: string | null;
   payPeriodLengthDays: number;
   activationWorkedDefault: ActivationData["defaults"]["worked"];
@@ -1147,6 +1149,7 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
         weekendPaired: created.weekendPaired ?? false,
         holidayWeekendPaired: created.holidayWeekendPaired ?? false,
         spreadOverMonth: created.spreadOverMonth ?? false,
+        evenAcrossMonths: created.evenAcrossMonths ?? false,
         ignoresWorkingDays: created.ignoresWorkingDays ?? false,
         autoSchedulable: created.autoSchedulable ?? false,
         hotkey: created.hotkey ?? null,
@@ -1415,8 +1418,11 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
               <FieldRow label="Pair with leading or following holiday" description="When Saturday/Sunday are paired, also assign the same person to an adjacent holiday (the Friday before or Monday after) so a 3-day holiday weekend (e.g. FRI-SAT-SUN or SAT-SUN-MON) is covered by one staff member">
                 <input disabled={!canEdit || !editingShift.weekendPaired} type="checkbox" checked={editingShift.holidayWeekendPaired} onChange={(e) => updateField(editingShift.id, "holidayWeekendPaired", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
-              <FieldRow label="Spread over the month" description="For each person, the scheduler spreads the shifts marked this way — together — across the weeks instead of bunching them into one week.">
+              <FieldRow label="Spread out as much as possible" description="For each person, the scheduler keeps the shifts marked this way — together — as far apart as it can, looking two weeks either side, including last month's and next month's. It decides among people whose counts are even; it never gives anyone extra.">
                 <input disabled={!canEdit} type="checkbox" checked={!!editingShift.spreadOverMonth} onChange={(e) => updateField(editingShift.id, "spreadOverMonth", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
+              </FieldRow>
+              <FieldRow label="Keep counts even across months" description="Each month this shift is shared out evenly first, as usual. Among people within one shift of each other this month, whoever is owed most from earlier months (since the date under Settings › Scheduling › Scheduled shift share) goes first: a tie-break only. People are owed a share only of days they could have worked it, and new staff start level.">
+                <input disabled={!canEdit} type="checkbox" checked={!!editingShift.evenAcrossMonths} onChange={(e) => updateField(editingShift.id, "evenAcrossMonths", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Can be assigned on days off" description="Allow this shift to be assigned even on a staff's non-working days (e.g., weekend call)">
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.ignoresWorkingDays} onChange={(e) => updateField(editingShift.id, "ignoresWorkingDays", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
@@ -3197,6 +3203,27 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
     }
   }
 
+  // Card #203: "Count shifts from" — the first day "Keep counts even across months" counts.
+  const [balanceStatus, setBalanceStatus] = useState<SaveStatus>("idle");
+  async function saveBalanceFrom(value: string | null) {
+    const prev = prefs.shiftBalanceFrom ?? null;
+    setPrefs((p) => ({ ...p, shiftBalanceFrom: value }));
+    setBalanceStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shiftBalanceFrom: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setBalanceStatus("saved");
+      setTimeout(() => setBalanceStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, shiftBalanceFrom: prev }));
+      setBalanceStatus("error");
+    }
+  }
+
   const [holidayStatus, setHolidayStatus] = useState<SaveStatus>("idle");
   async function saveHolidayPolicy(value: HolidayPolicy) {
     const prev = prefs.holidayPolicy;
@@ -3467,6 +3494,23 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
                 <span className="text-[11px] text-slate-500 mt-0.5">{SHARE_LABELS[basis].hint}</span>
               </button>
             ))}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <label htmlFor="shift-balance-from" className="text-sm text-slate-300">Count shifts from</label>
+            <input
+              id="shift-balance-from"
+              type="date"
+              disabled={!canEdit}
+              value={prefs.shiftBalanceFrom ?? ""}
+              onChange={(e) => canEdit && saveBalanceFrom(e.target.value || null)}
+              className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50"
+            />
+            {balanceStatus === "saving" && <span className="text-xs text-slate-500">Saving…</span>}
+            {balanceStatus === "saved" && <span className="text-xs text-emerald-400">Saved</span>}
+            {balanceStatus === "error" && <span className="text-xs text-rose-400">Failed</span>}
+            <span className="w-full text-xs text-slate-400">
+              For shifts marked &quot;Keep counts even across months&quot; (Settings › Shift types): shifts from this day on decide ties between people whose counts this month are even. Blank = each month on its own.
+            </span>
           </div>
         </div>
 

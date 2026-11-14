@@ -17,6 +17,7 @@ import { parseShiftShareBasis } from "@/lib/shift-share";
 import { parseHolidayPolicy } from "@/lib/holiday-policy";
 import { parseLeavePolicy } from "@/lib/leave-policy";
 import { deriveEquityFactorCodes } from "@/lib/equity-factors";
+import { payPeriodsCovering } from "@/lib/shift-balance";
 
 /**
  * Assemble the engine input for [startDate, endDate], expanded outward to cover
@@ -162,6 +163,30 @@ export async function buildAutoScheduleInput(
 
   const payPeriods = allPayPeriods;
 
+  // Card #203: read-only context for "Keep counts even across months" and the spacing check.
+  const isoDay = (d: Date): string => d.toISOString().split("T")[0];
+  const balanceFrom = schedulingPrefsRow?.shiftBalanceFrom ? isoDay(schedulingPrefsRow.shiftBalanceFrom) : null;
+  const evenOn = !!balanceFrom && shiftTypes.some((st) => st.evenAcrossMonths);
+  const spreadOn = shiftTypes.some((st) => st.spreadOverMonth);
+  const contextEnd = new Date(effectiveEnd + "T00:00:00Z");
+  contextEnd.setUTCDate(contextEnd.getUTCDate() + 14);
+  const [balanceRequestRows, spreadContextRows] = await Promise.all([
+    evenOn
+      ? db.scheduleRequest.findMany({
+          where: {
+            status: "approved",
+            startDate: { lte: new Date(effectiveEnd + "T00:00:00Z") },
+            endDate: { gte: new Date(balanceFrom + "T00:00:00Z") },
+          },
+        })
+      : Promise.resolve([] as typeof scheduleRequests),
+    spreadOn
+      ? db.assignment.findMany({
+          where: { date: { gt: new Date(effectiveEnd + "T00:00:00Z"), lte: contextEnd } },
+        })
+      : Promise.resolve([] as typeof existingAssignments),
+  ]);
+
   const start = new Date(effectiveStart + "T12:00:00");
   const end = new Date(effectiveEnd + "T12:00:00");
   const dates: string[] = [];
@@ -271,6 +296,13 @@ export async function buildAutoScheduleInput(
       isActive: p.isActive,
       isAutoScheduled: p.isAutoScheduled,
       specialQualifications: p.specialQualifications,
+      // Card #203: joining and tick dates (a person is owed a share only from then on).
+      createdOn: p.createdAt ? isoDay(p.createdAt) : null,
+      tempStartDate: p.tempStartDate ? isoDay(p.tempStartDate) : null,
+      tempEndDate: p.tempEndDate ? isoDay(p.tempEndDate) : null,
+      eligibleSince: Object.fromEntries(
+        staffEligibleShifts.filter((e) => e.staffId === p.id && e.eligibleSince).map((e) => [e.shiftTypeId, isoDay(e.eligibleSince!)]),
+      ),
       shiftEligibilityRules: (eligRulesMap.get(p.id) ?? []).map((er) => ({
         shiftTypeId: er.shiftTypeId,
         type: er.type as "eligible" | "ineligible",
@@ -331,6 +363,7 @@ export async function buildAutoScheduleInput(
       weekendPaired: st.weekendPaired,
       holidayWeekendPaired: st.holidayWeekendPaired,
       spreadOverMonth: st.spreadOverMonth,
+      evenAcrossMonths: st.evenAcrossMonths,
       ignoresWorkingDays: st.ignoresWorkingDays,
       category: st.category,
       autoSchedulable: st.autoSchedulable,
@@ -418,6 +451,7 @@ export async function buildAutoScheduleInput(
       shiftShareBasis: parseShiftShareBasis(schedulingPrefsRow?.shiftShareBasis),
       holidayPolicy: parseHolidayPolicy(schedulingPrefsRow?.holidayPolicy),
       leaveHoursPolicy: parseLeavePolicy(schedulingPrefsRow?.leaveHoursPolicy),
+      shiftBalanceFrom: balanceFrom,
     },
     // Linked by shift id; the code the fairness pass keys on is the shift's CURRENT one.
     equityFactors: deriveEquityFactorCodes(
@@ -460,5 +494,39 @@ export async function buildAutoScheduleInput(
       hoursPolicy: parseHoursPolicy(f.hoursPolicy),
     })),
     ...(opts.runMonth ? { writableFrom: writableFromOf(opts.runMonth) } : {}),
+    ...(evenOn
+      ? {
+          balanceRequests: balanceRequestRows.map((r) => ({
+            id: r.id,
+            staffId: r.staffId,
+            startDate: isoDay(r.startDate),
+            endDate: isoDay(r.endDate),
+            kind: r.kind as ScheduleRequestData["kind"],
+            shiftTypeIds: r.shiftTypeIds,
+            leaveShiftTypeId: r.leaveShiftTypeId,
+            strength: r.strength as ScheduleRequestData["strength"],
+            status: r.status as ScheduleRequestData["status"],
+          })),
+          // The stored list rolls forward and drops old periods; extend it back to the start date
+          // so earlier months keep their roster check (else worked counts lose their expected share).
+          balancePayPeriods: payPeriodsCovering(
+            allPayPeriods.map((pp) => ({ startDate: isoDay(pp.startDate), endDate: isoDay(pp.endDate) })),
+            balanceFrom!,
+            schedulingPrefsRow?.payPeriodLengthDays ?? 14,
+          ).filter((pp) => pp.endDate >= balanceFrom! && pp.startDate <= effectiveEnd),
+        }
+      : {}),
+    ...(spreadOn
+      ? {
+          spreadContext: spreadContextRows.map((a) => ({
+            staffId: a.staffId,
+            date: isoDay(a.date),
+            shiftTypeId: a.shiftTypeId,
+            code: shiftCodeMap.get(a.shiftTypeId) ?? "?",
+            isLocked: a.isLocked,
+            source: a.source,
+          })),
+        }
+      : {}),
   };
 }
