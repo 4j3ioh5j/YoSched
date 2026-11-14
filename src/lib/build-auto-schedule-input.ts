@@ -5,6 +5,7 @@
 // Live mode's client-side what-if re-solves. Server-only (imports prisma); the
 // returned value is plain JSON-serializable data (dates are "YYYY-MM-DD").
 
+import { readTuning } from "./scheduler-tuning";
 import { prisma } from "@/lib/prisma";
 import { ruleSpan } from "./holiday-rules";
 import { loadHolidayRules } from "./holiday-rules-db";
@@ -168,8 +169,10 @@ export async function buildAutoScheduleInput(
   const balanceFrom = schedulingPrefsRow?.shiftBalanceFrom ? isoDay(schedulingPrefsRow.shiftBalanceFrom) : null;
   const evenOn = !!balanceFrom && shiftTypes.some((st) => st.evenAcrossMonths);
   const spreadOn = shiftTypes.some((st) => st.spreadOverMonth);
+  // Card #215: the forward context reaches as far as the spacing reach in Settings.
+  const tuning = readTuning(schedulingPrefsRow);
   const contextEnd = new Date(effectiveEnd + "T00:00:00Z");
-  contextEnd.setUTCDate(contextEnd.getUTCDate() + 14);
+  contextEnd.setUTCDate(contextEnd.getUTCDate() + tuning.spreadRadiusDays);
   const [balanceRequestRows, spreadContextRows] = await Promise.all([
     evenOn
       ? db.scheduleRequest.findMany({
@@ -475,6 +478,7 @@ export async function buildAutoScheduleInput(
       holidayShiftId: schedulingPrefsRow?.holidayShiftId ?? null, // card #207: by id, never by code
       leaveHoursPolicy: parseLeavePolicy(schedulingPrefsRow?.leaveHoursPolicy),
       shiftBalanceFrom: balanceFrom,
+      ...tuning, // card #215: scheduler tuning numbers (lenient read; bad values are the defaults)
     },
     // Linked by shift id; the code the fairness pass keys on is the shift's CURRENT one.
     equityFactors: deriveEquityFactorCodes(

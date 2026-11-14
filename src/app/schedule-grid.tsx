@@ -1,5 +1,6 @@
 "use client";
 
+import { isWeekendDow } from "@/lib/scheduler-tuning";
 import { StatusOpRecorder, undoOrder } from "@/lib/request-undo-ops";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ShiftPicker } from "./shift-picker";
@@ -258,6 +259,7 @@ type Props = {
   dateFormat?: string;
   defaultLiveScope?: LiveScope; // dept default scope for auto-generate edits (#248)
   dayShading?: DayShading; // card #209: weekend/holiday shading colours from Settings (null = off)
+  weekendStartDow: number; // card #215: the weekend's first day from Settings (0 = Sunday … 6 = Saturday)
   currentVersions?: CurrentVersionMeta[];
   scheduleRequests?: GridRequest[];
   mutedAlertKeys?: string[]; // alert keys muted by any login (shared, single-tenant)
@@ -462,6 +464,7 @@ export function ScheduleGrid({
   dateFormat: dateFormatProp,
   defaultLiveScope = DEFAULT_LIVE_SCOPE,
   dayShading = DEFAULT_DAY_SHADING,
+  weekendStartDow,
   currentVersions = [],
   scheduleRequests = [],
   mutedAlertKeys = [],
@@ -1233,11 +1236,11 @@ export function ScheduleGrid({
           const stId = a?.shiftTypeId;
           if (stId && shiftCountsTowardFte(stId)) {
             const dow = cursor.getDay();
-            // Holiday wins over weekend. A day type the shift doesn't accrue on
-            // resolves to 0 hours, so no explicit day-type gate is needed.
+            // Holiday wins over weekend (card #215: the weekend from Settings). A day type the
+            // shift doesn't accrue on resolves to 0 hours, so no explicit day-type gate is needed.
             const dayType = holidaySet.has(dateStr)
               ? "holiday"
-              : dow === 0 || dow === 6
+              : isWeekendDow(dow, weekendStartDow)
                 ? "weekend"
                 : "weekday";
             hours += getHoursForAssignment(p.id, stId, dayType);
@@ -1249,7 +1252,7 @@ export function ScheduleGrid({
       result.set(pp.startDate, staffHours);
     }
     return result;
-  }, [sortedPPs, visibleStaff, effectiveAssignmentMap, overrideMap, shiftTypeMap]);
+  }, [sortedPPs, visibleStaff, effectiveAssignmentMap, overrideMap, shiftTypeMap, weekendStartDow]);
 
   const followRuleMap = useMemo(() => buildFollowRuleMap(followRules ?? []), [followRules]);
 
@@ -1290,6 +1293,7 @@ export function ScheduleGrid({
         shiftTypeMap,
         holidaySet,
         staffingReqs,
+        weekendStartDow,
       });
       if (warnings.length > 0) {
         map.set(date, warnings);
@@ -1312,7 +1316,7 @@ export function ScheduleGrid({
       }
     }
     return map;
-  }, [dates, staff, effectiveAssignmentMap, shiftTypeMap, holidaySet, staffingReqs, holidayRuleGroups]);
+  }, [dates, staff, effectiveAssignmentMap, shiftTypeMap, holidaySet, staffingReqs, holidayRuleGroups, weekendStartDow]);
 
   // Count columns name their shifts by id, so count the cells' shiftTypeId (saved grid and
   // Live what-if both carry it) — a renamed shift keeps counting.
@@ -4374,7 +4378,7 @@ export function ScheduleGrid({
 
               const { date } = item;
               const label = formatDateLabel(date, dateFormat);
-              const isWeekend = label.dow === 0 || label.dow === 6;
+              const isWeekend = isWeekendDow(label.dow, weekendStartDow); // card #215
               const isHoliday = holidaySet.has(date);
               const isOutsideMonth = date < firstOfMonth || date > lastOfMonth;
               const isToday = date === toDateStr(today);

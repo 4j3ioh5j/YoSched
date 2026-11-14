@@ -1,3 +1,4 @@
+import { isWeekendDow } from "./scheduler-tuning";
 import { FollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
 import { checkRequestConflict, type ScheduleRequestData } from "./schedule-requests";
 import { ruleToWhen } from "./recurrence";
@@ -101,10 +102,10 @@ function nextDateStr(dateStr: string): string {
   return toDateStr(d);
 }
 
-function getDayType(dateStr: string, holidaySet: Set<string>): string {
+// Card #215: the weekend is the Settings value (its first day and the next).
+function getDayType(dateStr: string, holidaySet: Set<string>, weekendStartDow: number): string {
   if (holidaySet.has(dateStr)) return "holiday";
-  const dow = parseDate(dateStr).getDay();
-  return dow === 0 || dow === 6 ? "weekend" : "weekday";
+  return isWeekendDow(parseDate(dateStr).getDay(), weekendStartDow) ? "weekend" : "weekday";
 }
 
 export function checkCellWarnings({
@@ -210,18 +211,21 @@ export function checkDayStaffing({
   shiftTypeMap,
   holidaySet,
   staffingReqs,
+  weekendStartDow,
 }: {
   date: string;
   staff: Staff[];
   assignmentMap: AssignmentLookup;
   shiftTypeMap: Map<string, ShiftType>;
   holidaySet: Set<string>;
+  /** Card #215: the weekend's first day from Settings (0 = Sunday … 6 = Saturday). */
+  weekendStartDow: number;
   /** Card #208: the hidden staffing minimums no longer raise warnings — accepted and ignored. */
   staffingMins?: StaffingMinimum[];
   staffingReqs?: StaffingRequirement[];
 }): Warning[] {
   const warnings: Warning[] = [];
-  const dayType = getDayType(date, holidaySet);
+  const dayType = getDayType(date, holidaySet, weekendStartDow);
   const dow = parseDate(date).getDay();
 
   function isOff(a: { shiftTypeId: string }): boolean {

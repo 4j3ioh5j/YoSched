@@ -17,6 +17,7 @@ import { HOLIDAY_POLICIES, type HolidayPolicy, isHolidayCreditShift } from "@/li
 import { holidayRulesVersion } from "@/lib/holiday-rules-db";
 import { buildHolidayGroups, RULE_OFFSET_MIN, RULE_OFFSET_MAX, RULE_NAME_MAX, type HolidayRuleSpec } from "@/lib/holiday-rules";
 import { createLatestWriter, type LatestWriter } from "@/lib/latest-writer";
+import { TUNING_DEFAULTS, TUNING_LIMITS, WEEKDAY_NAMES, isWeekendDow, readTuning, tuningError, weekendLabel, weekendSecondDow, type SchedulerTuning, type TuningKey } from "@/lib/scheduler-tuning";
 import { LEAVE_POLICIES, type LeavePolicy } from "@/lib/leave-policy";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
 import { HOURS_POLICIES, HOURS_POLICY_KEYS, parseHoursPolicy, isHoursPolicyKey, type HoursPolicy } from "@/lib/autogen-hours-policy";
@@ -30,6 +31,10 @@ import { DEFAULT_STAFF_ORDER, orderStaff, STAFF_ORDER_DEFAULT_DIR, type StaffOrd
 
 const CanEditContext = createContext(true);
 function useCanEdit() { return useContext(CanEditContext); }
+// Card #215: the SAVED scheduler tuning (weekend, spacing reach, even band) for help text and
+// shading across the page; updated only after a successful save.
+const TuningContext = createContext<SchedulerTuning>(TUNING_DEFAULTS);
+function useTuning() { return useContext(TuningContext); }
 
 type ShiftType = {
   id: string;
@@ -117,7 +122,7 @@ type SchedulingPrefs = {
   activationWorkedDefault: ActivationData["defaults"]["worked"];
   activationNeverDefault: ActivationData["defaults"]["never"];
   activationNewHireDefault: ActivationData["defaults"]["newHire"];
-};
+} & SchedulerTuning;
 
 type DefaultAvailabilityRule = {
   type: string;
@@ -866,6 +871,7 @@ function ActivationPanel({ shift, committed, onCancel, onConfirm }: { shift: Shi
 }
 
 function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initialFollowRules, initialFollowAvoids, initialRequiredFollowers }: { shifts: ShiftType[]; onShiftsChange: React.Dispatch<React.SetStateAction<ShiftType[]>>; pushUndo: (a: UndoAction) => void; initialFollowRules: FollowRuleData[]; initialFollowAvoids: FollowAvoidData[]; initialRequiredFollowers: RequiredFollowerData[] }) {
+  const tuning = useTuning(); // card #215: saved weekend / spacing values for the help text
   const canEdit = useCanEdit();
   // Each shift as last SAVED (not page-load props): Cancel reverts to it and Undo restores it.
   const [lastSaved, setLastSaved] = useState(shifts);
@@ -1350,7 +1356,7 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
               <FieldRow label="Hours per shift (weekdays)" description="How many hours this shift counts for on a weekday">
                 <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.defaultHours} onChange={(e) => updateField(editingShift.id, "defaultHours", parseFloat(e.target.value) || 0)} />
               </FieldRow>
-              <FieldRow label="Hours per shift (weekends)" description="Hours this shift counts for on a Sat/Sun. 0 = does not accrue weekend hours.">
+              <FieldRow label="Hours per shift (weekends)" description={`Hours this shift counts for on a weekend day (${weekendLabel(tuning.weekendStartDow)}). 0 = does not accrue weekend hours.`}>
                 <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.defaultHoursWeekend} onChange={(e) => updateField(editingShift.id, "defaultHoursWeekend", parseFloat(e.target.value) || 0)} />
               </FieldRow>
               <FieldRow label="Hours per shift (holidays)" description="Hours this shift counts for on a holiday (takes precedence over weekend). 0 = does not accrue holiday hours.">
@@ -1424,16 +1430,16 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
               <FieldRow label="Scheduling order" description="When auto-scheduling, which shifts get assigned first. Lower numbers go first. Leave blank if this shift should not be auto-scheduled.">
                 <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.schedulePriority ?? ""} placeholder="None" onChange={(e) => updateField(editingShift.id, "schedulePriority", e.target.value ? parseInt(e.target.value) : null)} />
               </FieldRow>
-              <FieldRow label="Pair Saturday and Sunday" description="Assign the same person to both Saturday and Sunday when filling this shift on weekends">
+              <FieldRow label="Pair the two weekend days" description={`Assign the same person to both ${WEEKDAY_NAMES[tuning.weekendStartDow]} and ${WEEKDAY_NAMES[weekendSecondDow(tuning.weekendStartDow)]} when filling this shift on weekends`}>
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.weekendPaired} onChange={(e) => updateField(editingShift.id, "weekendPaired", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
-              <FieldRow label="Pair with leading or following holiday" description="When Saturday/Sunday are paired, also assign the same person to an adjacent holiday (the Friday before or Monday after) so a 3-day holiday weekend (e.g. FRI-SAT-SUN or SAT-SUN-MON) is covered by one staff member">
+              <FieldRow label="Pair with leading or following holiday" description={`When ${weekendLabel(tuning.weekendStartDow)} are paired, also assign the same person to an adjacent holiday (the ${WEEKDAY_NAMES[(tuning.weekendStartDow + 6) % 7]} before or ${WEEKDAY_NAMES[(tuning.weekendStartDow + 2) % 7]} after) so a 3-day holiday weekend is covered by one staff member`}>
                 <input disabled={!canEdit || !editingShift.weekendPaired} type="checkbox" checked={editingShift.holidayWeekendPaired} onChange={(e) => updateField(editingShift.id, "holidayWeekendPaired", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
-              <FieldRow label="Spread out as much as possible" description="For each person, the scheduler keeps the shifts marked this way — together — as far apart as it can, looking two weeks either side, including last month's and next month's. It decides among people whose counts are even; it never gives anyone extra.">
+              <FieldRow label="Spread out as much as possible" description={`For each person, the scheduler keeps the shifts marked this way — together — as far apart as it can, looking ${tuning.spreadRadiusDays} days either side (Settings › Scheduler tuning), including last month's and next month's. It decides among people whose counts are even; it never gives anyone extra.`}>
                 <input disabled={!canEdit} type="checkbox" checked={!!editingShift.spreadOverMonth} onChange={(e) => updateField(editingShift.id, "spreadOverMonth", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
-              <FieldRow label="Keep counts even across months" description="Each month this shift is shared out evenly first, as usual. Among people within one shift of each other this month, whoever is owed most from earlier months (since the date under Settings › Scheduling › Scheduled shift share) goes first: a tie-break only. People are owed a share only of days they could have worked it, and new staff start level.">
+              <FieldRow label="Keep counts even across months" description={`Each month this shift is shared out evenly first, as usual. Among people within ${tuning.evenBandCalls} shift${tuning.evenBandCalls === 1 ? "" : "s"} of each other this month (Settings › Scheduler tuning), whoever is owed most from earlier months (since the date under Settings › Scheduling › Scheduled shift share) goes first: a tie-break only. People are owed a share only of days they could have worked it, and new staff start level.`}>
                 <input disabled={!canEdit} type="checkbox" checked={!!editingShift.evenAcrossMonths} onChange={(e) => updateField(editingShift.id, "evenAcrossMonths", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Can be assigned on days off" description="Allow this shift to be assigned even on a staff's non-working days (e.g., weekend call)">
@@ -1512,6 +1518,7 @@ function StaffingSection({
   pushUndo: (a: UndoAction) => void;
 }) {
   const canEdit = useCanEdit();
+  const { weekendStartDow } = useTuning(); // card #215
   const [grid, setGrid] = useState(() => {
     const map: Record<string, number> = {};
     for (const r of initial) map[`${r.shiftTypeId}:${r.dayKey}`] = r.minCount;
@@ -1784,7 +1791,7 @@ function StaffingSection({
           </thead>
           <tbody className="divide-y divide-slate-700/50">
             {DAY_KEYS.map((day) => {
-              const isWeekend = day === "0" || day === "6";
+              const isWeekend = day !== "holiday" && isWeekendDow(Number(day), weekendStartDow);
               const isHoliday = day === "holiday";
               return (
                 <tr
@@ -5294,11 +5301,109 @@ type EditAggCol = {
 // columns. A column with the "Catch-all" (isOther) flag has no rule and lists the
 // residual — staff who appear in no other column. Catch-all is just a per-column toggle:
 // columns are otherwise identical and all freely editable / movable / deletable.
+// ─── Scheduler tuning (card #215) ────────────────────────────────────────────
+
+const TUNING_FIELDS: { key: Exclude<TuningKey, "weekendStartDow">; label: string; description: string; step: number }[] = [
+  { key: "spreadRadiusDays", label: "Spacing reach (days)", description: "For shifts marked \u201cSpread out as much as possible\u201d: how many days either side of a shift count as close to it. Larger keeps them further apart.", step: 1 },
+  { key: "evenBandCalls", label: "Even-counts band", description: "For shifts marked \u201cKeep counts even across months\u201d: a person this many shifts ahead of the lowest this month is passed over. 1 keeps everyone within one shift.", step: 0.5 },
+  { key: "softRequestOffWeight", label: "Soft \u201cprefer off\u201d pull", description: "How strongly a soft day-off request pulls that day into a person\u2019s days off. It only acts within the slack the hours target leaves. 0 = ignore soft requests here.", step: 1 },
+  { key: "softAvoidFollowWeight", label: "Soft \u201cavoid after\u201d cost", description: "How much one soft \u201cavoid this shift after that one\u201d pair counts against a choice of fill days. 0 = ignore these pairs here.", step: 1 },
+  { key: "scarcePoolSize", label: "Few-people warning", description: "A shift that at most this many people can work marks a pay period\u2019s hours gap as structural (no fix the scheduler can make). 0 = never.", step: 1 },
+];
+
+function SchedulerTuningSection({ initial, onSaved }: { initial: SchedulerTuning; onSaved: (t: SchedulerTuning) => void }) {
+  const canEdit = useCanEdit();
+  // Text per field while typing; a value is sent only when it passes the shared check.
+  const [draft, setDraft] = useState<Record<TuningKey, string>>(() => Object.fromEntries(Object.entries(initial).map(([k, v]) => [k, String(v)])) as Record<TuningKey, string>);
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState<string | undefined>();
+  // Card #214's writer: one save at a time per field, newest wins, a late result never
+  // changes the page. `server` is what the server holds (the rollback target).
+  const [writer] = useState<LatestWriter<TuningKey, number>>(() => {
+    let server: SchedulerTuning = { ...initial };
+    return createLatestWriter<TuningKey, number>(
+      async (key, value) => {
+        const res = await fetch("/api/settings/scheduling-preferences", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [key]: value }),
+        });
+        if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "Save failed");
+        server = { ...server, [key]: value };
+        onSaved({ ...server });
+      },
+      (key, _value, err) => {
+        if (err === null) {
+          setStatus("saved");
+          setTimeout(() => setStatus("idle"), 2000);
+        } else {
+          setDraft((d) => ({ ...d, [key]: String(server[key]) }));
+          setStatus("error");
+          setError(err instanceof Error ? err.message : "Save failed");
+        }
+      },
+    );
+  });
+
+  function commit(key: TuningKey, text: string) {
+    const value = text.trim() === "" ? NaN : Number(text);
+    const bad = tuningError(key, value);
+    if (bad) { setStatus("error"); setError(bad.replace(key, TUNING_FIELDS.find((f) => f.key === key)?.label ?? key)); return; }
+    setDraft((d) => ({ ...d, [key]: String(value) }));
+    setStatus("saving");
+    setError(undefined);
+    writer.write(key, value);
+  }
+
+  return (
+    <CollapsibleSection
+      id="scheduler-tuning"
+      title="Scheduler tuning"
+      description="Numbers the scheduler uses when it weighs choices, and which two days are the weekend. The defaults are what the scheduler has always used."
+      status={status}
+      error={error}
+    >
+      <div className="space-y-2">
+        <FieldRow label="Weekend" description="The two days counted as the weekend: weekend hours, paired weekend shifts and weekend shading. The second day is always the day after the first.">
+          <select
+            disabled={!canEdit}
+            aria-label="Weekend"
+            className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50"
+            value={draft.weekendStartDow}
+            onChange={(e) => canEdit && commit("weekendStartDow", e.target.value)}
+          >
+            {WEEKDAY_NAMES.map((_n, dow) => <option key={dow} value={String(dow)}>{weekendLabel(dow)}</option>)}
+          </select>
+        </FieldRow>
+        {TUNING_FIELDS.map((f) => {
+          const l = TUNING_LIMITS[f.key];
+          return (
+            <FieldRow key={f.key} label={f.label} description={`${f.description} Default ${TUNING_DEFAULTS[f.key]}.`}>
+              <input
+                disabled={!canEdit}
+                type="number"
+                aria-label={f.label}
+                min={l.min}
+                max={l.max}
+                step={f.step}
+                value={draft[f.key]}
+                onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                onBlur={(e) => canEdit && e.target.value !== String(initial[f.key]) && commit(f.key, e.target.value)}
+                className="w-24 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50"
+              />
+            </FieldRow>
+          );
+        })}
+      </div>
+    </CollapsibleSection>
+  );
+}
+
 // ─── Weekend and Holiday Shading (card #209) ─────────────────────────────────
 
 type ShadeKey = "printWeekendColor" | "printHolidayColor" | "screenHolidayColor";
 const SHADE_FIELDS: { key: ShadeKey; label: string; description: string; fallback: string }[] = [
-  { key: "printWeekendColor", label: "Weekends (printed)", description: "Shade of every Saturday and Sunday row on the printed schedule.", fallback: "#EBEBEB" },
+  { key: "printWeekendColor", label: "Weekends (printed)", description: "Shade of every weekend row (the weekend days under Scheduler tuning) on the printed schedule.", fallback: "#EBEBEB" },
   { key: "printHolidayColor", label: "Holidays (printed)", description: "Shade of every date in the Holidays list on the printed schedule. Wins over the weekend shade.", fallback: "#D0D0D0" },
   { key: "screenHolidayColor", label: "Holidays (on screen)", description: "Tint of every date in the Holidays list on the schedule grid.", fallback: "#4A3410" },
 ];
@@ -5914,9 +6019,12 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
   // One shift list for the whole page: Shift Types edits it, every other section reads it.
   const [shiftTypes, setShiftTypes] = useState(initialShiftTypes);
   const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
+  // Card #215: the last SAVED tuning, shared with every section's help text and shading.
+  const [savedTuning, setSavedTuning] = useState<SchedulerTuning>(() => readTuning(schedulingPrefs));
 
   return (
     <CanEditContext.Provider value={canEdit}>
+    <TuningContext.Provider value={savedTuning}>
     <CollapseProvider>
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-5xl mx-auto px-6 py-8">
@@ -5940,6 +6048,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
         <div className="space-y-4 mb-8 mt-3">
           <StaffingSection initial={staffingReqs} shiftTypes={shiftTypes} pushUndo={undo.push} />
           <SchedulingPrefsSection initial={schedulingPrefs} shiftTypes={shiftTypes} />
+          <SchedulerTuningSection initial={savedTuning} onSaved={setSavedTuning} />
           <PayPeriodPrefsSection initial={departmentTargets} shiftTypes={shiftTypes} />
           <DesirabilitySection initial={desirabilityWeights} shiftTypes={shiftTypes} pushUndo={undo.push} />
           <EquityFactorsSection initial={initialEquityFactors} shifts={shiftTypes} />
@@ -5973,6 +6082,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
       )}
     </div>
     </CollapseProvider>
+    </TuningContext.Provider>
     </CanEditContext.Provider>
   );
 }

@@ -1,3 +1,4 @@
+import { readTuning } from "@/lib/scheduler-tuning";
 import { prisma } from "@/lib/prisma";
 import { getPayPeriods } from "@/lib/pay-periods-server";
 import { computeFairness } from "@/lib/fairness";
@@ -310,6 +311,7 @@ export default async function Home() {
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
         defaultLiveScope={parseLiveScope(schedPrefs?.defaultLiveScope)}
         dayShading={dayShadingFrom(schedPrefs)}
+        weekendStartDow={readTuning(schedPrefs).weekendStartDow}
         currentVersions={currentVersions.map((v) => ({
           year: v.year,
           month: v.month,

@@ -10,6 +10,8 @@
 //
 // Kept apart from the engine so the counting rule has one home and its own tests.
 
+import { weekendSecondDow } from "./scheduler-tuning";
+
 function localDate(s: string): Date {
   return new Date(s + "T12:00:00");
 }
@@ -36,9 +38,10 @@ export type CellAt = (staffId: string, date: string) => string | undefined;
  * is the second half of the Saturday's slot when the same person holds both (one weekend =
  * one slot, as the engine has always counted a pair); a lone Sunday is its own slot.
  */
-export function holdsSlot(cellAt: CellAt, staffId: string, shiftTypeId: string, weekendPaired: boolean, date: string): boolean {
+export function holdsSlot(cellAt: CellAt, staffId: string, shiftTypeId: string, weekendPaired: boolean, date: string, weekendStartDow: number): boolean {
   if (cellAt(staffId, date) !== shiftTypeId) return false;
-  if (weekendPaired && localDate(date).getDay() === 0 && cellAt(staffId, addDays(date, -1)) === shiftTypeId) return false;
+  // Card #215: the weekend's second day comes from Settings (Sunday by default).
+  if (weekendPaired && localDate(date).getDay() === weekendSecondDow(weekendStartDow) && cellAt(staffId, addDays(date, -1)) === shiftTypeId) return false;
   return true;
 }
 
@@ -51,6 +54,7 @@ export type BalanceTally = { got: number; expected: number };
 export function tallyBalances(opts: {
   shiftTypeId: string;
   weekendPaired: boolean;
+  weekendStartDow: number;
   staffIds: readonly string[];
   dates: Iterable<string>;
   cellAt: CellAt;
@@ -62,7 +66,7 @@ export function tallyBalances(opts: {
   for (const date of opts.dates) {
     let slots = 0;
     for (const id of opts.staffIds) {
-      if (holdsSlot(opts.cellAt, id, opts.shiftTypeId, opts.weekendPaired, date)) {
+      if (holdsSlot(opts.cellAt, id, opts.shiftTypeId, opts.weekendPaired, date, opts.weekendStartDow)) {
         slots++;
         out.get(id)!.got++;
       }
@@ -88,18 +92,16 @@ export function sharesOf(able: readonly { id: string; weight: number }[]): Map<s
   return m;
 }
 
-/** Days either side of a date that count toward how close a person's marked shifts are. */
-export const SPREAD_RADIUS = 14;
-
 /**
- * How bunched `date` would be for a person: Σ (RADIUS + 1 − gap)² over their marked cells
- * within RADIUS days either side (the day itself excluded). 0 = nothing within two weeks;
- * a shift the next day weighs 196, one 13 days away 4, so the furthest-from-everything day wins.
+ * How bunched `date` would be for a person: Σ (radius + 1 − gap)² over their marked cells
+ * within `radius` days either side (the day itself excluded). 0 = nothing within reach; with
+ * the default 14 a shift the next day weighs 196, one 13 days away 4, so the
+ * furthest-from-everything day wins. Card #215: `radius` is the Settings value.
  */
-export function spreadPenalty(isMarkedOn: (date: string) => boolean, date: string): number {
+export function spreadPenalty(isMarkedOn: (date: string) => boolean, date: string, radius: number): number {
   let p = 0;
-  for (let gap = 1; gap <= SPREAD_RADIUS; gap++) {
-    const w = (SPREAD_RADIUS + 1 - gap) ** 2;
+  for (let gap = 1; gap <= radius; gap++) {
+    const w = (radius + 1 - gap) ** 2;
     if (isMarkedOn(addDays(date, -gap))) p += w;
     if (isMarkedOn(addDays(date, gap))) p += w;
   }
@@ -130,16 +132,16 @@ export function payPeriodsCovering(
 /**
  * How much more bunched one person's marked shifts get when the days in `after` change to
  * marked (true) or unmarked (false): the whole proposed state against the current one. Every
- * pair touching a changed day lies within SPREAD_RADIUS of it; pairs away from them cancel.
+ * pair touching a changed day lies within `radius` of it; pairs away from them cancel.
  */
-export function spreadChange(markedNow: (date: string) => boolean, after: ReadonlyMap<string, boolean>): number {
+export function spreadChange(markedNow: (date: string) => boolean, after: ReadonlyMap<string, boolean>, radius: number): number {
   if (after.size === 0) return 0;
   const changed = [...after.keys()].sort();
-  const lo = addDays(changed[0], -SPREAD_RADIUS), hi = addDays(changed[changed.length - 1], SPREAD_RADIUS);
+  const lo = addDays(changed[0], -radius), hi = addDays(changed[changed.length - 1], radius);
   const markedAfter = (d: string) => (after.has(d) ? after.get(d)! : markedNow(d));
   const total = (marked: (d: string) => boolean): number => {
     let t = 0;
-    for (let d = lo; d <= hi; d = addDays(d, 1)) if (marked(d)) t += spreadPenalty(marked, d);
+    for (let d = lo; d <= hi; d = addDays(d, 1)) if (marked(d)) t += spreadPenalty(marked, d, radius);
     return t;
   };
   return total(markedAfter) - total(markedNow);

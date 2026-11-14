@@ -1,3 +1,4 @@
+import { readTuning } from "@/lib/scheduler-tuning";
 import { prisma } from "@/lib/prisma";
 import { getPayPeriods } from "@/lib/pay-periods-server";
 import { deriveEquityFactorCodes } from "@/lib/equity-factors";
@@ -109,6 +110,7 @@ export default async function Equity({ searchParams }: { searchParams: Promise<{
       durationHrsWeekend: o.durationHrsWeekend,
       durationHrsHoliday: o.durationHrsHoliday,
     })),
+    weekendStartDow: readTuning(schedPrefs).weekendStartDow, // card #215
   };
 
   const equityThresholds = {

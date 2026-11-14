@@ -50,7 +50,7 @@ describe("staffing rules follow the shift id, not the code", () => {
 
   it("the grid's day warning names the linked shift by its CURRENT code", () => {
     const shiftTypeMap = new Map([A, B, OFF].map((s) => [s.id, { ...s, maxPerDay: null }] as const));
-    const w = checkDayStaffing({
+    const w = checkDayStaffing({ weekendStartDow: 6,
       date: MON,
       staff: [staff("p1", "AB")],
       assignmentMap: new Map([[`p1:${MON}`, { shiftTypeId: "st-a", code: "st-b" }]]), // p1 works A (whose code is "st-b")

@@ -214,20 +214,20 @@ describe("checkDayStaffing", () => {
 
     it("no 'x/6 staffed' warning on an understaffed weekday or an empty holiday", () => {
       const aMap = makeAssignmentMap({ "p1:2025-05-12": { shiftTypeId: "st-or", code: "OR" } });
-      const weekday = checkDayStaffing({ date: "2025-05-12", staff, assignmentMap: aMap, shiftTypeMap: stMap, holidaySet, staffingMins: hidden });
+      const weekday = checkDayStaffing({ weekendStartDow: 6, date: "2025-05-12", staff, assignmentMap: aMap, shiftTypeMap: stMap, holidaySet, staffingMins: hidden });
       expect(weekday).toEqual([]);
-      const holiday = checkDayStaffing({ date: "2025-05-12", staff, assignmentMap: makeAssignmentMap({}), shiftTypeMap: stMap, holidaySet: new Set(["2025-05-12"]), staffingMins: hidden });
+      const holiday = checkDayStaffing({ weekendStartDow: 6, date: "2025-05-12", staff, assignmentMap: makeAssignmentMap({}), shiftTypeMap: stMap, holidaySet: new Set(["2025-05-12"]), staffingMins: hidden });
       expect(holiday).toEqual([]);
     });
 
     it("works without the old argument at all", () => {
-      const w = checkDayStaffing({ date: "2025-05-12", staff, assignmentMap: makeAssignmentMap({}), shiftTypeMap: stMap, holidaySet });
+      const w = checkDayStaffing({ weekendStartDow: 6, date: "2025-05-12", staff, assignmentMap: makeAssignmentMap({}), shiftTypeMap: stMap, holidaySet });
       expect(w).toEqual([]);
     });
 
     it("a Staffing Rule from Settings still warns on the same day", () => {
       const aMap = makeAssignmentMap({ "p1:2025-05-12": { shiftTypeId: "st-or", code: "OR" } });
-      const w = checkDayStaffing({
+      const w = checkDayStaffing({ weekendStartDow: 6,
         date: "2025-05-12", staff, assignmentMap: aMap, shiftTypeMap: stMap, holidaySet, staffingMins: hidden,
         staffingReqs: [{ shiftTypeId: "st-or", dayKey: "1", minCount: 2 }],
       });
@@ -241,7 +241,7 @@ describe("checkDayStaffing", () => {
       const aMap = makeAssignmentMap({
         "p1:2025-05-12": { shiftTypeId: "st-or", code: "OR" },
       });
-      const w = checkDayStaffing({
+      const w = checkDayStaffing({ weekendStartDow: 6,
         date: "2025-05-12", staff, assignmentMap: aMap,
         shiftTypeMap: stMap, holidaySet, staffingMins: [], staffingReqs: reqs,
       });
@@ -251,7 +251,7 @@ describe("checkDayStaffing", () => {
     it("uses shift-count type when actual is 0", () => {
       const reqs = [{ shiftTypeId: "st-or", dayKey: "1", minCount: 1 }];
       const aMap = makeAssignmentMap({});
-      const w = checkDayStaffing({
+      const w = checkDayStaffing({ weekendStartDow: 6,
         date: "2025-05-12", staff, assignmentMap: aMap,
         shiftTypeMap: stMap, holidaySet, staffingMins: [], staffingReqs: reqs,
       });
@@ -264,7 +264,7 @@ describe("checkDayStaffing", () => {
       const hSet = new Set(["2025-05-12"]);
       const reqs = [{ shiftTypeId: "st-or", dayKey: "holiday", minCount: 1 }];
       const aMap = makeAssignmentMap({});
-      const w = checkDayStaffing({
+      const w = checkDayStaffing({ weekendStartDow: 6,
         date: "2025-05-12", staff, assignmentMap: aMap,
         shiftTypeMap: stMap, holidaySet: hSet, staffingMins: [], staffingReqs: reqs,
       });

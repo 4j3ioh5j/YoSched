@@ -74,6 +74,7 @@ describe("assembleEquityModel — hours / weekend / override parity", () => {
     shiftTypes: SHIFT_TYPES,
     overrides: [{ staffId: "p1", shiftTypeId: "call", durationHrs: 30 }],
     holidays: [],
+    weekendStartDow: 6,
   });
 
   const p1 = () => model.data.find((d) => d.staffId === "p1")!;
@@ -126,6 +127,7 @@ describe("assembleEquityModel — staff mapping", () => {
       shiftTypes: SHIFT_TYPES,
       overrides: [],
       holidays: [],
+      weekendStartDow: 6,
     });
     const row = model.data[0];
     expect(row.name).toBe("Alice");
@@ -153,6 +155,7 @@ describe("computeStatsModel — full engine wiring", () => {
       shiftTypes: [{ id: "call", countsTowardFte: true, defaultHours: 24, defaultHoursWeekend: 24, defaultHoursHoliday: 24 }],
       desirabilityWeights: [],
       holidays: [],
+      weekendStartDow: 6,
       equityFactors: [],
       overrides: [],
     };
@@ -174,6 +177,7 @@ describe("computeStatsModel — full engine wiring", () => {
       shiftTypes: [],
       desirabilityWeights: [],
       holidays: [],
+      weekendStartDow: 6,
       equityFactors: [],
       overrides: [],
     };
@@ -190,6 +194,7 @@ describe("assembleEquityModel — off-shift handling", () => {
       shiftTypes: SHIFT_TYPES,
       overrides: [],
       holidays: [],
+      weekendStartDow: 6,
     });
     expect(model.data).toHaveLength(1);
     expect(model.data[0].shiftTally).toEqual({});
@@ -205,7 +210,7 @@ describe("assembleEquityModel — holiday hours", () => {
     { id: "work", countsTowardFte: true, defaultHours: 10, defaultHoursWeekend: 5, defaultHoursHoliday: 2 },
   ];
   // 2026-06-03 Wed (weekday), 2026-06-06 Sat (weekend).
-  function totalHours(date: string, holidays: string[]): number {
+  function totalHours(date: string, holidays: string[], weekendStartDow = 6): number {
     const model = assembleEquityModel({
       fairness: fairness([metric("p1", "AA", 1.0)]),
       staff: [{ id: "p1", name: "A", isAutoScheduled: true, ftePercentage: 1.0, employmentTypeId: "et-fte", employmentTypeName: "FTE" }],
@@ -213,6 +218,7 @@ describe("assembleEquityModel — holiday hours", () => {
       shiftTypes: HSHIFTS,
       overrides: [],
       holidays: holidays.map((d) => ({ date: d })),
+      weekendStartDow,
     });
     return model.data.find((d) => d.staffId === "p1")!.totalHours;
   }
@@ -222,6 +228,11 @@ describe("assembleEquityModel — holiday hours", () => {
   });
   it("uses weekend hours on a normal weekend", () => {
     expect(totalHours("2026-06-06", [])).toBe(5);
+  });
+  it("card #215: a Friday + Saturday weekend from Settings moves the weekend hours", () => {
+    expect(totalHours("2026-06-05", [], 5)).toBe(5); // Fri
+    expect(totalHours("2026-06-06", [], 5)).toBe(5); // Sat
+    expect(totalHours("2026-06-07", [], 5)).toBe(10); // Sun is a weekday now
   });
   it("uses holiday hours on a holiday weekday (holiday wins over weekday)", () => {
     expect(totalHours("2026-06-03", ["2026-06-03"])).toBe(2);

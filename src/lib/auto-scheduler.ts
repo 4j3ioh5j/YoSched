@@ -10,7 +10,8 @@ import { type HolidayPolicy, resolveHolidayShift } from "./holiday-policy";
 import { buildHolidayGroups, type HolidayRuleSpec, type HolidayGroup, type HolidayGroupSlot } from "./holiday-rules";
 import { couldWorkOn, excessLeaveDays, type LeavePolicy } from "./leave-policy";
 import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
-import { tallyBalances, sharesOf, spreadPenalty, spreadChange, SPREAD_RADIUS, addDays, type BalanceTally } from "./shift-balance";
+import { tallyBalances, sharesOf, spreadPenalty, spreadChange, addDays, type BalanceTally } from "./shift-balance";
+import { readTuning, isWeekendDate, weekendSecondDow, type SchedulerTuning } from "./scheduler-tuning";
 
 export type ScheduleStaff = {
   id: string;
@@ -184,6 +185,14 @@ type SchedulingPreferences = {
   sequentialOffWeight: number;
   threeDayWeekendWeight: number;
   fourDayWeekendWeight: number;
+  // Card #215: tuning numbers from Settings (src/lib/scheduler-tuning.ts). Read leniently: a
+  // missing or bad value is the column default, which is what the engine always used.
+  spreadRadiusDays?: SchedulerTuning["spreadRadiusDays"];
+  evenBandCalls?: SchedulerTuning["evenBandCalls"];
+  softRequestOffWeight?: SchedulerTuning["softRequestOffWeight"];
+  softAvoidFollowWeight?: SchedulerTuning["softAvoidFollowWeight"];
+  scarcePoolSize?: SchedulerTuning["scarcePoolSize"];
+  weekendStartDow?: SchedulerTuning["weekendStartDow"];
   pendingRequestMode?: PendingRequestMode; // how to treat PENDING requests; default "off"
   maxLeavePerDay?: number; // soft cap on staff away per day; 0/undefined = no cap (warn-only)
   requestConflictPolicy?: RequestConflictPolicy; // forced-request contention resolution; default "reconcile"
@@ -197,7 +206,9 @@ type SchedulingPreferences = {
 // Card #175: FTE-counted hours of one cell — the same math as the engine's
 // ppHoursForStaff (countsTowardFte, per-staff hour overrides, day type holiday >
 // weekend > weekday). Shared with request approval so both writers cap leave alike.
-export function countedHoursFn(input: Pick<AutoScheduleInput, "shiftTypes" | "staffOverrides" | "holidays">): (staffId: string, shiftTypeId: string, date: string) => number {
+// Card #215: the weekend comes from the same Settings value the engine reads.
+export function countedHoursFn(input: Pick<AutoScheduleInput, "shiftTypes" | "staffOverrides" | "holidays" | "schedulingPreferences">): (staffId: string, shiftTypeId: string, date: string) => number {
+  const weekendStart = readTuning(input.schedulingPreferences).weekendStartDow;
   const stById = new Map(input.shiftTypes.map((s) => [s.id, s] as const));
   const overrides = new Map<string, ShiftHourOverride>();
   for (const o of input.staffOverrides) overrides.set(`${o.staffId}:${o.shiftTypeId}`, resolveShiftHourOverride(o));
@@ -205,7 +216,7 @@ export function countedHoursFn(input: Pick<AutoScheduleInput, "shiftTypes" | "st
   return (staffId, shiftTypeId, date) => {
     const st = stById.get(shiftTypeId);
     if (!st?.countsTowardFte) return 0;
-    return getShiftHours(staffId, st, overrides, dayTypeOf(date, holidaySet));
+    return getShiftHours(staffId, st, overrides, dayTypeAt(date, holidaySet, weekendStart));
   };
 }
 
@@ -374,15 +385,11 @@ function getDow(dateStr: string): number {
   return new Date(dateStr + "T12:00:00").getDay();
 }
 
-function isWeekend(dateStr: string): boolean {
-  const d = getDow(dateStr);
-  return d === 0 || d === 6;
-}
-
-// Classify a date for hour math. Holiday wins over weekend.
-function dayTypeOf(dateStr: string, holidaySet: Set<string>): DayType {
+// Classify a date for hour math. Holiday wins over weekend. Card #215: the weekend is the
+// Settings value (its first day and the next), never fixed Sat/Sun.
+function dayTypeAt(dateStr: string, holidaySet: Set<string>, weekendStart: number): DayType {
   if (holidaySet.has(dateStr)) return "holiday";
-  return isWeekend(dateStr) ? "weekend" : "weekday";
+  return isWeekendDate(dateStr, weekendStart) ? "weekend" : "weekday";
 }
 
 // Hours a shift is worth for a staff on a given day type. A per-staff override
@@ -638,6 +645,13 @@ export function autoSchedule({
   holidayRules,
   holidayRuleContext,
 }: AutoScheduleInput): AutoScheduleResult {
+  // Card #215: the tuning numbers and the weekend, from Settings.
+  const tuning = readTuning(schedulingPreferences);
+  const weekendStart = tuning.weekendStartDow;
+  const weekendSecond = weekendSecondDow(weekendStart);
+  const isWeekend = (dateStr: string): boolean => isWeekendDate(dateStr, weekendStart);
+  const dayTypeOf = (dateStr: string, hs: Set<string>): DayType => dayTypeAt(dateStr, hs, weekendStart);
+  const spreadRadius = tuning.spreadRadiusDays;
   const isFrozen = (date: string): boolean => !!writableFrom && date < writableFrom;
   // Seeded final tiebreak helper (Slice 4b). seed 0/undefined ⇒ returns 0 for
   // every key, so all seeded comparisons are no-ops and the engine produces its
@@ -1008,7 +1022,7 @@ export function autoSchedule({
   /** How bunched a marked shift on `date` would be for the person (0 = nothing within two weeks). */
   function spreadLoad(staffId: string, date: string): number {
     if (spreadIds.size === 0) return 0;
-    return spreadPenalty((d) => spreadIds.has(cellShiftAt(staffId, d) ?? ""), date);
+    return spreadPenalty((d) => spreadIds.has(cellShiftAt(staffId, d) ?? ""), date, spreadRadius);
   }
 
   // Card #188: a staff card's Prefer eligibility rules rank, never gate — "eligible · Prefer"
@@ -1871,13 +1885,13 @@ export function autoSchedule({
     // approval re-solve spanning two months) are re-tallied from the current/proposed cells.
     let carried = carriedCache.get(st.id);
     if (!carried) {
-      carried = tallyBalances({ shiftTypeId: st.id, weekendPaired: st.weekendPaired, staffIds: activeIds, dates: carriedFixedDays, cellAt: slotCell(st, cellShiftAt), shareOn: (d) => shareOn(st, d) });
+      carried = tallyBalances({ shiftTypeId: st.id, weekendPaired: st.weekendPaired, weekendStartDow: weekendStart, staffIds: activeIds, dates: carriedFixedDays, cellAt: slotCell(st, cellShiftAt), shareOn: (d) => shareOn(st, d) });
       carriedCache.set(st.id, carried);
     }
     const live = carriedLiveDays.length > 0
-      ? tallyBalances({ shiftTypeId: st.id, weekendPaired: st.weekendPaired, staffIds: activeIds, dates: carriedLiveDays, cellAt: slotCell(st, cellAt), shareOn: (d) => shareOn(st, d) })
+      ? tallyBalances({ shiftTypeId: st.id, weekendPaired: st.weekendPaired, weekendStartDow: weekendStart, staffIds: activeIds, dates: carriedLiveDays, cellAt: slotCell(st, cellAt), shareOn: (d) => shareOn(st, d) })
       : null;
-    const run = tallyBalances({ shiftTypeId: st.id, weekendPaired: st.weekendPaired, staffIds: activeIds, dates: monthDays, cellAt: slotCell(st, cellAt), shareOn: (d) => shareOn(st, d) });
+    const run = tallyBalances({ shiftTypeId: st.id, weekendPaired: st.weekendPaired, weekendStartDow: weekendStart, staffIds: activeIds, dates: monthDays, cellAt: slotCell(st, cellAt), shareOn: (d) => shareOn(st, d) });
     const out: EvenBalance = { run: new Map(), carried: new Map() };
     for (const id of activeIds) {
       const r = run.get(id)!, c = carried.get(id)!, l = live?.get(id);
@@ -1925,7 +1939,7 @@ export function autoSchedule({
       byPerson.get(id)!.set(d, spreadIds.has(to ?? ""));
     }
     let delta = 0;
-    for (const [id, after] of byPerson) delta += spreadChange((d) => spreadIds.has(cellShiftAt(id, d) ?? ""), after);
+    for (const [id, after] of byPerson) delta += spreadChange((d) => spreadIds.has(cellShiftAt(id, d) ?? ""), after, spreadRadius);
     return delta;
   }
   const EPS = 1e-9;
@@ -2128,7 +2142,7 @@ export function autoSchedule({
       const staffId = k.slice(0, sep);
       const date = k.slice(sep + 1);
       if (!runCount.has(staffId) || !dateSet.has(date)) continue;
-      if (st.weekendPaired && getDow(date) === 0) {
+      if (st.weekendPaired && getDow(date) === weekendSecond) {
         const satCell = getCell(staffId, prevDate(date));
         if (satCell && satCell.code === st.code && !satCell.noCount) continue;
       }
@@ -2194,7 +2208,7 @@ export function autoSchedule({
       const bal = evenOn ? evenBalance(st) : null;
       const runBal = (p: ScheduleStaff): number => bal!.run.get(p.id) ?? 0;
       const minRun = evenOn ? Math.min(...pool.map(runBal)) : 0;
-      const inBand = (p: ScheduleStaff): boolean => runBal(p) < minRun + 1 - EPS;
+      const inBand = (p: ScheduleStaff): boolean => runBal(p) < minRun + tuning.evenBandCalls - EPS;
       const spreadOf = (p: ScheduleStaff): number => { const ds = datesFor(p); return ds ? ds.reduce((n, d) => n + spreadLoad(p.id, d), 0) : Infinity; };
       pool.sort((a, b) => {
         if (date) {
@@ -2285,7 +2299,7 @@ export function autoSchedule({
     const isClaimed = (d: string): boolean => claimedSlots.has(slotKey(st.id, d));
 
     if (st.weekendPaired) {
-      const saturdayDates = dates.filter((d) => getDow(d) === 6);
+      const saturdayDates = dates.filter((d) => getDow(d) === weekendStart); // card #215: the weekend's first day
 
       for (const sat of saturdayDates) {
         const sun = nextDate(sat);
@@ -2437,8 +2451,8 @@ export function autoSchedule({
               // Card #178: keep away from the person's MARKED shifts (this one included), also
               // just across the pay-period edges.
               // Card #203: two weeks either side, history and next month's cells included.
-              const stop = addDays(pp.endDate, SPREAD_RADIUS);
-              for (let d = addDays(pp.startDate, -SPREAD_RADIUS); d <= stop; d = nextDate(d)) {
+              const stop = addDays(pp.endDate, spreadRadius);
+              for (let d = addDays(pp.startDate, -spreadRadius); d <= stop; d = nextDate(d)) {
                 if (spreadIds.has(cellShiftAt(chosen.id, d) ?? "")) anchorDates.push(d);
               }
             } else {
@@ -2467,7 +2481,7 @@ export function autoSchedule({
               // from each other (spreadPenalty), then fewer avoided pairs, then the old min-gap
               // pull toward the pay period's middle, then the seed.
               const open = provAvailDates.filter((d) => !isAtMaximum(chosen, st, d));
-              const pairW = (a: string, b: string): number => { const g = daysBetween(a, b); return g >= 1 && g <= SPREAD_RADIUS ? (SPREAD_RADIUS + 1 - g) ** 2 : 0; };
+              const pairW = (a: string, b: string): number => { const g = daysBetween(a, b); return g >= 1 && g <= spreadRadius ? (spreadRadius + 1 - g) ** 2 : 0; };
               const minGap = (combo: string[]): number => {
                 let m = Infinity;
                 for (const d of combo) for (const o of [...anchorDates, ...combo]) if (o !== d) m = Math.min(m, daysBetween(d, o));
@@ -2934,10 +2948,10 @@ export function autoSchedule({
     // day into the chosen off-day set. Comparable to the weekend-clustering weights
     // so it can tip day-off selection, but it only acts within the slack the FTE
     // target leaves — it never creates a day off that hours don't allow.
-    const SOFT_REQUEST_OFF_WEIGHT = 5;
+    const SOFT_REQUEST_OFF_WEIGHT = tuning.softRequestOffWeight; // card #215: Settings
     // Card #177: the cost of one soft-avoided pair in a fill combination — the same scale as a
     // soft request, so it only steers within the slack the hours target leaves.
-    const SOFT_AVOID_FOLLOW_WEIGHT = 5;
+    const SOFT_AVOID_FOLLOW_WEIGHT = tuning.softAvoidFollowWeight; // card #215: Settings
 
     function softOffBonus(staffId: string, offDays: Set<string>): number {
       if (requestList.length === 0) return 0;
@@ -3320,7 +3334,7 @@ export function autoSchedule({
     const auditPPs = payPeriods.filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate));
     // Eligible-pool size per shift code among active auto-scheduled staff. A tiny
     // pool means coverage for that shift is structurally hard to balance.
-    const SCARCE_POOL = 3;
+    const SCARCE_POOL = tuning.scarcePoolSize; // card #215: Settings
     const poolByCode = new Map<string, number>();
     for (const st of shiftTypes) {
       let n = 0;

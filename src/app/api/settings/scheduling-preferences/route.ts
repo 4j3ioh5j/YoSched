@@ -1,3 +1,4 @@
+import { validateTuningBody, tuningData } from "@/lib/scheduler-tuning";
 import { isLeavePolicy, LEAVE_POLICIES } from "@/lib/leave-policy";
 import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
@@ -77,6 +78,10 @@ export async function PUT(req: NextRequest) {
     }
     shadeData[k] = v;
   }
+  // Card #215: scheduler tuning numbers — strict on write (one shared check), never coerced.
+  const tuningErr = validateTuningBody(body);
+  if (tuningErr) return NextResponse.json({ error: tuningErr }, { status: 400 });
+  const tuningUpdate = tuningData(body);
   if (leaveHoursPolicy !== undefined && !isLeavePolicy(leaveHoursPolicy)) {
     return NextResponse.json({ error: `leaveHoursPolicy must be one of ${LEAVE_POLICIES.join(", ")}` }, { status: 400 });
   }
@@ -138,6 +143,7 @@ export async function PUT(req: NextRequest) {
       ...balanceFromData,
       ...holidayShiftData,
       ...shadeData,
+      ...tuningUpdate,
       ...(columnOrder !== undefined && { staffColumnOrder: columnOrder === null ? Prisma.DbNull : columnOrder }),
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),
@@ -160,6 +166,7 @@ export async function PUT(req: NextRequest) {
       ...balanceFromData,
       ...holidayShiftData,
       ...shadeData,
+      ...tuningUpdate,
       ...(columnOrder != null && { staffColumnOrder: columnOrder }),
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),

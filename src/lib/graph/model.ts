@@ -9,6 +9,7 @@
  * unit-tested unit — the parity gate required by the revamp plan (slice 1b). Isomorphic:
  * no Prisma/Date-object dependency, so a later slice can run it client-side.
  */
+import { isWeekendDow } from "../scheduler-tuning";
 import { computeFairness } from "../fairness";
 import type { FairnessSummary, EquityFactor } from "../fairness";
 
@@ -104,8 +105,10 @@ export function assembleEquityModel(input: {
   shiftTypes: AssembleShiftType[];
   overrides: AssembleOverride[];
   holidays: Array<{ date: string }>;
+  /** Card #215: the weekend's first day from Settings (0 = Sunday … 6 = Saturday). */
+  weekendStartDow: number;
 }): EquityModel {
-  const { fairness, staff, assignments, shiftTypes, overrides, holidays } = input;
+  const { fairness, staff, assignments, shiftTypes, overrides, holidays, weekendStartDow } = input;
   const holidaySet = new Set(holidays.map((h) => h.date));
 
   // Per-staff shift-code tallies. Off shifts are skipped, but the staff
@@ -139,7 +142,7 @@ export function assembleEquityModel(input: {
     const dow = new Date(a.date + "T12:00:00").getDay();
     const dayType: "weekday" | "weekend" | "holiday" = holidaySet.has(a.date)
       ? "holiday"
-      : dow === 0 || dow === 6
+      : isWeekendDow(dow, weekendStartDow)
         ? "weekend"
         : "weekday";
     const ov = overrideMap.get(`${a.staffId}:${a.shiftTypeId}`);
@@ -259,6 +262,8 @@ export type RawStatsData = {
   holidays: Array<{ date: string }>;
   equityFactors: EquityFactor[];
   overrides: AssembleOverride[];
+  /** Card #215: the weekend's first day from Settings. */
+  weekendStartDow: number;
 };
 
 export function computeStatsModel(raw: RawStatsData): EquityModel {
@@ -310,5 +315,6 @@ export function computeStatsModel(raw: RawStatsData): EquityModel {
     shiftTypes: raw.shiftTypes,
     overrides: raw.overrides,
     holidays: raw.holidays,
+    weekendStartDow: raw.weekendStartDow,
   });
 }

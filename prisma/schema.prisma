@@ -398,6 +398,13 @@ model SchedulingPreferences {
   screenHolidayColor      String?  @default("#4A3410") // card #209: holiday row tint on the on-screen grid (null = none)
   holidayPolicy           String   @default("entitlement") // who is owed HOL on a holiday: "entitlement" (scheduled-workday rule, counts toward PP target) | "fill" (legacy hours-fill only) | "none" — see src/lib/holiday-policy.ts
   leaveHoursPolicy        String   @default("up-to-target") // card #175: requested leave charged "up-to-target" (only days they'd work, never past the PP target; the rest become X) | "always" — see src/lib/leave-policy.ts
+  // Card #215: scheduler tuning numbers (src/lib/scheduler-tuning.ts holds the limits; defaults = the values the engine always used)
+  spreadRadiusDays        Int      @default(14) // "spread out" reach: days either side that count as close
+  evenBandCalls           Float    @default(1)  // "keep counts even": calls ahead of the lowest before a person is passed over
+  softRequestOffWeight    Float    @default(5)  // pull of a soft "prefer off" request on the chosen days off
+  softAvoidFollowWeight   Float    @default(5)  // cost of one soft "avoid B after A" pair in fill choices
+  scarcePoolSize          Int      @default(3)  // a shift at most this many people can work marks an hours gap as structural
+  weekendStartDow         Int      @default(6)  // the weekend's first day (0 = Sunday … 6 = Saturday); the weekend is it and the next day
   activationWorkedDefault  String  @default("eligible")     // card #75: turning a shift's Auto-schedule on — people who have worked it start "eligible" | "not_eligible" | "keep" (see src/lib/shift-activation.ts)
   activationNeverDefault   String  @default("not_eligible") // card #75: … everyone else
   activationNewHireDefault String  @default("keep")         // card #75: employment-type defaults for new hires: "keep" | "match" | "none" | "all"

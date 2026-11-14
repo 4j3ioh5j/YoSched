@@ -1,3 +1,4 @@
+import { readTuning } from "@/lib/scheduler-tuning";
 import { prisma } from "@/lib/prisma";
 import { loadHolidayRules, holidayRulesVersion } from "@/lib/holiday-rules-db";
 import { deriveEquityFactorCodes } from "@/lib/equity-factors";
@@ -87,6 +88,7 @@ export default async function Settings() {
     activationWorkedDefault: parseActivationWorked(schedulingPrefsRow?.activationWorkedDefault),
     activationNeverDefault: parseActivationNever(schedulingPrefsRow?.activationNeverDefault),
     activationNewHireDefault: parseActivationNewHire(schedulingPrefsRow?.activationNewHireDefault),
+    ...readTuning(schedulingPrefsRow), // card #215: scheduler tuning (lenient read)
   };
 
   return (
