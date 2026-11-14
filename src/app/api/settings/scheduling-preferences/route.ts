@@ -7,7 +7,7 @@ import { isValidDateFormat } from "@/lib/date-format";
 import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES, isApprovalConflictPolicy, APPROVAL_CONFLICT_POLICIES, validateOffStrategyOrder } from "@/lib/schedule-requests";
 import { isLiveScope, LIVE_SCOPES } from "@/lib/live-scope";
 import { isShiftShareBasis, SHIFT_SHARE_BASES } from "@/lib/shift-share";
-import { isHolidayPolicy, HOLIDAY_POLICIES } from "@/lib/holiday-policy";
+import { isHolidayPolicy, HOLIDAY_POLICIES, isHolidayCreditShift } from "@/lib/holiday-policy";
 import { validateStaffOrderCriteria } from "@/lib/staff-order";
 import { isActivationGroupDefault, isActivationNewHireDefault, ACTIVATION_GROUP_DEFAULTS, ACTIVATION_NEW_HIRE_DEFAULTS } from "@/lib/shift-activation";
 
@@ -27,7 +27,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId } = body;
   // Card #203: "Count shifts from" — a YYYY-MM-DD date, or null to clear. Strictly validated.
   const balanceFromValid = shiftBalanceFrom === null || (typeof shiftBalanceFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(shiftBalanceFrom) && !Number.isNaN(Date.parse(shiftBalanceFrom + "T00:00:00Z")) && new Date(shiftBalanceFrom + "T00:00:00Z").toISOString().startsWith(shiftBalanceFrom));
   if (shiftBalanceFrom !== undefined && !balanceFromValid) {
@@ -55,6 +55,18 @@ export async function PUT(req: NextRequest) {
   if (holidayPolicy !== undefined && !isHolidayPolicy(holidayPolicy)) {
     return NextResponse.json({ error: `holidayPolicy must be one of ${HOLIDAY_POLICIES.join(", ")}` }, { status: 400 });
   }
+  // Card #207: the shift credited on a holiday — null clears it, otherwise the id of an
+  // existing leave shift that counts toward hours (entitlement bypasses eligibility and
+  // caps, so a working shift must never be chosen). The engine re-checks at run time.
+  if (holidayShiftId !== undefined && holidayShiftId !== null) {
+    const st = typeof holidayShiftId === "string"
+      ? await prisma.shiftType.findUnique({ where: { id: holidayShiftId }, select: { countsTowardFte: true, isLeave: true, isOffShift: true } })
+      : null;
+    if (!st || !isHolidayCreditShift(st)) {
+      return NextResponse.json({ error: "holidayShiftId must be null or a leave shift that counts toward hours" }, { status: 400 });
+    }
+  }
+  const holidayShiftData = holidayShiftId === undefined ? {} : { holidayShiftId: holidayShiftId as string | null };
   if (leaveHoursPolicy !== undefined && !isLeavePolicy(leaveHoursPolicy)) {
     return NextResponse.json({ error: `leaveHoursPolicy must be one of ${LEAVE_POLICIES.join(", ")}` }, { status: 400 });
   }
@@ -114,6 +126,7 @@ export async function PUT(req: NextRequest) {
       ...(isHolidayPolicy(holidayPolicy) && { holidayPolicy }),
       ...(isLeavePolicy(leaveHoursPolicy) && { leaveHoursPolicy }),
       ...balanceFromData,
+      ...holidayShiftData,
       ...(columnOrder !== undefined && { staffColumnOrder: columnOrder === null ? Prisma.DbNull : columnOrder }),
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),
@@ -134,6 +147,7 @@ export async function PUT(req: NextRequest) {
       ...(isHolidayPolicy(holidayPolicy) && { holidayPolicy }),
       ...(isLeavePolicy(leaveHoursPolicy) && { leaveHoursPolicy }),
       ...balanceFromData,
+      ...holidayShiftData,
       ...(columnOrder != null && { staffColumnOrder: columnOrder }),
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),

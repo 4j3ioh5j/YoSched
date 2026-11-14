@@ -59,6 +59,7 @@ const OFF = makeShift("st-off", "X", { isOffShift: true, countsTowardFte: false,
 const OR = makeShift("st-or", "OR", { schedulePriority: 1, isFillShift: true });
 
 const defaultPrefs = {
+  holidayShiftId: "st-hol", // card #207: the holiday shift is chosen by id
   prefer3DayWeekends: false,
   prefer4DayWeekends: false,
   preferSequentialOff: false,
@@ -3071,6 +3072,75 @@ describe("holiday entitlement policy", () => {
     const persisted = runSchedule({ ...base, existingAssignments: [{ staffId: "p2", date: WED, shiftTypeId: "st-hol", code: "HOL", isLocked: false, source: "auto" }] });
     expect(persisted.warnings.some((w) => w.includes("soft leave limit"))).toBe(false);
     expect(persisted.suggestions.filter((s) => s.code === "HOL")).toEqual([]); // kept, not re-placed
+  });
+
+  // ─── Card #207: the holiday shift is the one chosen in Settings, by id ───
+  describe("holiday shift chosen by id (card #207)", () => {
+    const HOLX = makeShift("st-hol", "HOLX", { name: "Renamed holiday", isLeave: true, defaultHours: 8, defaultHoursHoliday: 8, autoSchedulable: false });
+    const base = (extra: Record<string, unknown> = {}) => ({
+      dates: WEEK, staff: [makeStaff("p1", "AB")], shiftTypes: [OR, HOLX, OFF],
+      payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 40 }],
+      holidays: [{ date: WED }], ...extra,
+    });
+    const noShiftWarning = (r: AutoScheduleResult) => r.warnings.some((w) => w.includes("No holiday shift is chosen"));
+
+    it("renamed shift (code HOLX) is still granted under entitlement because it is linked by id", () => {
+      const r = runSchedule(base({ schedulingPreferences: prefs("entitlement") }));
+      expect(has(r, "p1", WED, "HOLX")).toBe(true);
+      expect(noShiftWarning(r)).toBe(false);
+    });
+
+    it("renamed shift is used by the legacy fill policy too", () => {
+      const r = runSchedule(base({ schedulingPreferences: prefs("fill") }));
+      expect(has(r, "p1", WED, "HOLX")).toBe(true);
+    });
+
+    it("a shift coded HOL that is not the chosen one is never placed", () => {
+      const other = makeShift("st-other", "HOL", { isLeave: true, defaultHours: 8, defaultHoursHoliday: 8, autoSchedulable: false });
+      const r = runSchedule(base({ shiftTypes: [OR, HOLX, other, OFF], schedulingPreferences: prefs("entitlement") }));
+      expect(has(r, "p1", WED, "HOL")).toBe(false);
+      expect(has(r, "p1", WED, "HOLX")).toBe(true);
+    });
+
+    it("no shift chosen: nothing placed, and a warning says so", () => {
+      const r = runSchedule(base({ schedulingPreferences: prefs("entitlement", { holidayShiftId: null }) }));
+      expect(r.suggestions.filter((s) => s.shiftTypeId === "st-hol")).toEqual([]);
+      expect(noShiftWarning(r)).toBe(true);
+      // Absent (an older server's inputs) reads the same as unset.
+      const absent = runSchedule(base({ schedulingPreferences: { ...prefs("entitlement"), holidayShiftId: undefined } }));
+      expect(absent.suggestions.filter((s) => s.shiftTypeId === "st-hol")).toEqual([]);
+      expect(noShiftWarning(absent)).toBe(true);
+    });
+
+    it("no warning under policy none, nor when the run has no holiday", () => {
+      expect(noShiftWarning(runSchedule(base({ schedulingPreferences: prefs("none", { holidayShiftId: null }) })))).toBe(false);
+      expect(noShiftWarning(runSchedule(base({ holidays: [], schedulingPreferences: prefs("entitlement", { holidayShiftId: null }) })))).toBe(false);
+    });
+
+    it("a chosen shift later edited into a working shift is ignored: never placed past eligibility or the daily max", () => {
+      // ORC-like working shift, max 1 per day, nobody eligible. Entitlement bypasses both
+      // checks, so it must refuse the shift rather than hand it to everyone.
+      const WORK = makeShift("st-hol", "ORC", { defaultHours: 16, defaultHoursHoliday: 16, maxPerDay: 1, autoSchedulable: false });
+      const staff = [makeStaff("p1", "AB", { eligibleShiftTypeIds: ["st-or", "st-off"] }), makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-off"] })];
+      const r = runSchedule(base({ staff, shiftTypes: [OR, WORK, OFF], schedulingPreferences: prefs("entitlement") }));
+      expect(r.suggestions.filter((s) => s.shiftTypeId === "st-hol" && s.date === WED)).toEqual([]);
+      expect(noShiftWarning(r)).toBe(true);
+    });
+
+    it("soft leave cap leaves out the chosen shift by id — under every policy, fresh or persisted — and still counts other leave", () => {
+      for (const policy of ["entitlement", "fill", "none"] as const) {
+        const inp = {
+          dates: WEEK, staff: [makeStaff("p1", "AB"), makeStaff("p2", "CD")], shiftTypes: [OR, AL, HOLX, OFF], holidays: [{ date: WED }],
+          schedulingPreferences: prefs(policy, { maxLeavePerDay: 1 }),
+          scheduleRequests: [req({ staffId: "p1", startDate: WED, endDate: WED, kind: "LEAVE", leaveShiftTypeId: "st-al" })],
+          existingAssignments: [{ staffId: "p2", date: WED, shiftTypeId: "st-hol", code: "HOLX", isLocked: false, source: "auto" as const }],
+        };
+        expect(runSchedule(inp).warnings.some((w) => w.includes("soft leave limit")), policy).toBe(false);
+        // The same persisted cell as plain leave (AL) does count: the cap still works.
+        const al = { ...inp, existingAssignments: [{ ...inp.existingAssignments[0], shiftTypeId: "st-al", code: "AL" }] };
+        expect(runSchedule(al).warnings.some((w) => w.includes("soft leave limit")), policy).toBe(true);
+      }
+    });
   });
 
   describe("request reconciliation on a holiday", () => {

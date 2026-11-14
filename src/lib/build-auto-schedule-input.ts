@@ -446,6 +446,7 @@ export async function buildAutoScheduleInput(
       requestConflictPolicy: parseRequestConflictPolicy(schedulingPrefsRow?.requestConflictPolicy),
       shiftShareBasis: parseShiftShareBasis(schedulingPrefsRow?.shiftShareBasis),
       holidayPolicy: parseHolidayPolicy(schedulingPrefsRow?.holidayPolicy),
+      holidayShiftId: schedulingPrefsRow?.holidayShiftId ?? null, // card #207: by id, never by code
       leaveHoursPolicy: parseLeavePolicy(schedulingPrefsRow?.leaveHoursPolicy),
       shiftBalanceFrom: balanceFrom,
     },

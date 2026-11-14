@@ -71,6 +71,7 @@ export default async function Settings() {
     defaultLiveScope: parseLiveScope(schedulingPrefsRow?.defaultLiveScope),
     shiftShareBasis: parseShiftShareBasis(schedulingPrefsRow?.shiftShareBasis),
     holidayPolicy: parseHolidayPolicy(schedulingPrefsRow?.holidayPolicy),
+    holidayShiftId: schedulingPrefsRow?.holidayShiftId ?? null,
     leaveHoursPolicy: parseLeavePolicy(schedulingPrefsRow?.leaveHoursPolicy),
     shiftBalanceFrom: schedulingPrefsRow?.shiftBalanceFrom?.toISOString().split("T")[0] ?? null,
     payPeriodAnchor: schedulingPrefsRow?.payPeriodAnchor?.toISOString().split("T")[0] ?? null,

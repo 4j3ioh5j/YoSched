@@ -220,7 +220,7 @@ describe("coverage repair guarantees", () => {
       schedulingPreferences: {
         prefer3DayWeekends: false, prefer4DayWeekends: false, preferSequentialOff: false,
         sequentialOffWeight: 1, threeDayWeekendWeight: 2, fourDayWeekendWeight: 3,
-        pendingRequestMode: "full", requestConflictPolicy: "reconcile", holidayPolicy: "entitlement",
+        pendingRequestMode: "full", requestConflictPolicy: "reconcile", holidayPolicy: "entitlement", holidayShiftId: "st-hol",
       },
       equityFactors: [],
       followRules: [{ sourceShiftId: "st-orc", allowedShiftId: null, allowOffShifts: true, mode: "allow" }],

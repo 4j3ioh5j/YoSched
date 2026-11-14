@@ -12,7 +12,7 @@ import { EQUITY_FACTORS_SAVE_URL, buildEquityFactorsSave, equitySaveErrorMessage
 import { COUNT_COLUMNS_SAVE_URL, buildCountColumnsSave, countColumnsSaveErrorMessage } from "@/lib/count-columns";
 import { PRINT_COLUMN_RULES_SAVE_URL, PRINT_AGGREGATE_COLUMNS_SAVE_URL, buildConditionsSave, printSaveErrorMessage } from "@/lib/print-conditions";
 import { SHIFT_SHARE_BASES, type ShiftShareBasis } from "@/lib/shift-share";
-import { HOLIDAY_POLICIES, type HolidayPolicy } from "@/lib/holiday-policy";
+import { HOLIDAY_POLICIES, type HolidayPolicy, isHolidayCreditShift } from "@/lib/holiday-policy";
 import { LEAVE_POLICIES, type LeavePolicy } from "@/lib/leave-policy";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
 import { HOURS_POLICIES, HOURS_POLICY_KEYS, parseHoursPolicy, isHoursPolicyKey, type HoursPolicy } from "@/lib/autogen-hours-policy";
@@ -100,6 +100,7 @@ type SchedulingPrefs = {
   defaultLiveScope: LiveScope;
   shiftShareBasis: ShiftShareBasis;
   holidayPolicy: HolidayPolicy;
+  holidayShiftId: string | null; // card #207: shift credited on a holiday, by id
   leaveHoursPolicy: LeavePolicy;
   shiftBalanceFrom?: string | null;
   payPeriodAnchor: string | null;
@@ -3244,6 +3245,27 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
     }
   }
 
+  // Card #207: which shift is credited on a holiday (by id).
+  const [holidayShiftStatus, setHolidayShiftStatus] = useState<SaveStatus>("idle");
+  async function saveHolidayShift(value: string | null) {
+    const prev = prefs.holidayShiftId;
+    setPrefs((p) => ({ ...p, holidayShiftId: value }));
+    setHolidayShiftStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ holidayShiftId: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setHolidayShiftStatus("saved");
+      setTimeout(() => setHolidayShiftStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, holidayShiftId: prev }));
+      setHolidayShiftStatus("error");
+    }
+  }
+
   // Card #175: how requested leave is charged.
   const [leaveStatus, setLeaveStatus] = useState<SaveStatus>("idle");
   async function saveLeavePolicy(value: LeavePolicy) {
@@ -3270,9 +3292,9 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
   };
 
   const HOLIDAY_LABELS: Record<HolidayPolicy, { label: string; hint: string }> = {
-    entitlement: { label: "Scheduled workday", hint: "Anyone normally scheduled on the holiday's weekday gets HOL; it counts toward pay-period hours and replaces a work day. Staff working the holiday keep their shift" },
-    fill: { label: "Hours fill only", hint: "HOL only when the hours fill happens to land on the holiday; staff already at target get X" },
-    none: { label: "None", hint: "The auto-scheduler never places HOL; a holiday is a plain day off" },
+    entitlement: { label: "Scheduled workday", hint: "Anyone normally scheduled on the holiday's weekday who is not working gets the holiday shift on that day; it counts toward pay-period hours and replaces a work day. Staff working the holiday keep their shift" },
+    fill: { label: "Hours fill only", hint: "The holiday shift only when the hours fill happens to land on the holiday; staff already at target get X" },
+    none: { label: "None", hint: "The auto-scheduler never places the holiday shift; a holiday is a plain day off" },
   };
 
   const SHARE_LABELS: Record<ShiftShareBasis, { label: string; hint: string }> = {
@@ -3515,9 +3537,9 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
         </div>
 
         <div className="pt-2 border-t border-slate-700/50">
-          <div className="text-sm font-medium text-slate-200">Holiday pay (HOL)</div>
+          <div className="text-sm font-medium text-slate-200">Holidays</div>
           <div className="text-xs text-slate-400">
-            Who the auto-scheduler gives HOL on a holiday. Approved leave, manual entries and work shifts already on the holiday are never replaced; staff with no pay-period target (fee basis) get nothing. Hours per HOL come from the HOL shift type&apos;s holiday hours.
+            On a date in the Holidays list, who the auto-scheduler gives the holiday shift. Approved leave, manual entries and work shifts already on the holiday are never replaced; staff with no pay-period target (fee basis) get nothing. Its hours come from the holiday shift&apos;s holiday hours.
             {holidayStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
             {holidayStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
             {holidayStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
@@ -3541,6 +3563,27 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
                 <span className="text-[11px] text-slate-500 mt-0.5">{HOLIDAY_LABELS[policy].hint}</span>
               </button>
             ))}
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <label htmlFor="holiday-shift" className="text-xs text-slate-300">Shift credited on holidays</label>
+            <select
+              id="holiday-shift"
+              value={prefs.holidayShiftId ?? ""}
+              disabled={!canEdit}
+              onChange={(e) => canEdit && saveHolidayShift(e.target.value === "" ? null : e.target.value)}
+              className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-200 disabled:opacity-60"
+            >
+              <option value="">None</option>
+              {shiftTypes.filter(isHolidayCreditShift).map((st) => (
+                <option key={st.id} value={st.id}>{st.code} — {st.name}</option>
+              ))}
+              {prefs.holidayShiftId && !shiftTypes.some((st) => st.id === prefs.holidayShiftId && isHolidayCreditShift(st)) && (
+                <option value={prefs.holidayShiftId}>(no longer a leave shift that counts toward hours)</option>
+              )}
+            </select>
+            {holidayShiftStatus === "saving" && <span className="text-xs text-slate-500">Saving…</span>}
+            {holidayShiftStatus === "saved" && <span className="text-xs text-emerald-400">Saved</span>}
+            {holidayShiftStatus === "error" && <span className="text-xs text-rose-400">Failed</span>}
           </div>
         </div>
 

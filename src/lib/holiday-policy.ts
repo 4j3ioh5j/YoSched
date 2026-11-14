@@ -27,3 +27,30 @@ export function isHolidayPolicy(v: unknown): v is HolidayPolicy {
 export function parseHolidayPolicy(v: unknown): HolidayPolicy {
   return isHolidayPolicy(v) ? v : DEFAULT_HOLIDAY_POLICY;
 }
+
+// Card #207: the shift credited on a holiday is chosen in Settings and linked by id
+// (SchedulingPreferences.holidayShiftId), never found by its code. Entitlement places
+// it WITHOUT eligibility or staffing caps because it is leave credit, so only a leave
+// shift that counts toward the hours target may be chosen. One predicate for the
+// Settings list, the API validation and the engine lookup.
+export function isHolidayCreditShift(st: { countsTowardFte: boolean; isLeave: boolean; isOffShift: boolean }): boolean {
+  return st.countsTowardFte && st.isLeave && !st.isOffShift;
+}
+
+/** The configured holiday shift, or null when unset, missing or no longer a valid choice. */
+export function resolveHolidayShift<T extends { id: string; countsTowardFte: boolean; isLeave: boolean; isOffShift: boolean }>(
+  shiftTypes: readonly T[],
+  holidayShiftId: string | null | undefined,
+): T | null {
+  if (!holidayShiftId) return null;
+  return shiftTypes.find((st) => st.id === holidayShiftId && isHolidayCreditShift(st)) ?? null;
+}
+
+/** Print shading colour for holiday date cells: the chosen holiday shift's print background. */
+export function holidayPrintBgFor(
+  shiftTypes: readonly { id: string; printBackgroundColor?: string | null }[],
+  holidayShiftId: string | null | undefined,
+): string | null {
+  if (!holidayShiftId) return null;
+  return shiftTypes.find((st) => st.id === holidayShiftId)?.printBackgroundColor ?? null;
+}

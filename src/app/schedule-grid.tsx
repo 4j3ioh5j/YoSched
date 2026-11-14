@@ -10,6 +10,7 @@ import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForScopeWithExplicit, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, DEFAULT_LIVE_SCOPE, type LiveScope } from "@/lib/live-scope";
+import { holidayPrintBgFor } from "@/lib/holiday-policy";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { liveBundleProblem } from "@/lib/live-bundle";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
@@ -253,6 +254,7 @@ type Props = {
   printAggregateColumns?: AggregateColumn[];
   dateFormat?: string;
   defaultLiveScope?: LiveScope; // dept default scope for auto-generate edits (#248)
+  holidayShiftId?: string | null; // card #207: the shift credited on a holiday (by id); its print colour shades holidays
   currentVersions?: CurrentVersionMeta[];
   scheduleRequests?: GridRequest[];
   mutedAlertKeys?: string[]; // alert keys muted by any login (shared, single-tenant)
@@ -456,6 +458,7 @@ export function ScheduleGrid({
   printAggregateColumns = [],
   dateFormat: dateFormatProp,
   defaultLiveScope = DEFAULT_LIVE_SCOPE,
+  holidayShiftId = null,
   currentVersions = [],
   scheduleRequests = [],
   mutedAlertKeys = [],
@@ -1035,12 +1038,12 @@ export function ScheduleGrid({
     return map;
   }, [shiftTypes]);
 
-  // The HOL shift's print background color shades the date cell of every holiday on the
-  // PRINTED schedule (replaces the old asterisk marker). Driven by the HOL shift's
-  // "Print background" setting, so clearing it removes the shading; null → no shading.
+  // The holiday shift's print background color shades the date cell of every holiday on the
+  // PRINTED schedule. Card #207: the holiday shift is the one chosen in Settings (by id),
+  // never found by its code; none chosen or no print colour → no shading.
   const holidayPrintBg = useMemo(
-    () => shiftTypes.find((st) => st.code === "HOL")?.printBackgroundColor ?? null,
-    [shiftTypes],
+    () => holidayPrintBgFor(shiftTypes, holidayShiftId),
+    [shiftTypes, holidayShiftId],
   );
 
   // Request chrome (boxed border + bare letters + corner badge) surfaces the

@@ -102,6 +102,7 @@ model ShiftType {
   standingCommitments StandingCommitment[]
   eligibleStaff            StaffEligibleShift[]
   defaultForEmploymentTypes    EmploymentTypeDefaultShift[]
+  holidayShiftFor      SchedulingPreferences[] @relation("holidayShift")
   followRulesAsSource  ShiftFollowRule[] @relation("followRuleSource")
   followRulesAsAllowed ShiftFollowRule[] @relation("followRuleAllowed")
   requiredFollowerAsSource   RequiredFollower[] @relation("requiredFollowerSource")
@@ -344,6 +345,8 @@ model SchedulingPreferences {
   staffColumnOrder        Json?    // ordered criteria stack for schedule column order, [{key, dir?}] (see src/lib/staff-order.ts); null = default (employmentType → ftePercentage desc → alphabetical)
   shiftBalanceFrom        DateTime? @db.Date // card #203: first day "Keep counts even across months" counts (null = each run on its own)
   shiftShareBasis         String   @default("fte") // auto-scheduler split of a scheduled shift's slots across eligible staff: "fte" (proportional to FTE) | "head" (equal per person) — see src/lib/shift-share.ts
+  holidayShiftId          String?  // card #207: the shift credited on a holiday (leave, counts toward FTE); linked by id, never by code. null = none chosen
+  holidayShift            ShiftType? @relation("holidayShift", fields: [holidayShiftId], references: [id], onDelete: SetNull)
   holidayPolicy           String   @default("entitlement") // who is owed HOL on a holiday: "entitlement" (scheduled-workday rule, counts toward PP target) | "fill" (legacy hours-fill only) | "none" — see src/lib/holiday-policy.ts
   leaveHoursPolicy        String   @default("up-to-target") // card #175: requested leave charged "up-to-target" (only days they'd work, never past the PP target; the rest become X) | "always" — see src/lib/leave-policy.ts
   activationWorkedDefault  String  @default("eligible")     // card #75: turning a shift's Auto-schedule on — people who have worked it start "eligible" | "not_eligible" | "keep" (see src/lib/shift-activation.ts)

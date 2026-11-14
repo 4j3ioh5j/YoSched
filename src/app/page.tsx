@@ -303,6 +303,7 @@ export default async function Home() {
         }))}
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
         defaultLiveScope={parseLiveScope(schedPrefs?.defaultLiveScope)}
+        holidayShiftId={schedPrefs?.holidayShiftId ?? null}
         currentVersions={currentVersions.map((v) => ({
           year: v.year,
           month: v.month,

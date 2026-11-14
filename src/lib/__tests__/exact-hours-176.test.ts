@@ -41,7 +41,7 @@ function input(o: Partial<AutoScheduleInput> = {}, prefs: Partial<AutoScheduleIn
     payPeriods: [PP],
     holidays: [], desirabilityWeights: [], standingCommitments: [], staffOverrides: [], dayPreferences: [],
     historicalAssignments: [], staffingRequirements: [],
-    schedulingPreferences: { prefer3DayWeekends: false, prefer4DayWeekends: false, preferSequentialOff: false, sequentialOffWeight: 1, threeDayWeekendWeight: 2, fourDayWeekendWeight: 3, ...prefs },
+    schedulingPreferences: { prefer3DayWeekends: false, prefer4DayWeekends: false, preferSequentialOff: false, sequentialOffWeight: 1, threeDayWeekendWeight: 2, fourDayWeekendWeight: 3, holidayShiftId: "st-hol", ...prefs },
     equityFactors: [], followRules: [],
     ...o,
   });

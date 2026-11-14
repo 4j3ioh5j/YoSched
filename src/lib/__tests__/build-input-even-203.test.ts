@@ -31,7 +31,7 @@ vi.mock("@/lib/prisma", () => {
     { staffId: "br", shiftTypeId: "st-call", eligibleSince: new Date("2027-01-20T09:00:00Z") },
     { staffId: "br", shiftTypeId: "st-orc", eligibleSince: null }, // legacy row: no tick date
   ] };
-  const schedulingPreferences = { findFirst: async () => ({ id: "default", shiftBalanceFrom: db.from ? D(db.from) : null }) };
+  const schedulingPreferences = { findFirst: async () => ({ id: "default", shiftBalanceFrom: db.from ? D(db.from) : null, holidayShiftId: "st-hol" }) };
   const scheduleRequest = { findMany: async (a: { where: unknown }) => { db.calls.push({ model: "scheduleRequest", where: a.where }); return [
     { id: "r1", staffId: "br", startDate: D("2027-02-03"), endDate: D("2027-02-03"), kind: "off", shiftTypeIds: [], leaveShiftTypeId: null, strength: "hard", status: "approved" },
   ]; } };
@@ -101,5 +101,12 @@ describe("input bundle for card #203", () => {
     expect(input.spreadContext).toEqual([{ staffId: "br", date: "2027-02-10", shiftTypeId: "st-call", code: "CALL", isLocked: false, source: "manual" }]);
     const w = db.calls.find((c) => JSON.stringify(c.where).includes('"gt"'))!.where;
     expect(w).toEqual({ date: { gt: D("2027-01-30"), lte: D("2027-02-13") } });
+  });
+});
+
+describe("input bundle for card #207", () => {
+  it("passes the chosen holiday shift id through to the engine", async () => {
+    const input = await build();
+    expect(input.schedulingPreferences.holidayShiftId).toBe("st-hol");
   });
 });

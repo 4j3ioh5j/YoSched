@@ -6,7 +6,7 @@ import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumT
 import { foldRequestsForDate, detectRequestConflicts, coversDate, parseOffStrategyOrder, LEAVE_STRATEGY_PREFIX, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode, type RequestConflictPolicy } from "./schedule-requests";
 import { matchesWhen, standingToWhen, ruleToWhen } from "./recurrence";
 import { type ShiftShareBasis } from "./shift-share";
-import { type HolidayPolicy } from "./holiday-policy";
+import { type HolidayPolicy, resolveHolidayShift } from "./holiday-policy";
 import { couldWorkOn, excessLeaveDays, type LeavePolicy } from "./leave-policy";
 import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
 import { tallyBalances, sharesOf, spreadPenalty, spreadChange, SPREAD_RADIUS, addDays, type BalanceTally } from "./shift-balance";
@@ -187,6 +187,7 @@ type SchedulingPreferences = {
   requestConflictPolicy?: RequestConflictPolicy; // forced-request contention resolution; default "reconcile"
   shiftShareBasis?: ShiftShareBasis; // split of a scheduled shift's slots across eligible staff: "fte" (default) | "head"
   holidayPolicy?: HolidayPolicy; // who is owed HOL on a holiday: "entitlement" (default) | "fill" (legacy) | "none"
+  holidayShiftId?: string | null; // card #207: the shift credited on a holiday, by id (null/undefined = none chosen)
   leaveHoursPolicy?: LeavePolicy; // card #175: leave only on days they'd work, up to the PP target ("up-to-target", default) | "always"
   shiftBalanceFrom?: string | null; // card #203: first day counted by "Keep counts even across months" (null = this run only)
 };
@@ -824,9 +825,10 @@ export function autoSchedule({
   }
 
   const holidayPolicy: HolidayPolicy = schedulingPreferences.holidayPolicy ?? "entitlement";
-  const holShift = holidayPolicy === "none"
-    ? null
-    : shiftTypes.find((st) => st.code === "HOL" && st.countsTowardFte) ?? null;
+  // Card #207: the holiday shift is the one chosen in Settings (by id), and only while it is
+  // still a leave shift counting toward the target — entitlement bypasses eligibility and caps.
+  const configuredHolShift = resolveHolidayShift(shiftTypes, schedulingPreferences.holidayShiftId);
+  const holShift = holidayPolicy === "none" ? null : configuredHolShift;
 
   // Card #176: STEP 2.75 grants HOL on a holiday a person normally works. Until it has
   // run, the hours checks (ppHoursBlock) must already see that owed HOL, or STEP 2
@@ -2555,6 +2557,11 @@ export function autoSchedule({
     }
   }
   grantHolidayEntitlement();
+  // Card #207: a holiday policy that places a shift, with no valid shift chosen, must say
+  // so instead of silently placing nothing.
+  if (holidayPolicy !== "none" && !holShift && dates.some((d) => holidaySet.has(d))) {
+    warnings.push("No holiday shift is chosen in Settings (or it is no longer a leave shift that counts toward hours), so no holiday hours were placed.");
+  }
   holidaysGranted = true;
 
   // ── STEP 3: Fill shift to hit FTE hour targets (day-off clustering) ──
@@ -4283,6 +4290,9 @@ export function autoSchedule({
     }
 
     const maxLeavePerDay = schedulingPreferences.maxLeavePerDay ?? 0;
+    // Card #207: the configured holiday shift (by id) is not "away", under every holiday
+    // policy — a persisted holiday cell reads the same as a fresh one.
+    const holidayShiftIdForCap = schedulingPreferences.holidayShiftId ?? null;
     // Soft leave cap: count EVERY away assignment on the day, not just honored ones.
     // (Staffing minimums stranded by honored-away requests are now reported by the
     // generalized coverage-shortfall audit above, classified "limited by approved
@@ -4291,11 +4301,11 @@ export function autoSchedule({
       for (const [date] of requestAwayByDate) {
         let awayTotal = 0;
         for (const [k, v] of grid.entries()) {
-          // HOL is holiday pay, not an absence the cap is meant to limit — on a
+          // The holiday shift is hours credit, not an absence the cap is meant to limit — on a
           // holiday it would otherwise count every staffer. Keyed on the SHIFT, not
           // the placing step: a persisted HOL (existingAssignments carry no step)
           // must read the same on a re-run / Live re-solve as a fresh one.
-          if (k.endsWith(`:${date}`) && isAwayShift(v.shiftTypeId) && v.code !== "HOL") awayTotal++;
+          if (k.endsWith(`:${date}`) && isAwayShift(v.shiftTypeId) && v.shiftTypeId !== holidayShiftIdForCap) awayTotal++;
         }
         if (awayTotal > maxLeavePerDay) {
           warnings.push(`${date}: ${awayTotal} staff away exceeds the soft leave limit of ${maxLeavePerDay} (honoring away requests)`);
