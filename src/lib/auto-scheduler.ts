@@ -601,6 +601,8 @@ export type AutoScheduleInput = {
   skipJointSpreadForTest?: boolean;
   /** Test-only (card #260): place each pay period once, with the minimum-gap host keys (no with/without trial). */
   skipGapTrialForTest?: boolean;
+  /** Test-only (card #259): skip Phase C of the compound repair (mixing in wanted shifts), to compare a run with and without it. */
+  skipShiftMixForTest?: boolean;
   /** Test-only (card #233): lower the joint day choice's per-PP bounds (default 200 swaps / 50k checks). */
   jointSpreadLimitsForTest?: { swaps: number; checks: number };
   // Multi-option candidate seed (Slice 4b). 0/undefined ⇒ the canonical schedule,
@@ -655,6 +657,7 @@ export function autoSchedule({
   skipFinishPairsForTest,
   skipJointSpreadForTest,
   skipGapTrialForTest,
+  skipShiftMixForTest,
   jointSpreadLimitsForTest,
   balanceRequests,
   balancePayPeriods,
@@ -4048,7 +4051,7 @@ export function autoSchedule({
   function compoundHoursRepair(fill: ScheduleShiftType): void {
     const ppRangesAll: PayPeriodRange[] = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
     const repairPPs = payPeriods.filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate));
-    const LIMITS = { odd: 12, intermediaries: 40, checksPerStep: 200, phaseBIters: 500 };
+    const LIMITS = { odd: 12, intermediaries: 40, checksPerStep: 200, phaseBIters: 500, phaseCIters: 200, reshapeOpts: 12 };
     const capHit = new Set<string>();
 
     for (const pp of repairPPs) {
@@ -4236,12 +4239,12 @@ export function autoSchedule({
 
       type Step = () => boolean;
       /** Try a compound: apply its steps in order, then the end-state checks; roll back on any failure. */
-      function attempt(steps: Step[], bounds = true): boolean {
+      function attempt(steps: Step[], bounds = true, extra?: () => boolean): boolean {
         const m = mark();
         changed.length = 0;
         const before = snapshotBefore();
         for (const s of steps) if (!s()) { rollback(m); return false; }
-        if (!endStateOk(before, bounds)) { rollback(m); return false; }
+        if (!endStateOk(before, bounds) || (extra && !extra())) { rollback(m); return false; }
         return true;
       }
 
@@ -4369,6 +4372,227 @@ export function autoSchedule({
         }
       }
 
+      // ── Phase C (card #259): mix shift lengths with shifts a person is meant to get ──
+      // David (#48): hours may be made exact only with a shift the person is already meant to
+      // get — their own min target / preference on it, up to that amount, or a staffing
+      // requirement for it still unmet that day. Never a shift purely for hours; never under.
+      // Feb 2027: DH +4 with an odd ORL; KO wants 2 PRE that week. DH takes KO's ORL (swap),
+      // KO's two OR days become the PRE they want, DH drops an OR — a compound Phase A/B can't
+      // reach, since its first step makes both worse.
+      type Wanted = { own: boolean; cover: boolean };
+      // Destination shifts: placeable work shifts other than the fill (Phase A/B own it), and
+      // never a required-follower source (a reshape must not create a shift that owes a
+      // follower — Codex #1212).
+      // Nor a shift placed as a group: a weekend pair (or a holiday weekend pair) and a holiday
+      // rule's slots must be placed together, so one cell of them alone is never a reshape.
+      const reshapeShifts = shiftTypes.filter((st) => st.autoSchedulable && st.countsTowardFte && !st.isLeave && !st.isOffShift && st.id !== fill.id
+        && !followerBySource.has(st.id) && !st.weekendPaired && !st.holidayWeekendPaired);
+      const groupSlot = new Set(ruleGroups.flatMap((g) => g.slots.map((x) => `${x.shiftTypeId}:${x.date}`)));
+      // Codex #1226: a cell that is one day of a group (a weekend pair, a holiday-rule pair) is
+      // never changed by Phase C, by a reshape or by a trade's swap: changing one day would leave
+      // the other day alone.
+      const inGroup = (c: { shiftTypeId: string; step?: string }, d: string): boolean => {
+        if (c.step === "holiday-rule" || groupSlot.has(`${c.shiftTypeId}:${d}`)) return true;
+        const st = stById.get(c.shiftTypeId);
+        return !!st && st.weekendPaired && (isWeekend(d) || (st.holidayWeekendPaired && holidaySet.has(d)));
+      };
+      const swapC = (d: string, A: ScheduleStaff, B: ScheduleStaff): boolean => {
+        const ca = cellOf(A, d), cb = cellOf(B, d);
+        if (!ca || !cb || inGroup(ca, d) || inGroup(cb, d)) return false;
+        return swap(d, A, B);
+      };
+      /** Is `W` a shift `A` is meant to get on `d`, on the grid as it stands (the compound's start)? */
+      function wantedAt(A: ScheduleStaff, W: ScheduleShiftType, d: string): Wanted | null {
+        const own = getMinimumDeficit(A, W, d) > 0;
+        const cover = countCoverage(W.code, d) < getRequiredCount(W, d);
+        return own || cover ? { own, cover } : null;
+      }
+      /** Still wanted in the end state: up to the target's amount, or up to the day's required count. */
+      function stillWanted(A: ScheduleStaff, W: ScheduleShiftType, d: string, w: Wanted): boolean {
+        if (w.cover && countCoverage(W.code, d) <= getRequiredCount(W, d)) return true;
+        if (!w.own) return false;
+        for (const t of A.shiftMinimumTargets ?? []) {
+          if (t.shiftTypeId !== W.id || t.minCount <= 0) continue;
+          const b = getWindowBounds(t, d, ppRangesAll);
+          if (!b) continue;
+          let n = 0;
+          for (const [k, v] of grid.entries()) {
+            if (!k.startsWith(A.id + ":") || v.code !== W.code || v.noCount) continue;
+            const x = k.slice(A.id.length + 1);
+            if (x >= b.start && x <= b.end) n++;
+          }
+          if (n <= t.minCount) return true;
+        }
+        return false;
+      }
+      /** Every max target (hard and soft) of A on W holds on the FINAL grid; the cell at `d` is
+       *  the candidate, counted once (isAtMaximum assumes it absent — Codex #1212). */
+      function rollingCountOk(A: ScheduleStaff, W: ScheduleShiftType, d: string): boolean {
+        const targets = (A.shiftMinimumTargets ?? []).filter((t) => t.shiftTypeId === W.id && t.maxCount != null);
+        if (targets.length === 0) return true;
+        const others: string[] = [];
+        for (const [k, v] of grid.entries()) {
+          if (!k.startsWith(A.id + ":") || v.code !== W.code || v.noCount) continue;
+          const x = k.slice(A.id.length + 1);
+          if (x !== d) others.push(x);
+        }
+        return targets.every((t) => !isAtRollingMaximum(t, d, others, ppRangesAll));
+      }
+      const softAvoidsW = (A: ScheduleStaff, d: string, W: ScheduleShiftType): boolean => {
+        if (requestList.length === 0) return false;
+        const f = foldFor(A.id, d);
+        return f.avoidWorking || f.avoidedShiftIds.has(W.id);
+      };
+      const windowWord: Record<string, string> = { week: "a week", pay_period: "a pay period", month: "a month", days: "in the window" };
+      function reshapeReason(A: ScheduleStaff, W: ScheduleShiftType, d: string, w: Wanted): string {
+        const t = w.own ? (A.shiftMinimumTargets ?? []).find((x) => x.shiftTypeId === W.id && x.minCount > 0) : undefined;
+        if (t) return `${W.code} (hours repair: ${A.initials}'s ${t.minCount} ${W.code} ${windowWord[t.window] ?? ""})`.replace(/ \)$/, ")");
+        return `${W.code} (hours repair: ${W.code} short on ${d})`;
+      }
+      /** The primitive: A's cell on d becomes W — a swappable work cell, or an open cell. */
+      function reshape(d: string, A: ScheduleStaff, W: ScheduleShiftType, w: Wanted): boolean {
+        if (holidaySet.has(d) || groupSlot.has(`${W.id}:${d}`) || softAvoidsW(A, d, W)) return false;
+        const c = cellOf(A, d);
+        if (c) {
+          if (!isSwappableCell(c) || inGroup(c, d) || c.shiftTypeId === W.id) return false;
+          if (swapBreaksHardMin(A, stById.get(c.shiftTypeId)!, d, ppRangesAll)) return false;
+        } else if (!isAvailable(A, d, W)) return false;
+        if (!canHoldForSwap(A, W, d, ppRangesAll)) return false;
+        repairSet(A.id, d, W, "repair", reshapeReason(A, W, d, w));
+        changed.push({ p: A, d });
+        return true;
+      }
+      type ReshapeOpt = { d: string; W: ScheduleShiftType; w: Wanted; dh: number };
+      /** A's wanted reshapes on the grid as it stands, with their hour change. */
+      function reshapeOpts(A: ScheduleStaff, skip?: string): ReshapeOpt[] {
+        const out: ReshapeOpt[] = [];
+        for (const d of ppDates) {
+          if (d === skip || holidaySet.has(d)) continue;
+          const c = cellOf(A, d);
+          if (c ? !isSwappableCell(c) || inGroup(c, d) : !isOpen(A, d)) continue;
+          const cur = c ? hrsOf(A, stById.get(c.shiftTypeId)!, d) : 0;
+          for (const W of reshapeShifts) {
+            if (c?.shiftTypeId === W.id || !(eligibleShiftSets.get(A.id)?.has(W.id) ?? false)) continue;
+            const w = wantedAt(A, W, d);
+            if (w) out.push({ d, W, w, dh: hrsOf(A, W, d) - cur });
+          }
+        }
+        return out;
+      }
+      /** 0, 1 or 2 reshapes on distinct days. */
+      function reshapeSets(opts: ReshapeOpt[], min: number): ReshapeOpt[][] {
+        const sets: ReshapeOpt[][] = min === 0 ? [[]] : [];
+        for (let i = 0; i < opts.length; i++) {
+          sets.push([opts[i]]);
+          for (let j = i + 1; j < opts.length; j++) if (opts[j].d !== opts[i].d) sets.push([opts[i], opts[j]]);
+        }
+        return sets;
+      }
+      function phaseC(): void {
+        for (let it = 0; ; it++) {
+          if (it >= LIMITS.phaseCIters) { capHit.add("phaseC"); return; }
+          const devNow = new Map(people.map((p) => [p.id, devOf(p)]));
+          const off = people.filter((p) => devNow.get(p.id) !== 0).sort((a, b) => Math.abs(devNow.get(b.id)!) - Math.abs(devNow.get(a.id)!) || (a.id < b.id ? -1 : 1));
+          if (off.length === 0) return;
+          type Cand = { gain: number; avoid: number; even: [number, number]; spread: number; size: number; tag: string; steps: Step[]; shaped: { A: ScheduleStaff; o: ReshapeOpt }[] };
+          const cands: Cand[] = [];
+          const gainOf = (deltas: [ScheduleStaff, number][]): number => {
+            const acc = new Map<string, number>();
+            for (const [p, x] of deltas) acc.set(p.id, (acc.get(p.id) ?? 0) + x);
+            let g = 0;
+            for (const [id, x] of acc) { const dv = devNow.get(id)!; g += Math.abs(dv) - Math.abs(dv + x); }
+            return g;
+          };
+          const under = (id: string, x: number): boolean => { const dv = devNow.get(id)!; return Math.max(0, -(dv + x)) > Math.max(0, -dv); };
+          // A fill-day adjustment for P: none, drop one, or add one (on a day other than `skip`).
+          type Adj = { dh: number; step: Step | null; ch: Change[]; tag: string };
+          const adjFor = (P: ScheduleStaff, skip: string[]): Adj[] => {
+            const out: Adj[] = [{ dh: 0, step: null, ch: [], tag: "" }];
+            for (const e of ppDates) {
+              if (skip.includes(e)) continue;
+              if (isFillCell(P, e)) out.push({ dh: -fillH(P, e), step: () => drop(e, P), ch: [[P, e, null]], tag: `-${e}` });
+              else if (isOpen(P, e)) out.push({ dh: fillH(P, e), step: () => add(e, P), ch: [[P, e, fill.id]], tag: `+${e}` });
+            }
+            return out;
+          };
+          const push = (deltas: [ScheduleStaff, number][], steps: Step[], ch: Change[], shaped: Cand["shaped"], tag: string) => {
+            if (deltas.some(([p, x]) => under(p.id, x))) return; // never under (cheap pre-filter; re-checked on the end state)
+            const gain = gainOf(deltas);
+            if (gain > 0) cands.push({ gain, avoid: avoidDelta(ch), ...evenSpread(ch), size: steps.length, tag, steps, shaped });
+          };
+          const shapeSteps = (A: ScheduleStaff, set: ReshapeOpt[]): Step[] => set.map((o) => () => reshape(o.d, A, o.W, o.w));
+          const shapeCh = (A: ScheduleStaff, set: ReshapeOpt[]): Change[] => set.map((o) => [A, o.d, o.W.id] as Change);
+          for (const P of off) {
+            // T1: P's own wanted reshapes (1–2), plus at most one fill-day adjustment.
+            const own = reshapeOpts(P);
+            if (own.length > LIMITS.reshapeOpts) capHit.add("reshapeOpts");
+            for (const set of reshapeSets(own.slice(0, LIMITS.reshapeOpts), 1)) {
+              const rh = set.reduce((s, o) => s + o.dh, 0);
+              for (const a of adjFor(P, set.map((o) => o.d))) {
+                push([[P, rh + a.dh]], [...shapeSteps(P, set), ...(a.step ? [a.step] : [])], [...shapeCh(P, set), ...a.ch],
+                  set.map((o) => ({ A: P, o })), `t1${P.id}${set.map((o) => o.d + o.W.id).join("")}${a.tag}`);
+              }
+            }
+            // T2: a same-day swap with A, then 1–2 of A's wanted reshapes absorb A's change, plus
+            // at most one fill-day adjustment for P.
+            let partners = people.filter((A) => A.id !== P.id);
+            if (partners.length > LIMITS.intermediaries) { capHit.add("intermediaries"); partners = partners.slice(0, LIMITS.intermediaries); }
+            for (const A of partners) {
+              const allA = reshapeOpts(A);
+              if (allA.length > LIMITS.reshapeOpts) capHit.add("reshapeOpts");
+              const aOpts = allA.slice(0, LIMITS.reshapeOpts);
+              if (aOpts.length === 0) continue;
+              for (const d of ppDates) {
+                const cp = cellOf(P, d), ca = cellOf(A, d);
+                if (!cp || !ca || !isSwappableCell(cp) || !isSwappableCell(ca) || inGroup(cp, d) || inGroup(ca, d) || cp.shiftTypeId === ca.shiftTypeId) continue;
+                const pSt = stById.get(cp.shiftTypeId)!, aSt = stById.get(ca.shiftTypeId)!;
+                const xP = hrsOf(P, aSt, d) - hrsOf(P, pSt, d), xA = hrsOf(A, pSt, d) - hrsOf(A, aSt, d);
+                // On the swap day itself A then holds P's old shift, so a reshape there is measured
+                // from that (P takes A's shift, A works the shift A wanted).
+                const onD: ReshapeOpt[] = [];
+                if (!holidaySet.has(d)) for (const W of reshapeShifts) {
+                  if (W.id === pSt.id || !(eligibleShiftSets.get(A.id)?.has(W.id) ?? false)) continue;
+                  const w = wantedAt(A, W, d);
+                  if (w) onD.push({ d, W, w, dh: hrsOf(A, W, d) - hrsOf(A, pSt, d) });
+                }
+                for (const set of reshapeSets([...onD, ...aOpts.filter((o) => o.d !== d)], 1)) {
+                  const rA = set.reduce((s, o) => s + o.dh, 0);
+                  for (const a of adjFor(P, [d])) {
+                    // The absorber ends no further from target than they started (plan T2).
+                    if (Math.abs(devNow.get(A.id)! + xA + rA) > Math.abs(devNow.get(A.id)!)) continue;
+                    push([[P, xP + a.dh], [A, xA + rA]], [() => swapC(d, P, A), ...shapeSteps(A, set), ...(a.step ? [a.step] : [])],
+                      [...swapChanges(d, P, A), ...shapeCh(A, set), ...a.ch], set.map((o) => ({ A, o })),
+                      `t2${P.id}${A.id}${d}${set.map((o) => o.d + o.W.id).join("")}${a.tag}`);
+                  }
+                }
+              }
+            }
+          }
+          if (cands.length === 0) return;
+          cands.sort((a, b) => b.gain - a.gain || a.avoid - b.avoid || cmpTuple(a.even, b.even) || a.spread - b.spread || a.size - b.size || (a.tag < b.tag ? -1 : 1));
+          let ok = false, checks = 0;
+          for (const c of cands) {
+            if (++checks > LIMITS.checksPerStep) { capHit.add("checks"); break; }
+            const startTotal = total();
+            const extra = (): boolean => {
+              // End state: every reshaped cell is still wanted (two of the same W can't overshoot
+              // together), every max holds with the candidate counted once, nobody further under
+              // than at the start (whatever the under-hours setting), and the total strictly drops.
+              for (const { A, o } of c.shaped) {
+                if (cellOf(A, o.d)?.shiftTypeId !== o.W.id) return false;
+                if (!stillWanted(A, o.W, o.d, o.w) || !rollingCountOk(A, o.W, o.d)) return false;
+              }
+              for (const p of people) if (Math.max(0, -devOf(p)) > Math.max(0, -devNow.get(p.id)!)) return false;
+              // Everyone whose cells were reshaped (P in T1, the absorber in T2) ends no further from target.
+              for (const { A } of c.shaped) if (Math.abs(devOf(A)) > Math.abs(devNow.get(A.id)!)) return false;
+              return total() < startTotal;
+            };
+            if (attempt(c.steps, true, extra)) { ok = true; break; }
+          }
+          if (!ok) return;
+        }
+      }
+
       const start = total();
       if (start === 0) continue;
       const startDevs = new Map(people.map((p) => [p.id, devOf(p)]));
@@ -4379,6 +4603,7 @@ export function autoSchedule({
         rollback(m);
         phaseB(); // strictly improving on its own, so always kept
       }
+      if (reshapeShifts.length > 0 && !skipShiftMixForTest) phaseC(); // each compound kept only if it strictly improves
       journal.length = 0; // committed
     }
     for (const what of capHit) warnings.push(`Hours repair: search limit reached (${what}); some hours may stay off target`);
