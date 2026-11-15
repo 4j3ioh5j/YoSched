@@ -6,6 +6,7 @@ import { activationAlreadyCommitted, type CommittedActivation } from "@/lib/acti
 import { appliedDiff, undoList, type ListApplied } from "@/lib/eligibility-undo";
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useEscape } from "@/lib/use-escape";
+import type { About } from "@/lib/about";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy, APPROVAL_CONFLICT_POLICIES, type ApprovalConflictPolicy } from "@/lib/schedule-requests";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
@@ -225,6 +226,7 @@ type PrintAggregateColumnData = {
 };
 
 type Props = {
+  about?: About;
   shiftTypes: ShiftType[];
   staffingReqs: StaffingReq[];
   payPeriods: PayPeriod[];
@@ -498,6 +500,49 @@ function CollapsibleSection({ id, title, description, status, error, children }:
     </div>
   );
 }
+
+// ─── About YoSched Section (card #230) ──────────────────────────────────────
+// Every value comes from the build (package.json + the release commit); nothing is
+// typed in here. An unknown value says so instead of showing a guess.
+
+function AboutSection({ about, dateFormat }: { about: About; dateFormat: DateFormatKey }) {
+  const unknown = <span className="text-slate-500">unknown</span>;
+  const [y, m, d] = about.releaseDate ? about.releaseDate.split("-").map(Number) : [];
+  const released = about.releaseDate ? formatDate(new Date(y, m - 1, d), dateFormat) : null;
+  const maker = about.makerName
+    ? about.makerUrl
+      ? <a href={about.makerUrl} target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:text-sky-300 underline underline-offset-2">{about.makerName}</a>
+      : about.makerName
+    : null;
+  const row = "grid grid-cols-[9rem_1fr] gap-3 py-1.5 text-sm";
+  return (
+    <CollapsibleSection id="about" title="About YoSched" description="Version and release" status="idle">
+      <dl className="divide-y divide-slate-700/40">
+        <div className={row}>
+          <dt className="text-slate-400">Version</dt>
+          <dd className="text-slate-100">
+            {about.version ?? unknown}
+            {about.build && <span className="ml-2 text-slate-500">(build {about.build})</span>}
+          </dd>
+        </div>
+        <div className={row}>
+          <dt className="text-slate-400">Release date</dt>
+          <dd className="text-slate-100">{released ?? unknown}</dd>
+        </div>
+        <div className={row}>
+          <dt className="text-slate-400">Copyright</dt>
+          <dd className="text-slate-100">
+            {about.copyrightYear !== null || maker
+              ? <>© {about.copyrightYear ?? unknown} {maker ?? unknown}</>
+              : unknown}
+          </dd>
+        </div>
+      </dl>
+    </CollapsibleSection>
+  );
+}
+const EMPTY_ABOUT: About = { version: null, build: null, releaseDate: null, copyrightYear: null, makerName: null, makerUrl: null };
+// ─── end About ──────────────────────────────────────────────────────────────
 
 // ─── Shift Types Section ────────────────────────────────────────────────────
 
@@ -6014,7 +6059,7 @@ function StaffColumnOrderSection({ initial, staff }: { initial: StaffOrderCriter
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, holidayTypes = [], holidayRules = EMPTY_HOLIDAY_RULES, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, followAvoids: initialFollowAvoids = [], requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, staffColumnOrder, orderableStaff, canEdit = true, canEditAutoGenPriority = false }: Props) {
+export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, holidayTypes = [], holidayRules = EMPTY_HOLIDAY_RULES, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, followAvoids: initialFollowAvoids = [], requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, staffColumnOrder, orderableStaff, canEdit = true, canEditAutoGenPriority = false, about = EMPTY_ABOUT }: Props) {
   const undo = useUndo();
   // One shift list for the whole page: Shift Types edits it, every other section reads it.
   const [shiftTypes, setShiftTypes] = useState(initialShiftTypes);
@@ -6037,6 +6082,11 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
             View-only — you do not have permission to edit settings
           </div>
         )}
+
+        <SectionGroup label="About YoSched" />
+        <div className="space-y-4 mb-8 mt-3">
+          <AboutSection about={about} dateFormat={dateFormat} />
+        </div>
 
         <SectionGroup label="Definitions" />
         <div className="space-y-4 mb-8 mt-3">

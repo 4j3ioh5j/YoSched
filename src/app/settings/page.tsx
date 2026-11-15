@@ -18,6 +18,7 @@ import { parseHoursPolicy } from "@/lib/autogen-hours-policy";
 import { parseActivationWorked, parseActivationNever, parseActivationNewHire } from "@/lib/shift-activation";
 import { redirect } from "next/navigation";
 import { effectiveFte } from "@/lib/fte";
+import { aboutInfo } from "@/lib/about";
 
 export const dynamic = "force-dynamic";
 
@@ -271,6 +272,13 @@ export default async function Settings() {
         }))}
         canEdit={canEditSettings}
         canEditAutoGenPriority={canEditAutoGenPriority}
+        about={aboutInfo({
+          version: process.env.YOSCHED_VERSION,
+          commit: process.env.YOSCHED_COMMIT,
+          committedAt: process.env.YOSCHED_COMMITTED_AT,
+          makerName: process.env.YOSCHED_MAKER_NAME,
+          makerUrl: process.env.YOSCHED_MAKER_URL,
+        })}
       />
     </main>
   );

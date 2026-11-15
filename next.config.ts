@@ -1,4 +1,15 @@
 import type { NextConfig } from "next";
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { readBuildInfo } from "./src/lib/build-info";
+
+// Card #230: Settings › About YoSched — version and maker from package.json, the release
+// (short sha + commit date) from the commit being built. Read once here and inlined.
+const buildInfo = readBuildInfo(
+  () => JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")),
+  (args) => execSync(`git ${args}`, { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }),
+);
 
 // Security headers applied to every response. These are a modest reputation
 // signal for scanners/filters and good practice generally.
@@ -66,6 +77,7 @@ const nextConfig: NextConfig = {
   // NOTE: keep in sync with BASE_PATH in src/lib/base-path.ts — this config file
   // can't import app modules, so the literal is duplicated here deliberately.
   basePath: "/yosched",
+  env: buildInfo,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
