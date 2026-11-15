@@ -2511,33 +2511,47 @@ export function autoSchedule({
         // The pair lands as a unit, so when over-target may not be crossed (policy/rank)
         // its COMBINED hours must fit — the per-day checks below only see one day.
         const pairOk = (p: ScheduleStaff) => coverageBeatsOverHours || !pairWouldExceed(p, [sat, sun], st);
-        const available = eligible.filter(
+        // Card #265: the pair is gap-checked as one block with its Sunday. Someone whose Sunday a
+        // maximum will drop (judged with the Saturday on the grid, which may be what fills it) gets
+        // the Saturday alone, so that lone day must keep a Hard gap too. Checked in every tier.
+        const getsSunday = (p: ScheduleStaff): boolean => {
+          if (coverageBeatsHardLimits) return true;
+          const key = `${p.id}:${sat}`, was = grid.get(key);
+          grid.set(key, { shiftTypeId: st.id, code: st.code, locked: false, noCount: false, step: `weekend-${stepName}` });
+          const capped = isAtMaximum(p, st, sun);
+          if (was) grid.set(key, was); else grid.delete(key);
+          return !capped;
+        };
+        const loneOk = (p: ScheduleStaff): boolean => !gapHard(st) || getsSunday(p) || !hardGapBlocks(p.id, st, [sat]);
+        let loneRefused = false;
+        const keepLone = (ps: ScheduleStaff[]): ScheduleStaff[] => {
+          const kept = ps.filter(loneOk);
+          if (kept.length < ps.length) loneRefused = true;
+          return kept;
+        };
+        const available = keepLone(eligible.filter(
           (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
             isAvailable(p, sat, st, { gapGroup: [sat, sun] }) && isAvailable(p, sun, st, { gapGroup: [sat, sun] }) &&
             !wouldBreakPPHours(p.id, sat, st) && pairOk(p)
-        );
-
+        ));
+        const fallback = available.length > 0 ? [] : keepLone(eligible.filter(
+          (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
+            canFillCoverageOverLimits(p, sat, st, [sat, sun]) && canFillCoverageOverLimits(p, sun, st, [sat, sun]) && pairOk(p)
+        ));
         if (available.length === 0) {
-          const fallback = eligible.filter(
-            (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
-              canFillCoverageOverLimits(p, sat, st, [sat, sun]) && canFillCoverageOverLimits(p, sun, st, [sat, sun]) && pairOk(p)
-          );
           if (fallback.length === 0) {
-            warnings.push(`No eligible ${st.code} staff for ${sat}/${sun}${gapCause(st, [sat, sun], eligible)}`);
+            const why = loneRefused ? ` — a maximum would leave ${sat} alone, too close to another ${st.code} (${hardGapWhy(st)})` : gapCause(st, [sat, sun], eligible);
+            warnings.push(`No eligible ${st.code} staff for ${sat}/${sun}${why}`);
             continue;
           }
           warnings.push(`${st.code} ${sat}/${sun}: all eligible staff would exceed PP hours`);
         }
-
-        const pool = available.length > 0 ? available : eligible.filter(
-          (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
-            canFillCoverageOverLimits(p, sat, st, [sat, sun]) && canFillCoverageOverLimits(p, sun, st, [sat, sun]) && pairOk(p)
-        );
-        if (pool.length === 0) continue;
+        const pool = available.length > 0 ? available : fallback;
         // Card #188: with Prefer rules in play, score the whole weekend each person would get.
         const chosen = pool.some((p) => preferRuleKeys.has(`${p.id}:${st.id}`)) ? pickStaff(pool, sat, () => [sat, sun]) : pickStaff(pool, sat);
+        const sunToo = getsSunday(chosen);
         assign(chosen.id, sat, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
-        if (coverageBeatsHardLimits || !isAtMaximum(chosen, st, sun)) {
+        if (sunToo) {
           assign(chosen.id, sun, st, `Weekend ${st.code} (even dist — ${chosen.initials})`, `weekend-${stepName}`, 0.8);
         } else {
           warnings.push(`${chosen.initials}: skipped ${st.code} on ${sun} — capped by max shift limit`);
