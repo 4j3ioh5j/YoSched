@@ -3704,8 +3704,19 @@ export function autoSchedule({
   // it via isLeave; listed here so the intent survives a HOL config change.
   const NON_SWAPPABLE_STEPS = new Set(["request-leave", LEAVE_OFF_STEP, "request-shift", "request-tentative", "standing", "follower", "off", "holiday", "holiday-rule"]);
 
-  function isSwappableCell(cell: { shiftTypeId: string; locked: boolean; noCount?: boolean; step?: string }): boolean {
+  // Codex #1226 / card #271: a cell that is one day of a group (a weekend pair, a holiday-rule
+  // pair) is never changed alone: changing one day would leave the other day stranded.
+  const groupSlot = new Set(ruleGroups.flatMap((g) => g.slots.map((x) => `${x.shiftTypeId}:${x.date}`)));
+  function cellInGroup(c: { shiftTypeId: string; step?: string }, d: string): boolean {
+    if (c.step === "holiday-rule" || groupSlot.has(`${c.shiftTypeId}:${d}`)) return true;
+    const st = stById.get(c.shiftTypeId);
+    return !!st && st.weekendPaired && (isWeekend(d) || (st.holidayWeekendPaired && holidaySet.has(d)));
+  }
+
+  // Can this cell be exchanged or moved ON ITS OWN on `date` (a single-day swap, move or drop)?
+  function isSwappableCell(cell: { shiftTypeId: string; locked: boolean; noCount?: boolean; step?: string }, date: string): boolean {
     if (cell.locked || cell.noCount || !cell.step || NON_SWAPPABLE_STEPS.has(cell.step)) return false;
+    if (cellInGroup(cell, date)) return false;
     // A required-follower SOURCE (e.g. ORC→X recovery) must not move: its follower
     // was placed relative to this cell and we don't relocate/revalidate followers
     // here. (Follower cells themselves carry step "follower" and are excluded
@@ -3812,7 +3823,7 @@ export function autoSchedule({
           for (const p of activeStaff) {
             if (!dev.has(p.id)) continue;
             const cell = grid.get(`${p.id}:${date}`);
-            if (!cell || !isSwappableCell(cell)) continue;
+            if (!cell || !isSwappableCell(cell, date)) continue;
             const st = stById.get(cell.shiftTypeId);
             if (st) cells.push({ id: p.id, staff: p, st });
           }
@@ -4080,7 +4091,7 @@ export function autoSchedule({
       const cellOf = (p: ScheduleStaff, d: string) => grid.get(`${p.id}:${d}`);
       const isFillCell = (p: ScheduleStaff, d: string): boolean => {
         const c = cellOf(p, d);
-        return !!c && c.shiftTypeId === fill.id && isSwappableCell(c);
+        return !!c && c.shiftTypeId === fill.id && isSwappableCell(c, d);
       };
       const isOpen = (p: ScheduleStaff, d: string): boolean => { const c = cellOf(p, d); return !c || isFillableOffCell(c); };
 
@@ -4162,7 +4173,7 @@ export function autoSchedule({
       // ── primitives (each checks its own placement legality on the grid as it stands) ──
       function swap(d: string, A: ScheduleStaff, B: ScheduleStaff): boolean {
         const ca = cellOf(A, d), cb = cellOf(B, d);
-        if (!ca || !cb || !isSwappableCell(ca) || !isSwappableCell(cb) || ca.shiftTypeId === cb.shiftTypeId) return false;
+        if (!ca || !cb || !isSwappableCell(ca, d) || !isSwappableCell(cb, d) || ca.shiftTypeId === cb.shiftTypeId) return false;
         const aSt = stById.get(ca.shiftTypeId)!, bSt = stById.get(cb.shiftTypeId)!;
         if (swapBreaksHardMin(A, aSt, d, ppRangesAll) || swapBreaksHardMin(B, bSt, d, ppRangesAll)) return false;
         // Legality of each side is judged with the other side's cell still in place.
@@ -4258,7 +4269,7 @@ export function autoSchedule({
           const cands: Cand[] = [];
           const swapDelta = (d: string, X: ScheduleStaff, Y: ScheduleStaff): number | null => {
             const cx = cellOf(X, d), cy = cellOf(Y, d);
-            if (!cx || !cy || !isSwappableCell(cx) || !isSwappableCell(cy) || cx.shiftTypeId === cy.shiftTypeId) return null;
+            if (!cx || !cy || !isSwappableCell(cx, d) || !isSwappableCell(cy, d) || cx.shiftTypeId === cy.shiftTypeId) return null;
             return hrsOf(X, stById.get(cy.shiftTypeId)!, d) - hrsOf(X, stById.get(cx.shiftTypeId)!, d);
           };
           for (let i = 0; i < odd.length; i++) for (let j = i + 1; j < odd.length; j++) {
@@ -4318,12 +4329,12 @@ export function autoSchedule({
           };
           for (const A of off) for (const d of ppDates) {
             const ca = cellOf(A, d);
-            if (ca && isSwappableCell(ca)) { // SWAP with anyone
+            if (ca && isSwappableCell(ca, d)) { // SWAP with anyone
               const aSt = stById.get(ca.shiftTypeId)!;
               for (const B of people) {
                 if (B.id === A.id) continue;
                 const cb = cellOf(B, d);
-                if (!cb || !isSwappableCell(cb) || cb.shiftTypeId === ca.shiftTypeId) continue;
+                if (!cb || !isSwappableCell(cb, d) || cb.shiftTypeId === ca.shiftTypeId) continue;
                 const bSt = stById.get(cb.shiftTypeId)!;
                 const gain = gainOf([[A, hrsOf(A, bSt, d) - hrsOf(A, aSt, d)], [B, hrsOf(B, aSt, d) - hrsOf(B, bSt, d)]]);
                 if (gain > 0) cands.push({ gain, avoid: avoidDelta(swapChanges(d, A, B)), ...evenSpread(swapChanges(d, A, B)), size: 2, tag: `s${A.id}${B.id}${d}`, steps: [() => swap(d, A, B)] });
@@ -4387,20 +4398,7 @@ export function autoSchedule({
       // rule's slots must be placed together, so one cell of them alone is never a reshape.
       const reshapeShifts = shiftTypes.filter((st) => st.autoSchedulable && st.countsTowardFte && !st.isLeave && !st.isOffShift && st.id !== fill.id
         && !followerBySource.has(st.id) && !st.weekendPaired && !st.holidayWeekendPaired);
-      const groupSlot = new Set(ruleGroups.flatMap((g) => g.slots.map((x) => `${x.shiftTypeId}:${x.date}`)));
-      // Codex #1226: a cell that is one day of a group (a weekend pair, a holiday-rule pair) is
-      // never changed by Phase C, by a reshape or by a trade's swap: changing one day would leave
-      // the other day alone.
-      const inGroup = (c: { shiftTypeId: string; step?: string }, d: string): boolean => {
-        if (c.step === "holiday-rule" || groupSlot.has(`${c.shiftTypeId}:${d}`)) return true;
-        const st = stById.get(c.shiftTypeId);
-        return !!st && st.weekendPaired && (isWeekend(d) || (st.holidayWeekendPaired && holidaySet.has(d)));
-      };
-      const swapC = (d: string, A: ScheduleStaff, B: ScheduleStaff): boolean => {
-        const ca = cellOf(A, d), cb = cellOf(B, d);
-        if (!ca || !cb || inGroup(ca, d) || inGroup(cb, d)) return false;
-        return swap(d, A, B);
-      };
+      // (A trade's swap and a reshape of an existing cell refuse a group day in isSwappableCell.)
       /** Is `W` a shift `A` is meant to get on `d`, on the grid as it stands (the compound's start)? */
       function wantedAt(A: ScheduleStaff, W: ScheduleShiftType, d: string): Wanted | null {
         const own = getMinimumDeficit(A, W, d) > 0;
@@ -4454,7 +4452,7 @@ export function autoSchedule({
         if (holidaySet.has(d) || groupSlot.has(`${W.id}:${d}`) || softAvoidsW(A, d, W)) return false;
         const c = cellOf(A, d);
         if (c) {
-          if (!isSwappableCell(c) || inGroup(c, d) || c.shiftTypeId === W.id) return false;
+          if (!isSwappableCell(c, d) || c.shiftTypeId === W.id) return false;
           if (swapBreaksHardMin(A, stById.get(c.shiftTypeId)!, d, ppRangesAll)) return false;
         } else if (!isAvailable(A, d, W)) return false;
         if (!canHoldForSwap(A, W, d, ppRangesAll)) return false;
@@ -4469,7 +4467,7 @@ export function autoSchedule({
         for (const d of ppDates) {
           if (d === skip || holidaySet.has(d)) continue;
           const c = cellOf(A, d);
-          if (c ? !isSwappableCell(c) || inGroup(c, d) : !isOpen(A, d)) continue;
+          if (c ? !isSwappableCell(c, d) : !isOpen(A, d)) continue;
           const cur = c ? hrsOf(A, stById.get(c.shiftTypeId)!, d) : 0;
           for (const W of reshapeShifts) {
             if (c?.shiftTypeId === W.id || !(eligibleShiftSets.get(A.id)?.has(W.id) ?? false)) continue;
@@ -4544,7 +4542,7 @@ export function autoSchedule({
               if (aOpts.length === 0) continue;
               for (const d of ppDates) {
                 const cp = cellOf(P, d), ca = cellOf(A, d);
-                if (!cp || !ca || !isSwappableCell(cp) || !isSwappableCell(ca) || inGroup(cp, d) || inGroup(ca, d) || cp.shiftTypeId === ca.shiftTypeId) continue;
+                if (!cp || !ca || !isSwappableCell(cp, d) || !isSwappableCell(ca, d) || cp.shiftTypeId === ca.shiftTypeId) continue;
                 const pSt = stById.get(cp.shiftTypeId)!, aSt = stById.get(ca.shiftTypeId)!;
                 const xP = hrsOf(P, aSt, d) - hrsOf(P, pSt, d), xA = hrsOf(A, pSt, d) - hrsOf(A, aSt, d);
                 // On the swap day itself A then holds P's old shift, so a reshape there is measured
@@ -4560,7 +4558,7 @@ export function autoSchedule({
                   for (const a of adjFor(P, [d])) {
                     // The absorber ends no further from target than they started (plan T2).
                     if (Math.abs(devNow.get(A.id)! + xA + rA) > Math.abs(devNow.get(A.id)!)) continue;
-                    push([[P, xP + a.dh], [A, xA + rA]], [() => swapC(d, P, A), ...shapeSteps(A, set), ...(a.step ? [a.step] : [])],
+                    push([[P, xP + a.dh], [A, xA + rA]], [() => swap(d, P, A), ...shapeSteps(A, set), ...(a.step ? [a.step] : [])],
                       [...swapChanges(d, P, A), ...shapeCh(A, set), ...a.ch], set.map((o) => ({ A, o })),
                       `t2${P.id}${A.id}${d}${set.map((o) => o.d + o.W.id).join("")}${a.tag}`);
                   }
