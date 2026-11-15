@@ -35,6 +35,8 @@ const CHILDREN = [
 type ChildKey = (typeof CHILDREN)[number]["key"];
 export type RemovalSnapshot = {
   version: 1;
+  /** Absent on rows written before card #223: those are removes. */
+  kind?: "removed";
   staff: Row;
   conditionedRuleIds: string[];
   loginUserId: string | null;
@@ -53,7 +55,25 @@ async function lockRows(tx: Tx, table: string, column: string, value: string): P
 /** Dates become ISO strings, as they will be stored in the JSON column. */
 const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v));
 
-export type RemoveResult = { kind: "missing" } | { kind: "deactivated" } | { kind: "deleted"; removalId: string };
+export type RemoveResult = { kind: "missing" } | { kind: "deactivated"; deactivationId: string | null } | { kind: "deleted"; removalId: string };
+
+/** Card #223: what a deactivation unlinked — the one real login Undo may link back, once. */
+export type DeactivationSnapshot = { version: 1; kind: "deactivated"; loginUserId: string };
+
+/**
+ * Card #223: unlink the person's login as a deactivation does (a shell login is deleted, a real
+ * one only unlinked) and, for a real login, record it so Undo can link exactly it back. Call
+ * inside the deactivating transaction, after its locks. Returns the record's id, or null.
+ */
+export async function detachForDeactivation(tx: Tx, id: string): Promise<string | null> {
+  const logins = await lockRows(tx, "users", "staffId", id);
+  await detachLoginForStaff(id, tx);
+  const loginId = logins[0]?.id as string | undefined;
+  if (!loginId || !(await tx.user.findUnique({ where: { id: loginId }, select: { id: true } }))) return null;
+  const snapshot: DeactivationSnapshot = { version: 1, kind: "deactivated", loginUserId: loginId };
+  const r = await tx.staffRemoval.create({ data: { staffId: id, snapshot: snapshot as unknown as Prisma.InputJsonValue } });
+  return r.id;
+}
 
 export async function removeStaff(tx: Tx, id: string): Promise<RemoveResult> {
   await lockEligibility(tx);
@@ -63,8 +83,7 @@ export async function removeStaff(tx: Tx, id: string): Promise<RemoveResult> {
   if ((await tx.assignment.count({ where: { staffId: id } })) > 0) {
     // History exists: deactivate + remove the login link, as before (now under the lock).
     await tx.staff.update({ where: { id }, data: { isActive: false } });
-    await detachLoginForStaff(id, tx);
-    return { kind: "deactivated" };
+    return { kind: "deactivated", deactivationId: await detachForDeactivation(tx, id) };
   }
 
   for (const c of CHILDREN) await lockRows(tx, c.table, "staffId", id);
@@ -72,7 +91,7 @@ export async function removeStaff(tx: Tx, id: string): Promise<RemoveResult> {
   const logins = await lockRows(tx, "users", "staffId", id);
 
   const staff = await tx.staff.findUnique({ where: { id } });
-  const snapshot = { version: 1, staff: plain(staff) as Row, conditionedRuleIds: conditioned.map((r) => String(r.id)), loginUserId: null } as RemovalSnapshot;
+  const snapshot = { version: 1, kind: "removed", staff: plain(staff) as Row, conditionedRuleIds: conditioned.map((r) => String(r.id)), loginUserId: null } as RemovalSnapshot;
   for (const c of CHILDREN) snapshot[c.key] = plain(await delegateOf(tx, c.delegate).findMany({ where: { staffId: id } }));
 
   // A shell login (never completed) is deleted, a real one only unlinked (logins are created on
@@ -88,18 +107,35 @@ export async function removeStaff(tx: Tx, id: string): Promise<RemoveResult> {
 
 export class RestoreRefused extends Error {}
 
-/** Restore a removed person from their snapshot; returns their id. Throws RestoreRefused. */
+/**
+ * Undo a remove (bring the person back from their snapshot) or a deactivation (card #223:
+ * re-activate, and link back the real login it unlinked where that is still free). Returns the
+ * person's id. Throws RestoreRefused.
+ */
 export async function restoreStaff(tx: Tx, removalId: string): Promise<string> {
   const first = await tx.staffRemoval.findUnique({ where: { id: removalId } });
   if (!first) throw new RestoreRefused("This can't be undone any more: there is nothing saved to bring back.");
   await lockEligibility(tx);
   await lockStaffRules(tx, first.staffId);
+  const present = (await lockRows(tx, "staff", "id", first.staffId)).length > 0;
   await lockRows(tx, "staff_removals", "id", removalId);
   const removal = await tx.staffRemoval.findUnique({ where: { id: removalId } });
   if (!removal || removal.restoredAt) throw new RestoreRefused("This has already been undone.");
-  const snap = removal.snapshot as unknown as RemovalSnapshot;
   const id = removal.staffId;
-  if (await tx.staff.findUnique({ where: { id } })) throw new RestoreRefused("This can't be undone any more: the person is already back.");
+  const kind = (removal.snapshot as { kind?: unknown } | null)?.kind;
+  if (kind === "deactivated") {
+    if (!present) throw new RestoreRefused("This can't be undone any more: the person has been removed since.");
+    const d = removal.snapshot as unknown as DeactivationSnapshot;
+    await tx.staff.update({ where: { id }, data: { isActive: true } });
+    // Their login only if it still exists, is still unlinked, and they have no other login.
+    if (!(await tx.user.findUnique({ where: { staffId: id }, select: { id: true } }))) {
+      await tx.user.updateMany({ where: { id: d.loginUserId, staffId: null }, data: { staffId: id } });
+    }
+    await tx.staffRemoval.update({ where: { id: removalId }, data: { restoredAt: new Date() } });
+    return id;
+  }
+  const snap = removal.snapshot as unknown as RemovalSnapshot;
+  if (present) throw new RestoreRefused("This can't be undone any more: the person is already back.");
   const initials = String(snap.staff.initials);
   if (await tx.staff.findUnique({ where: { initials } })) throw new RestoreRefused(`This can't be undone any more: the initials ${initials} are now used by someone else.`);
 

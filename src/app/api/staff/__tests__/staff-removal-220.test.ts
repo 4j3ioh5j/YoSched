@@ -24,6 +24,7 @@ const db = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/auth-guard", () => ({ getSession: async () => ({ error: null, session: { user: { id: "u" } }, userId: "u", permissions: ["staff:edit"], staffId: null }) }));
+vi.mock("@/lib/fte", () => ({ staffHoursWrite: () => ({ ok: true, ftePercentage: 1, fixedHoursPerPp: null }) }));
 vi.mock("@/lib/user-lifecycle", () => ({
   detachLoginForStaff: async (staffId: string) => {
     db.log.push("detach");
@@ -80,6 +81,7 @@ vi.mock("@/lib/prisma", () => {
         return {};
       },
     },
+    employmentType: { findUnique: async () => ({ id: "ft" }) },
     assignment: { count: async (a: { where: Row }) => { db.log.push("count"); return tbl("assignments").filter((r) => matches(r, a.where)).length; } },
     user: {
       findUnique: async (a: { where: Row; select?: unknown }) => { const u = tbl("users").find((r) => matches(r, a.where)); return u ? { ...u } : null; },
@@ -115,7 +117,7 @@ vi.mock("@/lib/prisma", () => {
   return { prisma };
 });
 
-import { DELETE } from "../route";
+import { DELETE, PUT } from "../route";
 import { POST as RESTORE } from "../restore/route";
 import { ruleListVersion } from "@/lib/staff-rule-versions";
 
@@ -174,8 +176,9 @@ describe("DELETE /api/staff (hard remove) keeps a snapshot", () => {
   it("an assignment present under the lock → deactivate in the same transaction, no snapshot", async () => {
     db.t.assignments.push({ id: "x1", staffId: "s1" });
     const res = await DELETE(req({ id: "s1" }));
-    expect(await res.json()).toEqual({ ok: true, deactivated: true });
-    expect(db.t.staff_removals).toEqual([]);
+    expect(await res.json()).toMatchObject({ ok: true, deactivated: true });
+    // No remove snapshot (card #223 records only the unlinked login).
+    expect(db.t.staff_removals.filter((r) => (r.snapshot as Row).kind !== "deactivated")).toEqual([]);
     expect(db.t.staff.find((s) => s.id === "s1")?.isActive).toBe(false);
     expect(db.log).not.toContain("delete");
   });
@@ -275,7 +278,79 @@ describe("POST /api/staff/restore", () => {
     db.log = [];
     await RESTORE(req({ removalId: removalId() }));
     const order = db.log.filter((l) => !l.startsWith("tx"));
-    expect(order.slice(0, 3)).toEqual(["eligibility-lock", "rules-lock:s1", "lock:staff_removals"]);
+    expect(order.slice(0, 4)).toEqual(["eligibility-lock", "rules-lock:s1", "lock:staff", "lock:staff_removals"]);
     expect(db.log).toContain("tx:timeout");
+  });
+});
+
+describe("card #223: Undo of a deactivate re-links the real login", () => {
+  const deact = () => db.t.staff_removals.filter((r) => (r.snapshot as Row).kind === "deactivated");
+  it("a remove with assignments (deactivate) records the real login and returns its id", async () => {
+    db.t.assignments.push({ id: "x1", staffId: "s1" });
+    const body = await (await DELETE(req({ id: "s1" }))).json();
+    expect(body).toEqual({ ok: true, deactivated: true, deactivationId: deact()[0].id });
+    expect(deact()[0].snapshot).toEqual({ version: 1, kind: "deactivated", loginUserId: "u1" });
+    expect(db.t.users[0].staffId).toBeNull();
+    expect(db.log.indexOf("lock:users")).toBeLessThan(db.log.indexOf("detach"));
+  });
+  it("the edit form's deactivate (PUT isActive false) records it too", async () => {
+    const body = await (await PUT(req({ id: "s1", isActive: false }))).json();
+    expect(body.deactivationId).toBe(deact()[0].id);
+    expect(db.t.users[0].staffId).toBeNull();
+  });
+  it("a shell login or no login: no record, no id", async () => {
+    db.t.users = [{ id: "u1", staffId: "s1", shell: true }];
+    expect((await (await PUT(req({ id: "s1", isActive: false }))).json()).deactivationId).toBeUndefined();
+    db.t.users = [];
+    db.t.assignments.push({ id: "x1", staffId: "s1" });
+    expect(await (await DELETE(req({ id: "s1" }))).json()).toEqual({ ok: true, deactivated: true });
+    expect(deact()).toEqual([]);
+  });
+  it("a save that keeps the person active writes no record", async () => {
+    expect((await (await PUT(req({ id: "s1", name: "Ann B" }))).json()).deactivationId).toBeUndefined();
+    expect(db.t.staff_removals).toEqual([]);
+  });
+  it("restore re-activates and re-links, once", async () => {
+    db.t.assignments.push({ id: "x1", staffId: "s1" });
+    const { deactivationId } = await (await DELETE(req({ id: "s1" }))).json();
+    db.log = [];
+    const res = await RESTORE(req({ removalId: deactivationId }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: "s1", isActive: true, loginUserId: "u1" });
+    expect(db.t.staff.find((s) => s.id === "s1")?.isActive).toBe(true);
+    expect(db.t.users[0].staffId).toBe("s1");
+    expect(db.log.filter((l) => !l.startsWith("tx")).slice(0, 4)).toEqual(["eligibility-lock", "rules-lock:s1", "lock:staff", "lock:staff_removals"]);
+    expect((await RESTORE(req({ removalId: deactivationId }))).status).toBe(409);
+  });
+  it("the login was linked to someone else meanwhile: re-activated, not re-linked", async () => {
+    const { deactivationId } = await (await PUT(req({ id: "s1", isActive: false }))).json();
+    db.t.users[0].staffId = "s2";
+    expect((await RESTORE(req({ removalId: deactivationId }))).status).toBe(200);
+    expect(db.t.staff.find((s) => s.id === "s1")?.isActive).toBe(true);
+    expect(db.t.users[0].staffId).toBe("s2");
+  });
+  it("the person was given another login meanwhile: the old one is not re-linked", async () => {
+    const { deactivationId } = await (await PUT(req({ id: "s1", isActive: false }))).json();
+    db.t.users.push({ id: "u2", staffId: "s1", shell: false });
+    expect((await RESTORE(req({ removalId: deactivationId }))).status).toBe(200);
+    expect(db.t.users.find((u) => u.id === "u1")?.staffId).toBeNull();
+    expect(db.t.users.find((u) => u.id === "u2")?.staffId).toBe("s1");
+  });
+  it("the person was removed meanwhile → 409, nothing written", async () => {
+    const { deactivationId } = await (await PUT(req({ id: "s1", isActive: false }))).json();
+    await DELETE(req({ id: "s1" }));
+    const was = before();
+    expect((await RESTORE(req({ removalId: deactivationId }))).status).toBe(409);
+    expect(db.t).toEqual(was);
+  });
+  it("a remove snapshot written without a kind (by 47e5fa9) still restores as a remove", async () => {
+    await DELETE(req({ id: "s1" }));
+    delete (db.t.staff_removals[0].snapshot as Row).kind;
+    expect((await RESTORE(req({ removalId: removalId() }))).status).toBe(200);
+    expect(db.t.staff.some((s) => s.id === "s1")).toBe(true);
+  });
+  it("a remove snapshot is written with kind \"removed\"", async () => {
+    await DELETE(req({ id: "s1" }));
+    expect((db.t.staff_removals[0].snapshot as Row).kind).toBe("removed");
   });
 });

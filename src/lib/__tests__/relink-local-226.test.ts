@@ -22,7 +22,7 @@ describe("relinkLoginLocal", () => {
   });
   it("the Undo of a remove uses it with the restored row", () => {
     const src = readFileSync(join(__dirname, "../../app/staff/staff-page.tsx"), "utf8");
-    const at = src.indexOf('fetch("/api/staff/restore"');
+    const at = src.indexOf("fetchRestore(result.removalId)");
     expect(at).toBeGreaterThan(-1);
     expect(src.slice(at, at + 1500)).toMatch(/setLogins\(\(cur\) => relinkLoginLocal\(cur, back\.id, back\.loginUserId\)\)/);
   });

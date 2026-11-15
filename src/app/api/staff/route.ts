@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
-import { detachLoginForStaff } from "@/lib/user-lifecycle";
-import { removeStaff, REMOVAL_TX } from "@/lib/staff-removal";
+import { removeStaff, detachForDeactivation, REMOVAL_TX } from "@/lib/staff-removal";
 import { ruleToWhen, whenToColumns, standingToWhen, normalizeAnyDay } from "@/lib/recurrence";
 import { NextRequest, NextResponse } from "next/server";
 import { staffHoursWrite } from "@/lib/fte";
@@ -156,6 +155,7 @@ export async function PUT(req: NextRequest) {
   let applied: { add: string[]; remove: string[] } | null = null;
   // Card #206: every list's version as this transaction left it (read under the lock).
   const ruleVersions: RuleVersions = {};
+  let deactivationId: string | null = null;
   try {
   await prisma.$transaction(async (tx) => {
     // Card #75: the eligibility lock first (every writer of staff_eligible_shifts takes it).
@@ -218,8 +218,9 @@ export async function PUT(req: NextRequest) {
     // Deactivated → remove the link in the SAME transaction: a never-completed shell login
     // is deleted, a real login only loses its staffId (it keeps working; administrators
     // included). Reactivation never creates a login — logins are created on demand.
+    // Card #223: a real login unlinked here is recorded, so Undo can link exactly it back.
     if (data.isActive === false) {
-      await detachLoginForStaff(id, tx);
+      deactivationId = await detachForDeactivation(tx, id);
     }
 
     // Card #75: apply only the user's changes (against the list the page started from), so a
@@ -258,7 +259,7 @@ export async function PUT(req: NextRequest) {
     include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true, shiftOverrides: true },
   });
 
-  return NextResponse.json({ ...result, ruleVersions, ...(applied ? { eligibleShiftTypeIdsApplied: applied } : {}) });
+  return NextResponse.json({ ...result, ruleVersions, ...(applied ? { eligibleShiftTypeIdsApplied: applied } : {}), ...(deactivationId ? { deactivationId } : {}) });
 }
 
 export async function POST(req: NextRequest) {
@@ -356,6 +357,6 @@ export async function DELETE(req: NextRequest) {
   // src/lib/staff-removal.ts). The snapshot lets Undo bring back the same person.
   const result = await prisma.$transaction((tx) => removeStaff(tx, id), REMOVAL_TX);
   if (result.kind === "missing") return NextResponse.json({ error: "Staff member not found" }, { status: 404 });
-  if (result.kind === "deactivated") return NextResponse.json({ ok: true, deactivated: true });
+  if (result.kind === "deactivated") return NextResponse.json({ ok: true, deactivated: true, ...(result.deactivationId ? { deactivationId: result.deactivationId } : {}) });
   return NextResponse.json({ ok: true, deleted: true, removalId: result.removalId });
 }

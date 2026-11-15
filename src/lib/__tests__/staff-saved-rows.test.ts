@@ -66,7 +66,8 @@ describe("the Staff page restores from saved rows, never the page-load props (ca
       const body = src.slice(st, end); // just this Undo callback
       for (const m of body.matchAll(/remember\(|savedRows\.current\.forget\(/g)) {
         const before = body.slice(0, m.index);
-        const lastFetch = Math.max(before.lastIndexOf("fetch("), before.lastIndexOf("putStaff("));
+        // Cards #220/#223: fetchRestore( and undoThenRelink( are server writes too.
+        const lastFetch = Math.max(...["fetch(", "putStaff(", "fetchRestore(", "undoThenRelink("].map((w) => before.lastIndexOf(w)));
         expect(lastFetch).toBeGreaterThan(-1);
         expect(before.slice(lastFetch)).toMatch(/if \(!res\?\.ok\) return;|if \(!res\) return;/);
         checked++;

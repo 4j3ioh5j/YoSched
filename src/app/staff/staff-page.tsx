@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useEscape } from "@/lib/use-escape";
 import { staffLoginStatusFromClient, type StaffLoginStatus } from "@/lib/staff-login-status";
 import { loginOptionsForStaff, relinkLoginLocal } from "@/lib/staff-login-link";
+import { undoThenRelink, type RestoreOutcome } from "@/lib/staff-undo-relink";
 import { initSavedActive, applySavedActive, canLinkLogin, type SavedActiveEvent } from "@/lib/staff-saved-active";
 import { SavedRows } from "@/lib/staff-saved-rows";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen, standingToWhen } from "@/lib/recurrence";
@@ -1105,7 +1106,8 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
   // holds (`held`); the server refuses (409) a list changed elsewhere since. The returned row keeps
   // every version next to the contents it belongs to (afterRulesSave), and `sent` is this save's
   // mask for its Undo.
-  async function putStaff(body: Staff, base: readonly string[], patch: RulesPatch, held: Staff): Promise<{ row: Staff; applied: ListApplied; sent: RuleKey[] } | null> {
+  // Card #223: `deactivationId` when this save deactivated the person and unlinked a real login.
+  async function putStaff(body: Staff, base: readonly string[], patch: RulesPatch, held: Staff): Promise<{ row: Staff; applied: ListApplied; sent: RuleKey[]; deactivationId?: string } | null> {
     const res = await fetch("/api/staff", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -1115,11 +1117,24 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
       if (res?.status === 409) alert((await res.json().catch(() => null))?.error ?? "This staff member was changed elsewhere. Reload the page and try again.");
       return null;
     }
-    const saved = await res.json().catch(() => null) as { eligibleShifts?: { shiftTypeId: string }[]; eligibleShiftTypeIdsApplied?: unknown; ruleVersions?: RuleVersions } | null;
+    const saved = await res.json().catch(() => null) as { eligibleShifts?: { shiftTypeId: string }[]; eligibleShiftTypeIdsApplied?: unknown; ruleVersions?: RuleVersions; deactivationId?: unknown } | null;
     const ids = saved?.eligibleShifts?.map((e) => e.shiftTypeId);
     const next = ids ? { ...body, eligibleShiftTypeIds: ids } : body;
     const row = afterRulesSave(next, held, patch.sent, saved?.ruleVersions);
-    return { row, applied: appliedDiff(saved?.eligibleShiftTypeIdsApplied, body.eligibleShiftTypeIds, base, row.eligibleShiftTypeIds), sent: patch.sent };
+    const deactivationId = typeof saved?.deactivationId === "string" ? saved.deactivationId : undefined;
+    return { row, applied: appliedDiff(saved?.eligibleShiftTypeIdsApplied, body.eligibleShiftTypeIds, base, row.eligibleShiftTypeIds), sent: patch.sent, deactivationId };
+  }
+
+  // Cards #220/#223: undo a remove or a deactivation from the record the server kept.
+  async function fetchRestore(removalId: string): Promise<RestoreOutcome<Staff>> {
+    const res = await fetch("/api/staff/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ removalId }),
+    }).catch(() => null);
+    if (res?.ok) return { ok: true, row: await res.json() as Staff };
+    const msg = res?.status === 409 ? (await res.json().catch(() => null))?.error : null;
+    return { ok: false, error: typeof msg === "string" ? msg : "This can't be undone any more. Reload the page." };
   }
 
   async function saveStaff(member: Staff) {
@@ -1148,12 +1163,20 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
             // Card #206: the rule lists go back only where this save changed them (its mask),
             // based on the versions this save produced — refused if changed elsewhere since.
             const u = undoList(saved.eligibleShiftTypeIds, result.applied);
-            const res = await putStaff({ ...prev, eligibleShiftTypeIds: u.list }, u.base, undoRulesPatch(prev, saved, result.sent), saved);
+            // Card #223: if this save deactivated them and unlinked a real login, link it back
+            // after the re-activating PUT; a refused re-link keeps the saved re-activation.
+            const res = await undoThenRelink(
+              async () => (await putStaff({ ...prev, eligibleShiftTypeIds: u.list }, u.base, undoRulesPatch(prev, saved, result.sent), saved))?.row ?? null,
+              result.deactivationId,
+              fetchRestore,
+            );
             if (!res) return; // refused: nothing changed on the server, so nothing changes here
             const back = res.row;
             remember(back);
             setStaff((cur) => cur.map((p) => p.id === back.id ? back : p));
+            setLogins((cur) => relinkLoginLocal(cur, back.id, back.loginUserId));
             markSaved({ kind: "saved", id: prev.id, isActive: prev.isActive });
+            if (res.error) alert(`${prev.initials} is active again, but their login could not be linked back: ${res.error}`);
           },
         });
       }
@@ -1190,7 +1213,18 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
       pushUndo({
         label: result.deactivated ? `Deactivated ${member.initials}` : `Removed ${member.initials}`,
         execute: async () => {
-          if (result.deactivated) {
+          if (result.deactivated && typeof result.deactivationId === "string") {
+            // Card #223: re-activate and link back the real login the deactivation unlinked.
+            const res = await fetchRestore(result.deactivationId);
+            if (res.ok === false) alert(res.error);
+            if (!res?.ok) return;
+            const back = res.row;
+            remember(back);
+            setStaff((cur) => cur.map((p) => p.id === id ? back : p));
+            setLogins((cur) => relinkLoginLocal(cur, back.id, back.loginUserId));
+            markSaved({ kind: "saved", id, isActive: true });
+          } else if (result.deactivated) {
+            // No real login was unlinked (or a server from before card #223): re-activate only.
             const res = await putStaff({ ...member, isActive: true }, member.eligibleShiftTypeIds, rulesPatch(member, member), member);
             if (!res) return;
             const back = res.row;
@@ -1200,14 +1234,10 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
           } else if (typeof result.removalId === "string") {
             // Card #220: bring back the same person (same id, rules, requests, links) from the
             // snapshot the remove kept. Refused (409) when that's no longer possible; nothing changes.
-            const res = await fetch("/api/staff/restore", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ removalId: result.removalId }),
-            }).catch(() => null);
-            if (res?.status === 409) alert((await res.json().catch(() => null))?.error ?? "This can't be undone any more. Reload the page.");
+            const res = await fetchRestore(result.removalId);
+            if (res.ok === false) alert(res.error);
             if (!res?.ok) return;
-            const back = await res.json() as Staff;
+            const back = res.row;
             remember(back);
             setStaff((cur) => [...cur.filter((p) => p.id !== back.id), back].sort((a, b) => a.sortOrder - b.sortOrder));
             // Card #226: the page's own login list shows the login linked again.
