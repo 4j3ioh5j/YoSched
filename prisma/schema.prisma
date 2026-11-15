@@ -882,3 +882,17 @@ model MutedAlert {
 
   @@map("muted_alerts")
 }
+
+// Card #220: what a hard staff remove deleted (the staff row, every cascaded child row with its
+// id, other people's "when X works" rules that named them, their login link), so Undo restores
+// the same person. Single use: restoredAt is set on restore. No foreign key (the person is gone).
+model StaffRemoval {
+  id         String    @id @default(cuid())
+  staffId    String
+  snapshot   Json
+  createdAt  DateTime  @default(now())
+  restoredAt DateTime?
+
+  @@index([staffId])
+  @@map("staff_removals")
+}

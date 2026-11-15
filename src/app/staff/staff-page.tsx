@@ -1197,7 +1197,22 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
             remember(back);
             setStaff((cur) => cur.map((p) => p.id === id ? back : p));
             markSaved({ kind: "saved", id, isActive: true });
+          } else if (typeof result.removalId === "string") {
+            // Card #220: bring back the same person (same id, rules, requests, links) from the
+            // snapshot the remove kept. Refused (409) when that's no longer possible; nothing changes.
+            const res = await fetch("/api/staff/restore", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ removalId: result.removalId }),
+            }).catch(() => null);
+            if (res?.status === 409) alert((await res.json().catch(() => null))?.error ?? "This can't be undone any more. Reload the page.");
+            if (!res?.ok) return;
+            const back = await res.json() as Staff;
+            remember(back);
+            setStaff((cur) => [...cur.filter((p) => p.id !== back.id), back].sort((a, b) => a.sortOrder - b.sortOrder));
+            markSaved({ kind: "added", id: back.id, isActive: back.isActive });
           } else {
+            // A server from before card #220 (no snapshot): re-create from the old row, as before.
             const res = await fetch("/api/staff", {
               method: "POST",
               headers: { "Content-Type": "application/json" },

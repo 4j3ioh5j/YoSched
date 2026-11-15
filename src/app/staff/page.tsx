@@ -2,10 +2,9 @@ import { prisma } from "@/lib/prisma";
 import { StaffPage } from "./staff-page";
 import { NavHeader } from "../nav-header";
 import { getPageSession } from "@/lib/auth-guard";
-import { staffLoginStatus } from "@/lib/staff-login-status";
 import { redirect } from "next/navigation";
 import { USER_SELECT, toClientUser } from "@/lib/user-view";
-import { ruleVersionsOf } from "@/lib/staff-rule-versions";
+import { STAFF_PAGE_INCLUDE, toClientStaff } from "@/lib/staff-client-row";
 
 export const dynamic = "force-dynamic";
 
@@ -18,10 +17,7 @@ export default async function Staff() {
   const [staff, employmentTypes, allShiftTypes] = await Promise.all([
     prisma.staff.findMany({
       orderBy: { sortOrder: "asc" },
-      include: {
-        employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true, shiftOverrides: true,
-        loginUser: { select: { id: true, isActive: true, email: true, passwordHash: true } },
-      },
+      include: STAFF_PAGE_INCLUDE,
     }),
     prisma.employmentType.findMany({
       orderBy: { sortOrder: "asc" },
@@ -42,77 +38,7 @@ export default async function Staff() {
         canEdit={permissions!.includes("staff:edit")}
         canEditUsers={canEditUsers}
         logins={logins}
-        staff={staff.map((p) => ({
-          id: p.id,
-          name: p.name,
-          loginStatus: staffLoginStatus(p.loginUser),
-          loginUserId: p.loginUser?.id ?? null,
-          initials: p.initials,
-          employmentTypeId: p.employmentTypeId,
-          employmentTypeName: p.employmentType.name,
-          // Card #71: the stored value; the page shows it only when the type has an FTE %.
-          ftePercentage: p.ftePercentage ?? p.employmentType.defaultFtePercentage,
-          fixedHoursPerPp: p.fixedHoursPerPp,
-          availabilityRules: p.availabilityRules.map((ar) => ({
-            type: ar.type,
-            strength: ar.strength,
-            conditionStaffId: ar.conditionStaffId,
-            conditionType: ar.conditionType,
-            whenKind: ar.whenKind,
-            whenDays: ar.whenDays,
-            whenPpWeek: ar.whenPpWeek,
-            whenOrds: ar.whenOrds,
-            whenCycleUnit: ar.whenCycleUnit,
-            whenCycleN: ar.whenCycleN,
-            whenCycleOffset: ar.whenCycleOffset,
-          })),
-          eligibleShiftTypeIds: p.eligibleShifts.map((es) => es.shiftTypeId),
-          shiftEligibilityRules: p.shiftEligibilityRules.map((er) => ({
-            shiftTypeId: er.shiftTypeId,
-            type: er.type,
-            strength: er.strength,
-            whenKind: er.whenKind,
-            whenDays: er.whenDays,
-            whenPpWeek: er.whenPpWeek,
-            whenOrds: er.whenOrds,
-            whenCycleUnit: er.whenCycleUnit,
-            whenCycleN: er.whenCycleN,
-            whenCycleOffset: er.whenCycleOffset,
-          })),
-          shiftMinimumTargets: p.shiftMinimumTargets.map((mt) => ({
-            shiftTypeId: mt.shiftTypeId,
-            minCount: mt.minCount,
-            maxCount: mt.maxCount,
-            window: mt.window,
-            windowDays: mt.windowDays,
-            windowCount: mt.windowCount,
-            strength: mt.strength,
-          })),
-          standingCommitments: p.standingCommitments.map((sc) => ({
-            shiftTypeId: sc.shiftTypeId,
-            notes: sc.notes,
-            whenKind: sc.whenKind,
-            whenDays: sc.whenDays,
-            whenPpWeek: sc.whenPpWeek,
-            whenOrds: sc.whenOrds,
-            whenCycleUnit: sc.whenCycleUnit,
-            whenCycleN: sc.whenCycleN,
-            whenCycleOffset: sc.whenCycleOffset,
-          })),
-          shiftOverrides: p.shiftOverrides.map((o) => ({
-            shiftTypeId: o.shiftTypeId,
-            durationHrs: o.durationHrs,
-            durationHrsWeekday: o.durationHrsWeekday,
-            durationHrsWeekend: o.durationHrsWeekend,
-            durationHrsHoliday: o.durationHrsHoliday,
-          })),
-          // Card #206: each rule list's version, from the same rows as the lists above.
-          ruleVersions: ruleVersionsOf(p),
-          specialQualifications: p.specialQualifications,
-          isActive: p.isActive,
-          isAutoScheduled: p.isAutoScheduled,
-          sortOrder: p.sortOrder,
-        }))}
+        staff={staff.map(toClientStaff)}
         employmentTypes={employmentTypes.map((et) => ({
           id: et.id,
           name: et.name,

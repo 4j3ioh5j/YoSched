@@ -1,11 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { detachLoginForStaff } from "@/lib/user-lifecycle";
+import { removeStaff, REMOVAL_TX } from "@/lib/staff-removal";
 import { ruleToWhen, whenToColumns, standingToWhen, normalizeAnyDay } from "@/lib/recurrence";
 import { NextRequest, NextResponse } from "next/server";
 import { staffHoursWrite } from "@/lib/fte";
 import { lockEligibility, eligibilityDiff, EligibilityStale } from "@/lib/eligibility-write";
-import { RULE_KEYS, ruleListVersion, ruleSelect, ruleVersionsOf, STAFF_RULES_LOCK_CLASS } from "@/lib/staff-rule-versions";
+import { RULE_KEYS, ruleListVersion, ruleSelect, ruleVersionsOf, lockStaffRules } from "@/lib/staff-rule-versions";
 import type { RuleKey, RuleVersions } from "@/lib/staff-rule-patch";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -70,10 +71,6 @@ const RULE_TABLE: Readonly<Record<RuleKey, string>> = {
 };
 const ruleTable = (tx: Prisma.TransactionClient, k: RuleKey) => (tx as unknown as Record<string, RuleTable>)[RULE_TABLE[k]];
 
-/** Card #206: one transaction-scoped lock per person for every write of their rule lists. */
-async function lockStaffRules(tx: Prisma.TransactionClient, id: string): Promise<void> {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${STAFF_RULES_LOCK_CLASS}::int, hashtext(${id}))`;
-}
 
 class RulesStale extends Error {
   constructor() {
@@ -354,21 +351,11 @@ export async function DELETE(req: NextRequest) {
   const { id } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  const assignmentCount = await prisma.assignment.count({ where: { staffId: id } });
-  if (assignmentCount > 0) {
-    // Soft delete (history exists): deactivate + remove the login link atomically.
-    await prisma.$transaction(async (tx) => {
-      await tx.staff.update({ where: { id }, data: { isActive: false } });
-      await detachLoginForStaff(id, tx);
-    });
-    return NextResponse.json({ ok: true, deactivated: true });
-  }
-
-  // Hard delete: remove the link first (a shell is deleted, a real login is kept and
-  // unlinked) and the staff row in one transaction.
-  await prisma.$transaction(async (tx) => {
-    await detachLoginForStaff(id, tx);
-    await tx.staff.delete({ where: { id } });
-  });
-  return NextResponse.json({ ok: true, deleted: true });
+  // Card #220: one transaction under locks that hold off every other writer of this person's rows;
+  // with assignments → deactivate (and unlink the login), else snapshot then delete (see
+  // src/lib/staff-removal.ts). The snapshot lets Undo bring back the same person.
+  const result = await prisma.$transaction((tx) => removeStaff(tx, id), REMOVAL_TX);
+  if (result.kind === "missing") return NextResponse.json({ error: "Staff member not found" }, { status: 404 });
+  if (result.kind === "deactivated") return NextResponse.json({ ok: true, deactivated: true });
+  return NextResponse.json({ ok: true, deleted: true, removalId: result.removalId });
 }

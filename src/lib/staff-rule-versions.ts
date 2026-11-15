@@ -1,6 +1,7 @@
 // Card #206: the version of each of a staff member's rule lists is a hash of its rows over
 // exactly the columns PUT /api/staff writes, independent of row order and of ids. Server only.
 import { createHash } from "node:crypto";
+import type { Prisma } from "@/generated/prisma/client";
 import { RULE_KEYS, type RuleKey, type RuleVersions } from "./staff-rule-patch";
 
 const WHEN = ["whenKind", "whenDays", "whenPpWeek", "whenOrds", "whenCycleUnit", "whenCycleN", "whenCycleOffset"];
@@ -38,3 +39,8 @@ export { RULE_KEYS };
 
 /** First key of the per-person advisory lock (the second is hashtext(staff id)). */
 export const STAFF_RULES_LOCK_CLASS = 206_206;
+
+/** Card #206: one transaction-scoped lock per person for every write of their rule lists. */
+export async function lockStaffRules(tx: Prisma.TransactionClient, id: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${STAFF_RULES_LOCK_CLASS}::int, hashtext(${id}))`;
+}
