@@ -104,3 +104,12 @@ export function loginOptionsForStaff(logins: LinkOptionLogin[], staffId: string)
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((u) => ({ id: u.id, label: u.email ? `${u.name} (${u.email})` : `${u.name} (no email yet)` }));
 }
+
+/**
+ * Card #226: mirror locally what Undo of a remove did on the server — the person's real login is
+ * linked to them again. No login, or one this page doesn't list: the list is returned unchanged.
+ */
+export function relinkLoginLocal<T extends { id: string; staffId: string | null }>(logins: T[], staffId: string, loginUserId: string | null): T[] {
+  if (!loginUserId || !logins.some((u) => u.id === loginUserId)) return logins;
+  return logins.map((u) => (u.id === loginUserId ? { ...u, staffId } : u));
+}

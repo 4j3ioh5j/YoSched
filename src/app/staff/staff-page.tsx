@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useEscape } from "@/lib/use-escape";
 import { staffLoginStatusFromClient, type StaffLoginStatus } from "@/lib/staff-login-status";
-import { loginOptionsForStaff } from "@/lib/staff-login-link";
+import { loginOptionsForStaff, relinkLoginLocal } from "@/lib/staff-login-link";
 import { initSavedActive, applySavedActive, canLinkLogin, type SavedActiveEvent } from "@/lib/staff-saved-active";
 import { SavedRows } from "@/lib/staff-saved-rows";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen, standingToWhen } from "@/lib/recurrence";
@@ -1210,6 +1210,8 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
             const back = await res.json() as Staff;
             remember(back);
             setStaff((cur) => [...cur.filter((p) => p.id !== back.id), back].sort((a, b) => a.sortOrder - b.sortOrder));
+            // Card #226: the page's own login list shows the login linked again.
+            setLogins((cur) => relinkLoginLocal(cur, back.id, back.loginUserId));
             markSaved({ kind: "added", id: back.id, isActive: back.isActive });
           } else {
             // A server from before card #220 (no snapshot): re-create from the old row, as before.
