@@ -1169,12 +1169,13 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
               async () => (await putStaff({ ...prev, eligibleShiftTypeIds: u.list }, u.base, undoRulesPatch(prev, saved, result.sent), saved))?.row ?? null,
               result.deactivationId,
               fetchRestore,
+              (row): Staff => ({ ...row, loginUserId: null, loginStatus: "none" }), // card #231: refused ⇒ unlinked
             );
             if (!res) return; // refused: nothing changed on the server, so nothing changes here
             const back = res.row;
             remember(back);
             setStaff((cur) => cur.map((p) => p.id === back.id ? back : p));
-            setLogins((cur) => relinkLoginLocal(cur, back.id, back.loginUserId));
+            if (res.relinked) setLogins((cur) => relinkLoginLocal(cur, back.id, back.loginUserId));
             markSaved({ kind: "saved", id: prev.id, isActive: prev.isActive });
             if (res.error) alert(`${prev.initials} is active again, but their login could not be linked back: ${res.error}`);
           },
