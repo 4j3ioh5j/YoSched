@@ -592,6 +592,10 @@ export type AutoScheduleInput = {
   skipCompoundRepairForTest?: boolean;
   /** Test-only (card #232): skip finishing half pairs, to exercise the later repairs on the old shapes. */
   skipFinishPairsForTest?: boolean;
+  /** Test-only (card #233): skip the joint day choice of paired spread shifts (the old greedy days). */
+  skipJointSpreadForTest?: boolean;
+  /** Test-only (card #233): lower the joint day choice's per-PP bounds (default 200 swaps / 50k checks). */
+  jointSpreadLimitsForTest?: { swaps: number; checks: number };
   // Multi-option candidate seed (Slice 4b). 0/undefined ⇒ the canonical schedule,
   // byte-for-byte identical to the pre-4b output (guaranteed by snapshot test).
   // A positive seed appends a deterministic hash AFTER every existing tiebreak
@@ -642,6 +646,8 @@ export function autoSchedule({
   writableFrom,
   skipCompoundRepairForTest,
   skipFinishPairsForTest,
+  skipJointSpreadForTest,
+  jointSpreadLimitsForTest,
   balanceRequests,
   balancePayPeriods,
   spreadContext,
@@ -2674,6 +2680,150 @@ export function autoSchedule({
             recordAssignment(chosen.id, date);
             placeEachDayFollower(chosen.id, date, st);
           }
+
+          // ── Card #233: choose the pay period's days jointly ──
+          // The groups above are chosen one host at a time, so the last hosts take what is left
+          // (two ORLs three days apart). A bounded best-improvement search then trades DAYS
+          // between two hosts — A's d1 for B's d2 — when that strictly lowers the spacing penalty
+          // (spreadDelta: the exact before/after penalty of both people). Who holds the shift, how
+          // many and their hours never change; every swap is judged on the grid it leaves.
+          // v1 scope: no follower source (a date swap could split a run or move a follower).
+          if (st.spreadOverMonth && spreadIds.size > 0 && !skipJointSpreadForTest && !followerBySource.has(st.id)) {
+            jointSpreadSwaps(pp);
+          }
+        }
+
+        function jointSpreadSwaps(pp: (typeof payPeriods)[number]): void {
+          const LIM = jointSpreadLimitsForTest ?? { swaps: 200, checks: 50000 };
+          const ppDates = dates.filter((d) => d >= pp.startDate && d <= pp.endDate);
+          const ppRangesAll: PayPeriodRange[] = payPeriods.map((x) => ({ startDate: x.startDate, endDate: x.endDate }));
+          // Only this step's own unlocked cells of the shift, on writable days.
+          const movable = (): { p: ScheduleStaff; d: string }[] => {
+            const out: { p: ScheduleStaff; d: string }[] = [];
+            for (const p of eligible) for (const d of ppDates) {
+              if (isFrozen(d)) continue;
+              const c = grid.get(`${p.id}:${d}`);
+              if (c && c.shiftTypeId === st.id && !c.locked && !c.noCount && c.step === stepName && c.source !== "manual") out.push({ p, d });
+            }
+            return out;
+          };
+          const softAvoid = (id: string, d: string): number => {
+            if (requestList.length === 0) return 0;
+            const f = foldFor(id, d);
+            return f.avoidWorking || f.avoidedShiftIds.has(st.id) ? 1 : 0;
+          };
+          // Follow rules around a cell as the grid now stands; an emptied in-range day reads as off.
+          const followOk = (id: string, d: string): boolean => {
+            const at = (x: string): { id: string; off: boolean } | null => {
+              const c = grid.get(`${id}:${x}`);
+              if (!c) return offShift && dateSet.has(x) ? { id: offShift.id, off: true } : null;
+              return { id: c.shiftTypeId, off: !!stById.get(c.shiftTypeId)?.isOffShift };
+            };
+            const me = at(d), prev = at(prevDate(d)), next = at(nextDate(d));
+            if (!me) return true;
+            if (prev && !isShiftAllowedAfter(followMap, prev.id, me.id, me.off)) return false;
+            if (next && !isShiftAllowedAfter(followMap, me.id, next.id, next.off)) return false;
+            return true;
+          };
+          // Hard minimum windows of this shift touching the changed days: never left lower when below.
+          const hardWindows = (p: ScheduleStaff, days: string[]): { start: string; end: string; min: number }[] => {
+            const out: { start: string; end: string; min: number }[] = [];
+            for (const t of p.shiftMinimumTargets ?? []) {
+              if (t.shiftTypeId !== st.id || (t.strength ?? "rule") !== "rule" || !(t.minCount > 0)) continue;
+              for (const d of days) { const b = getWindowBounds(t, d, ppRangesAll); if (b) out.push({ ...b, min: t.minCount }); }
+            }
+            return out;
+          };
+          const countIn = (id: string, w: { start: string; end: string }): number => {
+            let n = 0;
+            for (let x = w.start; x <= w.end; x = nextDate(x)) { const c = grid.get(`${id}:${x}`); if (c && c.code === st.code && !c.noCount) n++; }
+            return n;
+          };
+          const condOwners = staff.filter((p) => p.isActive && p.availabilityRules.some((r) => r.conditionStaffId && r.conditionType));
+          const condBroken = (): Set<string> => {
+            const out = new Set<string>();
+            for (const p of condOwners) for (const d of ppDates) {
+              const c = grid.get(`${p.id}:${d}`);
+              if (!c || !isWorking(p.id, d) || stById.get(c.shiftTypeId)?.ignoresWorkingDays) continue;
+              if (!evaluateAvailability(p.availabilityRules, d, payPeriods, (pid, x) => isWorking(pid, x)).available) out.add(`${p.id}:${d}`);
+            }
+            return out;
+          };
+          /** Makes the swap if the grid it leaves passes every hard check; otherwise leaves the grid as it was. */
+          const trySwap = (A: ScheduleStaff, d1: string, B: ScheduleStaff, d2: string): boolean => {
+            const kA1 = `${A.id}:${d1}`, kA2 = `${A.id}:${d2}`, kB1 = `${B.id}:${d1}`, kB2 = `${B.id}:${d2}`;
+            const cA = grid.get(kA1)!, cB = grid.get(kB2)!;
+            const wins = [...hardWindows(A, [d1, d2]).map((w) => ({ id: A.id, w })), ...hardWindows(B, [d1, d2]).map((w) => ({ id: B.id, w }))];
+            const winBefore = wins.map(({ id, w }) => countIn(id, w));
+            const condBefore = condBroken();
+            const cover = [countCoverage(st.code, d1), countCoverage(st.code, d2)];
+            // Equal shift hours aren't enough: leaving a holiday can make the person owed HOL
+            // hours (Codex #1063). Each person's projected PP hours, owed HOL included, stay put.
+            const projected = (p: ScheduleStaff): number => Math.round((ppHoursForStaff(p.id, pp) + pendingHolidayHours(p, pp, [])) * 100);
+            const hoursBefore = [projected(A), projected(B)];
+            const undo = (): false => {
+              grid.delete(kA2); grid.delete(kB1);
+              grid.set(kA1, cA); grid.set(kB2, cB);
+              return false;
+            };
+            grid.delete(kA1); grid.delete(kB2);
+            if (!isAvailable(A, d2, st)) return undo();
+            grid.set(kA2, { ...cA });
+            if (!isAvailable(B, d1, st)) return undo();
+            grid.set(kB1, { ...cB });
+            for (const [id, d] of [[A.id, d1], [A.id, d2], [B.id, d1], [B.id, d2]] as const) if (!followOk(id, d)) return undo();
+            for (let i = 0; i < wins.length; i++) {
+              const now = countIn(wins[i].id, wins[i].w);
+              if (now < wins[i].w.min && now < winBefore[i]) return undo();
+            }
+            for (const k of condBroken()) if (!condBefore.has(k)) return undo();
+            if (countCoverage(st.code, d1) !== cover[0] || countCoverage(st.code, d2) !== cover[1]) return undo();
+            if (projected(A) !== hoursBefore[0] || projected(B) !== hoursBefore[1]) return undo();
+            return true;
+          };
+          const moveSuggestion = (id: string, from: string, to: string): void => {
+            const s = suggestions.find((x) => x.staffId === id && x.date === from && x.shiftTypeId === st.id);
+            if (!s) return;
+            s.date = to;
+            if (!s.reason.endsWith(" · spread swap")) s.reason += " · spread swap";
+          };
+          const lastOf = (id: string): void => {
+            let last: string | undefined;
+            for (const d of dates) { const c = grid.get(`${id}:${d}`); if (c && c.code === st.code && !c.noCount) last = d; }
+            if (last) lastRunDate.set(id, last); else lastRunDate.delete(id);
+          };
+
+          let swaps = 0, checks = 0, capped = false;
+          search: while (true) {
+            if (swaps >= LIM.swaps) { capped = true; break; }
+            const cells = movable();
+            const cands: { delta: number; A: ScheduleStaff; d1: string; B: ScheduleStaff; d2: string }[] = [];
+            for (let i = 0; i < cells.length; i++) for (let j = 0; j < cells.length; j++) {
+              const { p: A, d: d1 } = cells[i], { p: B, d: d2 } = cells[j];
+              if (A.id === B.id || d1 === d2) continue;
+              if (i > j) continue; // each unordered pair once
+              if (d1.slice(0, 7) !== d2.slice(0, 7)) continue; // calendar-month counts stay as they are
+              if (grid.has(`${A.id}:${d2}`) || grid.has(`${B.id}:${d1}`)) continue; // destination must be empty
+              if (countedHrs(A.id, st, d1) !== countedHrs(A.id, st, d2) || countedHrs(B.id, st, d1) !== countedHrs(B.id, st, d2)) continue;
+              if (++checks > LIM.checks) { capped = true; break search; }
+              if (eligPreference(A, st.id, d2) < eligPreference(A, st.id, d1) || eligPreference(B, st.id, d1) < eligPreference(B, st.id, d2)) continue;
+              if (softAvoid(A.id, d2) > softAvoid(A.id, d1) || softAvoid(B.id, d1) > softAvoid(B.id, d2)) continue;
+              const runA = (d: string) => (d === d1 ? null : d === d2 ? st.id : grid.get(`${A.id}:${d}`)?.shiftTypeId);
+              const runB = (d: string) => (d === d2 ? null : d === d1 ? st.id : grid.get(`${B.id}:${d}`)?.shiftTypeId);
+              const nowA = (d: string) => grid.get(`${A.id}:${d}`)?.shiftTypeId, nowB = (d: string) => grid.get(`${B.id}:${d}`)?.shiftTypeId;
+              if (avoidedInRun([d1, d2], runA) > avoidedInRun([d1, d2], nowA) || avoidedInRun([d1, d2], runB) > avoidedInRun([d1, d2], nowB)) continue;
+              const delta = spreadDelta([[A.id, d1, null], [A.id, d2, st.id], [B.id, d2, null], [B.id, d1, st.id]]);
+              if (delta < -EPS) cands.push({ delta, A, d1, B, d2 });
+            }
+            cands.sort((x, y) => x.delta - y.delta); // stable: ties keep staff/date order
+            const made = cands.find((c) => trySwap(c.A, c.d1, c.B, c.d2));
+            if (!made) break;
+            moveSuggestion(made.A.id, made.d1, made.d2);
+            moveSuggestion(made.B.id, made.d2, made.d1);
+            lastOf(made.A.id); lastOf(made.B.id);
+            swaps++;
+          }
+          if (capped) warnings.push(`${st.code} spread search limit reached in PP ${pp.startDate}`);
         }
       } else {
         // Day-by-day distribution (pairingFactor === 1)
