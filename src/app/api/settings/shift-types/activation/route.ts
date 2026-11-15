@@ -11,7 +11,7 @@ import {
   readActivationState, applyActivation, ActivationStale,
   parseActivationWorked, parseActivationNever, parseActivationNewHire,
 } from "@/lib/shift-activation";
-import { SHIFT_TYPE_EDITABLE_FIELDS, sanitizePrintBg } from "@/lib/shift-type-fields";
+import { SHIFT_TYPE_EDITABLE_FIELDS, sanitizePrintBg, minGapError } from "@/lib/shift-type-fields";
 
 export async function GET(req: NextRequest) {
   const { error } = await getSession("settings:view");
@@ -46,6 +46,8 @@ export async function POST(req: NextRequest) {
   // Other edits to the shift saved in the same write (the Settings editor's unsaved fields).
   const shiftData: Prisma.ShiftTypeUpdateInput = {};
   if (shift && typeof shift === "object") {
+    const gapErr = minGapError(shift as Record<string, unknown>);
+    if (gapErr) return NextResponse.json({ error: gapErr }, { status: 400 });
     for (const key of SHIFT_TYPE_EDITABLE_FIELDS) {
       if (key === "autoSchedulable") continue;
       if (key in shift) (shiftData as Record<string, unknown>)[key] = (shift as Record<string, unknown>)[key];

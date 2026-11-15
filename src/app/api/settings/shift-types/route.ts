@@ -5,13 +5,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { coerceConditions } from "@/lib/print-column-visibility";
 import { conditionsReference } from "@/lib/print-conditions";
 import { lockEligibility } from "@/lib/eligibility-write";
-import { SHIFT_TYPE_EDITABLE_FIELDS as EDITABLE_FIELDS, sanitizePrintBg } from "@/lib/shift-type-fields";
+import { SHIFT_TYPE_EDITABLE_FIELDS as EDITABLE_FIELDS, sanitizePrintBg, minGapError } from "@/lib/shift-type-fields";
 
 export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { id, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+  const gapErr = minGapError(data);
+  if (gapErr) return NextResponse.json({ error: gapErr }, { status: 400 });
 
   const updateData: Prisma.ShiftTypeUpdateInput = {};
   for (const key of EDITABLE_FIELDS) {
@@ -48,6 +50,8 @@ export async function POST(req: NextRequest) {
   if (!data.code || !data.name) {
     return NextResponse.json({ error: "Missing code or name" }, { status: 400 });
   }
+  const gapErr = minGapError(data);
+  if (gapErr) return NextResponse.json({ error: gapErr }, { status: 400 });
 
   const maxSort = await prisma.shiftType.aggregate({ _max: { sortOrder: true } });
   const created = await prisma.shiftType.create({
@@ -73,6 +77,8 @@ export async function POST(req: NextRequest) {
       holidayWeekendPaired: data.holidayWeekendPaired ?? false,
       spreadOverMonth: data.spreadOverMonth ?? false,
       evenAcrossMonths: data.evenAcrossMonths ?? false,
+      minGapDays: data.minGapDays ?? null,
+      minGapStrength: data.minGapStrength ?? "preference",
       ignoresWorkingDays: data.ignoresWorkingDays ?? false,
       // Card #75: always off. Turning it on goes through the activation panel, which chooses who gets
       // it (a deleted shift's Undo re-POSTs its old row; it must not come back "on" with nobody).

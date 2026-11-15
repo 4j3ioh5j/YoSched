@@ -60,6 +60,8 @@ type ShiftType = {
   holidayWeekendPaired: boolean;
   spreadOverMonth?: boolean;
   evenAcrossMonths?: boolean;
+  minGapDays?: number | null; // card #260
+  minGapStrength?: string; // "rule" | "preference"
   ignoresWorkingDays: boolean;
   autoSchedulable: boolean;
   hotkey: string | null;
@@ -1214,6 +1216,8 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
         holidayWeekendPaired: created.holidayWeekendPaired ?? false,
         spreadOverMonth: created.spreadOverMonth ?? false,
         evenAcrossMonths: created.evenAcrossMonths ?? false,
+        minGapDays: created.minGapDays ?? null,
+        minGapStrength: created.minGapStrength ?? "preference",
         ignoresWorkingDays: created.ignoresWorkingDays ?? false,
         autoSchedulable: created.autoSchedulable ?? false,
         hotkey: created.hotkey ?? null,
@@ -1484,6 +1488,15 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
               </FieldRow>
               <FieldRow label="Spread out as much as possible" description={`For each person, the scheduler keeps the shifts marked this way — together — as far apart as it can, looking ${tuning.spreadRadiusDays} days either side (Settings › Scheduler tuning), including last month's and next month's. It decides among people whose counts are even; it never gives anyone extra.`}>
                 <input disabled={!canEdit} type="checkbox" checked={!!editingShift.spreadOverMonth} onChange={(e) => updateField(editingShift.id, "spreadOverMonth", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
+              </FieldRow>
+              <FieldRow label="Minimum days between two" description="For one person, two of this shift are at least this many days apart (7 = the same weekday the next week). Days in a row count as one stretch, measured from its last day. Includes last month's and next month's. Prefer: the scheduler chooses people and days that keep the gap, and warns when it can't. Hard: never closer — a day stays short instead, with a warning. Two in the same pay period can't be further apart than the pay period allows. Blank = off.">
+                <div className="flex items-center gap-2">
+                  <input disabled={!canEdit} type="number" min={2} max={60} className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.minGapDays ?? ""} placeholder="Off" onChange={(e) => updateField(editingShift.id, "minGapDays", e.target.value ? parseInt(e.target.value) : null)} />
+                  <select disabled={!canEdit || editingShift.minGapDays == null} value={editingShift.minGapStrength === "rule" ? "rule" : "preference"} onChange={(e) => updateField(editingShift.id, "minGapStrength", e.target.value)} className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50" title="Hard or Prefer">
+                    <option value="preference">Prefer</option>
+                    <option value="rule">Hard</option>
+                  </select>
+                </div>
               </FieldRow>
               <FieldRow label="Keep counts even across months" description={`Each month this shift is shared out evenly first, as usual. Among people within ${tuning.evenBandCalls} shift${tuning.evenBandCalls === 1 ? "" : "s"} of each other this month (Settings › Scheduler tuning), whoever is owed most from earlier months (since the date under Settings › Scheduling › Scheduled shift share) goes first: a tie-break only. People are owed a share only of days they could have worked it, and new staff start level.`}>
                 <input disabled={!canEdit} type="checkbox" checked={!!editingShift.evenAcrossMonths} onChange={(e) => updateField(editingShift.id, "evenAcrossMonths", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />

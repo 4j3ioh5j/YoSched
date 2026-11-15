@@ -11,6 +11,7 @@ import { buildHolidayGroups, type HolidayRuleSpec, type HolidayGroup, type Holid
 import { couldWorkOn, excessLeaveDays, type LeavePolicy } from "./leave-policy";
 import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
 import { tallyBalances, sharesOf, spreadPenalty, spreadChange, addDays, type BalanceTally } from "./shift-balance";
+import { gapBreaks, gapList, gapListShrank, gapTrialBeats, type GapTrialOutcome } from "./shift-gap";
 import { readTuning, isWeekendDate, weekendSecondDow, type SchedulerTuning } from "./scheduler-tuning";
 
 export type ScheduleStaff = {
@@ -60,6 +61,10 @@ export type ScheduleShiftType = {
   // Card #203: "Keep counts even across months" — the running balance (cells since the
   // department's shiftBalanceFrom) shares this shift out; earlier months only break ties.
   evenAcrossMonths?: boolean;
+  // Card #260: for one person, at least this many days between two of this shift (days in a
+  // row are one stretch). null/absent = off. "rule" = Hard (never closer), else Prefer.
+  minGapDays?: number | null;
+  minGapStrength?: string;
   ignoresWorkingDays: boolean;
   category: string;
 
@@ -594,6 +599,8 @@ export type AutoScheduleInput = {
   skipFinishPairsForTest?: boolean;
   /** Test-only (card #233): skip the joint day choice of paired spread shifts (the old greedy days). */
   skipJointSpreadForTest?: boolean;
+  /** Test-only (card #260): place each pay period once, with the minimum-gap host keys (no with/without trial). */
+  skipGapTrialForTest?: boolean;
   /** Test-only (card #233): lower the joint day choice's per-PP bounds (default 200 swaps / 50k checks). */
   jointSpreadLimitsForTest?: { swaps: number; checks: number };
   // Multi-option candidate seed (Slice 4b). 0/undefined ⇒ the canonical schedule,
@@ -647,6 +654,7 @@ export function autoSchedule({
   skipCompoundRepairForTest,
   skipFinishPairsForTest,
   skipJointSpreadForTest,
+  skipGapTrialForTest,
   jointSpreadLimitsForTest,
   balanceRequests,
   balancePayPeriods,
@@ -1034,6 +1042,112 @@ export function autoSchedule({
     return spreadPenalty((d) => spreadIds.has(cellShiftAt(staffId, d) ?? ""), date, spreadRadius);
   }
 
+  // ── Card #260: minimum days between two of the same shift, for one person ──
+  // Read from the grid, history and next month's cells (cellShiftAt). Hard = a STATE rule:
+  // placements are pre-checked here (isAvailable / canHoldForSwap, a group as one unit) and
+  // every writer that can remove or overwrite a cell compares the too-close pairs before and
+  // after (gapSnapshot / gapNewSince) and rolls back on a new one (Codex #1190). Pairs that
+  // already exist (hand-entered) never block a change. Prefer never blocks: it ranks.
+  // Card #260: while a pay period of a Prefer-gap shift is placed as if the setting were off
+  // (the baseline its Prefer result must beat), its gap reads as off.
+  let gapSuspended: string | null = null;
+  const gapOf = (st: ScheduleShiftType): number => (st.id !== gapSuspended && st.minGapDays != null && st.minGapDays >= 2 ? Math.floor(st.minGapDays) : 0);
+  const gapHard = (st: ScheduleShiftType): boolean => gapOf(st) > 0 && st.minGapStrength === "rule";
+  const gapShifts = shiftTypes.filter((s) => gapOf(s) > 0);
+  const hardGapShifts = gapShifts.filter(gapHard);
+  function holdsAt(staffId: string, stId: string, add?: Iterable<string>): (d: string) => boolean {
+    const extra = new Set(add ?? []);
+    return (d) => extra.has(d) || cellShiftAt(staffId, d) === stId;
+  }
+  /** How many NEW too-close pairs the person would get if `dates` (not yet on the grid) held `st`. */
+  function gapNewBreaks(staffId: string, st: ScheduleShiftType, dates: string[]): number {
+    const n = gapOf(st);
+    if (!n || dates.length === 0) return 0;
+    const sorted = [...dates].sort();
+    const from = sorted[0], to = sorted[sorted.length - 1];
+    const before = gapBreaks(holdsAt(staffId, st.id), from, to, n);
+    let k = 0;
+    for (const pair of gapBreaks(holdsAt(staffId, st.id, dates), from, to, n)) if (!before.has(pair)) k++;
+    return k;
+  }
+  /** The smallest gap the person's stretch of `st` would have to its neighbours with `dates` added (bigger = more room). */
+  function gapRoom(staffId: string, st: ScheduleShiftType, dates: string[]): number {
+    const n = gapOf(st);
+    if (!n || dates.length === 0) return 0;
+    const sorted = [...dates].sort();
+    const reach = Math.max(n, spreadRadius);
+    const gaps = gapList(holdsAt(staffId, st.id, dates), addDays(sorted[0], -reach), addDays(sorted[sorted.length - 1], reach));
+    return gaps.length ? Math.min(...gaps, reach) : reach;
+  }
+  type GapSnap = { from: string; to: string; pairs: Map<string, Set<string>> };
+  /** The Hard-gap too-close pairs of these people around these dates, before a change. */
+  function gapSnapshot(staffIds: Iterable<string>, dates: Iterable<string>): GapSnap | null {
+    if (hardGapShifts.length === 0) return null;
+    const ds = [...dates].sort();
+    if (ds.length === 0) return null;
+    const snap: GapSnap = { from: ds[0], to: ds[ds.length - 1], pairs: new Map() };
+    for (const id of new Set(staffIds)) for (const st of hardGapShifts) {
+      snap.pairs.set(`${id}|${st.id}`, gapBreaks(holdsAt(id, st.id), snap.from, snap.to, gapOf(st)));
+    }
+    return snap;
+  }
+  /**
+   * What a set of cell changes would do to minimum gaps, judged on the whole resulting state
+   * (removals included): does it add a Hard too-close pair, and how many Prefer pairs does it
+   * add (negative: removes)? The grid is changed only for the check and put back exactly.
+   */
+  function gapEffect(changes: readonly (readonly [string, string, string | null])[]): { hardNew: boolean; preferDelta: number } {
+    if (gapShifts.length === 0 || changes.length === 0) return { hardNew: false, preferDelta: 0 };
+    const ids = [...new Set(changes.map((c) => c[0]))];
+    const ds = changes.map((c) => c[1]).sort();
+    const from = ds[0], to = ds[ds.length - 1];
+    const prefer = gapShifts.filter((x) => !gapHard(x));
+    const preferCount = (): number => {
+      let n = 0;
+      for (const id of ids) for (const x of prefer) n += gapBreaks(holdsAt(id, x.id), from, to, gapOf(x)).size;
+      return n;
+    };
+    const snap = gapSnapshot(ids, ds);
+    const p0 = prefer.length ? preferCount() : 0;
+    const saved = changes.map(([id, d]) => [`${id}:${d}`, grid.get(`${id}:${d}`)] as const);
+    for (const [id, d, stId] of changes) {
+      const key = `${id}:${d}`;
+      if (stId === null) grid.delete(key);
+      else { const x = stById.get(stId)!; grid.set(key, { shiftTypeId: x.id, code: x.code, locked: false, noCount: false, step: "repair" }); }
+    }
+    const hardNew = gapNewSince(snap);
+    const p1 = prefer.length ? preferCount() : 0;
+    for (let i = saved.length - 1; i >= 0; i--) { const [k, v] = saved[i]; if (v) grid.set(k, v); else grid.delete(k); }
+    return { hardNew, preferDelta: p1 - p0 };
+  }
+  /**
+   * Would placing `st` on `dates` now (against the grid as it stands at this write) make a
+   * Hard-gap too-close pair the person doesn't already have? For the paths that write with
+   * their own checks instead of isAvailable (followers, standing commitments, min targets,
+   * fill, the holiday entitlement, days off), each checked at its own write (Codex #1198:
+   * a batch checked once before it writes goes stale as it writes).
+   */
+  function hardGapBlocks(staffId: string, st: ScheduleShiftType, dates: string[]): boolean {
+    return gapHard(st) && gapNewBreaks(staffId, st, dates) > 0;
+  }
+  const hardGapWhy = (st: ScheduleShiftType): string => `minimum gap between two ${st.code}: at least ${gapOf(st)} days, Hard`;
+  /** " — why" when a Hard gap is what keeps everyone else off this day (else ""), for "No eligible" warnings. */
+  function gapCause(st: ScheduleShiftType, dates: string[], pool: ScheduleStaff[]): string {
+    if (!gapHard(st)) return "";
+    const held = pool.some((p) => dates.every((d) => isAvailable(p, d, st, { skipGap: true })) && !dates.every((d) => isAvailable(p, d, st, { gapGroup: dates })));
+    return held ? ` — everyone free to work it would break the minimum gap between two ${st.code} (at least ${gapOf(st)} days, Hard)` : "";
+  }
+  /** Does the grid now hold a Hard-gap too-close pair that the snapshot didn't? */
+  function gapNewSince(snap: GapSnap | null): boolean {
+    if (!snap) return false;
+    for (const [key, before] of snap.pairs) {
+      const [id, stId] = key.split("|");
+      const st = stById.get(stId)!;
+      for (const pair of gapBreaks(holdsAt(id, stId), snap.from, snap.to, gapOf(st))) if (!before.has(pair)) return true;
+    }
+    return false;
+  }
+
   // Card #188: a staff card's Prefer eligibility rules rank, never gate — "eligible · Prefer"
   // favours those days (+1 each), "ineligible · Prefer" steers away (−1 each).
   const eligPpRanges = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
@@ -1065,7 +1179,10 @@ export function autoSchedule({
   // hardLimits. Every other gate — eligibility, availability, follow rules, the per-day
   // cap (Staffing Rules Max), one-shift-per-day — still applies. Hard MIN is not an availability
   // gate (it lives in the objective/floor), so only the MAX needs a waiver (Codex #1779).
-  function isAvailable(staff: ScheduleStaff, date: string, st: ScheduleShiftType, opts?: { ignoreHardMax?: boolean }): boolean {
+  // `gapGroup` (card #260): the whole group the day belongs to (a weekend pair, a paired group),
+  // so a Hard gap judges it as one stretch; `skipGap` leaves the gap to a caller that checks
+  // the whole group itself (completeGroupFor).
+  function isAvailable(staff: ScheduleStaff, date: string, st: ScheduleShiftType, opts?: { ignoreHardMax?: boolean; gapGroup?: string[]; skipGap?: boolean }): boolean {
     if (isFrozen(date)) return false;
     if (isAssigned(staff.id, date)) return false;
     // Approved hard requests (OFF / NEGATE_SHIFT) gate every placement that flows
@@ -1097,6 +1214,8 @@ export function autoSchedule({
     }
     if (dayFull(st, date)) return false;
     if (!opts?.ignoreHardMax && isAtMaximum(staff, st, date)) return false;
+    // Card #260: never waived (not by ignoreHardMax / coverage over limits): the day stays short.
+    if (!opts?.skipGap && gapHard(st) && gapNewBreaks(staff.id, st, opts?.gapGroup ?? [date]) > 0) return false;
     return true;
   }
 
@@ -1155,6 +1274,7 @@ export function autoSchedule({
     if (!avail.available) return "staff unavailable";
     if (holidaySet.has(next) && isWorkFollower) return "holiday";
     if (dayFull(spec.follower, next)) return `Max for ${spec.follower.code} that day already reached`;
+    if (hardGapBlocks(staffId, spec.follower, [next])) return hardGapWhy(spec.follower);
     return null;
   }
 
@@ -1462,8 +1582,8 @@ export function autoSchedule({
     return block !== "over" || hardMinBeatsOverHours;
   }
 
-  function canFillCoverageOverLimits(p: ScheduleStaff, date: string, st: ScheduleShiftType): boolean {
-    if (!isAvailable(p, date, st, { ignoreHardMax: coverageBeatsHardLimits && hasUnmetCoverageMinimum(date, st) })) return false;
+  function canFillCoverageOverLimits(p: ScheduleStaff, date: string, st: ScheduleShiftType, gapGroup?: string[]): boolean {
+    if (!isAvailable(p, date, st, { ignoreHardMax: coverageBeatsHardLimits && hasUnmetCoverageMinimum(date, st), gapGroup })) return false;
     const block = ppHoursBlock(p.id, date, st);
     if (!coverageBeatsOverHours && block === "over") return false;
     // An under-target coverage cannot push past (Prohibited, or Discouraged and ranked above
@@ -1756,6 +1876,10 @@ export function autoSchedule({
         warnings.push(`${member.initials}: standing ${st.code} not placed on ${date} (Max for ${st.code} that day already reached)`);
         continue;
       }
+      if (hardGapBlocks(sc.staffId, st, [date])) {
+        warnings.push(`${member.initials}: standing ${st.code} not placed on ${date} (${hardGapWhy(st)})`);
+        continue;
+      }
 
       assign(
         sc.staffId,
@@ -2030,10 +2154,12 @@ export function autoSchedule({
   type GroupTier = "strict" | "fallback" | "anchor";
   /** Can `p` take one open day under the tier's gate? (eligibility ticks + rules are checked
    *  separately: isAvailable doesn't check the ticks.) */
-  function slotOk(p: ScheduleStaff, s: HolidayGroupSlot, tier: GroupTier): boolean {
+  // `open` (card #260): the group's days, so a Hard gap judges its days of one shift as one stretch.
+  function slotOk(p: ScheduleStaff, s: HolidayGroupSlot, tier: GroupTier, open?: readonly HolidayGroupSlot[]): boolean {
     const st = stById.get(s.shiftTypeId)!;
-    if (tier === "fallback") return canFillCoverageOverLimits(p, s.date, st);
-    if (!isAvailable(p, s.date, st)) return false;
+    const gapGroup = open ? open.filter((x) => x.shiftTypeId === s.shiftTypeId).map((x) => x.date) : undefined;
+    if (tier === "fallback") return canFillCoverageOverLimits(p, s.date, st, gapGroup);
+    if (!isAvailable(p, s.date, st, { gapGroup })) return false;
     return tier === "anchor" || ppHoursBlock(p.id, s.date, st) === null;
   }
   /** Why `p` can't take all the open days, or null. */
@@ -2042,17 +2168,18 @@ export function autoSchedule({
       const st = stById.get(s.shiftTypeId)!;
       if (!eligibleStaff(st, s.date).some((e) => e.id === p.id)) return `not eligible for ${st.code} on ${s.date}`;
     }
-    for (const s of open) if (!slotOk(p, s, tier)) return `can't take ${stById.get(s.shiftTypeId)!.code} on ${s.date}`;
+    for (const s of open) if (!slotOk(p, s, tier, open)) return `can't take ${stById.get(s.shiftTypeId)!.code} on ${s.date}`;
     if (!coverageBeatsOverHours && groupWouldExceed(p, open)) return "would go over their hours for the pay period";
     return null;
   }
   /** Place the open days for `p` (date order, followers inside the trial); all or nothing. */
   function placeGroup(p: ScheduleStaff, g: HolidayGroup, open: readonly HolidayGroupSlot[], tier: GroupTier): string | null {
     const snap = snapshotFor(p.id, []);
+    const gapSnap = gapSnapshot([p.id], open.map((s) => s.date));
     let why: string | null = null;
     for (const s of open) {
       const st = stById.get(s.shiftTypeId)!;
-      if (!slotOk(p, s, tier)) { why = `can't take ${st.code} on ${s.date}`; break; }
+      if (!slotOk(p, s, tier, open)) { why = `can't take ${st.code} on ${s.date}`; break; }
       assign(p.id, s.date, st, `Holiday rule ${g.ruleName} (${p.initials})`, "holiday-rule", 0.95);
       placeEachDayFollower(p.id, s.date, st);
     }
@@ -2062,6 +2189,7 @@ export function autoSchedule({
         if (!c || c.shiftTypeId !== s.shiftTypeId || c.step !== "holiday-rule") { why = `a required follower lands on ${s.date}`; break; }
       }
     }
+    if (!why && gapNewSince(gapSnap)) why = "would break a minimum gap between two of the same shift";
     if (why) { restoreSnapshot(snap); return why; }
     return null;
   }
@@ -2141,6 +2269,9 @@ export function autoSchedule({
     // Per-shift tracking for even distribution within this run
     const runCount = new Map<string, number>();
     const lastRunDate = new Map<string, string>();
+    // Card #260: the minimum-gap host keys (gap first, then room) in pickStaff. A paired pay
+    // period is placed with them and without them, and they are kept only where they help.
+    let gapKeysOn = true;
     for (const p of eligible) runCount.set(p.id, 0);
     // Seed from counting cells of this shift already on the grid (STEP 1 requests,
     // manual/locked entries, prior-run spill inside the window). Must use the SAME
@@ -2172,7 +2303,12 @@ export function autoSchedule({
     // `datesOf` (cards #178/#188): the dates a candidate would actually get when it differs
     // from `date` (a weekend pair, a paired group); null = it can't host. Prefer rules and the
     // spread load are scored over those dates.
-    function pickStaff(pool: ScheduleStaff[], date?: string, datesOf?: (p: ScheduleStaff) => string[] | null): ScheduleStaff {
+    // `roomFor` (card #260): how far apart this person could space the shift in the pay period
+    // at best (their open days' span); a cramped person ranks behind a roomy one in the band.
+    // `groupsLeft` (card #260): how many more groups this pay period still needs. When it is at
+    // least the number of people in the fairness band, every one of them gets one anyway: then
+    // the most cramped go FIRST (so their few days aren't taken), not last.
+    function pickStaff(pool: ScheduleStaff[], date?: string, datesOf?: (p: ScheduleStaff) => string[] | null, roomFor?: (p: ScheduleStaff) => number, groupsLeft?: number): ScheduleStaff {
       const datesFor = (p: ScheduleStaff): string[] | null => (datesOf ? datesOf(p) : date ? [date] : null);
       const preferOf = new Map<string, number>();
       if (date || datesOf) {
@@ -2223,6 +2359,36 @@ export function autoSchedule({
       const minRun = evenOn ? Math.min(...pool.map(runBal)) : 0;
       const inBand = (p: ScheduleStaff): boolean => runBal(p) < minRun + tuning.evenBandCalls - EPS;
       const spreadOf = (p: ScheduleStaff): number => { const ds = datesFor(p); return ds ? ds.reduce((n, d) => n + spreadLoad(p.id, d), 0) : Infinity; };
+      // Card #260: with a minimum gap set, among people LEVEL on share (the even-across-months
+      // band for an even shift), those whose days keep the gap go first, then the most room
+      // (the widest smallest gap their days could have). Someone with fewer of the shift is
+      // never put behind someone with more for spacing: in the Feb 2027 trial a one-group band
+      // did that, and the person passed over still got the close leftover days (ST 23/25 Feb)
+      // while another got an extra pair.
+      const gapOn = gapKeysOn && gapOf(st) > 0 && !!(date || datesOf);
+      const gapBadOf = new Map<string, number>();
+      const roomOf = new Map<string, number>();
+      let gapMinShare = Infinity;
+      if (gapOn) {
+        for (const p of pool) {
+          const ds = datesFor(p);
+          gapBadOf.set(p.id, ds && ds.length ? (gapNewBreaks(p.id, st, ds) > 0 ? 1 : 0) : 0);
+          roomOf.set(p.id, roomFor ? Math.min(roomFor(p), gapOf(st)) : ds && ds.length ? Math.min(gapRoom(p.id, st, ds), gapOf(st)) : 0);
+          gapMinShare = Math.min(gapMinShare, evenOn ? runBal(p) : shareCount(p));
+        }
+      }
+      // The band the keys act in: the even shift's own band, else exactly level with the lowest.
+      const inGapBand = (p: ScheduleStaff): boolean => gapOn && (evenOn ? inBand(p) : Math.abs(shareCount(p) - gapMinShare) < 1e-9);
+      const allInBandServed = gapOn && groupsLeft !== undefined && groupsLeft >= pool.filter(inGapBand).length;
+      const gapCmp = (a: ScheduleStaff, b: ScheduleStaff): number => {
+        if (allInBandServed || !inGapBand(a) || !inGapBand(b)) return 0;
+        return (gapBadOf.get(a.id) ?? 0) - (gapBadOf.get(b.id) ?? 0);
+      };
+      const roomCmp = (a: ScheduleStaff, b: ScheduleStaff): number => {
+        if (!gapOn) return 0;
+        const d = (roomOf.get(b.id) ?? 0) - (roomOf.get(a.id) ?? 0);
+        return allInBandServed ? -d : d;
+      };
       pool.sort((a, b) => {
         if (date) {
           // Hard minimum deficit first — a staff who MUST reach a required minimum
@@ -2261,6 +2427,10 @@ export function autoSchedule({
           const ia = inBand(a), ib = inBand(b);
           if (ia !== ib) return ia ? -1 : 1;
           if (ia) {
+            const gc = gapCmp(a, b);
+            if (gc !== 0) return gc;
+            const rc = roomCmp(a, b);
+            if (rc !== 0) return rc;
             if (st.spreadOverMonth && (date || datesOf)) {
               const la = spreadOf(a), lb = spreadOf(b);
               if (la !== lb) return la - lb;
@@ -2273,6 +2443,10 @@ export function autoSchedule({
         } else {
           const countDiff = shareCount(a) - shareCount(b);
           if (Math.abs(countDiff) > 1e-9) return countDiff;
+          const gc = gapCmp(a, b);
+          if (gc !== 0) return gc;
+          const rc = roomCmp(a, b);
+          if (rc !== 0) return rc;
           // Card #178: among equally-shared candidates, the one with marked shifts furthest away.
           if (st.spreadOverMonth && (date || datesOf)) {
             const la = spreadOf(a), lb = spreadOf(b);
@@ -2336,17 +2510,17 @@ export function autoSchedule({
         const pairOk = (p: ScheduleStaff) => coverageBeatsOverHours || !pairWouldExceed(p, [sat, sun], st);
         const available = eligible.filter(
           (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
-            isAvailable(p, sat, st) && isAvailable(p, sun, st) &&
+            isAvailable(p, sat, st, { gapGroup: [sat, sun] }) && isAvailable(p, sun, st, { gapGroup: [sat, sun] }) &&
             !wouldBreakPPHours(p.id, sat, st) && pairOk(p)
         );
 
         if (available.length === 0) {
           const fallback = eligible.filter(
             (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
-              canFillCoverageOverLimits(p, sat, st) && canFillCoverageOverLimits(p, sun, st) && pairOk(p)
+              canFillCoverageOverLimits(p, sat, st, [sat, sun]) && canFillCoverageOverLimits(p, sun, st, [sat, sun]) && pairOk(p)
           );
           if (fallback.length === 0) {
-            warnings.push(`No eligible ${st.code} staff for ${sat}/${sun}`);
+            warnings.push(`No eligible ${st.code} staff for ${sat}/${sun}${gapCause(st, [sat, sun], eligible)}`);
             continue;
           }
           warnings.push(`${st.code} ${sat}/${sun}: all eligible staff would exceed PP hours`);
@@ -2354,7 +2528,7 @@ export function autoSchedule({
 
         const pool = available.length > 0 ? available : eligible.filter(
           (p) => !isAssigned(p.id, sat) && !isAssigned(p.id, sun) &&
-            canFillCoverageOverLimits(p, sat, st) && canFillCoverageOverLimits(p, sun, st) && pairOk(p)
+            canFillCoverageOverLimits(p, sat, st, [sat, sun]) && canFillCoverageOverLimits(p, sun, st, [sat, sun]) && pairOk(p)
         );
         if (pool.length === 0) continue;
         // Card #188: with Prefer rules in play, score the whole weekend each person would get.
@@ -2412,7 +2586,7 @@ export function autoSchedule({
           );
         }
         if (available.length === 0) {
-          warnings.push(`No eligible ${st.code} staff for holiday ${date}`);
+          warnings.push(`No eligible ${st.code} staff for holiday ${date}${gapCause(st, [date], eligible)}`);
           continue;
         }
 
@@ -2446,16 +2620,33 @@ export function autoSchedule({
 
           if (ppNeedDates.length === 0) continue;
 
+          // Card #260: one pass of this pay period's placement (finishing pairs, groups, the
+          // unpaired remainder, the day swaps); run twice below when the shift has a minimum gap.
+          const placePP = (): void => {
           const usedDates = new Set<string>();
+          // Card #260: how far apart a person could space this shift in the pay period at best.
+          const roomCache = new Map<string, number>();
+          const roomInPP = (p: ScheduleStaff): number => {
+            let r = roomCache.get(p.id);
+            if (r === undefined) {
+              const open = ppNeedDates.filter((d) => isAvailable(p, d, st, { skipGap: true }));
+              r = open.length >= 2 ? daysBetween(open[0], open[open.length - 1]) : 0;
+              roomCache.set(p.id, r);
+            }
+            return r;
+          };
 
           // Find a COMPLETE group of `pairingFactor` legal, uncapped, well-spread
           // dates that `chosen` can take from `remainDates`, or null if they can't
           // host a full group. Returning a partial is intentionally impossible —
           // that is what used to leave a lone ORL (and a +4 overshoot).
           const completeGroupFor = (chosen: ScheduleStaff, remainDates: string[], size: number = pairingFactor): string[] | null => {
+            // Card #260: the gap is judged on the whole group below (a day that's too close alone
+            // can be fine next to its partner), so the single-day pre-check leaves it out.
             const provAvailDates = remainDates
-              .filter((d) => isAvailable(chosen, d, st))
+              .filter((d) => isAvailable(chosen, d, st, { skipGap: true }))
               .sort((a, b) => a.localeCompare(b));
+            const gapBad = (combo: string[]): number => (gapOf(st) ? gapNewBreaks(chosen.id, st, combo) : 0);
             if (provAvailDates.length < size) return null;
             // Anchor dates: PP boundaries (push toward the middle) plus dates where
             // this staff already has other scheduled shifts in this PP.
@@ -2508,7 +2699,10 @@ export function autoSchedule({
                     pen += spreadLoad(chosen.id, combo[i]);
                     for (let j = i + 1; j < combo.length; j++) pen += pairW(combo[i], combo[j]);
                   }
-                  const key = [pen, avoidSet.size > 0 ? groupAvoided(combo) : 0, -minGap(combo), seedNum ? seedTie(`${chosen.id}|${combo.join(",")}`) : 0];
+                  // Card #260: a Hard gap drops the group; a Prefer gap ranks it behind every group that keeps it.
+                  const bad = gapBad(combo);
+                  if (bad > 0 && gapHard(st)) return;
+                  const key = [bad, pen, avoidSet.size > 0 ? groupAvoided(combo) : 0, -minGap(combo), seedNum ? seedTie(`${chosen.id}|${combo.join(",")}`) : 0];
                   if (!best || cmpTuple(key, best.key) < 0) best = { combo: [...combo], key };
                   return;
                 }
@@ -2522,9 +2716,17 @@ export function autoSchedule({
               walk(0, []);
               return best ? (best as { combo: string[] }).combo : null;
             }
-            const picked = bestSpread(provAvailDates, size, anchorDates, (p, c) => !violatesFollow(p, c), tieKey)
-              .filter((d) => !isAtMaximum(chosen, st, d));
-            return picked.length >= size ? picked.slice(0, size) : null;
+            // Card #260: groups that keep the gap first (the only ones under Hard); Prefer falls back.
+            const keepsGap = (p: string[], c: string): boolean => !gapOf(st) || gapBad([...p, c]) === 0;
+            const tryPick = (gapOk: boolean): string[] | null => {
+              const picked = bestSpread(provAvailDates, size, anchorDates, (p, c) => !violatesFollow(p, c) && (!gapOk || keepsGap(p, c)), tieKey)
+                .filter((d) => !isAtMaximum(chosen, st, d));
+              if (picked.length < size) return null;
+              const g = picked.slice(0, size);
+              return gapOk && gapBad(g) > 0 ? null : g;
+            };
+            if (gapOf(st)) return tryPick(true) ?? (gapHard(st) ? null : tryPick(false));
+            return tryPick(false);
           };
 
           // Card #232: finish HALF groups first. A person who already holds this shift in
@@ -2594,7 +2796,7 @@ export function autoSchedule({
                 if (after >= 0 && after % h.grain === 0) usable.push(h); // otherwise finishing wouldn't help
               }
               if (usable.length === 0) break;
-              const chosen = pickStaff(usable.map((h) => h.p), remainDates[0], (p) => groups.get(p.id) ?? null);
+              const chosen = pickStaff(usable.map((h) => h.p), remainDates[0], (p) => groups.get(p.id) ?? null, gapOf(st) ? roomInPP : undefined);
               for (const date of groups.get(chosen.id)!) {
                 const desirability = dwMap.get(`${st.id}:${getDow(date)}`) ?? 0;
                 assign(chosen.id, date, st, `${st.code} (finishes pair${desirability !== 0 ? `, desirability ${desirability > 0 ? "+" : ""}${desirability}` : ""})`, stepName, 0.7);
@@ -2616,7 +2818,7 @@ export function autoSchedule({
             const remainDates = ppNeedDates.filter((d) => !usedDates.has(d));
             if (remainDates.length < pairingFactor) break;
 
-            const hostable = eligible.filter((p) => remainDates.filter((d) => isAvailable(p, d, st)).length >= pairingFactor);
+            const hostable = eligible.filter((p) => remainDates.filter((d) => isAvailable(p, d, st, { skipGap: true })).length >= pairingFactor);
             // Prefer staff a full group does NOT push over their PP target (a hard
             // minimum overrides the cap); fall back to any hostable if none fit.
             const fits = hostable.filter((p) => {
@@ -2639,10 +2841,10 @@ export function autoSchedule({
               while (poolList.length > 0) {
                 // Cards #178/#188: rank hosts by the group each would actually get (spread load,
                 // Prefer rules) — remainDates[0] may be a day a host won't work.
-                const groups = st.spreadOverMonth || poolList.some((p) => preferRuleKeys.has(`${p.id}:${st.id}`))
+                const groups = st.spreadOverMonth || gapOf(st) > 0 || poolList.some((p) => preferRuleKeys.has(`${p.id}:${st.id}`))
                   ? new Map(poolList.map((p) => [p.id, completeGroupFor(p, remainDates)])) : null;
                 const chosen = groups
-                  ? pickStaff(poolList, remainDates[0], (p) => groups.get(p.id) ?? null)
+                  ? pickStaff(poolList, remainDates[0], (p) => groups.get(p.id) ?? null, gapOf(st) ? roomInPP : undefined, Math.floor(remainDates.length / pairingFactor))
                   : pickStaff(poolList, remainDates[0]);
                 const group = groups ? groups.get(chosen.id)! : completeGroupFor(chosen, remainDates);
                 if (group) {
@@ -2675,7 +2877,7 @@ export function autoSchedule({
             let available = eligible.filter((p) => isAvailable(p, date, st) && hoursOkOrHardMin(p, date, st));
             if (available.length === 0) available = eligible.filter((p) => canFillCoverageOverLimits(p, date, st));
             if (available.length === 0) {
-              warnings.push(`No eligible ${st.code} staff for ${date} (unpaired remainder) in PP ${pp.startDate}`);
+              warnings.push(`No eligible ${st.code} staff for ${date} (unpaired remainder) in PP ${pp.startDate}${gapCause(st, [date], eligible)}`);
               continue;
             }
             const chosen = pickStaff([...available], date);
@@ -2695,6 +2897,74 @@ export function autoSchedule({
           if (st.spreadOverMonth && spreadIds.size > 0 && !skipJointSpreadForTest && !followerBySource.has(st.id)) {
             jointSpreadSwaps(pp);
           }
+          };
+
+          // Card #260: Prefer works greedily (the host keys: spacing first, then room, among
+          // people level on share; groups that keep the gap first; the day swaps' guards), and
+          // in the Feb 2027 trial that cascaded: a person passed over still got the close
+          // leftover days, or none, so another got more and the hours repair scattered single
+          // ORLs. So the pay period is placed twice, and the result with the gap at work is kept
+          // only when it beats the baseline (gapTrialBeats): fewer too-close pairs, and no worse
+          // on coverage, lone groups, the most anyone holds, people over target or hours short.
+          // The baseline is the pay period placed as if the setting were off (Prefer), or with
+          // the gap but without the host keys (Hard: the gap itself is never off). Later steps
+          // (repairs) run once, on the kept result.
+          if (gapOf(st) > 0 && !skipGapTrialForTest) {
+            const snap = takeState();
+            const prefer = !gapHard(st);
+            if (prefer) gapSuspended = st.id; else gapKeysOn = false;
+            try { placePP(); } finally { gapSuspended = null; gapKeysOn = true; }
+            const base = ppOutcome(pp);
+            const baseState = takeState();
+            restoreState(snap);
+            placePP();
+            if (!gapTrialBeats(ppOutcome(pp), base)) restoreState(baseState);
+          } else {
+            placePP();
+          }
+        }
+
+        // The whole engine state a pay period's placement can change: every cell, every
+        // suggestion (copied: the day swaps edit them in place), step counts, warnings and the
+        // run's share counts.
+        type EngineState = { cells: [string, NonNullable<ReturnType<typeof grid.get>>][]; sug: Suggestion[]; steps: Record<string, number>; warn: string[]; run: [string, number][]; last: [string, string][] };
+        function takeState(): EngineState {
+          return { cells: [...grid].map(([k, v]) => [k, { ...v }]), sug: suggestions.map((x) => ({ ...x })), steps: { ...byStep }, warn: warnings.slice(), run: [...runCount], last: [...lastRunDate] };
+        }
+        function restoreState(s: EngineState): void {
+          grid.clear();
+          for (const [k, v] of s.cells) grid.set(k, { ...v });
+          suggestions.length = 0;
+          suggestions.push(...s.sug.map((x) => ({ ...x })));
+          for (const k of Object.keys(byStep)) delete byStep[k];
+          Object.assign(byStep, s.steps);
+          warnings.length = 0;
+          warnings.push(...s.warn);
+          runCount.clear(); for (const [k, v] of s.run) runCount.set(k, v);
+          lastRunDate.clear(); for (const [k, v] of s.last) lastRunDate.set(k, v);
+        }
+        // `short`: hours short of target that can't be made up, judged as each person's hours
+        // now plus the fill shift on every day they could still take it (a 12 h ORL moved off
+        // someone who can't reach target leaves them 4 h shorter). See gapTrialBeats.
+        function ppOutcome(pp: (typeof payPeriods)[number]): GapTrialOutcome {
+          let covered = 0, over = 0, close = 0, broken = 0, most = 0, short = 0;
+          for (const d of dates) if (d >= pp.startDate && d <= pp.endDate) covered += countCoverage(st.code, d);
+          for (const p of eligible) {
+            let n = 0;
+            for (const d of dates) if (d >= pp.startDate && d <= pp.endDate && grid.get(`${p.id}:${d}`)?.shiftTypeId === st.id) n++;
+            if (n % pairingFactor !== 0) broken++;
+            most = Math.max(most, n);
+            const target = targetFor(p, pp);
+            const have = ppHoursForStaff(p.id, pp) + pendingHolidayHours(p, pp, []);
+            if (target > 0 && have > target + EPS) over++;
+            if (target > 0 && fillShift) {
+              let reach = have;
+              for (const d of dates) if (d >= pp.startDate && d <= pp.endDate && !grid.has(`${p.id}:${d}`) && isAvailable(p, d, fillShift)) reach += countedHrs(p.id, fillShift, d);
+              short += Math.max(0, target - reach);
+            }
+            close += gapBreaks((d) => cellShiftAt(p.id, d) === st.id, pp.startDate, pp.endDate, gapOf(st)).size;
+          }
+          return { covered, broken, most, over, short, close };
         }
 
         function jointSpreadSwaps(pp: (typeof payPeriods)[number]): void {
@@ -2770,6 +3040,7 @@ export function autoSchedule({
               grid.set(kA1, cA); grid.set(kB2, cB);
               return false;
             };
+            const gapSnap = gapSnapshot([A.id, B.id], [d1, d2]); // card #260: the end state, removals included
             grid.delete(kA1); grid.delete(kB2);
             if (!isAvailable(A, d2, st)) return undo();
             grid.set(kA2, { ...cA });
@@ -2783,8 +3054,24 @@ export function autoSchedule({
             for (const k of condBroken()) if (!condBefore.has(k)) return undo();
             if (countCoverage(st.code, d1) !== cover[0] || countCoverage(st.code, d2) !== cover[1]) return undo();
             if (projected(A) !== hoursBefore[0] || projected(B) !== hoursBefore[1]) return undo();
+            if (gapNewSince(gapSnap)) return undo();
             return true;
           };
+          // Card #260: each person's gaps between two of THIS shift (day to day) around the pay
+          // period, as the grid stands or with one day moved. A swap never brings the closer of
+          // the two people's closest pair of THIS shift closer (so ORL-to-ORL distance is no
+          // longer traded for distance from CALL/ORC: RMc 10/17 → 9/11); with a minimum gap set it
+          // also never shrinks either person's gap under it (gap by gap, never summed: Codex
+          // #1190/#1195) and never adds a too-close pair for either person. Swaps rank by fewer
+          // too-close pairs, then the spread penalty over all marked shifts, then less closeness
+          // of THIS shift (so 16/18 → 16/19 is taken when the spread is level). Gaps above that
+          // may still be traded: spreading everyone needs one to give a little.
+          const gapReach = Math.max(gapOf(st), spreadRadius);
+          const gapFrom = addDays(pp.startDate, -gapReach), gapTo = addDays(pp.endDate, gapReach);
+          const holdsMoved = (id: string, drop?: string, add?: string) => (d: string): boolean =>
+            d === add ? true : d === drop ? false : cellShiftAt(id, d) === st.id;
+          const closeness = (gaps: number[]): number => gaps.reduce((n, g) => n + (g >= 1 && g <= spreadRadius ? (spreadRadius + 1 - g) ** 2 : 0), 0);
+          const breaksOf = (has: (d: string) => boolean): number => (gapOf(st) ? gapBreaks(has, gapFrom, gapTo, gapOf(st)).size : 0);
           const moveSuggestion = (id: string, from: string, to: string): void => {
             const s = suggestions.find((x) => x.staffId === id && x.date === from && x.shiftTypeId === st.id);
             if (!s) return;
@@ -2801,7 +3088,7 @@ export function autoSchedule({
           search: while (true) {
             if (swaps >= LIM.swaps) { capped = true; break; }
             const cells = movable();
-            const cands: { delta: number; A: ScheduleStaff; d1: string; B: ScheduleStaff; d2: string }[] = [];
+            const cands: { key: number[]; A: ScheduleStaff; d1: string; B: ScheduleStaff; d2: string }[] = [];
             for (let i = 0; i < cells.length; i++) for (let j = 0; j < cells.length; j++) {
               const { p: A, d: d1 } = cells[i], { p: B, d: d2 } = cells[j];
               if (A.id === B.id || d1 === d2) continue;
@@ -2816,10 +3103,22 @@ export function autoSchedule({
               const runB = (d: string) => (d === d2 ? null : d === d1 ? st.id : grid.get(`${B.id}:${d}`)?.shiftTypeId);
               const nowA = (d: string) => grid.get(`${A.id}:${d}`)?.shiftTypeId, nowB = (d: string) => grid.get(`${B.id}:${d}`)?.shiftTypeId;
               if (avoidedInRun([d1, d2], runA) > avoidedInRun([d1, d2], nowA) || avoidedInRun([d1, d2], runB) > avoidedInRun([d1, d2], nowB)) continue;
+              const hasA0 = holdsMoved(A.id), hasA1 = holdsMoved(A.id, d1, d2);
+              const hasB0 = holdsMoved(B.id), hasB1 = holdsMoved(B.id, d2, d1);
+              const gA0 = gapList(hasA0, gapFrom, gapTo, true), gA1 = gapList(hasA1, gapFrom, gapTo, true);
+              const gB0 = gapList(hasB0, gapFrom, gapTo, true), gB1 = gapList(hasB1, gapFrom, gapTo, true);
+              if (gapOf(st) && (gapListShrank(gA0, gA1, gapOf(st)) || gapListShrank(gB0, gB1, gapOf(st)))) continue;
+              const brA0 = breaksOf(hasA0), brA1 = breaksOf(hasA1), brB0 = breaksOf(hasB0), brB1 = breaksOf(hasB1);
+              if (brA1 > brA0 || brB1 > brB0) continue;
+              // The closer of the two people's closest pair of THIS shift never gets closer
+              // (RMc 10/17 → 9/11 traded a 7-day gap for distance from CALL/ORC).
+              const minOf = (g: number[]): number => (g.length ? g[0] : Infinity);
+              if (Math.min(minOf(gA1), minOf(gB1)) < Math.min(minOf(gA0), minOf(gB0))) continue;
               const delta = spreadDelta([[A.id, d1, null], [A.id, d2, st.id], [B.id, d2, null], [B.id, d1, st.id]]);
-              if (delta < -EPS) cands.push({ delta, A, d1, B, d2 });
+              const key = [brA1 + brB1 - brA0 - brB0, delta, closeness(gA1) + closeness(gB1) - closeness(gA0) - closeness(gB0)];
+              if (cmpTuple(key.map((v) => (Math.abs(v) <= EPS ? 0 : v)), [0, 0, 0]) < 0) cands.push({ key, A, d1, B, d2 });
             }
-            cands.sort((x, y) => x.delta - y.delta); // stable: ties keep staff/date order
+            cands.sort((x, y) => cmpTuple(x.key, y.key)); // stable: ties keep staff/date order
             const made = cands.find((c) => trySwap(c.A, c.d1, c.B, c.d2));
             if (!made) break;
             moveSuggestion(made.A.id, made.d1, made.d2);
@@ -2847,7 +3146,7 @@ export function autoSchedule({
           }
 
           if (available.length === 0) {
-            warnings.push(`No eligible ${st.code} staff for ${date}`);
+            warnings.push(`No eligible ${st.code} staff for ${date}${gapCause(st, [date], eligible)}`);
             continue;
           }
 
@@ -2891,7 +3190,7 @@ export function autoSchedule({
       let available = eligible.filter((p) => !isAssigned(p.id, date) && isAvailable(p, date, st) && !wouldBreakPPHours(p.id, date, st));
       if (available.length === 0) available = eligible.filter((p) => !isAssigned(p.id, date) && canFillCoverageOverLimits(p, date, st));
       if (available.length === 0) {
-        warnings.push(`No eligible ${st.code} staff for ${date}`);
+        warnings.push(`No eligible ${st.code} staff for ${date}${gapCause(st, [date], eligible)}`);
         continue;
       }
       const chosen = pickStaff(available, date);
@@ -2986,6 +3285,8 @@ export function autoSchedule({
           // placement is capped, but a LATER one in this block may be fine — so
           // skip it and keep trying (respace) rather than abandoning the minimum.
           if (isAtMaximum(staff, st, candidate)) continue;
+          // Card #260: the candidates were checked before this loop wrote any of them.
+          if (hardGapBlocks(staff.id, st, [candidate])) continue;
           // Soft (preference) targets respect pay-period hour protection — a
           // preference biases the mix but must never push a staffer past their
           // hours. Hard minimums intentionally override the cap (hasUnmetMinimum).
@@ -3038,6 +3339,10 @@ export function autoSchedule({
       if (!pp) continue;
       for (const staff of activeStaff) {
         if (!owedHoliday(staff, date, pp)) continue;
+        if (hardGapBlocks(staff.id, holShift, [date])) {
+          warnings.push(`${staff.initials}: ${holShift.code} not placed on ${date} (${hardGapWhy(holShift)})`);
+          continue;
+        }
         assign(staff.id, date, holShift, "Holiday entitlement (normally scheduled day)", "holiday", 0.9);
       }
     }
@@ -3350,12 +3655,15 @@ export function autoSchedule({
 
         let hours = currentHours;
         let cappedByMax = false;
+        let cappedByGap: string | null = null; // card #260: the shift whose Hard gap kept a fill day off
         for (const date of fillDates) {
           if (hours >= target) break;
           const shift = holidayPolicy === "fill" && holidaySet.has(date) && holShift ? holShift : fillShift;
           // Rolling max is date-dependent — skip a capped date, keep trying later
           // ones. A residual shortfall is reported by the post-repair audit.
           if (isAtMaximum(staff, shift, date)) { cappedByMax = true; continue; }
+          // Card #260 (Codex #1198): availability was checked before this batch wrote any day.
+          if (hardGapBlocks(staff.id, shift, [date])) { cappedByGap = shift.id; continue; }
           const shiftHrs = getShiftHours(staff.id, shift, overrideMap, dayTypeOf(date, holidaySet));
           // A whole fill shift may overshoot the target; not when over-target is Prohibited.
           if (!fillMayOvershoot && shift.countsTowardFte && hours + shiftHrs > target) continue;
@@ -3366,6 +3674,8 @@ export function autoSchedule({
         }
         if (cappedByMax && hours < target) {
           fillShortfallCause.set(`${staff.id}:${pp.startDate}`, "max");
+        } else if (cappedByGap && hours < target) {
+          fillShortfallCause.set(`${staff.id}:${pp.startDate}`, `gap:${cappedByGap}`);
         }
       }
     }
@@ -3432,6 +3742,15 @@ export function autoSchedule({
       if (nextSt && !isShiftAllowedAfter(followMap, st.id, next.shiftTypeId, nextSt.isOffShift)) return false;
     }
     if (isAtMaximum(staff, st, date)) return false;
+    // Card #260: the cell it replaces is judged gone (it is replaced); the end state is
+    // re-checked by the repair's endStateOk (removals included).
+    if (gapHard(st)) {
+      const cur = grid.get(`${staff.id}:${date}`);
+      if (cur) grid.delete(`${staff.id}:${date}`);
+      const bad = gapNewBreaks(staff.id, st, [date]) > 0;
+      if (cur) grid.set(`${staff.id}:${date}`, cur);
+      if (bad) return false;
+    }
     return true;
   }
 
@@ -3513,10 +3832,14 @@ export function autoSchedule({
               if (!canHoldForSwap(B.staff, A.st, date, ppRangesAll)) continue;
               if (swapBreaksHardMin(A.staff, A.st, date, ppRangesAll)) continue;
               if (swapBreaksHardMin(B.staff, B.st, date, ppRangesAll)) continue;
+              // Card #260: the whole resulting state — A losing its ORL can split a stretch too.
+              const gapFx = gapEffect([[A.id, date, B.st.id], [B.id, date, A.st.id]]);
+              if (gapFx.hardNew) continue;
               const pref = softPrefDelta(A.staff, B.st, A.st, date) + softPrefDelta(B.staff, A.st, B.st, date);
-              // Card #177: hours first; among equal gains, the swap adding fewer soft-avoided pairs.
+              // Card #177: hours first; among equal gains, the swap adding fewer soft-avoided pairs
+              // (card #260: and fewer too-close pairs of a Prefer minimum gap, beside it).
               const avoid = avoidedPairs(A.id, date, B.st.id) - avoidedPairs(A.id, date, A.st.id)
-                + avoidedPairs(B.id, date, A.st.id) - avoidedPairs(B.id, date, B.st.id);
+                + avoidedPairs(B.id, date, A.st.id) - avoidedPairs(B.id, date, B.st.id) + gapFx.preferDelta;
               // Card #203: then this month's evenness, the carried balance, spacing (marked shifts).
               const changes = [[A.id, date, B.st.id], [B.id, date, A.st.id]] as const;
               const even = evenDelta(changes);
@@ -3617,6 +3940,7 @@ export function autoSchedule({
           const cause = fillShortfallCause.get(`${staff.id}:${pp.startDate}`);
           let detail: string;
           if (cause === "max") detail = " — capped by max shift limit";
+          else if (cause?.startsWith("gap:")) { const g = stById.get(cause.slice(4)); detail = g ? ` — the ${hardGapWhy(g)}, leaves too few days` : " — no legal rebalance available"; }
           else if (cause === "days") detail = ` — cannot reach ${target}hrs with available days`;
           else if (scarce) detail = ` — constrained by ${scarce} (only ${poolByCode.get(scarce)} eligible)`;
           else detail = " — no legal rebalance available";
@@ -3772,7 +4096,7 @@ export function autoSchedule({
         if (next && !isShiftAllowedAfter(followMap, me.id, next.id, next.off)) return false;
         return true;
       }
-      type Before = { devs: Map<string, number>; cover: Map<string, number>; avail: Set<string> };
+      type Before = { devs: Map<string, number>; cover: Map<string, number>; avail: Set<string>; gap: GapSnap | null };
       // Card #185: every active person's rules, hand-scheduled ones too — a trade that takes BC's
       // day off must not leave a hand-placed 'EF only when BC works' day standing alone.
       const condOwners = staff.filter((p) => p.isActive && p.availabilityRules.some((r) => r.conditionStaffId && r.conditionType));
@@ -3792,7 +4116,9 @@ export function autoSchedule({
       function snapshotBefore(): Before {
         const cover = new Map<string, number>();
         for (const d of ppDates) for (const st of shiftTypes) cover.set(coverKey(st, d), countAssigned(st.code, d));
-        return { devs: new Map(people.map((p) => [p.id, devOf(p)])), cover, avail: availBroken() };
+        // Card #260: every participant's Hard-gap pairs over the pay period, so the end state is
+        // judged with removals included (a swap/move/drop that splits a stretch is refused).
+        return { devs: new Map(people.map((p) => [p.id, devOf(p)])), cover, avail: availBroken(), gap: gapSnapshot(people.map((p) => p.id), ppDates) };
       }
       /** Would anyone end further over (or under) target than in `start`, on a side the
        *  admin has made Prohibited? */
@@ -3818,6 +4144,7 @@ export function autoSchedule({
           }
         }
         for (const k of availBroken()) if (!before.avail.has(k)) return false;
+        if (gapNewSince(before.gap)) return false;
         const days = new Set(changed.map((c) => c.d));
         for (const d of days) for (const st of shiftTypes) {
           const was = before.cover.get(coverKey(st, d)) ?? 0, now = countCoverage(st.code, d), phys = countAssigned(st.code, d);
@@ -4174,6 +4501,14 @@ export function autoSchedule({
       if (cell.noCount) return "does not count toward targets";
       if (followerBySource.has(cell.shiftTypeId)) return "it has a required follower";
       if (st.weekendPaired && (isWeekend(date) || (st.holidayWeekendPaired && holidaySet.has(date)))) return "weekend pair";
+      // Card #260: freeing a middle day must not split a Hard-gap stretch into two too close.
+      if (gapHard(st)) {
+        const snap = gapSnapshot([staffId], [date]);
+        grid.delete(`${staffId}:${date}`);
+        const split = gapNewSince(snap);
+        grid.set(`${staffId}:${date}`, cell);
+        if (split) return `freeing it would leave two ${st.code} closer than ${gapOf(st)} days`;
+      }
       if (offShift) {
         // A neighbour as it will END: an empty in-window day (never filled, or freed by an
         // earlier removal) becomes X in STEP 4, so judge it as X (card #74: two adjacent
@@ -4279,6 +4614,7 @@ export function autoSchedule({
     const before = pp ? ppHoursForStaff(p.id, pp) : 0;
     const coverageBefore = countCoverage(st.code, date);
     const releasedCells = release.map((d) => ({ d, c: grid.get(`${p.id}:${d}`)! }));
+    const gapSnap = gapSnapshot([p.id], pp ? dates.filter((d) => d >= pp.startDate && d <= pp.endDate).concat(release, [date]) : [...release, date]);
     for (const d of release) releaseEngineCell(p.id, d);
     if (!isAvailable(p, date, st)) return null;
     assign(p.id, date, st, reason, step, confidence);
@@ -4298,6 +4634,7 @@ export function autoSchedule({
     }
     // Guarantees.
     if (grid.get(`${p.id}:${date}`)?.shiftTypeId !== st.id) return null;
+    if (gapNewSince(gapSnap)) return null; // card #260: a released day split a Hard-gap stretch
     if (countCoverage(st.code, date) <= coverageBefore) return null;
     for (const { d, c } of releasedCells) {
       const rst = stById.get(c.shiftTypeId);
@@ -4524,7 +4861,15 @@ export function autoSchedule({
 
       // Temporarily free the slot so challenger / backfill legality (incl. the per-day Max)
       // evaluates as if the holder weren't occupying it.
+      const holderGap = gapSnapshot([t.staffId], [t.date]);
       grid.delete(key);
+      // Card #260: taking the cell away would leave the holder two of a Hard-gap shift too
+      // close (it split a stretch): the holder keeps it, as when nobody challenges.
+      if (gapNewSince(holderGap)) {
+        grid.set(key, cell);
+        if (holderOverCap) warnings.push(`${holder.initials}: over target — ${hoursWith}/${target}hrs (+${hoursWith - target}) in PP ${pp.startDate} to honor ${t.st.code} request on ${t.date} (taking it away would break a minimum gap)`);
+        continue;
+      }
 
       // The department's hours policy decides whether over-target revokes the request
       // (it used to be an inviolable cap). Keep it when requests may push past over-target,
@@ -4674,9 +5019,15 @@ export function autoSchedule({
         return cell.locked || cell.step === "request-leave" || cell.step === LEAVE_OFF_STEP || cell.step === "request-shift";
       });
 
+      // Card #260: a free, under-cap person held off only by a Hard minimum gap.
+      const gapBlocked = !hasFixableBody && gapHard(st) && elig.some(
+        (p) => isAvailable(p, date, st, { skipGap: true }) && !wouldBreakPPHours(p.id, date, st),
+      );
       const cause = hasFixableBody
         ? "fixable — an eligible, under-cap staff member is free this day (distribution gap)"
-        : blockedByApproved
+        : gapBlocked
+          ? `everyone free to work it would break the minimum gap between two ${st.code} (at least ${gapOf(st)} days, Hard)`
+          : blockedByApproved
           ? "limited by approved leave / locked assignments"
           : "true shortage — every eligible staff member is unavailable or already at their pay-period hour cap";
       warnings.push(`${date}: ${st.code} below its required minimum (${assigned}/${required}) — ${cause}`);
@@ -4694,6 +5045,8 @@ export function autoSchedule({
     for (const date of dates) {
       for (const staff of activeStaff) {
         if (!isAssigned(staff.id, date)) {
+          // A day off left blank rather than break a Hard gap set on the off shift itself.
+          if (hardGapBlocks(staff.id, offShift, [date])) continue;
           assign(staff.id, date, offShift, "Day off", "off", 0.95);
         }
       }
@@ -4925,6 +5278,31 @@ export function autoSchedule({
       const empty = starts.map((s0) => span(s0, 7)).find((w) => w[0] >= first && w[6] <= last && !isFrozen(w[0]) && !w.some(marked));
       if (!empty) continue;
       warnings.push(`${initialsOf.get(p.id) ?? p.id}: ${busyN} spread shifts in 7 days (${busy[0].slice(5)}..${busy[6].slice(5)}), none in ${empty[0].slice(5)}..${empty[6].slice(5)}`);
+    }
+  }
+
+  // Card #260: every pair of the same shift closer than its minimum, for one person, with a day
+  // in this run. Prefer: "wanted"; Hard: only ever two hand-entered/approved cells (the engine
+  // never places one — an engine cell here is a bug, named so it is never silent).
+  if (gapShifts.length > 0 && dates.length > 0) {
+    const sorted = [...dates].sort();
+    const first = sorted[0], last = sorted[sorted.length - 1];
+    const placed = new Set(suggestions.map((x) => `${x.staffId}:${x.date}:${x.shiftTypeId}`));
+    const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const fmt = (d: string) => `${Number(d.slice(8, 10))} ${MON[Number(d.slice(5, 7)) - 1]}`;
+    for (const st of gapShifts) {
+      const n = gapOf(st);
+      for (const p of staff) {
+        for (const pair of gapBreaks(holdsAt(p.id, st.id), first, last, n)) {
+          const [a, b] = pair.split("|");
+          if (b < first || a > last) continue;
+          const engine = placed.has(`${p.id}:${a}:${st.id}`) || placed.has(`${p.id}:${b}:${st.id}`);
+          const why = gapHard(st)
+            ? engine ? `at least ${n} required` : `at least ${n} required — both entered by hand`
+            : engine ? `at least ${n} wanted` : `at least ${n} wanted — both entered by hand`;
+          warnings.push(`${p.initials}: ${st.code} ${fmt(a)} and ${fmt(b)} are ${daysBetween(a, b)} days apart (${why})`);
+        }
+      }
     }
   }
 

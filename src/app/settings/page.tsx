@@ -119,6 +119,8 @@ export default async function Settings() {
           holidayWeekendPaired: st.holidayWeekendPaired,
           spreadOverMonth: st.spreadOverMonth,
           evenAcrossMonths: st.evenAcrossMonths,
+          minGapDays: st.minGapDays,
+          minGapStrength: st.minGapStrength,
           ignoresWorkingDays: st.ignoresWorkingDays,
           autoSchedulable: st.autoSchedulable,
           hotkey: st.hotkey,

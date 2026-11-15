@@ -168,11 +168,15 @@ export async function buildAutoScheduleInput(
   const isoDay = (d: Date): string => d.toISOString().split("T")[0];
   const balanceFrom = schedulingPrefsRow?.shiftBalanceFrom ? isoDay(schedulingPrefsRow.shiftBalanceFrom) : null;
   const evenOn = !!balanceFrom && shiftTypes.some((st) => st.evenAcrossMonths);
-  const spreadOn = shiftTypes.some((st) => st.spreadOverMonth);
+  const spreadAny = shiftTypes.some((st) => st.spreadOverMonth);
+  // Card #260: a minimum gap between two of a shift also reads next month's cells, as far as
+  // the largest gap set on any shift.
+  const maxMinGap = Math.max(0, ...shiftTypes.map((st) => st.minGapDays ?? 0));
+  const spreadOn = spreadAny || maxMinGap > 0;
   // Card #215: the forward context reaches as far as the spacing reach in Settings.
   const tuning = readTuning(schedulingPrefsRow);
   const contextEnd = new Date(effectiveEnd + "T00:00:00Z");
-  contextEnd.setUTCDate(contextEnd.getUTCDate() + tuning.spreadRadiusDays);
+  contextEnd.setUTCDate(contextEnd.getUTCDate() + Math.max(spreadAny ? tuning.spreadRadiusDays : 0, maxMinGap));
   const [balanceRequestRows, spreadContextRows] = await Promise.all([
     evenOn
       ? db.scheduleRequest.findMany({
@@ -379,6 +383,8 @@ export async function buildAutoScheduleInput(
       holidayWeekendPaired: st.holidayWeekendPaired,
       spreadOverMonth: st.spreadOverMonth,
       evenAcrossMonths: st.evenAcrossMonths,
+      minGapDays: st.minGapDays ?? null,
+      minGapStrength: st.minGapStrength,
       ignoresWorkingDays: st.ignoresWorkingDays,
       category: st.category,
       autoSchedulable: st.autoSchedulable,

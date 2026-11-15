@@ -85,6 +85,8 @@ model ShiftType {
   weekendPaired      Boolean  @default(false)
   evenAcrossMonths   Boolean  @default(false) // card #203: share it out by the running balance since schedulingPreferences.shiftBalanceFrom (earlier months only break ties)
   spreadOverMonth    Boolean  @default(false) // card #178: for each person, marked shifts are spread across the weeks (one group)
+  minGapDays         Int? // card #260: at least N days between two of this shift for one person (null = off)
+  minGapStrength     String   @default("preference") // card #260: "rule" (Hard) | "preference" (Prefer)
   holidayWeekendPaired Boolean @default(false) // when weekendPaired, also assign the same person to an adjacent holiday (Fri before / Mon after) for a 3-day holiday weekend
   ignoresWorkingDays Boolean  @default(false)
   noConsecutiveGroup String?
