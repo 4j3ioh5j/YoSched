@@ -3185,3 +3185,144 @@ describe("holiday entitlement policy", () => {
     });
   });
 });
+
+describe("autoSchedule — half ORL pairs are finished first (card #232)", () => {
+  // ORL 12h vs OR fill 8h ⇒ pairingFactor 2. A hand-entered ORL earlier in the pay
+  // period is half a pair: its owner must get the second one before anyone starts a
+  // fresh pair, or they end the PP with a lone 12h ORL and +4 over an 8h target.
+  const ORL = makeShift("st-orl", "ORL", { defaultHours: 12, schedulePriority: 2, maxPerDay: 1 });
+  const shifts = [OR, ORL, OFF];
+  const pp = { startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 };
+  const elig3 = { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off"] };
+  const availDays = (days: number[]) =>
+    days.map((d) => ({ type: "available" as const, strength: "rule" as const, ...wEvery(d) }));
+  // Week 1 (May 12-16) is hand-entered: p1 has ORL Mon, p2 ORL Tue; everyone else OR.
+  const week1 = weekdayDates("2025-05-12", 5);
+  const manualWeek1 = (ids: string[]) => ids.flatMap((id) => week1.map((date) => {
+    const orl = (id === "p1" && date === "2025-05-12") || (id === "p2" && date === "2025-05-13");
+    return { staffId: id, date, shiftTypeId: orl ? "st-orl" : "st-or", code: orl ? "ORL" : "OR", isLocked: true };
+  }));
+  const ids = ["p1", "p2", "p3", "p4"];
+  const run = (staffOver: Record<string, Record<string, unknown>> = {}) => runSchedule({
+    dates: weekdayDates("2025-05-19", 4), // Mon-Thu of week 2: 4 ORL days to fill
+    staff: ids.map((id, i) => makeStaff(id, ["AB", "CD", "EF", "GH"][i], { ...elig3, ...(staffOver[id] ?? {}) })),
+    shiftTypes: shifts,
+    existingAssignments: manualWeek1(ids),
+    payPeriods: [pp],
+    staffingRequirements: [1, 2, 3, 4].map((d) => ({ shiftTypeId: "st-orl", dayKey: String(d), minCount: 1 })),
+  });
+  const orlCount = (r: AutoScheduleResult, id: string) =>
+    r.suggestions.filter((s) => s.staffId === id && s.code === "ORL").length +
+    (id === "p1" || id === "p2" ? 1 : 0);
+
+  it("gives each half-pair owner exactly one more ORL, and pairs the rest", () => {
+    const r = run();
+    // Done by the ORL step itself, not patched up afterwards by the hour-balance repair
+    // (the repair only swaps between two people, so on real data it can't always).
+    expect(r.suggestions.filter((s) => s.code === "ORL" && s.step === "repair")).toEqual([]);
+    expect(r.suggestions.filter((s) => (s.staffId === "p1" || s.staffId === "p2") && s.code === "ORL" && s.step === "orl")).toHaveLength(2);
+    expect(r.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORL")).toHaveLength(1);
+    expect(r.suggestions.filter((s) => s.staffId === "p2" && s.code === "ORL")).toHaveLength(1);
+    for (const id of ids) expect(orlCount(r, id) % 2).toBe(0);
+    expect(r.suggestions.filter((s) => s.code === "ORL")).toHaveLength(4);
+    expect(r.warnings.filter((w) => /over target/.test(w))).toEqual([]);
+  });
+
+  it("is the same on every run", () => {
+    const key = (r: AutoScheduleResult) => r.suggestions.map((s) => `${s.staffId}|${s.date}|${s.code}`).sort().join(";");
+    expect(key(run())).toBe(key(run()));
+  });
+
+  it("when the owner can't work any remaining ORL day, still fills ORL and names them", () => {
+    // p1 works Mon only — and Mon of week 2 is the only day; make p1 unable to work week 2 at all.
+    const r = run({ p1: { availabilityRules: availDays([5]) } }); // Fridays only: no run day fits
+    expect(r.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORL")).toHaveLength(0);
+    expect(r.suggestions.filter((s) => s.code === "ORL")).toHaveLength(4); // coverage kept
+    expect(r.warnings.some((w) => w.startsWith("AB:") && /ORL pair/.test(w))).toBe(true);
+  });
+
+  // Codex PLAN #1040 follow-up: judge by the hours LEFT to the person's target.
+  const handWeek = (rows: [string, string][]) => rows.map(([date, code]) => ({
+    staffId: "p1", date, shiftTypeId: `st-${code.toLowerCase()}`, code, isLocked: true,
+  }));
+  const runP1 = (p1Over: Record<string, unknown>, hand: ReturnType<typeof handWeek>, extraShifts: ScheduleShiftType[] = []) => runSchedule({
+    dates: weekdayDates("2025-05-19", 4),
+    staff: ids.map((id, i) => makeStaff(id, ["AB", "CD", "EF", "GH"][i], { ...elig3, ...(id === "p1" ? p1Over : {}) })),
+    shiftTypes: [...shifts, ...extraShifts],
+    existingAssignments: hand,
+    payPeriods: [pp],
+    staffingRequirements: [1, 2, 3, 4].map((d) => ({ shiftTypeId: "st-orl", dayKey: String(d), minCount: 1 })),
+  });
+
+  it("does not finish a pair for someone already on target (20h target met by ORL 12 + OR 8)", () => {
+    const r = runP1({ ftePercentage: 0.25 }, handWeek([["2025-05-12", "ORL"], ["2025-05-13", "OR"]]));
+    expect(r.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORL" && /finishes pair/.test(s.reason))).toEqual([]);
+    expect(r.warnings.some((w) => w.startsWith("AB:") && /ORL pair/.test(w))).toBe(false);
+  });
+
+  it("does not finish a pair when the hours left are already fill-divisible (ORL 12 + a 4h shift)", () => {
+    const H4 = makeShift("st-h4", "H4", { defaultHours: 4 });
+    const r = runP1({ eligibleShiftTypeIds: ["st-or", "st-orl", "st-off", "st-h4"] },
+      handWeek([["2025-05-12", "ORL"], ["2025-05-13", "H4"], ["2025-05-14", "OR"], ["2025-05-15", "OR"], ["2025-05-16", "OR"]]), [H4]);
+    expect(r.suggestions.filter((s) => s.staffId === "p1" && /finishes pair/.test(s.reason))).toEqual([]);
+  });
+
+  it("finishes the pair when that brings the person exactly to target", () => {
+    // Target 24 (0.3 FTE): one hand ORL (12) leaves 12 — exactly one more ORL.
+    const r = runP1({ ftePercentage: 0.3 }, handWeek([["2025-05-12", "ORL"]]));
+    expect(r.suggestions.filter((s) => s.staffId === "p1" && s.code === "ORL" && /finishes pair/.test(s.reason))).toHaveLength(1);
+  });
+
+  it("a person who can work a 12 h fill day is not forced into a second ORL", () => {
+    // OR is 12 h on Saturday; p1 works Saturdays, so 36 h left (after one hand ORL in an
+    // 80 h pay period with 4 hand ORs = 44) is fillable as 12 + 3 x 8 without another ORL.
+    const OR12 = makeShift("st-or", "OR", { schedulePriority: 1, isFillShift: true, defaultHoursWeekend: 12 });
+    const r = runSchedule({
+      dates: [...weekdayDates("2025-05-19", 4), "2025-05-24"],
+      staff: ids.map((id, i) => makeStaff(id, ["AB", "CD", "EF", "GH"][i], { ...elig3, ...(id === "p1" ? { availabilityRules: availDays([1, 2, 3, 4, 5, 6]) } : {}) })),
+      shiftTypes: [OR12, ORL, OFF],
+      existingAssignments: handWeek([["2025-05-12", "ORL"], ["2025-05-13", "OR"], ["2025-05-14", "OR"], ["2025-05-15", "OR"], ["2025-05-16", "OR"]]),
+      payPeriods: [pp],
+      staffingRequirements: [1, 2, 3, 4].map((d) => ({ shiftTypeId: "st-orl", dayKey: String(d), minCount: 1 })),
+    });
+    expect(r.suggestions.filter((s) => s.staffId === "p1" && /finishes pair/.test(s.reason))).toEqual([]);
+  });
+
+  it("counts a required work follower's hours: no finishing past target (Codex #1049)", () => {
+    // ORL → ADM (8 h, counts toward targets). Target 24 with one hand ORL: one more ORL is
+    // 12 h, but its ADM adds 8 → 32/24. Finishing must not happen.
+    const ADM = makeShift("st-adm", "ADM", { defaultHours: 8, autoSchedulable: false });
+    const r = runP1({ ftePercentage: 0.3, eligibleShiftTypeIds: ["st-or", "st-orl", "st-off", "st-adm"] },
+      handWeek([["2025-05-12", "ORL"]]), [ADM]);
+    // Same run WITH the ORL → ADM rule (runP1 passes no followers):
+    const withFollower = (countsTowardTargets: boolean) => runSchedule({
+      dates: weekdayDates("2025-05-19", 4),
+      staff: ids.map((id, i) => makeStaff(id, ["AB", "CD", "EF", "GH"][i], { eligibleShiftTypeIds: ["st-or", "st-orl", "st-off", "st-adm"], ...(id === "p1" ? { ftePercentage: 0.3 } : {}) })),
+      shiftTypes: [...shifts, ADM],
+      existingAssignments: handWeek([["2025-05-12", "ORL"]]),
+      payPeriods: [pp],
+      staffingRequirements: [1, 2, 3, 4].map((d) => ({ shiftTypeId: "st-orl", dayKey: String(d), minCount: 1 })),
+      requiredFollowers: [{ sourceShiftId: "st-orl", followerShiftId: "st-adm", scope: "each_day", countsTowardTargets }],
+    });
+    expect(r.suggestions.filter((s) => s.staffId === "p1" && /finishes pair/.test(s.reason))).toHaveLength(1); // no follower: finishes
+    // The follower's hours count toward FTE either way; countsTowardTargets only affects
+    // staffing/minimum counts (Codex #1051).
+    for (const flag of [true, false]) {
+      expect(withFollower(flag).suggestions.filter((s) => s.staffId === "p1" && /finishes pair/.test(s.reason)), String(flag)).toEqual([]);
+    }
+  });
+
+  it("leaves a run with no half pairs exactly as before", () => {
+    // No hand-entered ORL: the existing pairs-only behaviour (covered by the
+    // "only ever assigns ORL in pairs" test) must be untouched.
+    const r = runSchedule({
+      dates: weekdayDates("2025-05-12", 10),
+      staff: ids.map((id, i) => makeStaff(id, ["AB", "CD", "EF", "GH"][i], elig3)),
+      shiftTypes: shifts,
+      payPeriods: [pp],
+      staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftTypeId: "st-orl", dayKey: String(d), minCount: 1 })),
+    });
+    for (const id of ids) expect(r.suggestions.filter((s) => s.staffId === id && s.code === "ORL").length % 2).toBe(0);
+    expect(r.warnings.some((w) => /ORL pair/.test(w))).toBe(false);
+  });
+});

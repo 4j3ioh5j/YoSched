@@ -590,6 +590,8 @@ export type AutoScheduleInput = {
   // Tests only (card #176): skip the compound hours repair, so a test can compare a run with it
   // against the same run without it. Never set by the input builder.
   skipCompoundRepairForTest?: boolean;
+  /** Test-only (card #232): skip finishing half pairs, to exercise the later repairs on the old shapes. */
+  skipFinishPairsForTest?: boolean;
   // Multi-option candidate seed (Slice 4b). 0/undefined ⇒ the canonical schedule,
   // byte-for-byte identical to the pre-4b output (guaranteed by snapshot test).
   // A positive seed appends a deterministic hash AFTER every existing tiebreak
@@ -639,6 +641,7 @@ export function autoSchedule({
   seed,
   writableFrom,
   skipCompoundRepairForTest,
+  skipFinishPairsForTest,
   balanceRequests,
   balancePayPeriods,
   spreadContext,
@@ -2439,11 +2442,11 @@ export function autoSchedule({
           // dates that `chosen` can take from `remainDates`, or null if they can't
           // host a full group. Returning a partial is intentionally impossible —
           // that is what used to leave a lone ORL (and a +4 overshoot).
-          const completeGroupFor = (chosen: ScheduleStaff, remainDates: string[]): string[] | null => {
+          const completeGroupFor = (chosen: ScheduleStaff, remainDates: string[], size: number = pairingFactor): string[] | null => {
             const provAvailDates = remainDates
               .filter((d) => isAvailable(chosen, d, st))
               .sort((a, b) => a.localeCompare(b));
-            if (provAvailDates.length < pairingFactor) return null;
+            if (provAvailDates.length < size) return null;
             // Anchor dates: PP boundaries (push toward the middle) plus dates where
             // this staff already has other scheduled shifts in this PP.
             const anchorDates: string[] = [prevDate(pp.startDate), nextDate(pp.endDate)];
@@ -2489,7 +2492,7 @@ export function autoSchedule({
               };
               let best: { combo: string[]; key: number[] } | null = null;
               const walk = (from: number, combo: string[]): void => {
-                if (combo.length === pairingFactor) {
+                if (combo.length === size) {
                   let pen = 0;
                   for (let i = 0; i < combo.length; i++) {
                     pen += spreadLoad(chosen.id, combo[i]);
@@ -2499,7 +2502,7 @@ export function autoSchedule({
                   if (!best || cmpTuple(key, best.key) < 0) best = { combo: [...combo], key };
                   return;
                 }
-                for (let i = from; i <= open.length - (pairingFactor - combo.length); i++) {
+                for (let i = from; i <= open.length - (size - combo.length); i++) {
                   if (violatesFollow(combo, open[i])) continue;
                   combo.push(open[i]);
                   walk(i + 1, combo);
@@ -2509,10 +2512,90 @@ export function autoSchedule({
               walk(0, []);
               return best ? (best as { combo: string[] }).combo : null;
             }
-            const picked = bestSpread(provAvailDates, pairingFactor, anchorDates, (p, c) => !violatesFollow(p, c), tieKey)
+            const picked = bestSpread(provAvailDates, size, anchorDates, (p, c) => !violatesFollow(p, c), tieKey)
               .filter((d) => !isAtMaximum(chosen, st, d));
-            return picked.length >= pairingFactor ? picked.slice(0, pairingFactor) : null;
+            return picked.length >= size ? picked.slice(0, size) : null;
           };
+
+          // Card #232: finish HALF groups first. A person who already holds this shift in
+          // the pay period (hand-entered, a request, an earlier step) a non-multiple of
+          // pairingFactor times may be unable to land on target with fill days alone; one
+          // more (or the missing few) can fix that. "Can't land" is judged in each person's
+          // fill-day grain (the gcd of the fill hours on the days they could hold the fill,
+          // as the hours repair judges it: a 12 h Saturday OR counts for someone who works
+          // Saturdays), and finishing must leave hours they CAN fill, within target.
+          const c100 = (h: number): number => Math.round(h * 100);
+          const ppRunDates = dates.filter((d) => d >= pp.startDate && d <= pp.endDate && !isFrozen(d));
+          const fillGrain = (p: ScheduleStaff): number => {
+            let g = 0;
+            for (const d of ppRunDates) {
+              const h = c100(countedHrs(p.id, fillShift, d));
+              if (h <= 0) continue;
+              const c = grid.get(`${p.id}:${d}`);
+              if (c ? !isAwayShift(c.shiftTypeId) : isAvailable(p, d, fillShift)) g = gcd(g, h);
+            }
+            return g;
+          };
+          // Candidates: anyone whose hours LEFT can't be filled in their grain, for whom the
+          // fewest (1..pairingFactor-1) of this shift would make them fillable. Usually that is
+          // a person holding a lone one (`lone`: named in a warning when it can't be finished),
+          // but another 12 h shift can make someone odd too, and fairness picks between them.
+          // A required each-day WORK follower that counts toward FTE (e.g. ORL → ADM) adds
+          // its hours to every finishing day, whatever countsTowardTargets says (Codex #1049, #1051).
+          const finSpec = followerBySource.get(st.id);
+          const finFollower = finSpec && finSpec.scope === "each_day" && finSpec.follower.countsTowardFte
+            && !finSpec.follower.isOffShift && !finSpec.follower.isLeave ? finSpec.follower : null;
+          const finishHrs = (p: ScheduleStaff, d: string): number =>
+            c100(countedHrs(p.id, st, d)) + (finFollower ? c100(countedHrs(p.id, finFollower, nextDate(d))) : 0);
+          type Holder = { p: ScheduleStaff; k: number; left: number; grain: number; lone: boolean };
+          const holderOf = (p: ScheduleStaff): Holder | null => {
+            const target = targetFor(p, pp);
+            if (!(target > 0)) return null;
+            const grain = fillGrain(p) || c100(fillHrs); // no fill day they can hold: judge in the plain fill length
+            const left = c100(target - ppHoursForStaff(p.id, pp) - pendingHolidayHours(p, pp, ppNeedDates));
+            if (left <= 0 || grain <= 0 || left % grain === 0) return null;
+            let have = 0;
+            for (let d = pp.startDate; d <= pp.endDate; d = nextDate(d)) if (cellShiftAt(p.id, d) === st.id) have++;
+            const lone = have % pairingFactor !== 0;
+            const h = c100(st.defaultHours) + (finFollower ? c100(finFollower.defaultHours) : 0);
+            for (let k = 1; k < pairingFactor; k++) {
+              const after = left - k * h;
+              if (after < 0) break;
+              if (after % grain === 0) return { p, k, left, grain, lone };
+            }
+            return null;
+          };
+          if (!skipFinishPairsForTest) {
+            let holders = eligible.map(holderOf).filter((h): h is Holder => h !== null);
+            // Only in a pay period where someone really holds a lone one: elsewhere the pairs
+            // loop below and the hours repair after it keep their established behaviour.
+            if (!holders.some((h) => h.lone)) holders = [];
+            while (holders.length > 0) {
+              const remainDates = ppNeedDates.filter((d) => !usedDates.has(d));
+              const groups = new Map(holders.map((h) => [h.p.id, completeGroupFor(h.p, remainDates, h.k)] as const));
+              const usable: Holder[] = [];
+              for (const h of holders) {
+                const g = groups.get(h.p.id);
+                if (!g) {
+                  if (h.lone) warnings.push(`${h.p.initials}: could not finish the ${st.code} pair in PP ${pp.startDate} — no remaining ${st.code} day they can work`);
+                  continue;
+                }
+                const after = h.left - g.reduce((n, d) => n + finishHrs(h.p, d), 0);
+                if (after >= 0 && after % h.grain === 0) usable.push(h); // otherwise finishing wouldn't help
+              }
+              if (usable.length === 0) break;
+              const chosen = pickStaff(usable.map((h) => h.p), remainDates[0], (p) => groups.get(p.id) ?? null);
+              for (const date of groups.get(chosen.id)!) {
+                const desirability = dwMap.get(`${st.id}:${getDow(date)}`) ?? 0;
+                assign(chosen.id, date, st, `${st.code} (finishes pair${desirability !== 0 ? `, desirability ${desirability > 0 ? "+" : ""}${desirability}` : ""})`, stepName, 0.7);
+                usedDates.add(date);
+                recordAssignment(chosen.id, date);
+                placeEachDayFollower(chosen.id, date, st);
+              }
+              // Re-check the rest against the days now left (a day just taken may have been theirs).
+              holders = usable.filter((h) => h.p.id !== chosen.id);
+            }
+          }
 
           // Place COMPLETE groups only — never a partial. This keeps every staffer's
           // count of this shift a multiple of pairingFactor per PP (e.g. ORL is only

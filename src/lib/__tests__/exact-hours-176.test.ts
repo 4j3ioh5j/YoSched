@@ -329,11 +329,23 @@ describe("compound trades: hours that aren't 8 (card #176)", () => {
 describe("compound trades: limits (card #176)", () => {
   it("more odd people than the search limit: a valid schedule and a warning", () => {
     const ids = Array.from({ length: 16 }, (_, i) => `p${String(i).padStart(2, "0")}`);
-    const inp = frozenWeekShape(ids.slice(0, 14), ids, 5);
+    // Card #232: finishing half pairs now evens this shape before the repair; skip it here so
+    // the repair's search limit is still exercised (the next test checks the new path).
+    const inp = { ...frozenWeekShape(ids.slice(0, 14), ids, 5), skipFinishPairsForTest: true };
     const r = autoSchedule(inp);
     wellFormed(inp, r);
     expect(r.warnings.some((w) => w.startsWith("Hours repair: search limit reached"))).toBe(true);
     for (const day of W2) expect(r.suggestions.filter((s) => s.date === day && s.shiftTypeId === "st-orl")).toHaveLength(1);
+  });
+
+  it("card #232: the same shape with half pairs finished first ends no worse, with full ORL cover", () => {
+    const ids = Array.from({ length: 16 }, (_, i) => `p${String(i).padStart(2, "0")}`);
+    const base = frozenWeekShape(ids.slice(0, 14), ids, 5);
+    const r = autoSchedule(base);
+    wellFormed(base, r);
+    for (const day of W2) expect(r.suggestions.filter((s) => s.date === day && s.shiftTypeId === "st-orl")).toHaveLength(1);
+    const old = autoSchedule({ ...base, skipFinishPairsForTest: true });
+    expect(absSum(devs(base, r))).toBeLessThanOrEqual(absSum(devs(base, old)));
   });
 });
 
@@ -406,13 +418,24 @@ describe("under-target Prohibited (the live ranking): Phase A may pass through i
     }],
   ] as const) {
     it(`${name}: improves, and nobody ends further under than without the repair`, () => {
-      const inp = { ...shape(), factorOrder: live };
+      // Card #232 evens these shapes before the repair; skip that so the repair is still tested.
+      const inp = { ...shape(), factorOrder: live, skipFinishPairsForTest: true };
       const r = autoSchedule(inp);
       wellFormed(inp, r);
       const without = devs(inp, autoSchedule({ ...inp, skipCompoundRepairForTest: true }));
       const after = devs(inp, r);
       expect(absSum(after), JSON.stringify({ after, without })).toBeLessThan(absSum(without));
       for (const k of Object.keys(after)) expect(-after[k], k).toBeLessThanOrEqual(Math.max(0, -without[k]));
+    });
+
+    it(`${name}: with half pairs finished first (card #232), no worse than the old end state`, () => {
+      const inp = { ...shape(), factorOrder: live };
+      const r = autoSchedule(inp);
+      wellFormed(inp, r);
+      const now = devs(inp, r);
+      const old = devs(inp, autoSchedule({ ...inp, skipFinishPairsForTest: true }));
+      expect(absSum(now), JSON.stringify({ now, old })).toBeLessThanOrEqual(absSum(old));
+      for (const k of Object.keys(now)) expect(-now[k], k).toBeLessThanOrEqual(Math.max(0, -old[k]));
     });
   }
 });

@@ -290,7 +290,7 @@ describe("hours repair keeps the month even (card #203, R3-3)", () => {
   const DAY = H("st-day", "D", { schedulePriority: 20 });
   const LONG = H("st-long", "L", { defaultHours: 12, autoSchedulable: false });
   const FILL = H("st-fill", "F", { isFillShift: true });
-  const run = (order: string[]) => {
+  const run = (order: string[], finishPairs = false) => {
     const C = H("st-call", "CALL", { schedulePriority: 10, defaultHours: 12, evenAcrossMonths: true });
     const elig = ["st-call", "st-day", "st-off", "st-long", "st-fill"];
     return autoSchedule(input({
@@ -307,6 +307,9 @@ describe("hours repair keeps the month even (card #203, R3-3)", () => {
       staffingRequirements: [...needOn(["1"]),
         { shiftTypeId: "st-day", shiftCode: "D", dayKey: "1", minCount: 2, preferredCount: 2, maxCount: 2 },
         { shiftTypeId: "st-day", shiftCode: "D", dayKey: "2", minCount: 1, preferredCount: 1, maxCount: 1 }],
+      // Card #232 settles this CALL before the repair (b holds a lone one); the first test
+      // skips that so the repair's choice is still checked.
+      skipFinishPairsForTest: !finishPairs,
     }));
   };
   const mon = (r: ReturnType<typeof autoSchedule>) => r.suggestions.find((s) => s.date === "2025-06-02" && s.shiftTypeId === "st-call");
@@ -315,6 +318,14 @@ describe("hours repair keeps the month even (card #203, R3-3)", () => {
     for (const order of [["x", "b", "c"], ["x", "c", "b"]]) {
       const r = run(order);
       expect(mon(r)).toMatchObject({ staffId: "c", step: "repair" });
+      expect(r.balances?.["st-call"].b.run).toBeCloseTo(1 / 3);
+    }
+  });
+
+  it("card #232: finishing the lone CALL first still gives it to the person behind this month", () => {
+    for (const order of [["x", "b", "c"], ["x", "c", "b"]]) {
+      const r = run(order, true);
+      expect(mon(r)?.staffId).toBe("c");
       expect(r.balances?.["st-call"].b.run).toBeCloseTo(1 / 3);
     }
   });
