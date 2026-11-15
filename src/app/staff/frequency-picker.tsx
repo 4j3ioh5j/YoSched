@@ -57,25 +57,33 @@ const UNIT_OPTIONS: { value: string; label: string }[] = [
   { value: "days", label: "day(s) — rolling" },
 ];
 
-export function FrequencyPicker({
-  shiftTypeId,
-  target,
-  onChange,
-}: {
-  shiftTypeId: string;
-  target: Target | undefined;
-  onChange: (t: Target | undefined) => void;
-}) {
-  const has = !!target;
-  const t: Target = target ?? {
+/** The picker's empty state; its strength is what a new target is saved with (card #258). */
+export function blankTarget(shiftTypeId: string, defaultStrength: string = "rule"): Target {
+  return {
     shiftTypeId,
     minCount: 0,
     maxCount: null,
     window: "pay_period",
     windowDays: null,
     windowCount: 1,
-    strength: "rule",
+    strength: defaultStrength === "preference" ? "preference" : "rule",
   };
+}
+
+export function FrequencyPicker({
+  shiftTypeId,
+  target,
+  onChange,
+  defaultStrength,
+}: {
+  shiftTypeId: string;
+  target: Target | undefined;
+  onChange: (t: Target | undefined) => void;
+  /** Card #258: the strength a NEW target starts with (staff cards: Hard; Pay-period preferences: Prefer). */
+  defaultStrength?: string;
+}) {
+  const has = !!target;
+  const t: Target = target ?? blankTarget(shiftTypeId, defaultStrength);
   const mode = frequencyModeOf(t);
   const isBetween = mode === "between";
   const isDays = t.window === "days";

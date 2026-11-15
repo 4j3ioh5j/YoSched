@@ -28,6 +28,7 @@ import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/l
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
 import { RecurrencePicker } from "../staff/recurrence-picker";
 import { FrequencyPicker } from "../staff/frequency-picker";
+import { deptPickerTarget, deptTargetPutBody, DEPT_DEFAULT_STRENGTH, type DeptTargetRow, type DeptPickerTarget } from "./dept-target-row";
 import { DEFAULT_STAFF_ORDER, orderStaff, STAFF_ORDER_DEFAULT_DIR, type StaffOrderCriterion, type StaffOrderDir, type StaffOrderKey } from "@/lib/staff-order";
 
 const CanEditContext = createContext(true);
@@ -4141,17 +4142,7 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
 
 // ─── Pay-period preferences (department-wide, per-FTE shift targets) ─────────
 
-type DeptTargetData = {
-  id: string;
-  shiftTypeId: string;
-  minCount: number;
-  maxCount: number | null;
-  window: string;
-  windowDays: number | null;
-  windowCount: number | null;
-  strength: string; // "preference" (soft) | "rule" (hard)
-  perFte: boolean;
-};
+type DeptTargetData = DeptTargetRow;
 
 // Department-wide shift count targets expressed PER 1.0 FTE. Reuses the same
 // FrequencyPicker (min/max + window) used for per-staff targets; adds a soft/hard
@@ -4169,9 +4160,7 @@ function PayPeriodPrefsSection({ initial, shiftTypes }: { initial: DeptTargetDat
   const workShifts = shiftTypes.filter((st) => !st.isOffShift && !st.isLeave && st.autoSchedulable);
   const rowFor = (shiftTypeId: string) => rows.find((r) => r.shiftTypeId === shiftTypeId);
 
-  type PickerTarget = { shiftTypeId: string; minCount: number; maxCount?: number | null; window: string; windowDays?: number | null; windowCount?: number | null };
-
-  async function save(shiftTypeId: string, target: PickerTarget | undefined, strengthOverride?: string) {
+  async function save(shiftTypeId: string, target: DeptPickerTarget | undefined) {
     const existing = rowFor(shiftTypeId);
     setStatus("saving");
     setError("");
@@ -4200,16 +4189,8 @@ function PayPeriodPrefsSection({ initial, shiftTypes }: { initial: DeptTargetDat
         const res = await fetch("/api/settings/department-shift-targets", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            shiftTypeId,
-            minCount: target.minCount,
-            maxCount: target.maxCount ?? null,
-            window: target.window,
-            windowDays: target.windowDays ?? null,
-            windowCount,
-            strength: strengthOverride ?? existing?.strength ?? "preference",
-            perFte: true,
-          }),
+          // Card #258: the picker's Hard/Prefer choice is what is saved.
+          body: JSON.stringify(deptTargetPutBody(shiftTypeId, target, existing)),
         });
         if (!res.ok) throw new Error(await res.text());
         const saved = (await res.json()) as DeptTargetData;
@@ -4223,16 +4204,6 @@ function PayPeriodPrefsSection({ initial, shiftTypes }: { initial: DeptTargetDat
     }
   }
 
-  function toggleStrength(shiftTypeId: string) {
-    const r = rowFor(shiftTypeId);
-    if (!r) return;
-    save(
-      shiftTypeId,
-      { shiftTypeId, minCount: r.minCount, maxCount: r.maxCount, window: r.window, windowDays: r.windowDays, windowCount: r.windowCount },
-      r.strength === "rule" ? "preference" : "rule",
-    );
-  }
-
   return (
     <CollapsibleSection
       id="payperiod-preferences"
@@ -4244,7 +4215,7 @@ function PayPeriodPrefsSection({ initial, shiftTypes }: { initial: DeptTargetDat
       <div className="space-y-2 mt-4">
         {workShifts.map((st) => {
           const row = rowFor(st.id);
-          const target = row ? { shiftTypeId: st.id, minCount: row.minCount, maxCount: row.maxCount, window: row.window, windowDays: row.windowDays, windowCount: row.windowCount } : undefined;
+          const target = row ? deptPickerTarget(row) : undefined;
           return (
             <div key={st.id} className="flex items-center gap-3 py-1.5 border-b border-slate-700/40 last:border-0">
               <div className="w-16 shrink-0 text-sm font-medium text-slate-200" title={st.name}>{st.code}</div>
@@ -4252,26 +4223,14 @@ function PayPeriodPrefsSection({ initial, shiftTypes }: { initial: DeptTargetDat
                 <FrequencyPicker
                   shiftTypeId={st.id}
                   target={target}
-                  onChange={(t) => canEdit && save(st.id, t as PickerTarget | undefined)}
+                  defaultStrength={DEPT_DEFAULT_STRENGTH}
+                  onChange={(t) => canEdit && save(st.id, t)}
                 />
               </div>
-              <button
-                onClick={() => canEdit && toggleStrength(st.id)}
-                disabled={!canEdit || !row}
-                title={row?.strength === "rule" ? "Hard rule — must be met (warns if unmet)" : "Soft preference — biases the mix, never overrides staffing"}
-                className={[
-                  "shrink-0 px-2 py-1 rounded text-[11px] font-medium border transition-colors",
-                  !row ? "opacity-30 border-slate-700 text-slate-500" : row.strength === "rule" ? "bg-amber-600/20 border-amber-500 text-amber-300" : "bg-blue-600/20 border-blue-500 text-blue-300",
-                  !canEdit || !row ? "cursor-not-allowed" : "",
-                ].join(" ")}
-              >
-                {row?.strength === "rule" ? "Hard" : "Soft"}
-              </button>
             </div>
           );
         })}
       </div>
-      <p className="text-[11px] text-slate-500 mt-3">Soft/hard enforcement of these targets lands in a follow-up; for now they feed the same min/max logic as per-staff targets.</p>
     </CollapsibleSection>
   );
 }
