@@ -5,6 +5,7 @@ import { getPageSession } from "@/lib/auth-guard";
 import { staffLoginStatus } from "@/lib/staff-login-status";
 import { redirect } from "next/navigation";
 import { USER_SELECT, toClientUser } from "@/lib/user-view";
+import { ruleVersionsOf } from "@/lib/staff-rule-versions";
 
 export const dynamic = "force-dynamic";
 
@@ -105,6 +106,8 @@ export default async function Staff() {
             durationHrsWeekend: o.durationHrsWeekend,
             durationHrsHoliday: o.durationHrsHoliday,
           })),
+          // Card #206: each rule list's version, from the same rows as the lists above.
+          ruleVersions: ruleVersionsOf(p),
           specialQualifications: p.specialQualifications,
           isActive: p.isActive,
           isAutoScheduled: p.isAutoScheduled,

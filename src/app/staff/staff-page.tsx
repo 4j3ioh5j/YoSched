@@ -13,6 +13,7 @@ import { RecurrencePicker } from "./recurrence-picker";
 import { FrequencyPicker } from "./frequency-picker";
 import { describeFrequency, type ShiftMinTarget } from "@/lib/shift-eligibility";
 import { isValidFixedHours } from "@/lib/fte";
+import { rulesPatch, undoRulesPatch, afterRulesSave, withoutRules, type RuleKey, type RulesPatch, type RuleVersions } from "@/lib/staff-rule-patch";
 
 // Login-setup badge shown per staff row. Credentials/activation are managed on /users
 // (deep links below, for users:edit only); the link itself can also be changed in the
@@ -195,6 +196,8 @@ type Staff = {
   shiftMinimumTargets: ShiftMinimumTargetData[];
   standingCommitments: StandingCommitmentData[];
   shiftOverrides: ShiftOverrideData[];
+  /** Card #206: the version of each rule list above, as the server computed it for exactly that copy. */
+  ruleVersions: RuleVersions;
   specialQualifications: string[];
   isActive: boolean;
   isAutoScheduled: boolean;
@@ -945,6 +948,50 @@ function StandingCommitmentsEditor({
   );
 }
 
+/** Card #206: the page's row for a person the server just created (POST /api/staff's response). */
+type CreatedStaff = {
+  id: string; name: string; initials: string; employmentTypeId: string; employmentType?: { name: string } | null;
+  ftePercentage?: number | null; fixedHoursPerPp?: number | null; availabilityRules?: AvailabilityRule[];
+  eligibleShifts?: { shiftTypeId: string }[]; specialQualifications?: string[]; isActive: boolean;
+  isAutoScheduled?: boolean; sortOrder: number; ruleVersions?: RuleVersions;
+};
+function staffFromCreated(created: CreatedStaff, typeName: string): Staff {
+  return {
+    id: created.id,
+    name: created.name,
+    loginStatus: "none", // logins are created on demand ("Create login")
+    loginUserId: null,
+    initials: created.initials,
+    employmentTypeId: created.employmentTypeId,
+    employmentTypeName: created.employmentType?.name ?? typeName,
+    ftePercentage: created.ftePercentage ?? 0,
+    fixedHoursPerPp: created.fixedHoursPerPp ?? null,
+    availabilityRules: (created.availabilityRules ?? []).map((ar: AvailabilityRule) => ({
+      type: ar.type,
+      strength: ar.strength,
+      conditionStaffId: ar.conditionStaffId,
+      conditionType: ar.conditionType,
+      whenKind: ar.whenKind,
+      whenDays: ar.whenDays,
+      whenPpWeek: ar.whenPpWeek,
+      whenOrds: ar.whenOrds,
+      whenCycleUnit: ar.whenCycleUnit,
+      whenCycleN: ar.whenCycleN,
+      whenCycleOffset: ar.whenCycleOffset,
+    })),
+    eligibleShiftTypeIds: (created.eligibleShifts ?? []).map((es: { shiftTypeId: string }) => es.shiftTypeId),
+    shiftEligibilityRules: [],
+    shiftMinimumTargets: [],
+    standingCommitments: [],
+    shiftOverrides: [],
+    ruleVersions: created.ruleVersions ?? {},
+    specialQualifications: created.specialQualifications ?? [],
+    isActive: created.isActive,
+    isAutoScheduled: created.isAutoScheduled ?? true,
+    sortOrder: created.sortOrder,
+  };
+}
+
 export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff: initial, employmentTypes, allShiftTypes }: Props) {
   const [staff, setStaff] = useState(initial);
   // Card #25: the last SAVED version of each row (not the page-load props, not the draft).
@@ -1054,27 +1101,33 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
   // only this page's changes — a shift turned on in Settings meanwhile is never reverted. The saved
   // row then takes the server's list. A 409 ("reload") is shown, nothing changes locally.
   // Also returns the eligibility diff the server applied, so Undo reverses exactly this save.
-  async function putStaff(body: Staff, base: readonly string[]): Promise<{ row: Staff; applied: ListApplied } | null> {
+  // Card #206: only the rule lists in `patch` are sent, each with the version of the copy the page
+  // holds (`held`); the server refuses (409) a list changed elsewhere since. The returned row keeps
+  // every version next to the contents it belongs to (afterRulesSave), and `sent` is this save's
+  // mask for its Undo.
+  async function putStaff(body: Staff, base: readonly string[], patch: RulesPatch, held: Staff): Promise<{ row: Staff; applied: ListApplied; sent: RuleKey[] } | null> {
     const res = await fetch("/api/staff", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...body, eligibleShiftTypeIdsBase: base }),
+      body: JSON.stringify({ ...withoutRules(body), ...patch.lists, ruleBases: patch.ruleBases, eligibleShiftTypeIdsBase: base }),
     }).catch(() => null);
     if (!res?.ok) {
       if (res?.status === 409) alert((await res.json().catch(() => null))?.error ?? "This staff member was changed elsewhere. Reload the page and try again.");
       return null;
     }
-    const saved = await res.json().catch(() => null) as { eligibleShifts?: { shiftTypeId: string }[]; eligibleShiftTypeIdsApplied?: unknown } | null;
+    const saved = await res.json().catch(() => null) as { eligibleShifts?: { shiftTypeId: string }[]; eligibleShiftTypeIdsApplied?: unknown; ruleVersions?: RuleVersions } | null;
     const ids = saved?.eligibleShifts?.map((e) => e.shiftTypeId);
-    const row = ids ? { ...body, eligibleShiftTypeIds: ids } : body;
-    return { row, applied: appliedDiff(saved?.eligibleShiftTypeIdsApplied, body.eligibleShiftTypeIds, base, row.eligibleShiftTypeIds) };
+    const next = ids ? { ...body, eligibleShiftTypeIds: ids } : body;
+    const row = afterRulesSave(next, held, patch.sent, saved?.ruleVersions);
+    return { row, applied: appliedDiff(saved?.eligibleShiftTypeIdsApplied, body.eligibleShiftTypeIds, base, row.eligibleShiftTypeIds), sent: patch.sent };
   }
 
   async function saveStaff(member: Staff) {
     const prev = savedRows.current.get(member.id) ?? staff.find((p) => p.id === member.id);
     setSaving(true);
     try {
-      const result = await putStaff(member, (prev ?? member).eligibleShiftTypeIds);
+      const held = prev ?? member;
+      const result = await putStaff(member, held.eligibleShiftTypeIds, rulesPatch(member, held), held);
       if (!result) {
         if (prev) setStaff((cur) => cur.map((p) => p.id === member.id ? prev : p));
         return;
@@ -1092,8 +1145,10 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
             // Undo this edit only: the other fields go back to `prev`; the eligibility list loses
             // exactly what this save added and regains what it removed — a shift turned on
             // elsewhere meanwhile (kept by the save) stays (Codex #385).
+            // Card #206: the rule lists go back only where this save changed them (its mask),
+            // based on the versions this save produced — refused if changed elsewhere since.
             const u = undoList(saved.eligibleShiftTypeIds, result.applied);
-            const res = await putStaff({ ...prev, eligibleShiftTypeIds: u.list }, u.base);
+            const res = await putStaff({ ...prev, eligibleShiftTypeIds: u.list }, u.base, undoRulesPatch(prev, saved, result.sent), saved);
             if (!res) return; // refused: nothing changed on the server, so nothing changes here
             const back = res.row;
             remember(back);
@@ -1136,7 +1191,7 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
         label: result.deactivated ? `Deactivated ${member.initials}` : `Removed ${member.initials}`,
         execute: async () => {
           if (result.deactivated) {
-            const res = await putStaff({ ...member, isActive: true }, member.eligibleShiftTypeIds);
+            const res = await putStaff({ ...member, isActive: true }, member.eligibleShiftTypeIds, rulesPatch(member, member), member);
             if (!res) return;
             const back = res.row;
             remember(back);
@@ -1150,8 +1205,11 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
             }).catch(() => null);
             if (!res?.ok) return;
             const created = await res.json();
-            remember({ ...member, id: created.id });
-            setStaff((cur) => [...cur, { ...member, id: created.id }].sort((a, b) => a.sortOrder - b.sortOrder));
+            // Card #206: hold what the server created (its lists with their versions), never the
+            // removed row's lists under the new row's versions. Card #220 restores the rest.
+            const back = staffFromCreated(created, member.employmentTypeName);
+            remember(back);
+            setStaff((cur) => [...cur, back].sort((a, b) => a.sortOrder - b.sortOrder));
             markSaved({ kind: "added", id: created.id, isActive: !!created.isActive });
           }
         },
@@ -1172,39 +1230,7 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
       });
       if (!res.ok) return;
       const created = await res.json();
-      const newProv: Staff = {
-        id: created.id,
-        name: created.name,
-        loginStatus: "none", // logins are created on demand ("Create login")
-        loginUserId: null,
-        initials: created.initials,
-        employmentTypeId: created.employmentTypeId,
-        employmentTypeName: created.employmentType?.name ?? defaultType?.name ?? "",
-        ftePercentage: created.ftePercentage ?? 0,
-        fixedHoursPerPp: created.fixedHoursPerPp ?? null,
-        availabilityRules: (created.availabilityRules ?? []).map((ar: AvailabilityRule) => ({
-          type: ar.type,
-          strength: ar.strength,
-          conditionStaffId: ar.conditionStaffId,
-          conditionType: ar.conditionType,
-          whenKind: ar.whenKind,
-          whenDays: ar.whenDays,
-          whenPpWeek: ar.whenPpWeek,
-          whenOrds: ar.whenOrds,
-          whenCycleUnit: ar.whenCycleUnit,
-          whenCycleN: ar.whenCycleN,
-          whenCycleOffset: ar.whenCycleOffset,
-        })),
-        eligibleShiftTypeIds: (created.eligibleShifts ?? []).map((es: { shiftTypeId: string }) => es.shiftTypeId),
-        shiftEligibilityRules: [],
-        shiftMinimumTargets: [],
-        standingCommitments: [],
-        shiftOverrides: [],
-        specialQualifications: created.specialQualifications ?? [],
-        isActive: created.isActive,
-        isAutoScheduled: created.isAutoScheduled ?? true,
-        sortOrder: created.sortOrder,
-      };
+      const newProv = staffFromCreated(created, defaultType?.name ?? "");
       remember(newProv);
       setStaff((prev) => [...prev, newProv]);
       markSaved({ kind: "added", id: created.id, isActive: !!created.isActive });

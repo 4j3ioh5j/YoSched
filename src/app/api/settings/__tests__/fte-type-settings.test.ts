@@ -80,7 +80,12 @@ function client() {
       createMany: async ({ data }: { data: Target[] }) => { store.targets.push(...copy(data).map((t) => ({ ...t, strength: t.strength ?? "rule" }))); return { count: data.length }; },
       deleteMany: async ({ where }: { where: Record<string, unknown> }) => { store.targets = store.targets.filter((r) => !hit(r, where)); return { count: 0 }; },
     },
-    async $executeRaw() { store.locks++; return 0; }, // card #75: the eligibility advisory lock
+    // Card #206: the other rule lists (none stored in these tests); PUT reads their versions.
+    availabilityRule: { findMany: async () => [], createMany: async () => ({ count: 0 }), deleteMany: async () => ({ count: 0 }) },
+    shiftEligibilityRule: { findMany: async () => [], createMany: async () => ({ count: 0 }), deleteMany: async () => ({ count: 0 }) },
+    standingCommitment: { findMany: async () => [], createMany: async () => ({ count: 0 }), deleteMany: async () => ({ count: 0 }) },
+    staffShiftOverride: { findMany: async () => [], createMany: async () => ({ count: 0 }), deleteMany: async () => ({ count: 0 }) },
+    async $executeRaw() { store.locks++; return 0; }, // card #75 eligibility lock, card #206 per-person rules lock
     async $transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T> {
       const snap = structuredClone({ types: store.types, staff: store.staff, elig: store.elig, typeDefaults: store.typeDefaults, targets: store.targets });
       try { return await fn(this); } catch (e) { Object.assign(store, snap); throw e; }
@@ -93,6 +98,7 @@ vi.mock("@/lib/auth-guard", () => ({ getSession: async () => ({ error: null, ses
 vi.mock("@/lib/prisma", () => ({ prisma: fake }));
 vi.mock("@/lib/user-lifecycle", () => ({ detachLoginForStaff: async () => {} }));
 
+const { ruleListVersion } = await import("@/lib/staff-rule-versions");
 const { PUT: putStaff, POST: postStaff } = await import("../../staff/route");
 const { PUT: putType, POST: postType } = await import("../employment-types/route");
 
@@ -152,23 +158,38 @@ describe("PUT /api/staff", () => {
 
 describe("card #189: PUT /api/staff saves a count target's Hard/Prefer", () => {
   const T = (o: Record<string, unknown> = {}) => ({ shiftTypeId: "orc", minCount: 1, maxCount: null, window: "pay_period", windowDays: null, windowCount: 1, ...o });
+  // Card #206: a current page sends the version of the targets it holds.
+  const based = (id: string, list: Record<string, unknown>[]) => ({
+    id, shiftMinimumTargets: list,
+    ruleBases: { shiftMinimumTargets: ruleListVersion("shiftMinimumTargets", store.targets.filter((t) => t.staffId === id)) },
+  });
   it("saves Prefer and Hard", async () => {
-    expect((await putStaff(req({ id: "ab", shiftMinimumTargets: [T({ strength: "preference" }), T({ shiftTypeId: "orl", strength: "rule" })] }))).status).toBe(200);
+    expect((await putStaff(req(based("ab", [T({ strength: "preference" }), T({ shiftTypeId: "orl", strength: "rule" })])))).status).toBe(200);
     expect(store.targets.map((t) => [t.shiftTypeId, t.strength])).toEqual([["orc", "preference"], ["orl", "rule"]]);
   });
   it("an unknown value is 400 and nothing changes", async () => {
-    await putStaff(req({ id: "ab", shiftMinimumTargets: [T({ strength: "preference" })] }));
-    expect((await putStaff(req({ id: "ab", shiftMinimumTargets: [T({ strength: "maybe" })] }))).status).toBe(400);
+    await putStaff(req(based("ab", [T({ strength: "preference" })])));
+    expect((await putStaff(req(based("ab", [T({ strength: "maybe" })])))).status).toBe(400);
     expect(store.targets.map((t) => t.strength)).toEqual(["preference"]);
   });
-  it("an old cached page (no strength key) keeps the saved Prefer of the same target; a new target is Hard", async () => {
-    await putStaff(req({ id: "ab", shiftMinimumTargets: [T({ strength: "preference" })] }));
-    expect((await putStaff(req({ id: "ab", shiftMinimumTargets: [T({ minCount: 2 }), T({ shiftTypeId: "orl" })] }))).status).toBe(200);
+  it("an old cached page (no strength key) re-sending the saved targets keeps their Prefer", async () => {
+    await putStaff(req(based("ab", [T({ strength: "preference" })])));
+    expect((await putStaff(req({ id: "ab", shiftMinimumTargets: [T()] }))).status).toBe(200);
+    expect(store.targets.map((t) => [t.shiftTypeId, t.minCount, t.strength])).toEqual([["orc", 1, "preference"]]);
+  });
+  it("card #206: an old cached page that changes the targets is refused (409), nothing written", async () => {
+    await putStaff(req(based("ab", [T({ strength: "preference" })])));
+    expect((await putStaff(req({ id: "ab", shiftMinimumTargets: [T({ minCount: 2 }), T({ shiftTypeId: "orl" })] }))).status).toBe(409);
+    expect(store.targets.map((t) => [t.shiftTypeId, t.minCount, t.strength])).toEqual([["orc", 1, "preference"]]);
+  });
+  it("a target sent with no strength takes the saved strength of the same target; a new one is Hard", async () => {
+    await putStaff(req(based("ab", [T({ strength: "preference" })])));
+    expect((await putStaff(req(based("ab", [T({ minCount: 2 }), T({ shiftTypeId: "orl" })])))).status).toBe(200);
     expect(store.targets.map((t) => [t.shiftTypeId, t.minCount, t.strength])).toEqual([["orc", 2, "preference"], ["orl", 1, "rule"]]);
   });
   it("another person's targets are not read for the old-page fallback", async () => {
     store.targets.push({ staffId: "nh", shiftTypeId: "orc", minCount: 1, maxCount: null, window: "pay_period", windowDays: null, windowCount: 1, strength: "preference" });
-    await putStaff(req({ id: "ab", shiftMinimumTargets: [T()] }));
+    await putStaff(req(based("ab", [T()])));
     expect(store.targets.find((t) => t.staffId === "ab")?.strength).toBe("rule");
   });
 });

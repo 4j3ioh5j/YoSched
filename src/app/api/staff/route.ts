@@ -5,6 +5,9 @@ import { ruleToWhen, whenToColumns, standingToWhen, normalizeAnyDay } from "@/li
 import { NextRequest, NextResponse } from "next/server";
 import { staffHoursWrite } from "@/lib/fte";
 import { lockEligibility, eligibilityDiff, EligibilityStale } from "@/lib/eligibility-write";
+import { RULE_KEYS, ruleListVersion, ruleSelect, ruleVersionsOf, STAFF_RULES_LOCK_CLASS } from "@/lib/staff-rule-versions";
+import type { RuleKey, RuleVersions } from "@/lib/staff-rule-patch";
+import type { Prisma } from "@/generated/prisma/client";
 
 class HoursError extends Error {}
 
@@ -52,23 +55,140 @@ function standingWhenColumns(r: Record<string, unknown>) {
   );
 }
 
+type Row = Record<string, unknown>;
+type RuleTable = {
+  findMany(a: { where: { staffId: string }; select: Record<string, true> }): Promise<Row[]>;
+  deleteMany(a: { where: { staffId: string } }): Promise<unknown>;
+  createMany(a: { data: Row[] }): Promise<unknown>;
+};
+const RULE_TABLE: Readonly<Record<RuleKey, string>> = {
+  availabilityRules: "availabilityRule",
+  shiftEligibilityRules: "shiftEligibilityRule",
+  shiftMinimumTargets: "shiftMinimumTarget",
+  standingCommitments: "standingCommitment",
+  shiftOverrides: "staffShiftOverride",
+};
+const ruleTable = (tx: Prisma.TransactionClient, k: RuleKey) => (tx as unknown as Record<string, RuleTable>)[RULE_TABLE[k]];
+
+/** Card #206: one transaction-scoped lock per person for every write of their rule lists. */
+async function lockStaffRules(tx: Prisma.TransactionClient, id: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${STAFF_RULES_LOCK_CLASS}::int, hashtext(${id}))`;
+}
+
+class RulesStale extends Error {
+  constructor() {
+    super("This person's rules were changed elsewhere (for example in another tab). Reload the page and try again.");
+  }
+}
+
+/** The rows PUT writes for one sent list (without staffId), normalised exactly as stored. */
+function ruleRows(k: RuleKey, list: Row[], stored: Row[]): Row[] {
+  switch (k) {
+    case "availabilityRules":
+      return list.map((r) => ({
+        type: (r.type as string) ?? "available",
+        strength: (r.strength as string) ?? "rule",
+        conditionStaffId: (r.conditionStaffId as string | null | undefined) ?? null,
+        conditionType: (r.conditionType as string | null | undefined) ?? null,
+        ...whenColumns(r),
+      }));
+    case "shiftEligibilityRules":
+      return list.map((r) => ({
+        shiftTypeId: r.shiftTypeId as string,
+        type: (r.type as string) ?? "eligible",
+        strength: (r.strength as string) ?? "rule",
+        ...whenColumns(r),
+      }));
+    case "shiftMinimumTargets": {
+      // Card #189: Hard ("rule") or Prefer ("preference"). A page from before the setting sends
+      // no strength: it keeps the saved strength of the same target, so an old cached page can't
+      // quietly turn a Prefer back into Hard. A new one is Hard.
+      const keyOf = (t: Row) => `${t.shiftTypeId}|${t.window}|${(t.windowCount as number | null | undefined) ?? 1}`;
+      const saved = new Map(stored.map((t) => [keyOf(t), t.strength as string]));
+      const strengthOf = (t: Row): string => {
+        if (!Object.prototype.hasOwnProperty.call(t, "strength") || t.strength == null) return saved.get(keyOf(t)) ?? "rule";
+        if (t.strength === "rule" || t.strength === "preference") return t.strength;
+        throw new TypeError("A count target must be Hard or Prefer");
+      };
+      return list.map((t) => ({
+        shiftTypeId: t.shiftTypeId as string,
+        minCount: t.minCount as number,
+        maxCount: (t.maxCount as number | null) ?? null,
+        window: t.window as string,
+        windowDays: (t.windowDays as number | null | undefined) ?? null,
+        windowCount: (t.windowCount as number | undefined) ?? 1,
+        strength: strengthOf(t),
+      }));
+    }
+    case "standingCommitments":
+      return list.map((r) => ({
+        shiftTypeId: r.shiftTypeId as string,
+        notes: (r.notes as string) || null,
+        ...standingWhenColumns(r),
+      }));
+    case "shiftOverrides":
+      // Per-staff shift-hour overrides. durationHrs is the legacy base; the day-type columns are
+      // null unless explicitly split. A row with a non-number is dropped.
+      return list
+        .map((o) => ({
+          shiftTypeId: o.shiftTypeId as string,
+          durationHrs: Number(o.durationHrs),
+          durationHrsWeekday: o.durationHrsWeekday == null ? null : Number(o.durationHrsWeekday),
+          durationHrsWeekend: o.durationHrsWeekend == null ? null : Number(o.durationHrsWeekend),
+          durationHrsHoliday: o.durationHrsHoliday == null ? null : Number(o.durationHrsHoliday),
+        }))
+        .filter((r) =>
+          Number.isFinite(r.durationHrs) &&
+          (r.durationHrsWeekday == null || Number.isFinite(r.durationHrsWeekday)) &&
+          (r.durationHrsWeekend == null || Number.isFinite(r.durationHrsWeekend)) &&
+          (r.durationHrsHoliday == null || Number.isFinite(r.durationHrsHoliday)),
+        );
+  }
+}
+
 export async function PUT(req: NextRequest) {
   const { error } = await getSession("staff:edit");
   if (error) return error;
-  const { id, eligibleShiftTypeIds, eligibleShiftTypeIdsBase, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, standingCommitments, shiftOverrides, ...data } = await req.json();
+  const { id, eligibleShiftTypeIds, eligibleShiftTypeIdsBase, ruleBases, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, standingCommitments, shiftOverrides, ...data } = await req.json();
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+  const sentLists: Record<RuleKey, unknown> = { availabilityRules, shiftEligibilityRules, shiftMinimumTargets, standingCommitments, shiftOverrides };
+  const bases: Record<string, unknown> = ruleBases && typeof ruleBases === "object" ? ruleBases : {};
 
   // Card #75: what the eligibility diff actually changed, returned so the page's Undo reverses
   // exactly this save and nothing made elsewhere (Codex #385).
   let applied: { add: string[]; remove: string[] } | null = null;
+  // Card #206: every list's version as this transaction left it (read under the lock).
+  const ruleVersions: RuleVersions = {};
   try {
   await prisma.$transaction(async (tx) => {
     // Card #75: the eligibility lock first (every writer of staff_eligible_shifts takes it).
     if (Array.isArray(eligibleShiftTypeIds)) await lockEligibility(tx);
+    // Card #206: then this person's rules lock, before reading what is compared.
+    await lockStaffRules(tx, id);
     // Card #71: FTE % and fixed hours are decided by the (new) employment type's settings,
     // read in this transaction — a type change applies in the same write.
     const current = await tx.staff.findUnique({ where: { id }, select: { employmentTypeId: true } });
     if (!current) throw new HoursError("Staff member not found");
+
+    // Card #206: check every sent rule list before writing anything. With a base (the version of
+    // the copy the page holds) the stored list must still have it; without one (an old cached
+    // page that sends every list) the list must be exactly what is stored. Otherwise the save
+    // would erase rules made elsewhere → 409, nothing written.
+    const writes: Partial<Record<RuleKey, Row[]>> = {};
+    for (const k of RULE_KEYS) {
+      const list = sentLists[k];
+      if (!Array.isArray(list)) continue;
+      const stored = await ruleTable(tx, k).findMany({ where: { staffId: id }, select: ruleSelect(k) });
+      const rows = ruleRows(k, list as Row[], stored);
+      const have = ruleListVersion(k, stored);
+      if (Object.prototype.hasOwnProperty.call(bases, k)) {
+        if (bases[k] !== have) throw new RulesStale();
+      } else if (ruleListVersion(k, rows) !== have) {
+        throw new RulesStale();
+      }
+      writes[k] = rows;
+    }
+
     const typeId: string = data.employmentTypeId ?? current.employmentTypeId;
     const type = await tx.employmentType.findUnique({ where: { id: typeId } });
     if (!type) throw new HoursError("Unknown employment type");
@@ -115,114 +235,23 @@ export async function PUT(req: NextRequest) {
       if (add.length > 0) await tx.staffEligibleShift.createMany({ data: add.map((shiftTypeId) => ({ staffId: id, shiftTypeId })) });
     }
 
-    if (Array.isArray(availabilityRules)) {
-      await tx.availabilityRule.deleteMany({ where: { staffId: id } });
-      if (availabilityRules.length > 0) {
-        await tx.availabilityRule.createMany({
-          data: availabilityRules.map((r: Record<string, unknown>) => ({
-            staffId: id,
-            type: (r.type as string) ?? "available",
-            strength: (r.strength as string) ?? "rule",
-            conditionStaffId: r.conditionStaffId as string | undefined,
-            conditionType: r.conditionType as string | undefined,
-            ...whenColumns(r),
-          })),
-        });
-      }
+    // Replace each checked list with its normalised rows.
+    for (const k of RULE_KEYS) {
+      const rows = writes[k];
+      if (!rows) continue;
+      await ruleTable(tx, k).deleteMany({ where: { staffId: id } });
+      if (rows.length > 0) await ruleTable(tx, k).createMany({ data: rows.map((r) => ({ staffId: id, ...r })) });
     }
 
-    if (Array.isArray(shiftEligibilityRules)) {
-      await tx.shiftEligibilityRule.deleteMany({ where: { staffId: id } });
-      if (shiftEligibilityRules.length > 0) {
-        await tx.shiftEligibilityRule.createMany({
-          data: shiftEligibilityRules.map((r: Record<string, unknown>) => ({
-            staffId: id,
-            shiftTypeId: r.shiftTypeId as string,
-            type: (r.type as string) ?? "eligible",
-            strength: (r.strength as string) ?? "rule",
-            ...whenColumns(r),
-          })),
-        });
-      }
-    }
-
-    if (Array.isArray(shiftMinimumTargets)) {
-      // Card #189: Hard ("rule") or Prefer ("preference"). A page from before the setting sends
-      // no strength: it keeps the saved strength of the same target (read before the delete),
-      // so an old cached page can't quietly turn a Prefer back into Hard. A new one is Hard.
-      const keyOf = (t: { shiftTypeId: unknown; window: unknown; windowCount?: unknown }) =>
-        `${t.shiftTypeId}|${t.window}|${(t.windowCount as number | null | undefined) ?? 1}`;
-      const saved = new Map(
-        (await tx.shiftMinimumTarget.findMany({ where: { staffId: id }, select: { shiftTypeId: true, window: true, windowCount: true, strength: true } }))
-          .map((t) => [keyOf(t), t.strength]),
-      );
-      const strengthOf = (t: Record<string, unknown>): string => {
-        if (!Object.prototype.hasOwnProperty.call(t, "strength") || t.strength == null) return saved.get(keyOf(t as { shiftTypeId: unknown; window: unknown; windowCount?: unknown })) ?? "rule";
-        if (t.strength === "rule" || t.strength === "preference") return t.strength;
-        throw new TypeError("A count target must be Hard or Prefer");
-      };
-      const strengths = shiftMinimumTargets.map((t: Record<string, unknown>) => strengthOf(t));
-      await tx.shiftMinimumTarget.deleteMany({ where: { staffId: id } });
-      if (shiftMinimumTargets.length > 0) {
-        await tx.shiftMinimumTarget.createMany({
-          data: shiftMinimumTargets.map((t: Record<string, unknown>, i: number) => ({
-            strength: strengths[i],
-            staffId: id,
-            shiftTypeId: t.shiftTypeId as string,
-            minCount: t.minCount as number,
-            maxCount: (t.maxCount as number | null) ?? null,
-            window: t.window as string,
-            windowDays: t.windowDays as number | undefined,
-            windowCount: (t.windowCount as number | undefined) ?? 1,
-          })),
-        });
-      }
-    }
-
-    if (Array.isArray(standingCommitments)) {
-      await tx.standingCommitment.deleteMany({ where: { staffId: id } });
-      if (standingCommitments.length > 0) {
-        await tx.standingCommitment.createMany({
-          data: standingCommitments.map((r: Record<string, unknown>) => ({
-            staffId: id,
-            shiftTypeId: r.shiftTypeId as string,
-            notes: (r.notes as string) || null,
-            ...standingWhenColumns(r),
-          })),
-        });
-      }
-    }
-
-    // Per-staff shift-hour overrides. Replace-all like the other relations. A row
-    // is kept only when it actually differs from the shift's default (the client
-    // sends a row per dirty shift; an all-default row is dropped here to avoid
-    // accumulating no-op overrides). durationHrs is the legacy base; the day-type
-    // columns are null unless explicitly split.
-    if (Array.isArray(shiftOverrides)) {
-      await tx.staffShiftOverride.deleteMany({ where: { staffId: id } });
-      const rows = shiftOverrides
-        .map((o: Record<string, unknown>) => ({
-          staffId: id,
-          shiftTypeId: o.shiftTypeId as string,
-          durationHrs: Number(o.durationHrs),
-          durationHrsWeekday: o.durationHrsWeekday == null ? null : Number(o.durationHrsWeekday),
-          durationHrsWeekend: o.durationHrsWeekend == null ? null : Number(o.durationHrsWeekend),
-          durationHrsHoliday: o.durationHrsHoliday == null ? null : Number(o.durationHrsHoliday),
-        }))
-        .filter((r) =>
-          Number.isFinite(r.durationHrs) &&
-          (r.durationHrsWeekday == null || Number.isFinite(r.durationHrsWeekday)) &&
-          (r.durationHrsWeekend == null || Number.isFinite(r.durationHrsWeekend)) &&
-          (r.durationHrsHoliday == null || Number.isFinite(r.durationHrsHoliday)),
-        );
-      if (rows.length > 0) {
-        await tx.staffShiftOverride.createMany({ data: rows });
-      }
+    // Card #206 (Codex #1005): the versions are read here, under the lock, so they belong to
+    // exactly what this save left — never to a later save's rows.
+    for (const k of RULE_KEYS) {
+      ruleVersions[k] = ruleListVersion(k, await ruleTable(tx, k).findMany({ where: { staffId: id }, select: ruleSelect(k) }));
     }
   });
   } catch (e) {
     if (e instanceof HoursError) return NextResponse.json({ error: e.message }, { status: 400 });
-    if (e instanceof EligibilityStale) return NextResponse.json({ error: e.message, reason: "stale" }, { status: 409 });
+    if (e instanceof EligibilityStale || e instanceof RulesStale) return NextResponse.json({ error: e.message, reason: "stale" }, { status: 409 });
     if (e instanceof TypeError) return NextResponse.json({ error: e.message }, { status: 400 });
     throw e;
   }
@@ -232,7 +261,7 @@ export async function PUT(req: NextRequest) {
     include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true, shiftOverrides: true },
   });
 
-  return NextResponse.json(applied ? { ...result, eligibleShiftTypeIdsApplied: applied } : result);
+  return NextResponse.json({ ...result, ruleVersions, ...(applied ? { eligibleShiftTypeIdsApplied: applied } : {}) });
 }
 
 export async function POST(req: NextRequest) {
@@ -315,7 +344,8 @@ export async function POST(req: NextRequest) {
     include: { employmentType: true, eligibleShifts: true, availabilityRules: true, shiftEligibilityRules: true, shiftMinimumTargets: true, standingCommitments: true, shiftOverrides: true },
   });
 
-  return NextResponse.json(result);
+  // Card #206: the new person's rule-list versions, so the page can edit their rules at once.
+  return NextResponse.json(result ? { ...result, ruleVersions: ruleVersionsOf(result) } : result);
 }
 
 export async function DELETE(req: NextRequest) {

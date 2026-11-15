@@ -81,7 +81,8 @@ describe("Staff Undo reverses only its own eligibility change (card #75, Codex #
   const src = readFileSync(join(__dirname, "../../app/staff/staff-page.tsx"), "utf8");
   it("the edit's Undo sends undoList(saved list, applied diff), never prev's whole list", () => {
     expect(src).toMatch(/const u = undoList\(saved\.eligibleShiftTypeIds, result\.applied\);/);
-    expect(src).toMatch(/putStaff\(\{ \.\.\.prev, eligibleShiftTypeIds: u\.list \}, u\.base\)/);
+    // Card #206: and the rule lists only where that save changed them (its mask), from its versions.
+    expect(src).toMatch(/putStaff\(\{ \.\.\.prev, eligibleShiftTypeIds: u\.list \}, u\.base, undoRulesPatch\(prev, saved, result\.sent\), saved\)/);
     expect(src).not.toMatch(/putStaff\(prev, /);
   });
 });
