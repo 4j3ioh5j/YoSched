@@ -1166,7 +1166,11 @@ export function autoSchedule({
     if (why !== null) {
       const member = activeStaff.find((p) => p.id === staffId);
       const isWorkFollower = !spec.follower.isOffShift && !spec.follower.isLeave;
-      if (why && member && isWorkFollower) warnings.push(`${member.initials}: could not place required ${spec.follower.code} after ${sourceShift.code} on ${next} (${why})`);
+      // Card #239: a held day that already IS the follower (typed in by hand, say) meets the
+      // requirement: nothing is placed and nothing is wrong. Only the warning knows this —
+      // followerBlock's answer (read by the hours projections) stays "cell already filled".
+      const alreadyThere = why === "cell already filled" && grid.get(`${staffId}:${next}`)?.shiftTypeId === spec.follower.id;
+      if (why && member && isWorkFollower && !alreadyThere) warnings.push(`${member.initials}: could not place required ${spec.follower.code} after ${sourceShift.code} on ${next} (${why})`);
       return;
     }
     assign(staffId, next, spec.follower, `Required follower after ${sourceShift.code}`, "follower", 0.95, !spec.countsTowardTargets);

@@ -516,6 +516,68 @@ describe("autoSchedule", () => {
       expect(result.warnings.some((w) => w.includes("ADM") && w.includes("CALL"))).toBe(true);
     });
 
+    // Card #239: the day after a hand-entered CALL weekend already holds the ADM (typed in by
+    // hand too). The requirement is met, so nothing is placed and nothing is warned.
+    for (const locked of [true, false]) {
+      it(`each_run: no warning when the follower's day already holds the follower (${locked ? "locked" : "manual, unlocked"}) (card #239)`, () => {
+        const result = runSchedule({
+          dates: allDates("2025-05-17", 5),
+          staff: [fStaff()],
+          shiftTypes: followerShifts,
+          existingAssignments: [
+            ...callWeekend(locked),
+            { staffId: "p1", date: "2025-05-19", shiftTypeId: "st-adm", code: "ADM", isLocked: locked, source: "manual" },
+          ],
+          payPeriods: pp,
+          requiredFollowers: [
+            { sourceShiftId: "st-call", followerShiftId: "st-adm", scope: "each_run", countsTowardTargets: false },
+          ],
+        });
+        expect(result.suggestions.filter((s) => s.code === "ADM")).toHaveLength(0);
+        expect(result.warnings.filter((w) => w.includes("could not place required"))).toEqual([]);
+      });
+    }
+
+    // Card #239 (Codex #1072): the hours projections must keep reading a held follower day as
+    // "not placed by this run" — never as a new follower to add on top of the one already there.
+    const manualCell = (date: string, shiftTypeId: string, code: string) => ({ staffId: "p1", date, shiftTypeId, code, isLocked: false, source: "manual" });
+    const hoursOf = (r: AutoScheduleResult, extra: number) => r.suggestions.filter((s) => s.staffId === "p1").reduce((n, s) => n + (s.code === "ORC" ? 16 : s.code === "X" ? 0 : 8), extra);
+    it("a held ADM after ORC is not counted twice: ORC still fits exactly to target (card #239)", () => {
+      const result = runSchedule({
+        staff: [fStaff(), makeStaff("p2", "CD")],
+        shiftTypes: followerShifts,
+        existingAssignments: [manualCell("2025-05-13", "st-adm", "ADM"), manualCell("2025-05-14", "st-or", "OR"), manualCell("2025-05-15", "st-or", "OR")],
+        staffingRequirements: [{ shiftTypeId: "st-orc", dayKey: "1", minCount: 1 }],
+        factorOrder: [{ key: "overHours", sortOrder: 0, enabled: true, hoursPolicy: "prohibited" }],
+        requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-adm", scope: "each_day", countsTowardTargets: true }],
+      });
+      expect(result.suggestions.find((s) => s.date === "2025-05-12" && s.code === "ORC")?.staffId).toBe("p1");
+      expect(hoursOf(result, 24)).toBe(40);
+      expect(result.warnings.filter((w) => w.includes("could not place required"))).toEqual([]);
+    });
+    // Codex's counterexample: 64 h target, 32 h by hand, two legal ORC days (the only open days),
+    // a hand-entered X after one or both. Read as a second follower, the held X used up the last open day.
+    for (const xs of [["2025-05-13", "2025-05-16", "2025-05-21"], ["2025-05-13", "2025-05-16", "2025-05-20", "2025-05-21"]]) {
+      it(`a held X after ORC does not use up a second day: p1 still reaches target (X on ${xs.join(", ")}) (card #239)`, () => {
+        const ors = ["2025-05-14", "2025-05-15", "2025-05-22", "2025-05-23"];
+        const result = runSchedule({
+          dates: weekdayDates("2025-05-12", 10),
+          // AB prefers Monday ORC, so AB gets it whenever AB may take it; CD can take it too, so a
+          // wrongly "unreachable" AB hands the day to CD.
+          staff: [fStaff({ ftePercentage: 0.8, availabilityRules: makeStaff("x", "X").availabilityRules, shiftEligibilityRules: [{ shiftTypeId: "st-orc", type: "eligible", strength: "preference", ...wEvery(1) }] as ScheduleStaff["shiftEligibilityRules"] }),
+            makeStaff("p2", "CD", { eligibleShiftTypeIds: ["st-or", "st-orc", "st-off"] })],
+          shiftTypes: followerShifts,
+          payPeriods: [{ startDate: "2025-05-11", endDate: "2025-05-24", targetHours: 80 }],
+          existingAssignments: [...xs.map((d) => ({ ...manualCell(d, "st-off", "X"), isLocked: true })), ...ors.map((d) => manualCell(d, "st-or", "OR"))],
+          staffingRequirements: [{ shiftTypeId: "st-orc", dayKey: "1", minCount: 1 }],
+          factorOrder: [{ key: "underHours", sortOrder: 0, enabled: true, hoursPolicy: "prohibited" }],
+          requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: true }],
+        });
+        expect(result.suggestions.filter((s) => s.code === "ORC" && s.staffId === "p1").map((s) => s.date).sort()).toEqual(["2025-05-12", "2025-05-19"]);
+        expect(hoursOf(result, 32)).toBe(64);
+      });
+    }
+
     it("each_day: places a follower after EVERY occurrence (ORC→X on Tue and Thu)", () => {
       const result = runSchedule({
         dates: weekdayDates("2025-05-12", 5), // Mon..Fri
