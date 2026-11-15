@@ -1,5 +1,6 @@
 "use client";
 
+import { columnHoverText } from "@/lib/column-hover";
 import { isWeekendDow } from "@/lib/scheduler-tuning";
 import { StatusOpRecorder, undoOrder } from "@/lib/request-undo-ops";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -4253,17 +4254,8 @@ export function ScheduleGrid({
                   : p.fixedHoursPerPp != null
                     ? `${p.employmentTypeName} · ${p.fixedHoursPerPp} h/PP`
                     : p.employmentTypeName;
-                const zFmt = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(2)}σ`;
-                const fte = p.ftePercentage || 1;
-                const fTooltip = fe
-                  ? `${p.name} (${empLabel})\n` +
-                    `Equity: ${zFmt(fe.displayDeviation.overall)}\n` +
-                    `Desirability: ${zFmt(-fe.displayDeviation.desirability)}\n` +
-                    `Holiday: ${fe.metrics.holidayWorkCount} (avg ${((fairnessAverages?.holidayWorkCount ?? 0) * fte).toFixed(1)})\n` +
-                    `CALL: ${fe.metrics.shiftCounts["CALL"] ?? 0} (avg ${((fairnessAverages?.perShift["CALL"] ?? 0) * fte).toFixed(1)})\n` +
-                    `ORC: ${fe.metrics.shiftCounts["ORC"] ?? 0} (avg ${((fairnessAverages?.perShift["ORC"] ?? 0) * fte).toFixed(1)})\n` +
-                    `ORL: ${fe.metrics.shiftCounts["ORL"] ?? 0} (avg ${((fairnessAverages?.perShift["ORL"] ?? 0) * fte).toFixed(1)})`
-                  : `${p.name} (${empLabel})`;
+                // Card #221: the shift lines follow the Equity Factors settings.
+                const fTooltip = columnHoverText({ name: p.name, empLabel, fte: p.ftePercentage || 1, fe, averages: fairnessAverages });
                 return (
                   <th
                     key={p.id}
