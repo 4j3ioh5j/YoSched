@@ -279,6 +279,7 @@ export default async function Home() {
         }))}
         fairnessData={fairnessData}
         fairnessAverages={fairness.averages}
+        equityShiftCodes={fairness.equityShiftCodes}
         followRules={followRules.map((r) => ({
           sourceShiftId: r.sourceShiftId,
           allowedShiftId: r.allowedShiftId,

@@ -36,3 +36,11 @@ describe("columnHoverText", () => {
     expect(columnHoverText({ name: "Ann", empLabel: "x", fte: 1, fe, averages: undefined }).split("\n")).toHaveLength(4);
   });
 });
+
+describe("columnHoverText order (card #222)", () => {
+  it("number-only codes keep the Settings order given in `codes`, not number order", () => {
+    const f = { ...fe, metrics: { holidayWorkCount: 0, shiftCounts: { "10": 1, "2": 3 } } };
+    const t = columnHoverText({ name: "A", empLabel: "x", fte: 1, fe: f, averages: { holidayWorkCount: 0, perShift: { "10": 1, "2": 2 } }, codes: ["10", "2"] });
+    expect(t.split("\n").slice(4)).toEqual(["10: 1 (avg 1.0)", "2: 3 (avg 2.0)"]);
+  });
+});

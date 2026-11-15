@@ -8,7 +8,11 @@ type HoverEquity = {
 };
 type HoverAverages = { holidayWorkCount: number; perShift: Record<string, number> };
 
-export function columnHoverText(o: { name: string; empLabel: string; fte: number; fe: HoverEquity | undefined; averages: HoverAverages | undefined }): string {
+/**
+ * `codes`: the tracked shifts in Settings order (computeFairness's equityShiftCodes). Card #222:
+ * object keys can't carry that order for number-only codes ("10", "2" iterate as 2, 10).
+ */
+export function columnHoverText(o: { name: string; empLabel: string; fte: number; fe: HoverEquity | undefined; averages: HoverAverages | undefined; codes?: readonly string[] }): string {
   const head = `${o.name} (${o.empLabel})`;
   if (!o.fe) return head;
   const z = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(2)}σ`;
@@ -19,8 +23,10 @@ export function columnHoverText(o: { name: string; empLabel: string; fte: number
     `Desirability: ${z(-o.fe.displayDeviation.desirability)}`,
     `Holiday: ${o.fe.metrics.holidayWorkCount} (avg ${avg(o.averages?.holidayWorkCount)})`,
   ];
-  for (const [code, a] of Object.entries(o.averages?.perShift ?? {})) {
-    lines.push(`${code}: ${o.fe.metrics.shiftCounts[code] ?? 0} (avg ${avg(a)})`);
+  const perShift = o.averages?.perShift ?? {};
+  for (const code of o.codes ?? Object.keys(perShift)) {
+    if (!Object.prototype.hasOwnProperty.call(perShift, code)) continue;
+    lines.push(`${code}: ${o.fe.metrics.shiftCounts[code] ?? 0} (avg ${avg(perShift[code])})`);
   }
   return lines.join("\n");
 }

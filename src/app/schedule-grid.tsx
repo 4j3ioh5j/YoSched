@@ -253,6 +253,8 @@ type Props = {
     holidayWorkCount: number;
     perShift: Record<string, number>;
   };
+  /** Card #222: the shifts Equity Factors track, in Settings order (the hover's shift lines). */
+  equityShiftCodes?: string[];
   followRules?: FollowRuleRow[];
   countColumns?: { label: string; shiftTypeIds: string[] }[];
   printColumnRules?: PrintRule[];
@@ -458,6 +460,7 @@ export function ScheduleGrid({
   staffingReqs,
   fairnessData,
   fairnessAverages,
+  equityShiftCodes,
   followRules,
   countColumns = [],
   printColumnRules = [],
@@ -4255,7 +4258,7 @@ export function ScheduleGrid({
                     ? `${p.employmentTypeName} · ${p.fixedHoursPerPp} h/PP`
                     : p.employmentTypeName;
                 // Card #221: the shift lines follow the Equity Factors settings.
-                const fTooltip = columnHoverText({ name: p.name, empLabel, fte: p.ftePercentage || 1, fe, averages: fairnessAverages });
+                const fTooltip = columnHoverText({ name: p.name, empLabel, fte: p.ftePercentage || 1, fe, averages: fairnessAverages, codes: equityShiftCodes });
                 return (
                   <th
                     key={p.id}
