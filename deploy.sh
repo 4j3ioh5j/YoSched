@@ -12,6 +12,17 @@ SERVICE_NAME="yosched-app"
 echo "==> Running test gate..."
 pnpm test:fast || { echo "ABORT: test:fast failed — fix before deploying"; exit 1; }
 
+# Card #235: every release raises the version. Compare with the last released commit
+# (origin's main, freshly fetched); a re-deploy of that same commit is allowed.
+echo "==> Checking the release version..."
+git fetch -q origin main || { echo "ABORT: could not fetch origin to check the version"; exit 1; }
+HEAD_SHA=$(git rev-parse HEAD)
+RELEASED_SHA=$(git rev-parse origin/main)
+HEAD_VER=$(git show HEAD:package.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).version??""))') || { echo "ABORT: could not read this commit's version"; exit 1; }
+RELEASED_VER=$(git show origin/main:package.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).version??""))') || { echo "ABORT: could not read the released version"; exit 1; }
+node scripts/check-release-version.mjs "$HEAD_SHA" "$RELEASED_SHA" "$HEAD_VER" "$RELEASED_VER" || { echo "ABORT: raise the version before releasing"; exit 1; }
+echo "    $RELEASED_VER -> $HEAD_VER"
+
 echo "==> Pushing to GitHub..."
 git push
 
