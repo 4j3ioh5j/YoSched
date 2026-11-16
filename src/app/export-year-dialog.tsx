@@ -1,10 +1,10 @@
 "use client";
 
 // Card #299: "Export year" dialog. One click saves the year as BOTH an Excel workbook and a
-// PDF (one month per sheet / page), from the SAVED schedule. The folder picker (Chrome,
-// Edge, "Save to a folder…") opens straight from its click; Export downloads both (card #308).
+// PDF (one month per sheet / page), from the SAVED schedule. Export downloads both (card #308);
+// the folder button is gone (card #311).
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { BASE_PATH } from "@/lib/base-path";
 import { exportFileNameError, exportNameEdit, exportNameSetYear, initExportName } from "@/lib/export-filename";
@@ -12,7 +12,6 @@ import { browserExportEnv, runYearExport, type ExportOutcome } from "@/lib/save-
 import { buildYearExportFiles, fetchPdfFonts } from "@/lib/export-year-files";
 import type { ExportScheduleInput } from "@/lib/print-month-model";
 
-const noSubscribe = () => () => {};
 
 type Props = {
   yearChoices: number[];
@@ -52,13 +51,9 @@ export function ExportYearDialog({ yearChoices, defaultYear, fileNameTemplate, s
   const nameError = exportFileNameError(nameState.name);
   const canExport = !busy && !nameError;
 
-  // Card #308: Export downloads both files, so Chrome's own Save As (if set to ask) reaches
-  // any folder, Downloads included. "Save to a folder…" is the optional folder picker.
-  // Read after mount so the server render and the first client render match.
-  const hasPicker = useSyncExternalStore(noSubscribe, () => !!browserExportEnv().showDirectoryPicker, () => false);
-
-  // No await before runYearExport: the folder picker needs the click's user activation.
-  const onExport = (mode: "auto" | "download" = "download") => {
+  // Card #308/#311: Export downloads both files; Chrome's own Save As (if set to ask) reaches
+  // any folder, Desktop and Downloads included. No folder picker (Chrome blocks those folders).
+  const onExport = () => {
     if (!canExport) return;
     const token = ++runToken.current;
     const input = snapshot();
@@ -70,7 +65,6 @@ export function ExportYearDialog({ yearChoices, defaultYear, fileNameTemplate, s
       nameState.name,
       () => buildYearExportFiles(input, year, now, () => fetchPdfFonts(BASE_PATH)),
       browserExportEnv(),
-      { mode },
     )
       .then((r) => {
         if (!mounted.current || token !== runToken.current) { r.release(); return; }
@@ -140,9 +134,6 @@ export function ExportYearDialog({ yearChoices, defaultYear, fileNameTemplate, s
         )}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={close} disabled={busy} className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-300">Close</button>
-          {hasPicker && (
-            <button type="button" onClick={() => onExport("auto")} disabled={!canExport} className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-200">Save to a folder…</button>
-          )}
           <button type="button" onClick={() => onExport()} disabled={!canExport} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded text-white">Export</button>
         </div>
       </div>

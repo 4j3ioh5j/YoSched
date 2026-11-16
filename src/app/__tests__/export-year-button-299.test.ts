@@ -18,22 +18,20 @@ describe("Export year button (card #299)", () => {
     expect(snap).not.toMatch(/effectiveAssignmentMap|liveDisplayMap|liveOutcome/);
   });
 
-  it("opens the picker straight from the click (no await before runYearExport)", () => {
+  it("starts the downloads straight from the click (no await before runYearExport)", () => {
     const body = dialog.slice(dialog.indexOf("const onExport = () => {"), dialog.indexOf("runYearExport("));
     expect(body).not.toMatch(/await|\.then\(/);
   });
 });
 
-describe("Export year: Export downloads, the folder picker is optional (card #308)", () => {
+describe("Export year: Export downloads; no folder button (cards #308, #311)", () => {
   it("Export and Enter download both files (Chrome's own Save As reaches every folder)", () => {
     expect(dialog).toMatch(/onClick=\{\(\) => onExport\(\)\}[^>]*>Export</);
-    expect(dialog).toMatch(/const onExport = \(mode: "auto" \| "download" = "download"\)/);
-    expect(dialog).toMatch(/browserExportEnv\(\),\s*\{ mode \},/);
+    expect(dialog).toMatch(/const onExport = \(\) => \{/);
   });
 
-  it("Save to a folder… is the optional picker, shown only where one exists", () => {
-    expect(dialog).toMatch(/\{hasPicker && \(\s*<button[^>]*onClick=\{\(\) => onExport\("auto"\)\}[^>]*>Save to a folder…</);
-    expect(dialog).not.toMatch(/>Download instead</);
+  it("there is no folder button and no folder picker (card #311)", () => {
+    expect(dialog).not.toMatch(/Save to a folder|hasPicker|showDirectoryPicker|>Download instead</);
   });
 
   it("the hint says where downloads go and how to choose the folder", () => {
