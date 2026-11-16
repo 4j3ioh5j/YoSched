@@ -5817,16 +5817,33 @@ function closestGap(byPerson: Map<string, SpacingUnit[]> | undefined, from: stri
 }
 const daysBetweenDates = (a: string, b: string): number => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a + "T12:00:00Z")) / 86400000);
 
-export function autoSchedule(input: AutoScheduleInput, opts: AutoScheduleOptions = {}): AutoScheduleResult {
+/** One engine run of the spacing trial, with its per-item quality maps. */
+export type TrialRun = { result: AutoScheduleResult; items: QualityItems };
+/** One candidate's change to a stage's base input: one marked shift's spacing (null = the base as is). */
+export type TrialVariant = { shiftTypeId: string; minGapDays: number; minGapStrength: "preference" | "rule" } | null;
+/** One stage of the trial: every run starts from `base`, changed by its variant. */
+export type TrialBatch = { base: AutoScheduleInput; variants: TrialVariant[] };
+/** The input one batch entry runs: the base with that shift's spacing set. */
+export function trialInput(base: AutoScheduleInput, v: TrialVariant): AutoScheduleInput {
+  if (!v) return base;
+  return { ...base, shiftTypes: base.shiftTypes.map((st) => (st.id === v.shiftTypeId ? { ...st, minGapDays: v.minGapDays, minGapStrength: v.minGapStrength } : st)) };
+}
+
+/**
+ * Card #266: the spacing trial as a sequence of BATCHES. It yields the inputs one stage needs
+ * (the off run, then every candidate of one marked shift: they all start from the same base),
+ * receives their runs in the same order, and picks exactly as a one-by-one loop would (same
+ * order, strict `<`). A batch can therefore run in parallel (worker threads) or in a plain loop
+ * with the same result. Returns null when no trial applies (one plain run).
+ */
+export function* spacingTrialSteps(input: AutoScheduleInput): Generator<TrialBatch, AutoScheduleResult | null, TrialRun[]> {
   const marked = input.shiftTypes
     .filter((st) => st.spreadOverMonth && st.autoSchedulable && st.minGapDays == null)
     .sort((a, b) => (a.schedulePriority ?? Number.MAX_SAFE_INTEGER) - (b.schedulePriority ?? Number.MAX_SAFE_INTEGER) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const order = effectiveFactorKeys(input.factorOrder);
-  if (opts.spacingTrial === false || marked.length === 0 || input.dates.length === 0 || !order.includes(SPACING_KEY)) return autoScheduleCore(input);
+  if (marked.length === 0 || input.dates.length === 0 || !order.includes(SPACING_KEY)) return null;
 
-  const core = opts.coreForTest ?? autoScheduleCore;
-  const run = (inp: AutoScheduleInput) => { const items = newQualityItems(); return { result: core(inp, items), items }; };
-  const off = run(input);
+  const [off] = yield { base: input, variants: [null] };
   const above = order.slice(0, order.indexOf(SPACING_KEY));
   const radius = readTuning(input.schedulingPreferences).spreadRadiusDays;
   const from = input.dates[0], to = input.dates[input.dates.length - 1];
@@ -5843,19 +5860,23 @@ export function autoSchedule(input: AutoScheduleInput, opts: AutoScheduleOptions
     let anyEligible = false;
     let blockedBy: string | null = null;
     const base = cur;
+    const cands: { n: number; strength: "preference" | "rule"; v: TrialVariant }[] = [];
     for (let n = 2; n <= nMax; n++) {
-      for (const strength of ["preference", "rule"] as const) {
-        const inp: AutoScheduleInput = { ...base, shiftTypes: base.shiftTypes.map((st) => (st.id === S.id ? { ...st, minGapDays: n, minGapStrength: strength } : st)) };
-        const r = run(inp);
-        const why = spacingGuardBlocks(r.items, off.items, above);
-        if (why) { blockedBy ??= why; continue; }
-        anyEligible = true;
-        if (compareScheduleQuality(r.result.quality, best.result.quality) < 0) { best = r; kept = { n, strength }; cur = inp; }
-      }
+      for (const strength of ["preference", "rule"] as const) cands.push({ n, strength, v: { shiftTypeId: S.id, minGapDays: n, minGapStrength: strength } });
     }
-    if (kept) {
+    const runs = yield { base, variants: cands.map((c) => c.v) };
+    if (runs.length !== cands.length) throw new Error("spacing trial: a batch returned the wrong number of runs");
+    cands.forEach(({ n, strength, v }, i) => {
+      const r = runs[i];
+      const why = spacingGuardBlocks(r.items, off.items, above);
+      if (why) { blockedBy ??= why; return; }
+      anyEligible = true;
+      if (compareScheduleQuality(r.result.quality, best.result.quality) < 0) { best = r; kept = { n, strength }; cur = trialInput(base, v); }
+    });
+    const k = kept as { n: number; strength: "preference" | "rule" } | null;
+    if (k) {
       const close = closestGap(best.items.spacingUnits.get(S.id), from, to);
-      notes.push(`${S.code}: kept ${kept.n} days apart (${kept.strength === "rule" ? "Hard" : "Prefer"})${close != null ? `; the closest pair is ${close} days` : ""}`);
+      notes.push(`${S.code}: kept ${k.n} days apart (${k.strength === "rule" ? "Hard" : "Prefer"})${close != null ? `; the closest pair is ${close} days` : ""}`);
     } else if (!anyEligible && blockedBy) {
       notes.push(`${S.code}: spacing left as generated; a wider spacing would cost ${GUARD_WORDS[blockedBy] ?? blockedBy}`);
     } else {
@@ -5863,6 +5884,24 @@ export function autoSchedule(input: AutoScheduleInput, opts: AutoScheduleOptions
     }
   }
   return notes.length ? { ...best.result, warnings: [...best.result.warnings, ...notes] } : best.result;
+}
+
+/** One engine run with its per-item quality maps (what a trial batch entry needs). */
+export function trialRun(input: AutoScheduleInput, core: (input: AutoScheduleInput, items: QualityItems) => AutoScheduleResult = autoScheduleCore): TrialRun {
+  const items = newQualityItems();
+  return { result: core(input, items), items };
+}
+
+export function autoSchedule(input: AutoScheduleInput, opts: AutoScheduleOptions = {}): AutoScheduleResult {
+  if (opts.spacingTrial === false) return autoScheduleCore(input);
+  const core = opts.coreForTest ?? autoScheduleCore;
+  const steps = spacingTrialSteps(input);
+  let step = steps.next();
+  while (!step.done) {
+    const { base, variants } = step.value;
+    step = steps.next(variants.map((v) => trialRun(trialInput(base, v), core)));
+  }
+  return step.value ?? autoScheduleCore(input);
 }
 
 /** Test seam (card #266): one engine run with its per-item quality maps. */
