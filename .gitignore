@@ -45,5 +45,3 @@ next-env.d.ts
 # Scratch/temp working files (per project convention)
 _scratch/
 
-# card #266: the browser engine worker, built by scripts/build-engine-worker.mjs
-/public/engine-worker-*.js

@@ -2,7 +2,7 @@
 // snapshot of the AutoGenFactor order (a string[] of factor keys). Kept separate from the
 // route so the validation/reconciliation logic is unit-testable without prisma/auth.
 
-import { validateFactorOrder, insertSpacing, SPACING_BELOW, SPACING_KEY } from "./autogen-factor-order";
+import { validateFactorOrder } from "./autogen-factor-order";
 
 export type ProfileInputValidation =
   | { ok: true; name: string; order: string[] }
@@ -50,14 +50,8 @@ export function reconcileOrder(savedOrder: unknown, existingKeys: string[]): str
       }
     }
   }
-  // Card #266/#285: a profile saved before the spacing factor gets it below the profile's own
-  // requests and overHours (the same rule as the engine's 6-key acceptance); without either, last.
-  const placeSpacing = known.has(SPACING_KEY) && !seen.has(SPACING_KEY) && SPACING_BELOW.some((k) => seen.has(k));
-  const head = placeSpacing ? insertSpacing(reconciled) : reconciled;
-  const have = new Set(head);
   for (const key of existingKeys) {
-    if (!have.has(key) && key !== SPACING_KEY) head.push(key);
+    if (!seen.has(key)) reconciled.push(key);
   }
-  if (!have.has(SPACING_KEY) && known.has(SPACING_KEY)) head.push(SPACING_KEY);
-  return head;
+  return reconciled;
 }

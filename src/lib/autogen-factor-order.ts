@@ -21,26 +21,6 @@ export function validateFactorOrder(submitted: unknown, existingKeys: string[]):
   return { ok: true, order };
 }
 
-// Card #266/#285: the "spacing" factor sits below both "requests" (David's #52) and "overHours"
-// (#58): directly after whichever of the two comes later in the list. One helper places it
-// wherever a key list predates it: the engine's acceptance of the old exact 6-key set, and
-// applying a saved profile that lacks it. With only one of the two, it goes after that one;
-// with neither, last.
-export const SPACING_KEY = "spacing";
-export const SPACING_BELOW = ["requests", "overHours"] as const;
-export function insertSpacing(keys: readonly string[]): string[] {
-  if (keys.includes(SPACING_KEY)) return [...keys];
-  const at = Math.max(...SPACING_BELOW.map((k) => keys.indexOf(k)));
-  return at < 0 ? [...keys, SPACING_KEY] : [...keys.slice(0, at + 1), SPACING_KEY, ...keys.slice(at + 1)];
-}
-
-// Card #266: the Live grid runs the engine in the browser, and an open tab keeps its old bundle
-// across a deploy. An old engine sees an unknown "spacing" row and falls back to the default
-// order (overHours above requests), so GET /api/auto-schedule/inputs sends the spacing row ONLY
-// to a client that says it knows it (`factors=spacing`, comma-separated list). Without the flag
-// the old tab gets the six rows its engine honours exactly.
-export const SPACING_CAPABILITY_PARAM = "factors";
-export function factorRowsForClient<T extends { key: string }>(rows: readonly T[], capability: string | null): T[] {
-  const caps = new Set((capability ?? "").split(",").map((x) => x.trim()).filter(Boolean));
-  return caps.has(SPACING_KEY) ? [...rows] : rows.filter((r) => r.key !== SPACING_KEY);
-}
+// Card #293: "spacing" (cards #266–#289) is retired. The engine drops a stale row with this key
+// (a DB not yet migrated, an old tab's input, a rollback's re-added row) instead of falling back.
+export const RETIRED_SPACING_KEY = "spacing";

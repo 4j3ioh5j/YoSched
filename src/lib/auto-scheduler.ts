@@ -13,10 +13,8 @@ import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
 import { tallyBalances, sharesOf, spreadPenalty, spreadChange, addDays, type BalanceTally } from "./shift-balance";
 import { gapBreaks, gapList, gapListShrank, gapTrialBeats, type GapTrialOutcome } from "./shift-gap";
 import { readTuning, isWeekendDate, weekendSecondDow, type SchedulerTuning } from "./scheduler-tuning";
-import { insertSpacing, SPACING_KEY } from "./autogen-factor-order";
-import { spacingUnits, spacingPenalty, mostUnits, type SpacingUnit } from "./spacing-measure";
+import { RETIRED_SPACING_KEY } from "./autogen-factor-order";
 import { isoDow, isoNext, isoPrev, isoNoonMs } from "./date-memo";
-import { runTimed } from "./trial-run-cost";
 
 export type ScheduleStaff = {
   id: string;
@@ -260,7 +258,6 @@ export type ScheduleQuality = {
     underHours: number;        // Σ max(0, target − worked) over staff×PP (measures #217, under side)
     requestsDenied: number;    // non-human-approved REQUEST_SHIFT work-days not honored, per covered date (#221)
     fairnessSpread: number;    // stddev of FTE-normalized desirability load across staff
-    spacing: number;           // card #266: Σ closeness of each person's marked-shift units (spacing-measure.ts)
     // Derived aggregate (coverage + hardLimits). NOT a rank tier — kept so the
     // feasibility floor in autoScheduleCandidates keeps its Slice-1 meaning until
     // the Slice-2b floor redesign. Equals the old T0 `hardBreaches`.
@@ -320,7 +317,6 @@ export const DEFAULT_FACTOR_ORDER = [
   "overHours",
   "underHours",
   "requests",
-  "spacing", // card #266/#285: below requests and overHours, before fairness
   "fairness",
 ] as const;
 
@@ -337,18 +333,19 @@ export const DEFAULT_FACTOR_ORDER = [
 // known AND enabled. Anything else → DEFAULT_FACTOR_ORDER (no factor silently demoted).
 // Do NOT pre-filter unknowns, or an unknown key alongside a reordered known set would
 // slip through and reorder the known factors instead of falling back (Codex #1761).
-export function effectiveFactorKeys(config: AutoGenFactorConfig[] | undefined): string[] {
+//
+// Card #293: the retired "spacing" factor (cards #266–#289) is the one key dropped first: a DB
+// not yet migrated, an old tab's input or a rollback's re-added row keeps the other six in their
+// configured order. Its toggle never mattered to the engine, so it is dropped enabled or not.
+export function effectiveFactorKeys(rawConfig: AutoGenFactorConfig[] | undefined): string[] {
   const known: readonly string[] = DEFAULT_FACTOR_ORDER;
   let order: string[] = [...known];
+  const config = rawConfig?.filter((f) => f.key !== RETIRED_SPACING_KEY);
   if (config && config.length) {
     const keys = new Set(config.map((f) => f.key));
     const allKnown = keys.size === config.length && config.every((f) => f.enabled && known.includes(f.key));
     const sorted = () => [...config].sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.key);
     if (allKnown && config.length === known.length) order = sorted();
-    // Card #266: the exact pre-spacing set (every known key but spacing) keeps its order, with
-    // spacing placed below requests and overHours (card #285) — a DB not yet migrated, or an old
-    // server's input.
-    else if (allKnown && config.length === known.length - 1 && !keys.has(SPACING_KEY)) order = insertSpacing(sorted());
   }
   return withProhibitedHoursFirst(order, config);
 }
@@ -687,24 +684,6 @@ export type AutoScheduleInput = {
   holidayRuleContext?: ScheduleAssignment[];
 };
 
-// Card #266: each graded term's ITEMS (person × pay period, date × shift, …), built where the
-// totals are summed so the two can never disagree, plus the RAW forms the spacing trial guards
-// (coverage with no waiver for locked/approved cells; every request the engine places, any
-// strength). Internal: filled only when a caller passes a sink; never on the public result.
-export type QualityItems = {
-  coverage: Map<string, number>;      // date|shiftTypeId → graded unmet count
-  coverageRaw: Map<string, number>;   // date|shiftTypeId → required − assigned, unconditionally
-  hardLimits: Map<string, number>;    // staff|target#|min|window → amount, or staff|target#|max|date → 1
-  overHours: Map<string, number>;     // staff|ppStart → hours over
-  underHours: Map<string, number>;    // staff|ppStart → hours under
-  requestsHonoured: Set<string>;      // requestId|date of every REQUEST_SHIFT day the grid honours
-  fairness: number;
-  spacingUnits: Map<string, Map<string, SpacingUnit[]>>; // marked shiftTypeId → staffId → units (window ± radius)
-};
-const newQualityItems = (): QualityItems => ({
-  coverage: new Map(), coverageRaw: new Map(), hardLimits: new Map(), overHours: new Map(), underHours: new Map(), requestsHonoured: new Set(), fairness: 0, spacingUnits: new Map(),
-});
-
 function autoScheduleCore({
   dates,
   staff,
@@ -737,8 +716,7 @@ function autoScheduleCore({
   spreadContext,
   holidayRules,
   holidayRuleContext,
-}: AutoScheduleInput, itemsOut?: QualityItems): AutoScheduleResult {
-  const items = itemsOut ?? newQualityItems();
+}: AutoScheduleInput): AutoScheduleResult {
   // Card #215: the tuning numbers and the weekend, from Settings.
   const tuning = readTuning(schedulingPreferences);
   const weekendStart = tuning.weekendStartDow;
@@ -1117,34 +1095,6 @@ function autoScheduleCore({
     const g = grid.cellAt(staffId, date);
     if (g) return g.shiftTypeId;
     return outsideCells.get(staffId)?.get(date);
-  }
-  /**
-   * Card #266: the person's units of a marked shift over the run window ± the radius (grid, history
-   * and next-month cells). One engine group is one unit: a weekendPaired weekend (with its paired
-   * holiday), or a holiday-rule group's slot; every other cell is its own unit.
-   */
-  function spacingUnitsOf(staffId: string, stId: string): SpacingUnit[] {
-    if (dates.length === 0) return [];
-    const st = stById.get(stId);
-    const cells: { date: string; group: string | null }[] = [];
-    const stop = addDays(dates[dates.length - 1], spreadRadius);
-    for (let d = addDays(dates[0], -spreadRadius); d <= stop; d = addDays(d, 1)) {
-      if (cellShiftAt(staffId, d) !== stId) continue;
-      cells.push({ date: d, group: spacingGroupOf(st, d) });
-    }
-    return spacingUnits(cells);
-  }
-  function spacingGroupOf(st: ScheduleShiftType | undefined, d: string): string | null {
-    const rg = ruleGroupOfSlot.get(`${st?.id}:${d}`);
-    if (rg != null) return `rule:${rg}`;
-    if (!st?.weekendPaired) return null;
-    const weekendOf = (x: string): string => (getDow(x) === weekendStart ? x : addDays(x, -1));
-    if (isWeekend(d)) return `wk:${weekendOf(d)}`;
-    if (st.holidayWeekendPaired && holidaySet.has(d)) {
-      if (isWeekend(addDays(d, 1))) return `wk:${weekendOf(addDays(d, 1))}`;
-      if (isWeekend(addDays(d, -1))) return `wk:${weekendOf(addDays(d, -1))}`;
-    }
-    return null;
   }
   /** How bunched a marked shift on `date` would be for the person (0 = nothing within two weeks). */
   function spreadLoad(staffId: string, date: string): number {
@@ -4055,8 +4005,8 @@ function autoScheduleCore({
         const dev = Math.round(hours - target);
         // Slice 2a: split the two-directional deviation into over / under sides so
         // they can be ranked independently (over = soft, under = shortage).
-        if (dev > 0) { qOverHours += dev; items.overHours.set(`${staff.id}|${pp.startDate}`, dev); }
-        else if (dev < 0) { qUnderHours += -dev; items.underHours.set(`${staff.id}|${pp.startDate}`, -dev); }
+        if (dev > 0) qOverHours += dev;
+        else if (dev < 0) qUnderHours += -dev;
         if (dev === 0) continue;
         // A scarce-eligibility shift this staff actually worked in the PP marks
         // the deviation as structural (Class 2 — no engine fix).
@@ -5433,10 +5383,9 @@ function autoScheduleCore({
       // Raw coverage gap — counted for EVERY shortfall (the expanding re-solve needs
       // to see gaps that `hardBreaches` sanctions away when a locked cell blocks them).
       qCoverageShortfall += required - assigned;
-      items.coverageRaw.set(`${date}|${st.id}`, required - assigned);
       // `coverage` term: count the missing slots UNLESS the gap is sanctioned by a
       // human-approved leave / locked cell (#220: human-approved > coverage).
-      if (!blockedByApproved) { qCoverage += required - assigned; items.coverage.set(`${date}|${st.id}`, required - assigned); }
+      if (!blockedByApproved) qCoverage += required - assigned;
     }
   }
 
@@ -5456,7 +5405,7 @@ function autoScheduleCore({
   // ── Check minimum targets (after all assignments are final) ──
   for (const staff of activeStaff) {
     if (!staff.shiftMinimumTargets || staff.shiftMinimumTargets.length === 0) continue;
-    for (const [tIdx, target] of staff.shiftMinimumTargets.entries()) {
+    for (const target of staff.shiftMinimumTargets) {
       const st = stById.get(target.shiftTypeId);
       if (!st) continue;
       const ppRanges = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
@@ -5481,7 +5430,6 @@ function autoScheduleCore({
         if (!met && targetIsHard(target)) {
           warnings.push(`${staff.initials}: only ${current}/${needed} ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
           qHardLimits += needed - current; // hardLimits: hard per-staff minimum shortfall
-          items.hardLimits.set(`${staff.id}|${tIdx}|min|${windowKey}`, needed - current);
         }
       }
 
@@ -5509,9 +5457,6 @@ function autoScheduleCore({
               : `${(target.windowCount ?? 1) > 1 ? `${target.windowCount} ` : ""}${target.window}`;
           warnings.push(`${staff.initials}: ${st.code} exceeds max ${target.maxCount} per ${windowDesc} (rolling) — ${overCap.join(", ")}`);
           qHardLimits += overCap.length; // hardLimits: hard per-staff (rolling) MAX overage
-          // One item per over-cap day (card #266 r1): a total per person let a candidate move
-          // the over-cap days to another week and still pass the spacing guard.
-          for (const d of overCap) items.hardLimits.set(`${staff.id}|${tIdx}|max|${d}`, 1);
         }
       }
     }
@@ -5584,37 +5529,6 @@ function autoScheduleCore({
       if (!cell || !wantWork.includes(cell.shiftTypeId)) qRequestsDenied++;
     }
   }
-  // Card #266: the RAW request items — every REQUEST_SHIFT work day the grid honours, any
-  // strength or approval (the graded term above skips soft and human-approved requests).
-  for (const r of requestList) {
-    if (r.kind !== "REQUEST_SHIFT" || (r.status !== "approved" && r.status !== "pending")) continue;
-    const wantWork = r.shiftTypeIds.filter((id) => { const st = stById.get(id); return !!st && !st.isLeave && !st.isOffShift; });
-    for (const date of dates) {
-      if (!coversDate(r, date)) continue;
-      const cell = grid.get(`${r.staffId}:${date}`);
-      if (cell && wantWork.includes(cell.shiftTypeId)) items.requestsHonoured.add(`${r.id}|${date}`);
-    }
-  }
-
-  // Card #266: spacing — how close each person's cells of each marked shift sit (spacing-measure.ts),
-  // over the run window with history and next-month context within the radius.
-  const qSpacing = spacingOfGrid();
-  function spacingOfGrid(): number {
-    if (spreadIds.size === 0 || dates.length === 0) return 0;
-    const from = dates[0], to = dates[dates.length - 1];
-    let total = 0;
-    for (const stId of spreadIds) {
-      const byPerson = new Map<string, SpacingUnit[]>();
-      for (const p of activeStaff) {
-        const units = spacingUnitsOf(p.id, stId);
-        if (units.length) byPerson.set(p.id, units);
-        total += spacingPenalty(units, spreadRadius, from, to);
-      }
-      items.spacingUnits.set(stId, byPerson);
-    }
-    return total;
-  }
-
   // T3: evenness of the undesirable/desirable shift load across staff, measured on
   // the FINISHED grid (so it differentiates candidates — the input `fairness` is
   // history-based and identical across them). FTE-normalized desirability score per
@@ -5635,7 +5549,6 @@ function autoScheduleCore({
   const desMean = desScores.reduce((s, v) => s + v, 0) / (desScores.length || 1);
   const desVar = desScores.reduce((s, v) => s + (v - desMean) ** 2, 0) / (desScores.length || 1);
   const qFairnessSpread = Math.round(Math.sqrt(desVar) * 1000) / 1000;
-  items.fairness = qFairnessSpread;
 
   const quality: ScheduleQuality = {
     breakdown: {
@@ -5645,7 +5558,6 @@ function autoScheduleCore({
       underHours: qUnderHours,
       requestsDenied: qRequestsDenied,
       fairnessSpread: qFairnessSpread,
-      spacing: qSpacing,
       // Derived aggregate kept for the Slice-1 feasibility floor (redesigned in 2b).
       hardBreaches: qCoverage + qHardLimits,
       coverageShortfall: qCoverageShortfall,
@@ -5657,7 +5569,6 @@ function autoScheduleCore({
         overHours: qOverHours,
         underHours: qUnderHours,
         requests: qRequestsDenied,
-        spacing: qSpacing,
         fairness: qFairnessSpread,
       },
       factorOrder,
@@ -5764,225 +5675,8 @@ function autoScheduleCore({
   };
 }
 
-// ── Card #266: the spacing trial (no knob) ──
-// Every generate tries, for each marked ("spread over the month") shift with no admin-set minimum
-// gap, the result with the gap off and each gap N = 2 … N_max as Prefer and as Hard, and keeps the
-// best by the configured rank. A trial is ELIGIBLE only if no single item of any factor ranked
-// above spacing is worse than in the original off run (per person × pay period, per date × shift
-// graded AND raw, per hard target, per requested day of any strength): spacing never moves a
-// shortage from one person or day to another. Shifts are searched one at a time in schedule-
-// priority order, each starting from the settings kept for the earlier ones. Pure: the trial
-// changes only copies of the input.
-export type AutoScheduleOptions = {
-  /** false: exactly one run (the grading-only locked baselines in scenario.ts). Default: trial. */
-  spacingTrial?: boolean;
-  /** Test seam only: replaces the engine run inside the trial (the trial's choice logic under test). */
-  coreForTest?: (input: AutoScheduleInput, items: QualityItems) => AutoScheduleResult;
-  /** Card #266: filled in with how many trial batches the pool ran and how many ran inline. */
-  trialStats?: { pooled: number; inline: number };
-};
-
-const GUARD_WORDS: Record<string, string> = {
-  hardLimits: "a hard per-staff limit",
-  coverage: "coverage",
-  underHours: "hours under target",
-  overHours: "hours over target",
-  requests: "a requested shift",
-  fairness: "fairness",
-};
-
-/** The first factor ranked above spacing on which `c` has an item worse than `o` (the off run), or null. */
-export function spacingGuardBlocks(c: QualityItems, o: QualityItems, above: readonly string[]): string | null {
-  const worse = (cm: Map<string, number>, om: Map<string, number>): boolean => {
-    for (const [k, v] of cm) if (v > (om.get(k) ?? 0)) return true;
-    return false;
-  };
-  for (const f of above) {
-    if (f === "underHours" && worse(c.underHours, o.underHours)) return f;
-    if (f === "overHours" && worse(c.overHours, o.overHours)) return f;
-    if (f === "coverage" && (worse(c.coverage, o.coverage) || worse(c.coverageRaw, o.coverageRaw))) return f;
-    if (f === "hardLimits" && worse(c.hardLimits, o.hardLimits)) return f;
-    if (f === "requests") for (const k of o.requestsHonoured) if (!c.requestsHonoured.has(k)) return f;
-    if (f === "fairness" && c.fairness > o.fairness) return f;
-  }
-  return null;
-}
-
-/** The smallest gap between neighbouring units of one person, at least one touching [from, to]. */
-function closestGap(byPerson: Map<string, SpacingUnit[]> | undefined, from: string, to: string): number | null {
-  let best: number | null = null;
-  for (const units of byPerson?.values() ?? []) {
-    for (let i = 1; i < units.length; i++) {
-      const a = units[i - 1], b = units[i];
-      if (!(a.end >= from && a.start <= to) && !(b.end >= from && b.start <= to)) continue;
-      const g = daysBetweenDates(a.end, b.start);
-      if (g >= 1 && (best == null || g < best)) best = g;
-    }
-  }
-  return best;
-}
-const daysBetweenDates = (a: string, b: string): number => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a + "T12:00:00Z")) / 86400000);
-
-/** One engine run of the spacing trial, with its per-item quality maps. */
-export type TrialRun = { result: AutoScheduleResult; items: QualityItems };
-/** One candidate's change to a stage's base input: one marked shift's spacing (null = the base as is). */
-export type TrialVariant = { shiftTypeId: string; minGapDays: number; minGapStrength: "preference" | "rule" } | null;
-/** One stage of the trial: every run starts from `base`, changed by its variant. */
-export type TrialBatch = { base: AutoScheduleInput; variants: TrialVariant[] };
-/** The input one batch entry runs: the base with that shift's spacing set. */
-export function trialInput(base: AutoScheduleInput, v: TrialVariant): AutoScheduleInput {
-  if (!v) return base;
-  return { ...base, shiftTypes: base.shiftTypes.map((st) => (st.id === v.shiftTypeId ? { ...st, minGapDays: v.minGapDays, minGapStrength: v.minGapStrength } : st)) };
-}
-
-/**
- * Card #266: the spacing trial as a sequence of BATCHES. It yields the inputs one stage needs
- * (the off run, then every candidate of one marked shift: they all start from the same base),
- * receives their runs in the same order, and picks exactly as a one-by-one loop would (same
- * order, strict `<`). A batch can therefore run in parallel (worker threads) or in a plain loop
- * with the same result. Returns null when no trial applies (one plain run).
- */
-export function* spacingTrialSteps(input: AutoScheduleInput): Generator<TrialBatch, AutoScheduleResult | null, TrialRun[]> {
-  const marked = input.shiftTypes
-    .filter((st) => st.spreadOverMonth && st.autoSchedulable && st.minGapDays == null)
-    .sort((a, b) => (a.schedulePriority ?? Number.MAX_SAFE_INTEGER) - (b.schedulePriority ?? Number.MAX_SAFE_INTEGER) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  const order = effectiveFactorKeys(input.factorOrder);
-  if (marked.length === 0 || input.dates.length === 0 || !order.includes(SPACING_KEY)) return null;
-
-  const [off] = yield { base: input, variants: [null] };
-  const above = order.slice(0, order.indexOf(SPACING_KEY));
-  const radius = readTuning(input.schedulingPreferences).spreadRadiusDays;
-  const from = input.dates[0], to = input.dates[input.dates.length - 1];
-  const spanDays = daysBetweenDates(from, to) + 1 + 2 * Math.max(0, radius);
-  let best = off;
-  let cur = input;
-  const notes: string[] = [];
-  for (const S of marked) {
-    const U = mostUnits(off.items.spacingUnits.get(S.id) ?? new Map(), radius, from, to);
-    if (U < 2) continue;
-    const nMax = Math.min(radius, Math.floor(spanDays / U));
-    if (nMax < 2) continue;
-    let kept: { n: number; strength: "preference" | "rule" } | null = null;
-    let anyEligible = false;
-    let blockedBy: string | null = null;
-    const base = cur;
-    const cands: { n: number; strength: "preference" | "rule"; v: TrialVariant }[] = [];
-    for (let n = 2; n <= nMax; n++) {
-      for (const strength of ["preference", "rule"] as const) cands.push({ n, strength, v: { shiftTypeId: S.id, minGapDays: n, minGapStrength: strength } });
-    }
-    const runs = yield { base, variants: cands.map((c) => c.v) };
-    if (runs.length !== cands.length) throw new Error("spacing trial: a batch returned the wrong number of runs");
-    cands.forEach(({ n, strength, v }, i) => {
-      const r = runs[i];
-      const why = spacingGuardBlocks(r.items, off.items, above);
-      if (why) { blockedBy ??= why; return; }
-      anyEligible = true;
-      if (compareScheduleQuality(r.result.quality, best.result.quality) < 0) { best = r; kept = { n, strength }; cur = trialInput(base, v); }
-    });
-    const k = kept as { n: number; strength: "preference" | "rule" } | null;
-    if (k) {
-      const close = closestGap(best.items.spacingUnits.get(S.id), from, to);
-      notes.push(`${S.code}: kept ${k.n} days apart (${k.strength === "rule" ? "Hard" : "Prefer"})${close != null ? `; the closest pair is ${close} days` : ""}`);
-    } else if (!anyEligible && blockedBy) {
-      notes.push(`${S.code}: spacing left as generated; a wider spacing would cost ${GUARD_WORDS[blockedBy] ?? blockedBy}`);
-    } else {
-      notes.push(`${S.code}: spacing left as generated; no wider spacing gave a better schedule`);
-    }
-  }
-  return notes.length ? { ...best.result, warnings: [...best.result.warnings, ...notes] } : best.result;
-}
-
-/** One engine run with its per-item quality maps (what a trial batch entry needs). */
-export function trialRun(input: AutoScheduleInput, core: (input: AutoScheduleInput, items: QualityItems) => AutoScheduleResult = autoScheduleCore): TrialRun {
-  const items = newQualityItems();
-  return { result: core(input, items), items };
-}
-
-/**
- * Card #281: what every batch of one run (one autoSchedule call, one Live edit) shares with the
- * runner. `stalled`: the workers already stalled once in this run, so later batches take over at
- * once instead of waiting again (one stall per run at most). `inline`: a batch of this run got no
- * answer from any worker, so the rest of the run is done here without asking the runner.
- * Card #287, the run's cost book (trial-run-cost.ts): `hereMs`/`hereRuns` time the runs done here,
- * `lostMs` is how far the finished pool batches are behind the same runs done here.
- */
-export type TrialRunState = { stalled: boolean; inline: boolean; hereMs?: number; hereRuns?: number; lostMs?: number };
-/** One batch's context: when its run began, that run's state, and the run of entry `idx` done here. */
-export type TrialBatchCtx = { startedAt: number; run: TrialRunState; runHere: (idx: number) => TrialRun };
-
-/**
- * Card #266: runs one trial batch somewhere else (the server's worker-thread pool), returning the
- * runs in the batch's order, or null to have the batch run here, in a plain loop. Only the server
- * installs one (src/instrumentation.ts); the browser and the tests run every batch inline.
- * Card #281: the runner may run entries itself with `ctx.runHere` (the main thread helping, or
- * taking over from a stalled worker); the result is the same either way.
- *
- * The runner is kept on globalThis, not in this module: Next's production build gives
- * instrumentation and each API route their own copy of this file (card #266 r1).
- */
-export type TrialBatchRunner = (batch: TrialBatch, ctx: TrialBatchCtx) => TrialRun[] | null;
-const RUNNER_KEY = Symbol.for("yosched.trialBatchRunner");
-type RunnerHolder = { [RUNNER_KEY]?: TrialBatchRunner | null };
-const currentRunner = (): TrialBatchRunner | null => (globalThis as RunnerHolder)[RUNNER_KEY] ?? null;
-/** Installs (or with null removes) the batch runner; returns the one it replaces. */
-export function setTrialBatchRunner(runner: TrialBatchRunner | null): TrialBatchRunner | null {
-  const prev = currentRunner();
-  (globalThis as RunnerHolder)[RUNNER_KEY] = runner;
-  return prev;
-}
-
-/**
- * One run's batch function: each batch goes to the installed runner (the server's pool) when it
- * has more than one run and the runner answers in full, otherwise it runs here in a plain loop.
- * Every batch of the run shares one start time and one TrialRunState.
- */
-export function trialBatchRunFor(
-  opts: { core?: (input: AutoScheduleInput, items: QualityItems) => AutoScheduleResult; noRunner?: boolean; stats?: { pooled: number; inline: number } } = {},
-): (batch: TrialBatch) => TrialRun[] {
-  const startedAt = performance.now();
-  const state: TrialRunState = { stalled: false, inline: false };
-  return (batch) => {
-    const runner = opts.noRunner || state.inline ? null : currentRunner();
-    const runHere = (idx: number) => trialRun(trialInput(batch.base, batch.variants[idx]), opts.core);
-    // The off run is one run: nothing to share out. A runner that gives up, or answers with the
-    // wrong number of runs, leaves the batch to the plain loop (same result, just slower).
-    let runs = batch.variants.length > 1 && runner ? runner(batch, { startedAt, run: state, runHere }) : null;
-    if (runs && runs.length !== batch.variants.length) runs = null;
-    if (opts.stats) opts.stats[runs ? "pooled" : "inline"]++;
-    return runs ?? batch.variants.map((_, i) => runTimed(state, () => runHere(i)));
-  };
-}
-
-export function autoSchedule(input: AutoScheduleInput, opts: AutoScheduleOptions = {}): AutoScheduleResult {
-  if (opts.spacingTrial === false) return autoScheduleCore(input);
-  // A test's stand-in core only runs here, so a test seam never goes to the pool.
-  const run = trialBatchRunFor({ core: opts.coreForTest, noRunner: !!opts.coreForTest, stats: opts.trialStats });
-  const steps = spacingTrialSteps(input);
-  let step = steps.next();
-  while (!step.done) step = steps.next(run(step.value));
-  return step.value ?? autoScheduleCore(input);
-}
-
-/**
- * Card #266 slice B: autoSchedule as steps. Yields every batch of independent runs it needs
- * (a plain run is a one-run batch too, so a browser can do even that off the main thread),
- * receives their runs in order, and returns exactly autoSchedule's result.
- */
-export function* autoScheduleSteps(input: AutoScheduleInput, opts: { spacingTrial?: boolean } = {}): Generator<TrialBatch, AutoScheduleResult, TrialRun[]> {
-  const plain = function* (): Generator<TrialBatch, AutoScheduleResult, TrialRun[]> {
-    const runs = yield { base: input, variants: [null] };
-    if (runs.length !== 1) throw new Error("autoScheduleSteps: a batch returned the wrong number of runs");
-    return runs[0].result;
-  };
-  if (opts.spacingTrial === false) return yield* plain();
-  const trial = yield* spacingTrialSteps(input);
-  return trial ?? (yield* plain());
-}
-
-/** Test seam (card #266): one engine run with its per-item quality maps. */
-export function autoScheduleOnceWithItemsForTest(input: AutoScheduleInput): { result: AutoScheduleResult; items: QualityItems } {
-  const items = newQualityItems();
-  return { result: autoScheduleCore(input, items), items };
+export function autoSchedule(input: AutoScheduleInput): AutoScheduleResult {
+  return autoScheduleCore(input);
 }
 
 // One generated alternative: the seed that produced it plus its full result.

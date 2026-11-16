@@ -1,5 +1,5 @@
-// Card #266: a small month with two marked (spread-over-month) shifts, so the spacing trial runs
-// an off run and two candidate batches. Shared by the engine pool and Live-edit step tests.
+// Card #266: a small month with two marked (spread-over-month) shifts and a factor order that still
+// holds the retired spacing row (card #293: the engine must ignore it).
 import type { AutoScheduleInput, ScheduleStaff } from "../auto-scheduler";
 import { whenToColumns, legacyPatternToWhen } from "../recurrence";
 import { withDayCaps, type TestShift } from "./test-day-caps";

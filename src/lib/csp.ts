@@ -29,8 +29,6 @@ const STATIC_DIRECTIVES = [
   "img-src 'self' data:",
   "font-src 'self'",
   "connect-src 'self'",
-  // Card #266: Live edits run the engine on Web Workers loaded from this origin (/engine-worker-*.js).
-  "worker-src 'self'",
   "form-action 'self'",
   // Nothing in the app frames itself or is meant to be framed. Stricter than the
   // X-Frame-Options: SAMEORIGIN we also send; where both apply, frame-ancestors wins.

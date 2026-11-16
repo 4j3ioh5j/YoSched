@@ -34,13 +34,6 @@ describe("buildCsp", () => {
     expect(policy).toContain("object-src 'none'");
   });
 
-  it("lets the page start its own engine workers (card #266), and only from this origin", () => {
-    // With 'strict-dynamic', script-src ignores 'self', and worker-src falls back to script-src:
-    // without its own directive a same-origin Worker file would be a violation.
-    const directives = buildCsp(generateNonce()).split("; ");
-    expect(directives).toContain("worker-src 'self'");
-  });
-
   it("rejects a malformed nonce rather than emitting a policy that matches no script", () => {
     // Next silently drops a nonce it cannot parse. The resulting script-src would match
     // nothing, blocking every script — and only once the policy is enforced.

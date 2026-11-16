@@ -11,12 +11,10 @@ import { staffPpTarget, ppDiffCell } from "@/lib/fte";
 import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, ALERT_CATEGORIES, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
-import { applyScenarioSteps, applyScenarioExpandingSteps, cellsToCommitOnAccept, freesForScopeWithExplicit, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
+import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForScopeWithExplicit, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, DEFAULT_LIVE_SCOPE, type LiveScope } from "@/lib/live-scope";
 import { rowPrintShade, screenHolidayTint, DEFAULT_DAY_SHADING, type DayShading } from "@/lib/day-shading";
-import { type AutoScheduleInput, type TrialBatch, type TrialRun } from "@/lib/auto-scheduler";
-import { createLiveJobs, runLiveSteps, webWorkerCount } from "@/lib/live-job";
-import { createWebEnginePool, type WebEnginePool, type WebBatchCtx } from "@/lib/engine-web-pool";
+import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { liveBundleProblem } from "@/lib/live-bundle";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { printStampText, unsavedPrintWarning } from "@/lib/print-stamp";
@@ -310,27 +308,6 @@ type PickerState = {
 
 // Hover marker for the staff header and the date: a light-blue outline drawn
 // inside the cell, so it never reads as the solid-blue selection.
-// Card #266 slice B: Live edits run their engine batches on Web Workers, one pool per page,
-// made on first use. The worker file is the one built from this release (build-engine-worker.mjs);
-// any failure (no Worker, the file missing, another release, no answer in time) runs the batch on
-// the page instead: slower, never different.
-let livePool: WebEnginePool | null | undefined;
-function liveBatchRunner(): (batch: TrialBatch, ctx: WebBatchCtx) => Promise<TrialRun[] | null> {
-  if (livePool === undefined) {
-    const commit = process.env.YOSCHED_COMMIT ?? "";
-    livePool = typeof Worker === "undefined" || !commit ? null : createWebEnginePool({
-      url: `${BASE_PATH}/engine-worker-${commit}.js`,
-      workers: webWorkerCount(typeof navigator === "undefined" ? undefined : navigator.hardwareConcurrency),
-      expect: { version: process.env.YOSCHED_VERSION ?? "", commit },
-      // Card #281: the page takes over a worker's runs after 1 s without an answer.
-      stallMs: 1000,
-    });
-    void livePool?.warm();
-  }
-  const pool = livePool;
-  return pool ? (b, ctx) => pool.runBatch(b, ctx) : async () => null;
-}
-
 const HOVER_OUTLINE: React.CSSProperties = { boxShadow: "inset 0 0 0 2px #60a5fa" };
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -612,11 +589,6 @@ export function ScheduleGrid({
   const [liveMode, setLiveMode] = useState(false);
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveOutcome, setLiveOutcome] = useState<ScenarioOutcome | null>(null);
-  // Card #266 slice B: an edit's re-solve runs asynchronously; while it does the banner says
-  // "working…" and further edits wait. Only the newest job may land (live-job.ts).
-  const [liveBusy, setLiveBusy] = useState(false);
-  const [liveJobs] = useState(() => createLiveJobs(setLiveBusy));
-  useEffect(() => () => liveJobs.cancel(), [liveJobs]);
   // How wide the engine may re-solve to compensate for an edit (user-selectable in
   // the Live banner). "pp" (default) re-solves the pay period(s) you touched — enough
   // to rebalance PP hours without churning the whole month; "day" frees the touched
@@ -2616,10 +2588,10 @@ export function ScheduleGrid({
       // Live mode: route the pasted block through the what-if engine as batch pins
       // (it ripples like any other edit) instead of persisting.
       if (liveModeRef.current) {
+        const ok = liveEditRef.current(sets.map((s) => ({ staffId: s.staffId, date: s.date, shiftTypeId: s.shiftTypeId })), []);
         // On failure liveEdit already raised a specific rejection toast (who/shift/day);
         // only announce the success summary here so we don't overwrite it.
-        void liveEditRef.current(sets.map((s) => ({ staffId: s.staffId, date: s.date, shiftTypeId: s.shiftTypeId })), [])
-          .then((ok) => { if (ok) setPasteToast(pasteSummary(sets.length, resolution)); });
+        if (ok) setPasteToast(pasteSummary(sets.length, resolution));
         return;
       }
 
@@ -3442,8 +3414,7 @@ export function ScheduleGrid({
     if (!dates.length) return;
     setLiveLoading(true);
     try {
-      // Card #266: `factors=spacing` tells the server this bundle's engine knows the spacing factor.
-      const res = await fetch(`/api/auto-schedule/inputs?start=${dates[0]}&end=${dates[dates.length - 1]}&factors=spacing`);
+      const res = await fetch(`/api/auto-schedule/inputs?start=${dates[0]}&end=${dates[dates.length - 1]}`);
       if (!res.ok) {
         console.error("Live: failed to load engine inputs", res.status);
         return;
@@ -3474,8 +3445,7 @@ export function ScheduleGrid({
 
       // No-op re-solve: with the whole baseline locked and nothing pinned/freed,
       // the engine reproduces the current grid (a complete schedule ⇒ 0 ripple).
-      const outcome = await runLiveSteps(liveJobs, () => applyScenarioSteps(liveInput, [], []), liveBatchRunner());
-      if (!outcome) return; // the page was left while it ran
+      const outcome = applyScenario(liveInput, [], []);
       // Snapshot the enter-time grid (incl. any engine fills of empty cells) as the
       // Accept baseline — only later, user-driven divergence from this gets saved.
       const initial = new Map<string, string>();
@@ -3515,7 +3485,6 @@ export function ScheduleGrid({
   }
 
   function cancelLive() {
-    liveJobs.cancel();
     setLiveMode(false);
     setLiveOutcome(null);
     clearReject();
@@ -3531,8 +3500,6 @@ export function ScheduleGrid({
   }
 
   async function acceptLive() {
-    // An edit still re-solving: what is on screen is not what the user asked for yet.
-    if (liveJobs.busy) return;
     const outcome = liveOutcome;
     if (!outcome) { cancelLive(); return; }
     // WYSIWYG persist: commit every cell that differs from the SAVED DB grid — the
@@ -3707,17 +3674,11 @@ export function ScheduleGrid({
     return true;
   }
 
-  // Resolves true if the edit was applied, false if it was refused (a hard-illegal pin snapped it
-  // back, the previous edit is still re-solving) or dropped (undone, cancelled while it ran);
-  // callers like paste use this to avoid a misleading "applied" toast.
-  async function liveEdit(newPins: ScenarioPin[], newFrees: ScenarioFree[]): Promise<boolean> {
+  // Returns true if the edit was applied, false if a hard-illegal pin snapped it back
+  // (callers like paste use this to avoid a misleading "applied" toast).
+  function liveEdit(newPins: ScenarioPin[], newFrees: ScenarioFree[]): boolean {
     const base = liveBaseInputRef.current;
-    const before = liveOutcome;
-    if (!base || !before) return false;
-    if (liveJobs.busy) {
-      setPasteToast("Still working on the last change — try again in a moment");
-      return false;
-    }
+    if (!base || !liveOutcome) return false;
 
     // Manual cells (hand-placed BEFORE entering auto-generate) are locked: the user
     // may not overwrite, move, or clear them in the sandbox. The engine already
@@ -3753,17 +3714,9 @@ export function ScheduleGrid({
     // discretionary cells that keeps coverage whole (least churn; no PP-hours rebalance).
     // day/pp/range: free EVERYTHING in scope and let the engine re-solve it — more churn,
     // but it rebalances PP hours (the pre-Option-4 behavior).
-    let outcome: ScenarioOutcome | null;
-    try {
-      outcome = await runLiveSteps(liveJobs, () => liveScope === "limited"
-        ? applyScenarioExpandingSteps(base, pinsArray(nextPins), [...nextFrees].map(pinKeyParts), nextTouched, nextPins, "range")
-        : applyScenarioSteps(base, pinsArray(nextPins), freesForScopeWithExplicit(base, nextPins, nextTouched, liveScope, [...nextFrees].map(pinKeyParts))), liveBatchRunner());
-    } catch (e) {
-      console.error("Live: edit failed", e);
-      return false;
-    }
-    // Undone, cancelled or accepted while it ran (or the page was left): nothing lands.
-    if (!outcome) return false;
+    const outcome = liveScope === "limited"
+      ? applyScenarioExpanding(base, pinsArray(nextPins), [...nextFrees].map(pinKeyParts), nextTouched, nextPins, "range")
+      : applyScenario(base, pinsArray(nextPins), freesForScopeWithExplicit(base, nextPins, nextTouched, liveScope, [...nextFrees].map(pinKeyParts)));
     if (!outcome.applied) {
       // Hard-illegal pin: snap back (keep current grid + pins) and surface WHY.
       // The banner note alone was too easy to miss, so a refused keystroke read as
@@ -3772,7 +3725,7 @@ export function ScheduleGrid({
       showRejectAt(outcome.rejected);
       return false;
     }
-    liveUndoStack.current.push({ pins: livePinsRef.current, frees: liveFreesRef.current, touched: liveTouchedRef.current, outcome: before });
+    liveUndoStack.current.push({ pins: livePinsRef.current, frees: liveFreesRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
     liveRedoStack.current = [];
     livePinsRef.current = nextPins;
     liveFreesRef.current = nextFrees;
@@ -3784,28 +3737,19 @@ export function ScheduleGrid({
 
   // Re-solve the current pin-set at a new scope (a scope change is not an edit, so
   // it doesn't touch the undo stack — it just widens/narrows the displayed ripple).
-  async function changeLiveScope(scope: LiveScope) {
-    // While an edit re-solves the scope buttons are disabled; a scope change must not drop it.
-    if (liveJobs.busy) return;
+  function changeLiveScope(scope: LiveScope) {
     setLiveScope(scope);
     const base = liveBaseInputRef.current;
     if (!base || !liveOutcome) return;
-    const pins = livePinsRef.current, frees = liveFreesRef.current, touched = liveTouchedRef.current;
     // Re-solve the current pins at the new scope: "limited" frees minimally and widens
     // only as coverage needs; day/pp/range free everything in scope (full rebalance).
-    try {
-      const outcome = await runLiveSteps(liveJobs, () => scope === "limited"
-        ? applyScenarioExpandingSteps(base, pinsArray(pins), [...frees].map(pinKeyParts), touched, pins, "range")
-        : applyScenarioSteps(base, pinsArray(pins), freesForScopeWithExplicit(base, pins, touched, scope, [...frees].map(pinKeyParts))), liveBatchRunner());
-      if (outcome?.applied) { clearReject(); setLiveOutcome(outcome); }
-    } catch (e) {
-      console.error("Live: scope change failed", e);
-    }
+    const outcome = scope === "limited"
+      ? applyScenarioExpanding(base, pinsArray(livePinsRef.current), [...liveFreesRef.current].map(pinKeyParts), liveTouchedRef.current, livePinsRef.current, "range")
+      : applyScenario(base, pinsArray(livePinsRef.current), freesForScopeWithExplicit(base, livePinsRef.current, liveTouchedRef.current, scope, [...liveFreesRef.current].map(pinKeyParts)));
+    if (outcome.applied) { clearReject(); setLiveOutcome(outcome); }
   }
 
   function liveSandboxUndo() {
-    // Undo while an edit re-solves drops that edit (it never landed, so nothing is popped).
-    if (liveJobs.busy) { liveJobs.cancel(); clearReject(); return; }
     const snap = liveUndoStack.current.pop();
     if (!snap || !liveOutcome) return;
     liveRedoStack.current.push({ pins: livePinsRef.current, frees: liveFreesRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
@@ -3817,7 +3761,6 @@ export function ScheduleGrid({
   }
 
   function liveSandboxRedo() {
-    if (liveJobs.busy) return;
     const snap = liveRedoStack.current.pop();
     if (!snap || !liveOutcome) return;
     liveUndoStack.current.push({ pins: livePinsRef.current, frees: liveFreesRef.current, touched: liveTouchedRef.current, outcome: liveOutcome });
@@ -4233,7 +4176,6 @@ export function ScheduleGrid({
                   ? "matches the current grid (no changes yet)"
                   : `${liveRippleSet.size} cell${liveRippleSet.size !== 1 ? "s" : ""} changed`}
               </span>
-              {liveBusy && <span className="text-xs text-violet-200 animate-pulse">working…</span>}
               {liveOutcome.softWarnings.length > 0 && (
                 <span className="text-xs text-amber-400" title={liveOutcome.softWarnings.join("\n")}>
                   {liveOutcome.softWarnings.length} warning{liveOutcome.softWarnings.length !== 1 ? "s" : ""}
@@ -4253,8 +4195,7 @@ export function ScheduleGrid({
                   <button
                     key={val}
                     onClick={() => changeLiveScope(val)}
-                    disabled={liveBusy}
-                    className={`px-1.5 py-0.5 rounded transition-colors disabled:opacity-50 ${liveScope === val ? "bg-violet-600 text-white" : "bg-slate-700/60 text-slate-300 hover:bg-slate-600"}`}
+                    className={`px-1.5 py-0.5 rounded transition-colors ${liveScope === val ? "bg-violet-600 text-white" : "bg-slate-700/60 text-slate-300 hover:bg-slate-600"}`}
                   >
                     {LIVE_SCOPE_LABELS[val]}
                   </button>
@@ -4264,7 +4205,7 @@ export function ScheduleGrid({
             <div className="flex items-center gap-2">
               <button
                 onClick={liveSandboxUndo}
-                disabled={!liveBusy && liveUndoStack.current.length === 0}
+                disabled={liveUndoStack.current.length === 0}
                 className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded transition-colors text-slate-300"
                 title="Revert (undo within this Live session) — also Ctrl+Z"
               >
@@ -4272,7 +4213,7 @@ export function ScheduleGrid({
               </button>
               <button
                 onClick={liveSandboxRedo}
-                disabled={liveBusy || liveRedoStack.current.length === 0}
+                disabled={liveRedoStack.current.length === 0}
                 className="px-2 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded transition-colors text-slate-300"
                 title="Advance (redo within this Live session) — also Ctrl+Shift+Z"
               >
@@ -4280,7 +4221,7 @@ export function ScheduleGrid({
               </button>
               <button
                 onClick={acceptLive}
-                disabled={liveLoading || liveBusy}
+                disabled={liveLoading}
                 className="px-3 py-1 text-sm bg-violet-600 hover:bg-violet-500 disabled:opacity-50 rounded transition-colors text-white font-medium"
               >
                 Accept

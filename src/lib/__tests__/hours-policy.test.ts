@@ -328,12 +328,11 @@ describe("policy reaches every placement path", () => {
   });
 
   it("grading puts Prohibited hours rows first, keeping their relative order", () => {
-    // Card #266: these are the old 6-key profiles, so spacing is placed below requests and overHours (here: after requests).
-    expect(effectiveFactorKeys(factors(ORDER))).toEqual(["hardLimits", "coverage", "overHours", "underHours", "requests", "spacing", "fairness"]);
+    expect(effectiveFactorKeys(factors(ORDER))).toEqual(ORDER);
     expect(effectiveFactorKeys(factors(ORDER, "prohibited", "discouraged"))).toEqual(
-      ["overHours", "hardLimits", "coverage", "underHours", "requests", "spacing", "fairness"]);
+      ["overHours", "hardLimits", "coverage", "underHours", "requests", "fairness"]);
     expect(effectiveFactorKeys(factors(DAVID_ORDER, "prohibited", "prohibited"))).toEqual(
-      ["underHours", "overHours", "hardLimits", "coverage", "requests", "spacing", "fairness"]);
+      ["underHours", "overHours", "hardLimits", "coverage", "requests", "fairness"]);
     // An invalid order falls back to the default, but the policy still applies.
     const badWithUnder = [...factors(ORDER, undefined, "prohibited")].map((f) => (f.key === "fairness" ? { ...f, enabled: false } : f));
     expect(effectiveFactorKeys(badWithUnder)[0]).toBe("underHours");
