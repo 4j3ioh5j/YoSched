@@ -211,6 +211,9 @@ input[type="checkbox"]:disabled {
   tbody tr {
     background: white !important;
     opacity: 1 !important;
+    /* Card #310: today's and the flashed row's outline is a box-shadow ring on the row. The
+       cells' borders cover it inside the grid, but over the PP# strip it printed as a box. */
+    box-shadow: none !important;
   }
 
   /* Fixed row height, sized so a full 31-day month fits one landscape page.
@@ -376,6 +379,10 @@ input[type="checkbox"]:disabled {
     display: block !important;
     color: #000 !important;
     white-space: pre !important;
+    /* Card #310: the footer spans the grid only, not the PP# strip right of it, so a
+       right-aligned line ends at the grid's right edge (and a centred one centres on it). */
+    box-sizing: border-box !important;
+    padding-right: var(--pp-label-w, 0px) !important;
   }
 
   /* Card #301: the print-only strip right of the table for the "PP#01" labels, at the top

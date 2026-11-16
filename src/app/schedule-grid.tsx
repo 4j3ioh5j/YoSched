@@ -349,6 +349,10 @@ function printBlockStyle(b: PrintBlock): React.CSSProperties {
   return { fontSize: `${b.size}pt`, fontWeight: b.bold ? 700 : 400, textAlign: b.align };
 }
 
+/** Width of the print-only PP# strip right of the grid (card #301); the footer line stops
+ *  short of it by the same amount (card #310). */
+const PP_LABEL_W = (on: boolean) => (on ? "0.34in" : "0px");
+
 /** On-screen widths of the split DATE / DAY columns (px). */
 const DATE_COL_W = 48; // cards #305/#306: date + day = 88px, as the old single column
 const dayColW = (fmt: PrintLayout["dayColumnFormat"]) => (fmt === "Dddd" ? 80 : 40);
@@ -4359,7 +4363,7 @@ export function ScheduleGrid({
                 data-pp-label-col
                 aria-hidden
                 className="hidden"
-                style={{ "--pp-label-w": printLayout.payPeriodLabels ? "0.34in" : "0px" } as React.CSSProperties}
+                style={{ "--pp-label-w": PP_LABEL_W(printLayout.payPeriodLabels) } as React.CSSProperties}
               />
             </tr>
           </thead>
@@ -4763,7 +4767,7 @@ export function ScheduleGrid({
           <span data-print-hide className="text-slate-500">No saved version for {MONTH_NAMES[viewMonth]} {viewYear}</span>
         )}
         {/* Print-only: the footer template + " - YoSched", filled in by the print stamp. */}
-        <div data-print-footer ref={printFooterRef} className="hidden" style={printBlockStyle(printLayout.footer)} />
+        <div data-print-footer ref={printFooterRef} className="hidden" style={{ ...printBlockStyle(printLayout.footer), "--pp-label-w": PP_LABEL_W(printLayout.payPeriodLabels) } as React.CSSProperties} />
       </div>
 
       {/* Request save error — partial/failed saves are surfaced, not silent */}
