@@ -25,7 +25,9 @@ describe("earlier-month freeze wiring (card #174)", () => {
   it("Day/PP/Range re-solves (edit and scope change) pass the user's explicit frees (card #180)", () => {
     const grid = read("schedule-grid.tsx");
     expect(grid).toContain("freesForScopeWithExplicit(base, nextPins, nextTouched, liveScope, [...nextFrees].map(pinKeyParts))");
-    expect(grid).toContain("freesForScopeWithExplicit(base, livePinsRef.current, liveTouchedRef.current, scope, [...liveFreesRef.current].map(pinKeyParts))");
-    expect(grid).not.toMatch(/applyScenario\([^)]*freesForScope\(/);
+    // Card #266 slice B: the scope change copies the refs first (the re-solve is asynchronous).
+    expect(grid).toContain("const pins = livePinsRef.current, frees = liveFreesRef.current, touched = liveTouchedRef.current;");
+    expect(grid).toContain("freesForScopeWithExplicit(base, pins, touched, scope, [...frees].map(pinKeyParts))");
+    expect(grid).not.toMatch(/applyScenario(Steps)?\([^)]*freesForScope\(/);
   });
 });
