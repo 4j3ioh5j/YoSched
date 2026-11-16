@@ -58,7 +58,7 @@ input[type="checkbox"]:disabled {
      print date) inside the page margin, so with none they print nothing there
      (card #173). The 0.4in margin moves onto the body instead; the schedule is a
      single page, so the once-per-document body padding gives the same layout. The
-     app prints its own date/time next to the version number ([data-print-stamp]). */
+     app prints its own footer line ([data-print-footer], card #301). */
   @page {
     size: landscape;
     margin: 0;
@@ -84,22 +84,20 @@ input[type="checkbox"]:disabled {
     display: none !important;
   }
 
-  /* Print header: bold-centered "YoSched" brand above the month/year */
+  /* Card #301: the whole printout uses the table font from Settings (--print-font: the
+     chosen font, then the bundled narrow font) and its size (--print-font-size), both set
+     inline on the grid root. */
+  [data-print-root] {
+    font-family: var(--print-font) !important;
+  }
+
+  /* Print title: the Settings header template. Its size, weight and alignment are
+     inline styles from Settings, so nothing here may set them. */
   [data-print-title] {
     display: block !important;
-    font-size: 15px !important;
-    font-weight: 700 !important;
-    text-align: center !important;
-    padding: 2px 0 6px !important;
+    padding: 0 0 4px !important;
     color: black !important;
-  }
-  [data-print-brand] {
-    display: block !important;
-    font-size: 17px !important;
-    font-weight: 800 !important;
-    letter-spacing: 0.01em;
-    text-align: center !important;
-    margin-bottom: 1px !important;
+    line-height: 1.2;
   }
 
   /* Reset the grid container */
@@ -124,7 +122,7 @@ input[type="checkbox"]:disabled {
     width: 100% !important;
     table-layout: fixed !important;
     border-collapse: collapse !important;
-    font-size: 9px !important;
+    font-size: var(--print-font-size) !important;
   }
   /* In fixed layout the columns take their FIRST-ROW widths, so the explicit
      per-column widths (w-[88px]/w-[44px]/w-[32px]) AND min-widths must both be
@@ -148,9 +146,16 @@ input[type="checkbox"]:disabled {
     vertical-align: middle !important;
     text-align: center !important;
   }
-  /* Keep the date column wide enough for the full "Mon Jun 16"-style label; the
-     remaining columns split the rest of the page width equally. */
-  thead th:first-child, tbody td:first-child {
+  /* The date block keeps fixed widths; the remaining columns split the rest of the page
+     width equally. Split (card #301, default): DATE "01-05" and DAY "MON" ("Monday" is
+     wider: --day-col-w). One column: the full "Mon Jun 16"-style label. */
+  [data-date-col] {
+    width: 0.42in !important;
+  }
+  [data-day-col] {
+    width: var(--day-col-w, 0.36in) !important;
+  }
+  [data-date-col][data-date-block-end] {
     width: 0.72in !important;
   }
 
@@ -175,25 +180,31 @@ input[type="checkbox"]:disabled {
   }
 
   thead tr {
-    background: #f1f5f9 !important;
+    background: white !important;
   }
 
   /* Column headers (staff initials) — bold for print legibility. Sized for print
      (the on-screen text-xs 12px cut "RMc"/"ADh" to "R…"/"A…" in the narrow equal-share
      columns), and any on-screen selection/hover outline (an inline box-shadow) is
      dropped so the selected or hovered column never prints marked (card #173). */
+  /* Card #301 borders (as the reference PDF): thin black inside, heavy (2px) outside, under
+     the header row and after the date block. */
   thead th {
-    background: #f1f5f9 !important;
-    color: #1e293b !important;
-    border: 1px solid #cbd5e1 !important;
+    background: white !important;
+    color: #000 !important;
+    border: 1px solid #000 !important;
+    border-top: 2px solid #000 !important;
+    border-bottom: 2px solid #000 !important;
     padding: 3px 0 !important;
     position: static !important;
     font-weight: 700 !important;
-    font-size: 8px !important;
-    letter-spacing: -0.02em !important;
+    font-size: var(--print-font-size) !important;
     box-shadow: none !important;
   }
-  tbody td:first-child {
+  thead th[data-date-col], thead th[data-day-col] {
+    text-transform: uppercase !important;
+  }
+  [data-date-col], [data-day-col] {
     box-shadow: none !important;
   }
 
@@ -207,7 +218,7 @@ input[type="checkbox"]:disabled {
      the SAME cell height and simply leaves whitespace at the bottom — rows never
      change size from month to month. */
   tbody td {
-    border: 1px solid #cbd5e1 !important;
+    border: 1px solid #000 !important;
     /* Top-biased vertical padding (2px top / 0 bottom) centers the cell text *visually*.
        With vertical-align:middle the line BOX is centered, but the codes are uppercase —
        their ink sits in the upper part of the box (the descender space below the baseline
@@ -227,6 +238,22 @@ input[type="checkbox"]:disabled {
     background: var(--row-print-bg) !important;
   }
 
+
+  /* Heavy left edge (the first date cell), right edge of the date block, and bottom edge
+     (the month's last day; padding days after it never print). */
+  [data-date-col]:first-child, [data-date-block-end]:first-child {
+    border-left: 2px solid #000 !important;
+  }
+  [data-date-block-end] {
+    border-right: 2px solid #000 !important;
+  }
+  tbody tr[data-month-last] td {
+    border-bottom: 2px solid #000 !important;
+  }
+  /* First row of each pay period: a double line on top (card #301). */
+  tbody tr[data-pp-start] td:not([data-pp-label-col]) {
+    border-top: 3px double #000 !important;
+  }
 
   /* Print only the calendar month — hide leading/trailing pay-period padding days */
   tr[data-outside-month] {
@@ -256,8 +283,7 @@ input[type="checkbox"]:disabled {
     background: transparent !important;
     color: #000 !important;
     font-weight: 400 !important;
-    font-size: 9px !important;
-    letter-spacing: -0.02em !important;
+    font-size: var(--print-font-size) !important;
     border-radius: 0 !important;
     padding: 0 !important;
   }
@@ -297,20 +323,20 @@ input[type="checkbox"]:disabled {
   /* PP summary (+/-) rows never print — they carry data-print-hide (see the grid),
      so the printout is always exactly one calendar month on one page. */
 
-  /* Date column styling — bold (day-of-week + date) for print legibility. Slightly
-     smaller font so the full "Mon Jun 16" label fits without truncating. */
-  tbody td:first-child {
-    font-weight: 700 !important;
-    color: #1e293b !important;
+  /* Date block: plain table text, as the reference PDF (card #301): not bold, and not the
+     screen's monospace. The inner spans carry on-screen weights and fonts too. */
+  [data-date-col], [data-day-col],
+  [data-date-col] *, [data-day-col] * {
+    font-weight: 400 !important;
+    font-family: inherit !important;
     white-space: nowrap !important;
-    font-size: 8.5px !important;
   }
 
-  /* Force the header initials and the date column to print SOLID BLACK. Their inner
+  /* Force the header initials and the date block to print SOLID BLACK. Their inner
      <span>s carry on-screen slate/amber text-color classes that override the cell-level
      color above, so they'd otherwise print gray — target the descendants explicitly. */
   thead th, thead th *,
-  tbody td:first-child, tbody td:first-child * {
+  [data-date-col], [data-date-col] *, [data-day-col], [data-day-col] * {
     color: #000 !important;
   }
 
@@ -333,24 +359,43 @@ input[type="checkbox"]:disabled {
     width: 100% !important;
   }
 
-  /* Version footer: print at the bottom of the schedule in black on white */
+  /* Version footer: in print it holds only the Settings footer line (template +
+     " - YoSched", card #301); its screen text is data-print-hide. The size, weight and
+     alignment are inline styles from Settings. The unsaved-edits notice no longer prints;
+     printing a modified month asks first instead (card #173). */
   [data-version-footer] {
-    display: flex !important;
+    display: block !important;
     background: white !important;
-    color: #1e293b !important;
-    border-top: 1px solid #cbd5e1 !important;
-    padding: 6px 2px !important;
-    font-size: 10px !important;
-    margin-top: 6px !important;
+    color: #000 !important;
+    border: none !important;
+    padding: 3px 0 0 !important;
+    margin: 0 !important;
   }
-  [data-version-footer] span {
-    color: #1e293b !important;
+  [data-print-footer] {
+    display: block !important;
+    color: #000 !important;
+    white-space: pre !important;
   }
-  /* Print date/time, to the right of "Version n" (card #173). The unsaved-edits
-     notice no longer prints; printing a modified month asks first instead. */
-  [data-version-footer] [data-print-stamp] {
-    display: inline !important;
-    margin-left: 12px !important;
+
+  /* Card #301: the print-only strip right of the table for the "PP#01" labels, at the top
+     of each pay period's first row. No borders of its own except the left one, which is
+     the table's heavy right edge; no shading. Width 0 when the labels are off. */
+  thead th[data-pp-label-col], tbody tr td[data-pp-label-col] {
+    display: table-cell !important;
+    width: var(--pp-label-w, 0.34in) !important;
+    border-top: none !important;
+    border-right: none !important;
+    border-bottom: none !important;
+    border-left: 2px solid #000 !important;
+    background: transparent !important;
+    padding: 0 0 0 1px !important;
+    vertical-align: top !important;
+    text-align: left !important;
+    font-size: 6pt !important;
+    font-weight: 400 !important;
+    line-height: 1 !important;
+    overflow: visible !important;
+    white-space: nowrap !important;
   }
 }
 

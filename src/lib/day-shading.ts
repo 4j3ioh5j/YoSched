@@ -7,9 +7,10 @@ export type DayShading = {
   screenHolidayColor: string | null;
 };
 
+// Card #301: print shading is off by default (matches the MD Schedule PDF).
 export const DEFAULT_DAY_SHADING: DayShading = {
-  printWeekendColor: "#EBEBEB",
-  printHolidayColor: "#D0D0D0",
+  printWeekendColor: null,
+  printHolidayColor: null,
   screenHolidayColor: "#4A3410",
 };
 

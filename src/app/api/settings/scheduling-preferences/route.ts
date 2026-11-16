@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { validateSpecialColumnOrder } from "@/lib/special-columns";
+import { validatePrintBlock, validatePrintFontFamily, validatePrintFontSize, isDateColumnFormat, isDayColumnFormat, type PrintBlock } from "@/lib/print-layout";
 import { isValidDateFormat } from "@/lib/date-format";
 import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES, isApprovalConflictPolicy, APPROVAL_CONFLICT_POLICIES, validateOffStrategyOrder } from "@/lib/schedule-requests";
 import { isLiveScope, LIVE_SCOPES } from "@/lib/live-scope";
@@ -30,7 +31,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels } = body;
   // Card #203: "Count shifts from" — a YYYY-MM-DD date, or null to clear. Strictly validated.
   const balanceFromValid = shiftBalanceFrom === null || (typeof shiftBalanceFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(shiftBalanceFrom) && !Number.isNaN(Date.parse(shiftBalanceFrom + "T00:00:00Z")) && new Date(shiftBalanceFrom + "T00:00:00Z").toISOString().startsWith(shiftBalanceFrom));
   if (shiftBalanceFrom !== undefined && !balanceFromValid) {
@@ -110,6 +111,39 @@ export async function PUT(req: NextRequest) {
     }
   }
 
+  // Card #301: printed header/footer templates, table font, DATE/DAY columns and pay-period
+  // labels — strict on write (400 before any write); a header/footer null resets to the default.
+  const printBlocks: { printHeader?: PrintBlock | null; printFooter?: PrintBlock | null } = {};
+  for (const [key, v] of [["printHeader", printHeader], ["printFooter", printFooter]] as const) {
+    if (v === undefined) continue;
+    const r = validatePrintBlock(v);
+    if (!r.ok) return NextResponse.json({ error: `${key}: ${r.error}` }, { status: 400 });
+    printBlocks[key] = r.value;
+  }
+  if (printFontFamily !== undefined && !validatePrintFontFamily(printFontFamily)) {
+    return NextResponse.json({ error: "printFontFamily must be 1–64 letters, digits, spaces or hyphens" }, { status: 400 });
+  }
+  if (printFontSize !== undefined && !validatePrintFontSize(printFontSize)) {
+    return NextResponse.json({ error: "printFontSize must be a whole number from 6 to 14" }, { status: 400 });
+  }
+  for (const [key, v] of [["splitDateDayColumns", splitDateDayColumns], ["printPayPeriodLabels", printPayPeriodLabels]] as const) {
+    if (v !== undefined && typeof v !== "boolean") return NextResponse.json({ error: `${key} must be true or false` }, { status: 400 });
+  }
+  if (dateColumnFormat !== undefined && !isDateColumnFormat(dateColumnFormat)) {
+    return NextResponse.json({ error: "dateColumnFormat is not a known format" }, { status: 400 });
+  }
+  if (dayColumnFormat !== undefined && !isDayColumnFormat(dayColumnFormat)) {
+    return NextResponse.json({ error: "dayColumnFormat is not a known format" }, { status: 400 });
+  }
+  const printLayoutData = {
+    ...(printFontFamily !== undefined && { printFontFamily: printFontFamily as string }),
+    ...(printFontSize !== undefined && { printFontSize: printFontSize as number }),
+    ...(splitDateDayColumns !== undefined && { splitDateDayColumns: splitDateDayColumns as boolean }),
+    ...(dateColumnFormat !== undefined && { dateColumnFormat: dateColumnFormat as string }),
+    ...(dayColumnFormat !== undefined && { dayColumnFormat: dayColumnFormat as string }),
+    ...(printPayPeriodLabels !== undefined && { printPayPeriodLabels: printPayPeriodLabels as boolean }),
+  };
+
   // Card #300: order of the special schedule columns — strict on write, null resets to the
   // built-in order (reads stay lenient via parseSpecialColumnOrder).
   let specialOrder: string[] | null | undefined;
@@ -160,6 +194,9 @@ export async function PUT(req: NextRequest) {
       ...tuningUpdate,
       ...(columnOrder !== undefined && { staffColumnOrder: columnOrder === null ? Prisma.DbNull : columnOrder }),
       ...(specialOrder !== undefined && { specialColumnOrder: specialOrder === null ? Prisma.DbNull : specialOrder }),
+      ...(printBlocks.printHeader !== undefined && { printHeader: printBlocks.printHeader === null ? Prisma.DbNull : printBlocks.printHeader }),
+      ...(printBlocks.printFooter !== undefined && { printFooter: printBlocks.printFooter === null ? Prisma.DbNull : printBlocks.printFooter }),
+      ...printLayoutData,
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),
       ...(isActivationNewHireDefault(activationNewHireDefault) && { activationNewHireDefault }),
@@ -184,6 +221,9 @@ export async function PUT(req: NextRequest) {
       ...tuningUpdate,
       ...(columnOrder != null && { staffColumnOrder: columnOrder }),
       ...(specialOrder != null && { specialColumnOrder: specialOrder }),
+      ...(printBlocks.printHeader != null && { printHeader: printBlocks.printHeader }),
+      ...(printBlocks.printFooter != null && { printFooter: printBlocks.printFooter }),
+      ...printLayoutData,
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),
       ...(isActivationNewHireDefault(activationNewHireDefault) && { activationNewHireDefault }),

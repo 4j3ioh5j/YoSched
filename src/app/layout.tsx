@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Archivo_Narrow, Geist, Geist_Mono } from "next/font/google";
 import { Providers } from "./providers";
 import { SITE_URL, canonicalUrl } from "@/lib/base-path";
 import "./globals.css";
@@ -12,6 +12,14 @@ const geistSans = Geist({
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+});
+
+// Card #301: a free (SIL OFL) narrow font bundled for the printed schedule, used when the
+// font chosen in Settings (default Aptos Narrow) is not installed on the printing computer.
+const printNarrow = Archivo_Narrow({
+  variable: "--font-print-narrow",
+  subsets: ["latin"],
+  weight: ["400", "700"],
 });
 
 // Richer, generic (non-industry-specific) metadata. metadataBase makes the
@@ -57,7 +65,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${printNarrow.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         <Providers>{children}</Providers>

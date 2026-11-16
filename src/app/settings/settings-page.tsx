@@ -27,6 +27,26 @@ import { reconcileOrder, MAX_PROFILE_NAME_LENGTH } from "@/lib/autogen-profile";
 import { OffStrategyEditor } from "@/components/off-strategy-editor";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
+import {
+  DEFAULT_PRINT_LAYOUT,
+  DATE_COLUMN_FORMATS,
+  DAY_COLUMN_FORMATS,
+  YOSCHED_FOOTER_SUFFIX,
+  PRINT_BLOCK_TEXT_MAX,
+  validatePrintBlock,
+  validatePrintFontFamily,
+  validatePrintFontSize,
+  renderPrintTemplate,
+  footerLine,
+  printFontStack,
+  formatDateColumn,
+  formatDayColumn,
+  ppLabelText,
+  type PrintAlign,
+  type PrintBlock,
+  type PrintLayout,
+  type PrintTemplateContext,
+} from "@/lib/print-layout";
 import { RecurrencePicker } from "../staff/recurrence-picker";
 import { FrequencyPicker } from "../staff/frequency-picker";
 import { deptPickerTarget, deptTargetPutBody, DEPT_DEFAULT_STRENGTH, type DeptTargetRow, type DeptPickerTarget } from "./dept-target-row";
@@ -120,6 +140,7 @@ type SchedulingPrefs = {
   printWeekendColor: string | null; // card #209: null = no weekend shading in print
   printHolidayColor: string | null; // card #209: null = no holiday shading in print
   screenHolidayColor: string | null; // card #209: null = no holiday tint on screen
+  printLayout: PrintLayout; // card #301: header/footer, table font, DATE/DAY columns
   leaveHoursPolicy: LeavePolicy;
   shiftBalanceFrom?: string | null;
   payPeriodAnchor: string | null;
@@ -5625,6 +5646,268 @@ function DayShadingSection({ initial }: { initial: Pick<SchedulingPrefs, ShadeKe
   );
 }
 
+// ── Card #301: printed header/footer, table font, DATE/DAY columns ──────────────
+
+/** A section's draft and its last SAVED value. Cancel returns to the saved value; a value
+ *  becomes "saved" only once the server accepted it. The caller locks its inputs while
+ *  `busy`, so a late result never lands over typing. */
+function useSavedDraft<T>(initial: T) {
+  const [saved, setSaved] = useState<T>(initial);
+  const [draft, setDraft] = useState<T>(initial);
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState<string | undefined>();
+  const busy = status === "saving";
+  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+  async function save(body: Record<string, unknown>, next: T) {
+    setStatus("saving");
+    setError(undefined);
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setSaved(next);
+      setDraft(next);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setStatus("error");
+      setError(e instanceof Error ? e.message : "Save failed");
+    }
+  }
+  return { saved, draft, setDraft, status, error, busy, dirty, save };
+}
+
+const BTN_SAVE = "px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded text-white";
+const BTN_PLAIN = "px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-300";
+const INPUT = "bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 disabled:opacity-50";
+
+function PrintBlockEditor({ label, value, onChange, disabled }: { label: string; value: PrintBlock; onChange: (b: PrintBlock) => void; disabled: boolean }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        type="text"
+        aria-label={`${label} text`}
+        maxLength={PRINT_BLOCK_TEXT_MAX}
+        value={value.text}
+        disabled={disabled}
+        onChange={(e) => onChange({ ...value, text: e.target.value.replace(/[\r\n]/g, " ") })}
+        className={`${INPUT} flex-1 min-w-[16rem]`}
+      />
+      <label className="flex items-center gap-1 text-xs text-slate-400">
+        Size
+        <input
+          type="number"
+          aria-label={`${label} size`}
+          min={6}
+          max={32}
+          step={1}
+          value={value.size}
+          disabled={disabled}
+          onChange={(e) => onChange({ ...value, size: e.target.valueAsNumber })}
+          className={`${INPUT} w-16`}
+        />
+        pt
+      </label>
+      <label className="flex items-center gap-1 text-xs text-slate-400">
+        <input
+          type="checkbox"
+          aria-label={`${label} bold`}
+          checked={value.bold}
+          disabled={disabled}
+          onChange={(e) => onChange({ ...value, bold: e.target.checked })}
+          className="rounded border-slate-600 w-4 h-4 disabled:opacity-50"
+        />
+        Bold
+      </label>
+      <select
+        aria-label={`${label} alignment`}
+        value={value.align}
+        disabled={disabled}
+        onChange={(e) => onChange({ ...value, align: e.target.value as PrintAlign })}
+        className={INPUT}
+      >
+        <option value="left">Left</option>
+        <option value="center">Center</option>
+        <option value="right">Right</option>
+      </select>
+    </div>
+  );
+}
+
+function PrintHeaderFooterSection({ initial }: { initial: PrintLayout }) {
+  const canEdit = useCanEdit();
+  const { saved, draft, setDraft, status, error, busy, dirty, save } = useSavedDraft({ header: initial.header, footer: initial.footer });
+  const valid = validatePrintBlock(draft.header).ok && validatePrintBlock(draft.footer).ok;
+  const now = new Date();
+  // Preview: this month, the current time, and an example saved version.
+  const previewCtx: PrintTemplateContext = { year: now.getFullYear(), month: now.getMonth(), printedAt: now, dateFormat: "MM/DD/YYYY", version: 9 };
+  const previewStyle = (b: PrintBlock): React.CSSProperties => ({ fontFamily: printFontStack(initial.fontFamily), fontSize: `${b.size}pt`, fontWeight: b.bold ? 700 : 400, textAlign: b.align });
+  const defaults = { header: DEFAULT_PRINT_LAYOUT.header, footer: DEFAULT_PRINT_LAYOUT.footer };
+  return (
+    <CollapsibleSection
+      id="print-header-footer"
+      title="Header & Footer"
+      description="The title above the printed schedule and the line under it. Fill-in words: {MONTH} (JANUARY), {Month} (January), {MON} (JAN), {YEAR}, {DATE} (print date, in the date format setting), {TIME} (print time, 24-hour), {VERSION} (the month's saved version, two digits). The footer always ends with “ - YoSched”."
+      status={status}
+      error={error}
+    >
+      <div className="space-y-3">
+        <FieldRow label="Header" description="Printed above the table.">
+          <PrintBlockEditor label="Header" value={draft.header} disabled={!canEdit || busy} onChange={(header) => setDraft({ ...draft, header })} />
+        </FieldRow>
+        <FieldRow label="Footer" description="Printed under the table, followed by “ - YoSched”.">
+          <PrintBlockEditor label="Footer" value={draft.footer} disabled={!canEdit || busy} onChange={(footer) => setDraft({ ...draft, footer })} />
+        </FieldRow>
+        <div className="rounded border border-slate-700 bg-white text-black px-3 py-2 space-y-1" aria-label="Preview">
+          <div style={previewStyle(draft.header)}>{renderPrintTemplate(draft.header.text, previewCtx)}</div>
+          <div className="text-[10px] text-slate-400 text-center">… schedule …</div>
+          <div style={previewStyle(draft.footer)}>{footerLine(draft.footer.text, previewCtx)}</div>
+        </div>
+        <p className="text-xs text-slate-500">Preview uses this month, now, and version 09. “{YOSCHED_FOOTER_SUFFIX.trim()}” is always added and can’t be changed.</p>
+        {!valid && <p className="text-xs text-red-400">Size must be a whole number from 6 to 32.</p>}
+        <div className="flex gap-2">
+          <button type="button" disabled={!canEdit || busy || !dirty || !valid} onClick={() => save({ printHeader: draft.header, printFooter: draft.footer }, draft)} className={BTN_SAVE}>Save</button>
+          <button type="button" disabled={!canEdit || busy || !dirty} onClick={() => setDraft(saved)} className={BTN_PLAIN}>Cancel</button>
+          <button type="button" disabled={!canEdit || busy} onClick={() => save({ printHeader: null, printFooter: null }, defaults)} className={BTN_PLAIN}>Reset to default</button>
+        </div>
+      </div>
+    </CollapsibleSection>
+  );
+}
+
+const FONT_SUGGESTIONS = ["Aptos Narrow", "Arial Narrow", "Archivo Narrow", "Calibri", "Arial"];
+
+function PrintFontSection({ initial }: { initial: PrintLayout }) {
+  const canEdit = useCanEdit();
+  const { saved, draft, setDraft, status, error, busy, dirty, save } = useSavedDraft({ fontFamily: initial.fontFamily, fontSize: initial.fontSize, payPeriodLabels: initial.payPeriodLabels });
+  const valid = validatePrintFontFamily(draft.fontFamily) && validatePrintFontSize(draft.fontSize);
+  const d = DEFAULT_PRINT_LAYOUT;
+  const defaults = { fontFamily: d.fontFamily, fontSize: d.fontSize, payPeriodLabels: d.payPeriodLabels };
+  return (
+    <CollapsibleSection
+      id="print-font"
+      title="Table Font"
+      description="The font of the printed schedule. When the chosen font is not installed on the computer that prints, YoSched’s own narrow font is used."
+      status={status}
+      error={error}
+    >
+      <div className="space-y-3">
+        <FieldRow label="Font" description="Letters, digits, spaces and hyphens.">
+          <input
+            type="text"
+            list="print-font-suggestions"
+            aria-label="Font"
+            maxLength={64}
+            value={draft.fontFamily}
+            disabled={!canEdit || busy}
+            onChange={(e) => setDraft({ ...draft, fontFamily: e.target.value })}
+            className={`${INPUT} w-56`}
+            style={{ fontFamily: validatePrintFontFamily(draft.fontFamily) ? printFontStack(draft.fontFamily) : undefined }}
+          />
+          <datalist id="print-font-suggestions">
+            {FONT_SUGGESTIONS.map((f) => <option key={f} value={f} />)}
+          </datalist>
+        </FieldRow>
+        <FieldRow label="Size" description="Points, 6 to 14 (the header and footer have their own sizes).">
+          <input
+            type="number"
+            aria-label="Font size"
+            min={6}
+            max={14}
+            step={1}
+            value={draft.fontSize}
+            disabled={!canEdit || busy}
+            onChange={(e) => setDraft({ ...draft, fontSize: e.target.valueAsNumber })}
+            className={`${INPUT} w-20`}
+          />
+        </FieldRow>
+        <FieldRow label="Pay-period labels" description={`Print “${ppLabelText(1)}” to the right of the first day of each pay period.`}>
+          <input
+            type="checkbox"
+            aria-label="Pay-period labels"
+            checked={draft.payPeriodLabels}
+            disabled={!canEdit || busy}
+            onChange={(e) => setDraft({ ...draft, payPeriodLabels: e.target.checked })}
+            className="rounded border-slate-600 w-4 h-4 disabled:opacity-50"
+          />
+        </FieldRow>
+        {!valid && <p className="text-xs text-red-400">Font: letters, digits, spaces and hyphens. Size: a whole number from 6 to 14.</p>}
+        <div className="flex gap-2">
+          <button type="button" disabled={!canEdit || busy || !dirty || !valid} onClick={() => save({ printFontFamily: draft.fontFamily, printFontSize: draft.fontSize, printPayPeriodLabels: draft.payPeriodLabels }, draft)} className={BTN_SAVE}>Save</button>
+          <button type="button" disabled={!canEdit || busy || !dirty} onClick={() => setDraft(saved)} className={BTN_PLAIN}>Cancel</button>
+          <button type="button" disabled={!canEdit || busy} onClick={() => save({ printFontFamily: defaults.fontFamily, printFontSize: defaults.fontSize, printPayPeriodLabels: defaults.payPeriodLabels }, defaults)} className={BTN_PLAIN}>Reset to default</button>
+        </div>
+      </div>
+    </CollapsibleSection>
+  );
+}
+
+const DATE_COLUMN_SAMPLE = "2026-01-05"; // a Monday
+const DAY_COLUMN_SAMPLE_DOW = 1;
+
+function DateColumnsSection({ initial }: { initial: PrintLayout }) {
+  const canEdit = useCanEdit();
+  const { saved, draft, setDraft, status, error, busy, dirty, save } = useSavedDraft({ splitDateDay: initial.splitDateDay, dateColumnFormat: initial.dateColumnFormat, dayColumnFormat: initial.dayColumnFormat });
+  const d = DEFAULT_PRINT_LAYOUT;
+  const defaults = { splitDateDay: d.splitDateDay, dateColumnFormat: d.dateColumnFormat, dayColumnFormat: d.dayColumnFormat };
+  return (
+    <CollapsibleSection
+      id="date-columns"
+      title="Date Columns"
+      description="On the schedule grid and the printout: one date column (“Mon 1/5”), or separate DATE and DAY columns in the formats below."
+      status={status}
+      error={error}
+    >
+      <div className="space-y-3">
+        <FieldRow label="Separate DATE and DAY" description="Off: one column with the day and date together.">
+          <input
+            type="checkbox"
+            aria-label="Separate DATE and DAY columns"
+            checked={draft.splitDateDay}
+            disabled={!canEdit || busy}
+            onChange={(e) => setDraft({ ...draft, splitDateDay: e.target.checked })}
+            className="rounded border-slate-600 w-4 h-4 disabled:opacity-50"
+          />
+        </FieldRow>
+        <FieldRow label="DATE format" description="Example: Monday, January 5.">
+          <select
+            aria-label="DATE format"
+            value={draft.dateColumnFormat}
+            disabled={!canEdit || busy || !draft.splitDateDay}
+            onChange={(e) => setDraft({ ...draft, dateColumnFormat: e.target.value as PrintLayout["dateColumnFormat"] })}
+            className={INPUT}
+          >
+            {DATE_COLUMN_FORMATS.map((f) => (
+              <option key={f} value={f}>{f} ({formatDateColumn(DATE_COLUMN_SAMPLE, f)})</option>
+            ))}
+          </select>
+        </FieldRow>
+        <FieldRow label="DAY format" description="Example: Monday.">
+          <select
+            aria-label="DAY format"
+            value={draft.dayColumnFormat}
+            disabled={!canEdit || busy || !draft.splitDateDay}
+            onChange={(e) => setDraft({ ...draft, dayColumnFormat: e.target.value as PrintLayout["dayColumnFormat"] })}
+            className={INPUT}
+          >
+            {DAY_COLUMN_FORMATS.map((f) => (
+              <option key={f} value={f}>{formatDayColumn(DAY_COLUMN_SAMPLE_DOW, f)}</option>
+            ))}
+          </select>
+        </FieldRow>
+        <div className="flex gap-2">
+          <button type="button" disabled={!canEdit || busy || !dirty} onClick={() => save({ splitDateDayColumns: draft.splitDateDay, dateColumnFormat: draft.dateColumnFormat, dayColumnFormat: draft.dayColumnFormat }, draft)} className={BTN_SAVE}>Save</button>
+          <button type="button" disabled={!canEdit || busy || !dirty} onClick={() => setDraft(saved)} className={BTN_PLAIN}>Cancel</button>
+          <button type="button" disabled={!canEdit || busy} onClick={() => save({ splitDateDayColumns: defaults.splitDateDay, dateColumnFormat: defaults.dateColumnFormat, dayColumnFormat: defaults.dayColumnFormat }, defaults)} className={BTN_PLAIN}>Reset to default</button>
+        </div>
+      </div>
+    </CollapsibleSection>
+  );
+}
+
 function AdditionalColumnsSection({
   initial,
   shiftTypes,
@@ -6209,6 +6492,8 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
             countColumns={savedCountColumns}
           />
           <DayShadingSection initial={schedulingPrefs} />
+          <PrintHeaderFooterSection initial={schedulingPrefs.printLayout} />
+          <PrintFontSection initial={schedulingPrefs.printLayout} />
         </div>
 
         <SectionGroup label="Calendar" />
@@ -6220,6 +6505,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
         <SectionGroup label="General & System" />
         <div className="space-y-4 mt-3">
           <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
+          <DateColumnsSection initial={schedulingPrefs.printLayout} />
           <EmailSettingsSection />
         </div>
       </div>

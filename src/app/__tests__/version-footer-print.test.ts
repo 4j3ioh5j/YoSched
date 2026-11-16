@@ -42,14 +42,15 @@ describe("unsaved edits: warned before printing, not printed (card #173)", () =>
     expect(grid.slice(idx - 60, idx + 60)).toContain("data-print-hide");
   });
 
-  it("the footer still prints, showing the version and the print time", () => {
+  it("the footer still prints, now as the Settings footer line (card #301)", () => {
     expect(printBlock).toContain("[data-version-footer]");
     expect(printBlock).not.toMatch(/\[data-version-footer\][^{]*\{[^}]*display:\s*none/);
-    expect(printBlock).toMatch(/\[data-print-stamp\][^{]*\{[^}]*display:\s*inline !important/);
-    // "Version n" itself is not print-hidden; the saved date and comment are.
+    expect(printBlock).toMatch(/\[data-print-footer\][^{]*\{[^}]*display: block !important/);
+    // Card #301: the screen's "Version n" no longer prints; {VERSION} in the footer
+    // template carries it. The saved date and comment stay screen-only.
     const v = grid.indexOf(">Version {focalVersion.versionNumber}</span>");
     expect(v).toBeGreaterThan(-1);
-    expect(grid.slice(v - 80, v)).not.toContain("data-print-hide");
+    expect(grid.slice(grid.lastIndexOf("<span", v), v)).toContain("data-print-hide");
     expect(grid).toContain("<span data-print-hide>saved {formatDate(");
     expect(grid).toMatch(/<span data-print-hide className="text-slate-500 italic truncate max-w-md" title=\{focalVersion\.comment\}>/);
   });
@@ -67,12 +68,13 @@ describe("print layout (card #173)", () => {
     expect(printBlock).toMatch(/body \{\s*padding: 0\.4in !important;/);
   });
 
-  it("smaller YoSched title", () => {
-    expect(printBlock).toMatch(/\[data-print-brand\] \{[^}]*font-size: 17px !important;/);
+  it("the title is the Settings header, not a fixed YoSched brand (card #301)", () => {
+    expect(grid).not.toContain("data-print-brand");
+    expect(grid).toContain("data-print-title");
   });
 
-  it("header initials sized for print, clipped not ellipsised, no outline", () => {
-    expect(printBlock).toMatch(/thead th \{[^}]*font-size: 8px !important;[^}]*box-shadow: none !important;/);
+  it("header initials at the Settings font size (card #301), clipped not ellipsised, no outline", () => {
+    expect(printBlock).toMatch(/thead th \{[^}]*font-size: var\(--print-font-size\) !important;[^}]*box-shadow: none !important;/);
     expect(printBlock).toMatch(/thead th, tbody td \{[^}]*text-overflow: clip !important;/);
     expect(printBlock).not.toMatch(/text-overflow:\s*ellipsis/);
   });

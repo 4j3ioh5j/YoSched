@@ -20,6 +20,7 @@ import { canonicalUrl } from "@/lib/base-path";
 import type { Metadata } from "next";
 import { effectiveFte, effectiveFixedHours } from "@/lib/fte";
 import { dayShadingFrom } from "@/lib/day-shading";
+import { printLayoutFrom } from "@/lib/print-layout";
 import { buildHolidayGroups } from "@/lib/holiday-rules";
 import { loadHolidayRules } from "@/lib/holiday-rules-db";
 
@@ -316,6 +317,7 @@ export default async function Home() {
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
         defaultLiveScope={parseLiveScope(schedPrefs?.defaultLiveScope)}
         dayShading={dayShadingFrom(schedPrefs)}
+        printLayout={printLayoutFrom(schedPrefs)}
         weekendStartDow={readTuning(schedPrefs).weekendStartDow}
         currentVersions={currentVersions.map((v) => ({
           year: v.year,

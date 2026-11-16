@@ -40,6 +40,9 @@ describe("isShadeColor / dayShadingFrom", () => {
   });
   it("no stored row → defaults; a stored explicit null stays off", () => {
     expect(dayShadingFrom(null)).toEqual(DEFAULT_DAY_SHADING);
+    // Card #301: print shading is off by default (matches the MD Schedule PDF); the
+    // on-screen holiday tint keeps its default.
+    expect(DEFAULT_DAY_SHADING).toEqual({ printWeekendColor: null, printHolidayColor: null, screenHolidayColor: "#4A3410" });
     expect(dayShadingFrom({ printWeekendColor: null, printHolidayColor: "#D0D0D0", screenHolidayColor: null }))
       .toEqual({ printWeekendColor: null, printHolidayColor: "#D0D0D0", screenHolidayColor: null });
   });

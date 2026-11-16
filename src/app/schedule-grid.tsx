@@ -17,7 +17,8 @@ import { rowPrintShade, screenHolidayTint, DEFAULT_DAY_SHADING, type DayShading 
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { liveBundleProblem } from "@/lib/live-bundle";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
-import { printStampText, unsavedPrintWarning } from "@/lib/print-stamp";
+import { unsavedPrintWarning } from "@/lib/print-stamp";
+import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
@@ -265,6 +266,8 @@ type Props = {
   dateFormat?: string;
   defaultLiveScope?: LiveScope; // dept default scope for auto-generate edits (#248)
   dayShading?: DayShading; // card #209: weekend/holiday shading colours from Settings (null = off)
+  /** Card #301: header/footer templates, table font, DATE/DAY columns, PP labels (Settings). */
+  printLayout?: PrintLayout;
   weekendStartDow: number; // card #215: the weekend's first day from Settings (0 = Sunday … 6 = Saturday)
   currentVersions?: CurrentVersionMeta[];
   scheduleRequests?: GridRequest[];
@@ -330,6 +333,15 @@ function parseDate(s: string): Date {
   return new Date(s + "T12:00:00");
 }
 
+
+/** Card #301: a header/footer block's size, weight and alignment as inline print styles. */
+function printBlockStyle(b: PrintBlock): React.CSSProperties {
+  return { fontSize: `${b.size}pt`, fontWeight: b.bold ? 700 : 400, textAlign: b.align };
+}
+
+/** On-screen widths of the split DATE / DAY columns (px). */
+const DATE_COL_W = 56;
+const dayColW = (fmt: PrintLayout["dayColumnFormat"]) => (fmt === "Dddd" ? 84 : 44);
 
 function formatDateLabel(dateStr: string, dateFormat: DateFormatKey = DEFAULT_DATE_FORMAT): { day: string; date: string; dow: number; dayNum: number; month: number } {
   const d = parseDate(dateStr);
@@ -472,6 +484,7 @@ export function ScheduleGrid({
   dateFormat: dateFormatProp,
   defaultLiveScope = DEFAULT_LIVE_SCOPE,
   dayShading = DEFAULT_DAY_SHADING,
+  printLayout = DEFAULT_PRINT_LAYOUT,
   weekendStartDow,
   currentVersions = [],
   scheduleRequests = [],
@@ -719,17 +732,36 @@ export function ScheduleGrid({
   );
   const monthModified = focalVersion ? focalVersion.snapshotHash !== liveMonthHash : false;
 
-  // Card #173 — printing. The print date/time is written straight into the footer
-  // span on `beforeprint` (fires for the Print button AND the browser's own print),
-  // so it is current without waiting for a React render. The Print button and
-  // Ctrl/Cmd+P both go through printMonth, which first warns when the month has
-  // edits not in its saved version.
-  const printStampRef = useRef<HTMLSpanElement>(null);
+  // Card #173 / #301 — printing. The printed title and footer are the Settings
+  // templates (lib/print-layout). They are written straight into their print-only
+  // elements: once now, and again on `beforeprint` (fires for the Print button AND
+  // the browser's own print), so {DATE}/{TIME} are the print time without waiting for
+  // a React render. React renders those elements empty, so it never fights the text.
+  // The Print button and Ctrl/Cmd+P both go through printMonth, which first warns
+  // when the month has edits not in its saved version.
+  const printTitleRef = useRef<HTMLDivElement>(null);
+  const printFooterRef = useRef<HTMLDivElement>(null);
+  const printCtx = useCallback(
+    (printedAt: Date): PrintTemplateContext => ({
+      year: viewYear,
+      month: viewMonth,
+      printedAt,
+      dateFormat,
+      version: focalVersion ? focalVersion.versionNumber : null,
+    }),
+    [viewYear, viewMonth, dateFormat, focalVersion],
+  );
   useEffect(() => {
-    const stamp = () => { if (printStampRef.current) printStampRef.current.textContent = printStampText(new Date(), dateFormat); };
+    const stamp = () => {
+      if (printTitleRef.current) printTitleRef.current.textContent = renderPrintTemplate(printLayout.header.text, printCtx(new Date()));
+      if (printFooterRef.current) printFooterRef.current.textContent = footerLine(printLayout.footer.text, printCtx(new Date()));
+    };
+    stamp();
     window.addEventListener("beforeprint", stamp);
     return () => window.removeEventListener("beforeprint", stamp);
-  }, [dateFormat]);
+  }, [printCtx, printLayout.header.text, printLayout.footer.text]);
+  // Card #301: the date block is one column, or DATE + DAY.
+  const dateCols = printLayout.splitDateDay ? 2 : 1;
   const printMonth = useCallback(() => {
     const warning = unsavedPrintWarning(focalVersion ? focalVersion.versionNumber : null, monthModified);
     if (warning && !window.confirm(warning)) return;
@@ -3932,7 +3964,11 @@ export function ScheduleGrid({
   const hasAlertError = useMemo(() => visibleAlerts.some((a) => a.type === "error"), [visibleAlerts]);
 
   return (
-    <div className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}>
+    <div
+      data-print-root
+      className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}
+      style={{ "--print-font": printFontStack(printLayout.fontFamily), "--print-font-size": `${printLayout.fontSize}pt` } as React.CSSProperties}
+    >
       {/* Request mode indicator — "/" toggles; letters create requests, not
           assignments (Shift=avoid, Alt=soft). */}
       {requestMode && (
@@ -3943,11 +3979,9 @@ export function ScheduleGrid({
           <span>REQUEST MODE — letters add requests (Shift = avoid, Alt = soft) · + approve · ! deny · ^ reset to pending · Delete removes the request (not the shift). Press “/” to exit.</span>
         </div>
       )}
-      {/* Print-only title: bold-centered "YoSched" brand above the month/year */}
-      <div data-print-title className="hidden">
-        <span data-print-brand>YoSched</span>
-        {MONTH_NAMES[viewMonth]} {viewYear}
-      </div>
+      {/* Print-only title: the Settings header template (card #301), filled in by the
+          print stamp above. */}
+      <div data-print-title ref={printTitleRef} className="hidden" style={printBlockStyle(printLayout.header)} />
 
       {/* Toolbar */}
       <div data-print-hide className="flex items-center gap-2 px-6 py-2 bg-slate-800 border-b border-slate-700 shrink-0">
@@ -4265,9 +4299,29 @@ export function ScheduleGrid({
         <table className="border-collapse text-sm w-full">
           <thead className="sticky top-0 z-10">
             <tr className="bg-slate-800">
-              <th className="sticky left-0 z-20 bg-slate-800 px-3 py-2 text-left text-xs font-medium text-slate-400 border-b border-r border-slate-700 w-[88px] min-w-[88px]">
-                Date
-              </th>
+              {printLayout.splitDateDay ? (
+                <>
+                  <th
+                    data-date-col
+                    className="sticky left-0 z-20 bg-slate-800 px-2 py-2 text-left text-xs font-medium text-slate-400 border-b border-slate-700"
+                    style={{ width: DATE_COL_W, minWidth: DATE_COL_W }}
+                  >
+                    Date
+                  </th>
+                  <th
+                    data-day-col
+                    data-date-block-end
+                    className="sticky z-20 bg-slate-800 px-2 py-2 text-left text-xs font-medium text-slate-400 border-b border-r border-slate-700"
+                    style={{ left: DATE_COL_W, width: dayColW(printLayout.dayColumnFormat), minWidth: dayColW(printLayout.dayColumnFormat), "--day-col-w": printLayout.dayColumnFormat === "Dddd" ? "0.62in" : "0.36in" } as React.CSSProperties}
+                  >
+                    Day
+                  </th>
+                </>
+              ) : (
+                <th data-date-col data-date-block-end className="sticky left-0 z-20 bg-slate-800 px-3 py-2 text-left text-xs font-medium text-slate-400 border-b border-r border-slate-700 w-[88px] min-w-[88px]">
+                  Date
+                </th>
+              )}
               {visibleStaff.map((p) => {
                 const isActiveCol = activeCol === p.id;
                 const fe = fairnessData?.[p.id];
@@ -4335,6 +4389,14 @@ export function ScheduleGrid({
                 </th>
               );
               })}
+              {/* Card #301: print-only strip right of the table for the PP#nn labels. Its
+                  width is 0 when the labels are off, so it only draws the right border. */}
+              <th
+                data-pp-label-col
+                aria-hidden
+                className="hidden"
+                style={{ "--pp-label-w": printLayout.payPeriodLabels ? "0.34in" : "0px" } as React.CSSProperties}
+              />
             </tr>
           </thead>
           <tbody>
@@ -4351,6 +4413,7 @@ export function ScheduleGrid({
                 return (
                   <tr key={`pp-${pp.startDate}`} data-print-hide className="bg-slate-800/80">
                     <td
+                      colSpan={dateCols}
                       className="sticky left-0 z-[5] px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider border-r border-slate-600 whitespace-nowrap border-y border-y-indigo-500/60"
                       style={{ background: "#1a2340" }}
                     >
@@ -4388,7 +4451,7 @@ export function ScheduleGrid({
                         <td key={`pp-${sc.key}`} className="px-2 py-1 text-center text-[10px] font-mono border-l border-slate-600 text-indigo-400/60 border-y border-y-indigo-500/60" />
                       ),
                     )}
-                    {dedicatedColumns.length === 0 && countColumns.length === 0 && <td className="border-y border-y-indigo-500/60" />}
+                    <td data-pp-label-col aria-hidden className="hidden" />
                   </tr>
                 );
               }
@@ -4418,6 +4481,8 @@ export function ScheduleGrid({
                   data-weekend={isWeekend || undefined}
                   data-holiday={isHoliday || undefined}
                   data-outside-month={isOutsideMonth || undefined}
+                  data-month-last={date === lastOfMonth || undefined}
+                  data-pp-start={isNewPP || undefined}
                   data-print-shade={printShade ? "" : undefined}
                   style={{
                     ...(printShade ? { "--row-print-bg": printShade } : null),
@@ -4431,26 +4496,39 @@ export function ScheduleGrid({
                     "transition-colors",
                   ].join(" ")}
                 >
-                  <td
-                    className={[
-                      "sticky left-0 z-[5] px-2 py-1 text-xs font-mono border-r border-slate-700 whitespace-nowrap cursor-pointer hover:brightness-125",
-                      isNewPP ? "border-t-2 border-t-indigo-500" : "",
-                    ].join(" ")}
-                    style={{
-                      background: isActiveRow ? "rgba(29,78,216,0.7)" : isOutsideMonth ? "#0d1321" : holidayTint ?? (isWeekend ? "#1a2236" : "#0f172a"),
-                      ...(!isActiveRow && hoverRow === date ? HOVER_OUTLINE : null),
-                    } as React.CSSProperties}
-                    onClick={() => setActiveRow(activeRow === date ? null : date)}
-                    onMouseEnter={(e) => { setHoverRow(date); if (isHoliday) showTip(setTooltip, holidayNames.get(date) ?? "", e); }}
-                    onMouseLeave={() => { setHoverRow(null); if (isHoliday) setTooltip(null); }}
-                  >
-                    <span className={isActiveRow ? "text-blue-200 font-bold" : isWeekend ? "text-slate-500" : "text-slate-300"}>
-                      {label.day}
-                    </span>{" "}
-                    <span className={isActiveRow ? "text-blue-200" : isOutsideMonth ? "text-slate-600" : "text-slate-400"}>
-                      {label.date}
-                    </span>
-                  </td>
+                  {(() => {
+                    // The date block: one "Mon 6/16" cell, or (card #301, default) a DATE and a
+                    // DAY cell. Both share the row-select click, hover and sticky background.
+                    const cellBg = isActiveRow ? "rgba(29,78,216,0.7)" : isOutsideMonth ? "#0d1321" : holidayTint ?? (isWeekend ? "#1a2236" : "#0f172a");
+                    const cellProps = {
+                      onClick: () => setActiveRow(activeRow === date ? null : date),
+                      onMouseEnter: (e: React.MouseEvent) => { setHoverRow(date); if (isHoliday) showTip(setTooltip, holidayNames.get(date) ?? "", e); },
+                      onMouseLeave: () => { setHoverRow(null); if (isHoliday) setTooltip(null); },
+                    };
+                    const cellStyle = { background: cellBg, ...(!isActiveRow && hoverRow === date ? HOVER_OUTLINE : null) } as React.CSSProperties;
+                    const base = "sticky z-[5] px-2 py-1 text-xs font-mono whitespace-nowrap cursor-pointer hover:brightness-125";
+                    const ppTop = isNewPP ? "border-t-2 border-t-indigo-500" : "";
+                    const dayClass = isActiveRow ? "text-blue-200 font-bold" : isWeekend ? "text-slate-500" : "text-slate-300";
+                    const dateClass = isActiveRow ? "text-blue-200" : isOutsideMonth ? "text-slate-600" : "text-slate-400";
+                    if (printLayout.splitDateDay) {
+                      return (
+                        <>
+                          <td data-date-col className={[base, "left-0", ppTop].join(" ")} style={cellStyle} {...cellProps}>
+                            <span className={dateClass}>{formatDateColumn(date, printLayout.dateColumnFormat)}</span>
+                          </td>
+                          <td data-day-col data-date-block-end className={[base, "border-r border-slate-700", ppTop].join(" ")} style={{ ...cellStyle, left: DATE_COL_W }} {...cellProps}>
+                            <span className={dayClass}>{formatDayColumn(label.dow, printLayout.dayColumnFormat)}</span>
+                          </td>
+                        </>
+                      );
+                    }
+                    return (
+                      <td data-date-col data-date-block-end className={[base, "left-0 border-r border-slate-700", ppTop].join(" ")} style={cellStyle} {...cellProps}>
+                        <span className={dayClass}>{label.day}</span>{" "}
+                        <span className={dateClass}>{label.date}</span>
+                      </td>
+                    );
+                  })()}
                   {visibleStaff.map((p) => {
                     const cellKey = `${p.id}:${date}`;
                     // In Live mode the cell shows the in-browser re-solve, not the
@@ -4679,6 +4757,9 @@ export function ScheduleGrid({
                     </td>
                   );
                   })}
+                  <td data-pp-label-col aria-hidden className="hidden">
+                    {printLayout.payPeriodLabels && isNewPP && currentPP ? ppLabelText(payPeriodLabel(currentPP.startDate, periodLengthOf(currentPP)).number) : null}
+                  </td>
                 </tr>
               );
             })}
@@ -4696,9 +4777,10 @@ export function ScheduleGrid({
       >
         {focalVersion ? (
           <>
-            <span className="font-semibold text-slate-200">Version {focalVersion.versionNumber}</span>
-            {/* Print shows only "Version n" and the print time; the rest is screen-only.
-                The unsaved-edits notice became a confirm before printing (card #173). */}
+            <span data-print-hide className="font-semibold text-slate-200">Version {focalVersion.versionNumber}</span>
+            {/* Screen-only: print shows the Settings footer line instead (card #301), whose
+                {VERSION} is this version. The unsaved-edits notice became a confirm before
+                printing (card #173). */}
             <span data-print-hide className="text-slate-500">·</span>
             <span data-print-hide>saved {formatDate(parseDate(focalVersion.savedAt.slice(0, 10)), dateFormat)}</span>
             {focalVersion.comment && (
@@ -4713,9 +4795,10 @@ export function ScheduleGrid({
             )}
           </>
         ) : (
-          <span className="text-slate-500">No saved version for {MONTH_NAMES[viewMonth]} {viewYear}</span>
+          <span data-print-hide className="text-slate-500">No saved version for {MONTH_NAMES[viewMonth]} {viewYear}</span>
         )}
-        <span data-print-stamp ref={printStampRef} className="hidden" />
+        {/* Print-only: the footer template + " - YoSched", filled in by the print stamp. */}
+        <div data-print-footer ref={printFooterRef} className="hidden" style={printBlockStyle(printLayout.footer)} />
       </div>
 
       {/* Request save error — partial/failed saves are surfaced, not silent */}
