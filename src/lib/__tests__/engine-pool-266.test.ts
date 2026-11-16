@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { build } from "esbuild";
 import { autoSchedule, setTrialBatchRunner, trialRun, trialInput, spacingTrialSteps, type AutoScheduleInput, type TrialBatch, type TrialRun } from "../auto-scheduler";
-import { createEnginePool, readBundleStamp, stampBanner, type EnginePool } from "../engine-pool";
+import { createEnginePool, readBundleStamp, stampBanner, deadlineRunner, poolOptionsFromEnv, type EnginePool } from "../engine-pool";
 import { createTrialWorkerHandler } from "../engine-worker-core";
 import { fixture } from "./engine-266-fixture";
 
@@ -217,5 +217,59 @@ describe("worker handler (card #266)", () => {
     const h = createTrialWorkerHandler();
     h({ type: "stage", job: 1, base: { broken: true } as unknown as AutoScheduleInput });
     expect(h({ type: "run", job: 1, idx: 0, variant: null })).toMatchObject({ job: 1, idx: 0, error: expect.any(String) });
+  });
+});
+
+describe("the overall time limit for one run's trial (card #266 r1)", { timeout: 120_000 }, () => {
+  it("a batch given a shorter time limit than the pool's gives up at that limit", () => {
+    const f = fakeWorker("hang2.cjs", `port.on("message", () => {});`);
+    const p = pool({ bundlePath: f, batchTimeoutMs: 20_000 })!;
+    const t = performance.now();
+    expect(p.runBatch({ base: fixture(6), variants: [null, null] }, 300)).toBeNull();
+    const ms = performance.now() - t;
+    expect(ms).toBeGreaterThanOrEqual(250);
+    expect(ms).toBeLessThan(2_000);
+  });
+
+  it("each batch gets the pool's limit or the time left, whichever is less; after the deadline, none go to the pool", () => {
+    const asked: (number | undefined)[] = [];
+    const fake = { runBatch: (_b: TrialBatch, ms?: number) => { asked.push(ms); return null; } };
+    let now = 10_000;
+    const run = deadlineRunner(fake, { batchTimeoutMs: 3_000, trialDeadlineMs: 6_000 }, () => now);
+    const b = { base: fixture(6), variants: [null, null] };
+    run(b, { startedAt: 10_000 });
+    now = 14_500;
+    run(b, { startedAt: 10_000 });
+    now = 16_000;
+    expect(run(b, { startedAt: 10_000 })).toBeNull();
+    now = 17_000;
+    expect(run(b, { startedAt: 10_000 })).toBeNull();
+    expect(asked).toEqual([3_000, 1_500]);
+  });
+
+  it("a pool that hangs costs at most the deadline in waiting, and the result is still the plain one", () => {
+    const input = fixture();
+    const plain = sig(autoSchedule(input));
+    const f = fakeWorker("hang3.cjs", `port.on("message", () => {});`);
+    const p = pool({ bundlePath: f, batchTimeoutMs: 20_000 })!;
+    let waited = 0;
+    const timed = { runBatch: (b: TrialBatch, ms?: number) => { const t = performance.now(); const r = p.runBatch(b, ms); waited += performance.now() - t; return r; } };
+    setTrialBatchRunner(deadlineRunner(timed, { batchTimeoutMs: 20_000, trialDeadlineMs: 700 }));
+    try {
+      const stats = { pooled: 0, inline: 0 };
+      expect(sig(autoSchedule(input, { trialStats: stats }))).toBe(plain);
+      expect(stats.pooled).toBe(0);
+      expect(waited).toBeLessThan(1_200);
+    } finally { setTrialBatchRunner(null); }
+  });
+
+  it("reads the limits from the environment, with defaults inside the 10-second budget", () => {
+    const d = poolOptionsFromEnv({}, STAMP, 16);
+    expect(d.batchTimeoutMs).toBe(3_000);
+    expect(d.trialDeadlineMs).toBe(6_000);
+    const e = poolOptionsFromEnv({ YOSCHED_ENGINE_BATCH_TIMEOUT_MS: "2000", YOSCHED_ENGINE_TRIAL_DEADLINE_MS: "4000" }, STAMP, 16);
+    expect([e.batchTimeoutMs, e.trialDeadlineMs]).toEqual([2_000, 4_000]);
+    const bad = poolOptionsFromEnv({ YOSCHED_ENGINE_BATCH_TIMEOUT_MS: "0", YOSCHED_ENGINE_TRIAL_DEADLINE_MS: "soon" }, STAMP, 16);
+    expect([bad.batchTimeoutMs, bad.trialDeadlineMs]).toEqual([3_000, 6_000]);
   });
 });

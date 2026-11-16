@@ -16,7 +16,7 @@
 
 import {
   autoScheduleSteps,
-  runTrialBatch,
+  trialBatchRunFor,
   trialRun,
   trialInput,
   type TrialBatch,
@@ -158,7 +158,7 @@ export function applyScenario(
   pins: ScenarioPin[],
   frees: ScenarioFree[],
 ): ScenarioOutcome {
-  return runStepsSync(applyScenarioSteps(input, pins, frees), runTrialBatch);
+  return runStepsSync(applyScenarioSteps(input, pins, frees), trialBatchRunFor());
 }
 
 /** Card #266 slice B: the engine work of one Live edit, as batches of independent runs. */
@@ -491,7 +491,7 @@ export function applyScenarioExpanding(
   pinned: { has(key: string): boolean },
   scope: "day" | "pp" | "range",
 ): ScenarioOutcome {
-  return runStepsSync(applyScenarioExpandingSteps(input, pins, explicitFrees, touchedDates, pinned, scope), runTrialBatch);
+  return runStepsSync(applyScenarioExpandingSteps(input, pins, explicitFrees, touchedDates, pinned, scope), trialBatchRunFor());
 }
 
 /** applyScenarioExpanding as steps (card #266 slice B): the same outcome. */

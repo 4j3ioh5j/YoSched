@@ -63,7 +63,7 @@ describe("installEnginePool", { timeout: 60_000 }, () => {
     const pool = installEnginePool({ YOSCHED_ENGINE_WORKER: out, YOSCHED_ENGINE_WORKERS: "2" }, stamp, (m) => logs.push(m), 4);
     expect(pool).not.toBeNull();
     expect(setTrialBatchRunner(null)).toBeTypeOf("function");
-    expect(logs).toContain("engine pool: 2 workers");
+    expect(logs).toContain("engine pool: 2 workers (batch limit 3000 ms, trial deadline 6000 ms)");
     await pool!.close();
   });
 

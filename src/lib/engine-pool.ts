@@ -17,7 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Worker, MessageChannel, receiveMessageOnPort, type MessagePort } from "node:worker_threads";
-import type { TrialBatch, TrialRun } from "./auto-scheduler";
+import type { TrialBatch, TrialBatchRunner, TrialRun } from "./auto-scheduler";
 import type { WorkerMessage, WorkerReply } from "./engine-worker-core";
 
 export type BundleStamp = { version: string; commit: string };
@@ -53,7 +53,8 @@ export type EnginePoolOptions = {
   log?: (message: string) => void;
 };
 export type EnginePool = {
-  runBatch(batch: TrialBatch): TrialRun[] | null;
+  /** `timeoutMs` (when shorter) replaces the pool's batch time limit for this batch. */
+  runBatch(batch: TrialBatch, timeoutMs?: number): TrialRun[] | null;
   close(): Promise<void>;
   readonly size: number;
   readonly disabled: boolean;
@@ -105,7 +106,7 @@ export function createEnginePool(o: EnginePoolOptions): EnginePool | null {
     return null;
   };
 
-  function runBatch(b: TrialBatch): TrialRun[] | null {
+  function runBatch(b: TrialBatch, timeoutMs?: number): TrialRun[] | null {
     if (disabled) return null;
     const n = b.variants.length;
     if (n === 0) return [];
@@ -116,7 +117,8 @@ export function createEnginePool(o: EnginePoolOptions): EnginePool | null {
     } catch (e) { return fail(`a worker could not start: ${errText(e)}`); }
     const active = slots.slice(0, k);
     const id = ++job;
-    const deadline = performance.now() + o.batchTimeoutMs;
+    const limitMs = timeoutMs != null && timeoutMs > 0 ? Math.min(timeoutMs, o.batchTimeoutMs) : o.batchTimeoutMs;
+    const deadline = performance.now() + limitMs;
     const out: (TrialRun | undefined)[] = new Array(n).fill(undefined);
     let got = 0;
     let next = 0;
@@ -142,7 +144,7 @@ export function createEnginePool(o: EnginePoolOptions): EnginePool | null {
         }
         if (got >= n || progressed) continue;
         const left = deadline - performance.now();
-        if (left <= 0) return fail(`no answer within the batch time limit (${o.batchTimeoutMs} ms)`);
+        if (left <= 0) return fail(`no answer within the batch time limit (${Math.round(limitMs)} ms)`);
         // A short slice: a reply posted just before `seen` was read is picked up on the next pass.
         Atomics.wait(counter, 0, seen, Math.min(left, WAIT_SLICE_MS));
       }
@@ -160,10 +162,31 @@ export function createEnginePool(o: EnginePoolOptions): EnginePool | null {
 }
 
 const DEFAULT_WORKERS = 8;
-const DEFAULT_BATCH_TIMEOUT_MS = 15_000;
+// David's budget for generating a month is 10 s at most. A hung or broken pool waits at most the
+// trial deadline in total before every remaining batch runs inline (a batch the pool gives up on
+// reruns inline too), so the deadline plus an inline trial stays near that budget.
+const DEFAULT_BATCH_TIMEOUT_MS = 3_000;
+const DEFAULT_TRIAL_DEADLINE_MS = 6_000;
+
+/**
+ * The installed runner: one run's batches go to the pool until `trialDeadlineMs` after the run
+ * started; each gets the pool's batch limit or the time left, whichever is less. After that, null:
+ * the rest of the run's batches run inline (the same result).
+ */
+export function deadlineRunner(
+  pool: Pick<EnginePool, "runBatch">,
+  o: { batchTimeoutMs: number; trialDeadlineMs: number },
+  now: () => number = () => performance.now(),
+): TrialBatchRunner {
+  return (batch, { startedAt }) => {
+    const left = o.trialDeadlineMs - (now() - startedAt);
+    if (left <= 0) return null;
+    return pool.runBatch(batch, Math.min(o.batchTimeoutMs, left));
+  };
+}
 
 /** The pool's settings from the environment (server operations, not scheduling policy). */
-export function poolOptionsFromEnv(env: Record<string, string | undefined>, expect: BundleStamp, cpus: number = os.availableParallelism()): Omit<EnginePoolOptions, "log"> {
+export function poolOptionsFromEnv(env: Record<string, string | undefined>, expect: BundleStamp, cpus: number = os.availableParallelism()): Omit<EnginePoolOptions, "log"> & { trialDeadlineMs: number } {
   const int = (v: string | undefined, dflt: number, min: number) => {
     if (v == null || v.trim() === "") return dflt;
     const n = Number(v);
@@ -173,6 +196,7 @@ export function poolOptionsFromEnv(env: Record<string, string | undefined>, expe
     bundlePath: env.YOSCHED_ENGINE_WORKER?.trim() || path.join(process.cwd(), "engine-worker.cjs"),
     workers: Math.min(int(env.YOSCHED_ENGINE_WORKERS, DEFAULT_WORKERS, 0), Math.max(0, cpus - 1)),
     batchTimeoutMs: int(env.YOSCHED_ENGINE_BATCH_TIMEOUT_MS, DEFAULT_BATCH_TIMEOUT_MS, 1),
+    trialDeadlineMs: int(env.YOSCHED_ENGINE_TRIAL_DEADLINE_MS, DEFAULT_TRIAL_DEADLINE_MS, 1),
     expect,
   };
 }

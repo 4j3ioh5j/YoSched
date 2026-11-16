@@ -5898,33 +5898,50 @@ export function trialRun(input: AutoScheduleInput, core: (input: AutoScheduleInp
  * Card #266: runs one trial batch somewhere else (the server's worker-thread pool), returning the
  * runs in the batch's order, or null to have the batch run here, in a plain loop. Only the server
  * installs one (src/instrumentation.ts); the browser and the tests run every batch inline.
+ * `startedAt` is when the whole run (one autoSchedule call, one Live edit) began, so the runner can
+ * hold an overall time limit across its batches.
+ *
+ * The runner is kept on globalThis, not in this module: Next's production build gives
+ * instrumentation and each API route their own copy of this file (card #266 r1).
  */
-export type TrialBatchRunner = (batch: TrialBatch) => TrialRun[] | null;
-let trialBatchRunner: TrialBatchRunner | null = null;
+export type TrialBatchRunner = (batch: TrialBatch, ctx: { startedAt: number }) => TrialRun[] | null;
+const RUNNER_KEY = Symbol.for("yosched.trialBatchRunner");
+type RunnerHolder = { [RUNNER_KEY]?: TrialBatchRunner | null };
+const currentRunner = (): TrialBatchRunner | null => (globalThis as RunnerHolder)[RUNNER_KEY] ?? null;
 /** Installs (or with null removes) the batch runner; returns the one it replaces. */
 export function setTrialBatchRunner(runner: TrialBatchRunner | null): TrialBatchRunner | null {
-  const prev = trialBatchRunner;
-  trialBatchRunner = runner;
+  const prev = currentRunner();
+  (globalThis as RunnerHolder)[RUNNER_KEY] = runner;
   return prev;
+}
+
+/**
+ * One run's batch function: each batch goes to the installed runner (the server's pool) when it
+ * has more than one run and the runner answers in full, otherwise it runs here in a plain loop.
+ * Every batch of the run shares one start time (see TrialBatchRunner).
+ */
+export function trialBatchRunFor(
+  opts: { core?: (input: AutoScheduleInput, items: QualityItems) => AutoScheduleResult; noRunner?: boolean; stats?: { pooled: number; inline: number } } = {},
+): (batch: TrialBatch) => TrialRun[] {
+  const startedAt = performance.now();
+  return (batch) => {
+    const runner = opts.noRunner ? null : currentRunner();
+    // The off run is one run: nothing to share out. A runner that gives up, or answers with the
+    // wrong number of runs, leaves the batch to the plain loop (same result, just slower).
+    let runs = batch.variants.length > 1 && runner ? runner(batch, { startedAt }) : null;
+    if (runs && runs.length !== batch.variants.length) runs = null;
+    if (opts.stats) opts.stats[runs ? "pooled" : "inline"]++;
+    return runs ?? batch.variants.map((v) => trialRun(trialInput(batch.base, v), opts.core));
+  };
 }
 
 export function autoSchedule(input: AutoScheduleInput, opts: AutoScheduleOptions = {}): AutoScheduleResult {
   if (opts.spacingTrial === false) return autoScheduleCore(input);
-  const core = opts.coreForTest ?? autoScheduleCore;
   // A test's stand-in core only runs here, so a test seam never goes to the pool.
-  const runner = opts.coreForTest ? null : trialBatchRunner;
+  const run = trialBatchRunFor({ core: opts.coreForTest, noRunner: !!opts.coreForTest, stats: opts.trialStats });
   const steps = spacingTrialSteps(input);
   let step = steps.next();
-  while (!step.done) {
-    const batch = step.value;
-    const inline = () => batch.variants.map((v) => trialRun(trialInput(batch.base, v), core));
-    // The off run is one run: nothing to share out. A runner that gives up, or answers with the
-    // wrong number of runs, leaves the batch to the plain loop (same result, just slower).
-    let runs = batch.variants.length > 1 && runner ? runner(batch) : null;
-    if (runs && runs.length !== batch.variants.length) runs = null;
-    if (opts.trialStats) opts.trialStats[runs ? "pooled" : "inline"]++;
-    step = steps.next(runs ?? inline());
-  }
+  while (!step.done) step = steps.next(run(step.value));
   return step.value ?? autoScheduleCore(input);
 }
 
@@ -5942,17 +5959,6 @@ export function* autoScheduleSteps(input: AutoScheduleInput, opts: { spacingTria
   if (opts.spacingTrial === false) return yield* plain();
   const trial = yield* spacingTrialSteps(input);
   return trial ?? (yield* plain());
-}
-
-/**
- * Runs one batch here and now: on the installed runner (the server's pool) when it has more than
- * one run and the runner answers in full, otherwise in a plain loop. The same choice autoSchedule
- * makes, for the step drivers (scenario.ts runStepsSync).
- */
-export function runTrialBatch(batch: TrialBatch): TrialRun[] {
-  let runs = batch.variants.length > 1 && trialBatchRunner ? trialBatchRunner(batch) : null;
-  if (runs && runs.length !== batch.variants.length) runs = null;
-  return runs ?? batch.variants.map((v) => trialRun(trialInput(batch.base, v)));
 }
 
 /** Test seam (card #266): one engine run with its per-item quality maps. */
