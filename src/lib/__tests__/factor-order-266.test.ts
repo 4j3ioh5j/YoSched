@@ -1,7 +1,7 @@
-// Card #266: the "spacing" factor sits after requests. One helper places it for both the
+// Card #266: the "spacing" factor sits after requests (and, card #285, after overHours). One helper places it for both the
 // engine's old-6-key acceptance and applying a saved profile.
 import { describe, it, expect } from "vitest";
-import { insertSpacingAfterRequests } from "../autogen-factor-order";
+import { insertSpacing } from "../autogen-factor-order";
 import { reconcileOrder } from "../autogen-profile";
 import { effectiveFactorKeys, DEFAULT_FACTOR_ORDER, type AutoGenFactorConfig } from "../auto-scheduler";
 import { FACTOR_META } from "../autogen-priority";
@@ -10,18 +10,7 @@ const LIVE6 = ["hardLimits", "coverage", "underHours", "requests", "overHours", 
 const cfg = (keys: string[], o: Partial<Record<string, Partial<AutoGenFactorConfig>>> = {}): AutoGenFactorConfig[] =>
   keys.map((key, i) => ({ key, sortOrder: i, enabled: true, ...(o[key] ?? {}) }));
 
-describe("insertSpacingAfterRequests (card #266)", () => {
-  it("inserts spacing directly after requests", () => {
-    expect(insertSpacingAfterRequests(LIVE6)).toEqual(["hardLimits", "coverage", "underHours", "requests", "spacing", "overHours", "fairness"]);
-  });
-  it("appends it when requests is absent", () => {
-    expect(insertSpacingAfterRequests(["a", "b"])).toEqual(["a", "b", "spacing"]);
-  });
-  it("leaves a list that already has spacing unchanged", () => {
-    const k = ["spacing", ...LIVE6];
-    expect(insertSpacingAfterRequests(k)).toEqual(k);
-  });
-});
+// insertSpacing itself: factor-order-285.test.ts (below Over hours too, David's #58).
 
 describe("effectiveFactorKeys with spacing (card #266)", () => {
   it("the default order has spacing after requests", () => {
@@ -31,11 +20,11 @@ describe("effectiveFactorKeys with spacing (card #266)", () => {
     const k = ["spacing", "hardLimits", "coverage", "underHours", "requests", "overHours", "fairness"];
     expect(effectiveFactorKeys(cfg(k))).toEqual(k);
   });
-  it("the old exact 6-key set keeps its order with spacing inserted after requests", () => {
-    expect(effectiveFactorKeys(cfg(LIVE6))).toEqual(["hardLimits", "coverage", "underHours", "requests", "spacing", "overHours", "fairness"]);
+  it("the old exact 6-key set keeps its order with spacing inserted below requests and overHours (#285)", () => {
+    expect(effectiveFactorKeys(cfg(LIVE6))).toEqual(["hardLimits", "coverage", "underHours", "requests", "overHours", "spacing", "fairness"]);
   });
   it("Prohibited hours still move first, on the 6-key set too", () => {
-    expect(effectiveFactorKeys(cfg(LIVE6, { underHours: { hoursPolicy: "prohibited" } }))).toEqual(["underHours", "hardLimits", "coverage", "requests", "spacing", "overHours", "fairness"]);
+    expect(effectiveFactorKeys(cfg(LIVE6, { underHours: { hoursPolicy: "prohibited" } }))).toEqual(["underHours", "hardLimits", "coverage", "requests", "overHours", "spacing", "fairness"]);
   });
   it.each([
     ["a 6-key set missing another key", ["hardLimits", "coverage", "underHours", "requests", "spacing", "fairness"]],
@@ -50,13 +39,13 @@ describe("effectiveFactorKeys with spacing (card #266)", () => {
   });
 });
 
-describe("reconcileOrder places a missing spacing after the profile's requests (card #266)", () => {
-  const LIVE7 = insertSpacingAfterRequests(LIVE6);
-  it("an old 6-key profile → spacing after its requests", () => {
+describe("reconcileOrder places a missing spacing below the profile's requests and overHours (cards #266, #285)", () => {
+  const LIVE7 = insertSpacing(LIVE6);
+  it("an old 6-key profile → spacing below its requests and overHours", () => {
     const old = ["coverage", "hardLimits", "requests", "underHours", "overHours", "fairness"];
-    expect(reconcileOrder(old, LIVE7)).toEqual(["coverage", "hardLimits", "requests", "spacing", "underHours", "overHours", "fairness"]);
+    expect(reconcileOrder(old, LIVE7)).toEqual(["coverage", "hardLimits", "requests", "underHours", "overHours", "spacing", "fairness"]);
   });
-  it("requests absent from the profile → spacing last; other missing keys still appended last", () => {
+  it("requests and overHours absent from the profile → spacing last; other missing keys still appended last", () => {
     expect(reconcileOrder(["fairness", "coverage"], LIVE7)).toEqual(["fairness", "coverage", "hardLimits", "underHours", "requests", "overHours", "spacing"]);
   });
   it("a catalog without spacing is unchanged behaviour", () => {

@@ -9,7 +9,7 @@ import { buildRankFromConfig, DEFAULT_FACTOR_ORDER, type AutoGenFactorConfig } f
 // Distinct term values so a reorder is observable in the output vector. Keyed by the
 // six Slice-2a factors (was the two aggregates coverageAndHardLimits / ppHours).
 // Card #266 adds spacing (55), after requests. A config of the six pre-spacing keys keeps its
-// order with spacing inserted after requests.
+// order with spacing inserted below requests and overHours (card #285).
 const TERMS = { hardLimits: 10, coverage: 20, overHours: 30, underHours: 40, requests: 50, spacing: 55, fairness: 60 };
 const DEFAULT_RANK = [10, 20, 30, 40, 50, 55, 60];
 

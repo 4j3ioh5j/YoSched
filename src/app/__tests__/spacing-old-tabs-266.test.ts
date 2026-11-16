@@ -9,7 +9,7 @@ import { effectiveFactorKeys } from "@/lib/auto-scheduler";
 
 const SRC = path.resolve(__dirname, "..");
 const read = (p: string) => readFileSync(path.join(SRC, p), "utf8");
-const LIVE7 = ["hardLimits", "coverage", "underHours", "requests", "spacing", "overHours", "fairness"].map((key, i) => ({ key, sortOrder: i, enabled: true }));
+const LIVE7 = ["hardLimits", "coverage", "underHours", "requests", "overHours", "spacing", "fairness"].map((key, i) => ({ key, sortOrder: i, enabled: true }));  // the live order since David's #58
 
 // The pre-#266 engine's validity rule (auto-scheduler.ts at 5acde0c): honoured only when the config
 // is EXACTLY its six known keys, else the default order [hardLimits, coverage, overHours, underHours, requests, fairness].
@@ -25,7 +25,7 @@ describe("old-tab bridge for the spacing factor (card #266)", () => {
     const rows = factorRowsForClient(LIVE7, null);
     expect(rows.map((r) => r.key)).toEqual(["hardLimits", "coverage", "underHours", "requests", "overHours", "fairness"]);
     expect(oldEngineOrder(rows)).toEqual(["hardLimits", "coverage", "underHours", "requests", "overHours", "fairness"]);
-    // (the 7 rows would have made the old engine fall back: requests and overHours swap)
+    // (the 7 rows would have made the old engine fall back: it does not know spacing)
     expect(oldEngineOrder(LIVE7)).toEqual(OLD_KNOWN);
   });
   it("with the flag (alone or in a list) all seven rows are sent", () => {
@@ -33,7 +33,7 @@ describe("old-tab bridge for the spacing factor (card #266)", () => {
     expect(factorRowsForClient(LIVE7, "other, spacing")).toHaveLength(7);
     expect(factorRowsForClient(LIVE7, "other")).toHaveLength(6);
   });
-  it("a new tab on a rolled-back server (6 rows) keeps the live order with spacing after requests", () => {
+  it("a new tab on a rolled-back server (6 rows) keeps the live order (spacing below requests and overHours, card #285)", () => {
     expect(effectiveFactorKeys(factorRowsForClient(LIVE7, null))).toEqual(LIVE7.map((r) => r.key));
   });
   it("the route filters by the flag and the Live grid sends it", () => {

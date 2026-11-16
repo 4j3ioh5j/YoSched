@@ -21,13 +21,16 @@ export function validateFactorOrder(submitted: unknown, existingKeys: string[]):
   return { ok: true, order };
 }
 
-// Card #266: the "spacing" factor sits directly after "requests" (David's #52). One helper
-// places it wherever a key list predates it: the engine's acceptance of the old exact 6-key
-// set, and applying a saved profile that lacks it. Without "requests", spacing goes last.
+// Card #266/#285: the "spacing" factor sits below both "requests" (David's #52) and "overHours"
+// (#58): directly after whichever of the two comes later in the list. One helper places it
+// wherever a key list predates it: the engine's acceptance of the old exact 6-key set, and
+// applying a saved profile that lacks it. With only one of the two, it goes after that one;
+// with neither, last.
 export const SPACING_KEY = "spacing";
-export function insertSpacingAfterRequests(keys: readonly string[]): string[] {
+export const SPACING_BELOW = ["requests", "overHours"] as const;
+export function insertSpacing(keys: readonly string[]): string[] {
   if (keys.includes(SPACING_KEY)) return [...keys];
-  const at = keys.indexOf("requests");
+  const at = Math.max(...SPACING_BELOW.map((k) => keys.indexOf(k)));
   return at < 0 ? [...keys, SPACING_KEY] : [...keys.slice(0, at + 1), SPACING_KEY, ...keys.slice(at + 1)];
 }
 

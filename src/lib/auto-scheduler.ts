@@ -13,7 +13,7 @@ import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
 import { tallyBalances, sharesOf, spreadPenalty, spreadChange, addDays, type BalanceTally } from "./shift-balance";
 import { gapBreaks, gapList, gapListShrank, gapTrialBeats, type GapTrialOutcome } from "./shift-gap";
 import { readTuning, isWeekendDate, weekendSecondDow, type SchedulerTuning } from "./scheduler-tuning";
-import { insertSpacingAfterRequests, SPACING_KEY } from "./autogen-factor-order";
+import { insertSpacing, SPACING_KEY } from "./autogen-factor-order";
 import { spacingUnits, spacingPenalty, mostUnits, type SpacingUnit } from "./spacing-measure";
 import { isoDow, isoNext, isoPrev, isoNoonMs } from "./date-memo";
 
@@ -319,7 +319,7 @@ export const DEFAULT_FACTOR_ORDER = [
   "overHours",
   "underHours",
   "requests",
-  "spacing", // card #266: after requests, before fairness (and, live, before overHours)
+  "spacing", // card #266/#285: below requests and overHours, before fairness
   "fairness",
 ] as const;
 
@@ -345,8 +345,9 @@ export function effectiveFactorKeys(config: AutoGenFactorConfig[] | undefined): 
     const sorted = () => [...config].sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.key);
     if (allKnown && config.length === known.length) order = sorted();
     // Card #266: the exact pre-spacing set (every known key but spacing) keeps its order, with
-    // spacing placed after requests — a DB not yet migrated, or an old server's input.
-    else if (allKnown && config.length === known.length - 1 && !keys.has(SPACING_KEY)) order = insertSpacingAfterRequests(sorted());
+    // spacing placed below requests and overHours (card #285) — a DB not yet migrated, or an old
+    // server's input.
+    else if (allKnown && config.length === known.length - 1 && !keys.has(SPACING_KEY)) order = insertSpacing(sorted());
   }
   return withProhibitedHoursFirst(order, config);
 }
