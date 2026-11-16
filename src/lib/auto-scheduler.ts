@@ -1800,10 +1800,24 @@ function autoScheduleCore({
   }
 
   // Card #175: could the person work this date, by their own availability rules
-  // (couldWorkOn reads conditional rules optimistically — STEP 0 runs on an empty grid;
-  // any excess left over target is trimmed after placement, trimLeaveToTarget).
+  // (couldWorkOn reads an undecided conditional rule optimistically; card #183 re-judges this
+  // run's leave on the finished grid, leaveOffOnRuledOutDays; any excess left over target is
+  // trimmed after placement, trimLeaveToTarget).
   const leavePolicy: LeavePolicy = schedulingPreferences.leaveHoursPolicy ?? "up-to-target";
-  const normallyWorks = (p: ScheduleStaff, date: string): boolean => couldWorkOn(p.availabilityRules, date, payPeriods);
+  // Card #183: a conditional rule's condition person is judged exactly when their cell is
+  // fixed before any engine step: a loaded cell the engine never changes (anything but a
+  // fillable day off, isFillableOffCell — assign() never overwrites the rest), or read-only
+  // context outside the run. Built from the loaded assignments, so leave this step places
+  // never counts. Anything else is undecided (undefined) and read optimistically, as before.
+  const fixedBeforeRun = new Map<string, boolean>();
+  for (const a of existingAssignments) {
+    if (!dateSet.has(a.date) || !isFillableOffCell({ shiftTypeId: a.shiftTypeId, locked: a.isLocked, source: a.source })) {
+      fixedBeforeRun.set(`${a.staffId}:${a.date}`, !isAwayShift(a.shiftTypeId));
+    }
+  }
+  const knownBeforeRun = (sid: string, d: string): boolean | undefined => fixedBeforeRun.get(`${sid}:${d}`);
+  const normallyWorks = (p: ScheduleStaff, date: string): boolean =>
+    couldWorkOn(p.availabilityRules, date, payPeriods, knownBeforeRun);
 
   // ── STEP 0: Pre-place approved leave requests ──
   // An approved hard LEAVE request pre-places its specific leave shift, exactly
@@ -1825,8 +1839,18 @@ function autoScheduleCore({
         // Card #175: a requested leave day the person would have been off anyway
         // (their own availability rules) gets X — no leave is charged for a day off.
         if (leavePolicy === "up-to-target" && offShift && !normallyWorks(staff, date)) {
-          assign(staff.id, date, offShift, `Requested leave on a day off: ${offShift.code} (no leave used)`, LEAVE_OFF_STEP, 1.0);
-          continue;
+          // Card #183 (Codex #1419): a day off here must not break a follow rule with a cell
+          // already there (a later placement next to it checks its own rule via isAvailable).
+          const prev = grid.get(`${staff.id}:${prevDate(date)}`);
+          const next = grid.get(`${staff.id}:${nextDate(date)}`);
+          const nextSt = next ? stById.get(next.shiftTypeId) : undefined;
+          const followOk = (!prev || isShiftAllowedAfter(followMap, prev.shiftTypeId, offShift.id, true))
+            && (!next || !nextSt || isShiftAllowedAfter(followMap, offShift.id, next.shiftTypeId, nextSt.isOffShift));
+          if (followOk) {
+            assign(staff.id, date, offShift, `Requested leave on a day off: ${offShift.code} (no leave used)`, LEAVE_OFF_STEP, 1.0);
+            continue;
+          }
+          warnings.push(`${staff.initials} ${date}: requested leave kept — their availability rule rules the day out, but a day off there would break a follow rule`);
         }
         assign(staff.id, date, leaveSt, `Approved leave request: ${leaveSt.code}`, "request-leave", 1.0);
       }
@@ -4814,6 +4838,100 @@ function autoScheduleCore({
     }
   }
 
+  // Card #183: this run's leave on a day the person's conditional rule rules out, judged on the
+  // finished grid ("EF is not available when CD works" and CD now works that day), becomes the
+  // off shift: the person is off anyway, so no leave is charged. The condition person's day is
+  // their final cell; an empty day in the run is X (STEP 4); a day outside the run with no cell
+  // is undecided and read optimistically. AL and X are both away, so the swap never changes
+  // anyone else's condition. Kept when a day off there would break a follow rule.
+  function leaveOffOnRuledOutDays(off: ScheduleShiftType) {
+    const owners = activeStaff.filter((p) => p.availabilityRules.some((r) => r.conditionStaffId && r.conditionType));
+    if (owners.length === 0) return;
+    const knownFinal = (sid: string, d: string): boolean | undefined => {
+      const c = grid.get(`${sid}:${d}`);
+      if (c) return !isAwayShift(c.shiftTypeId);
+      return dateSet.has(d) ? false : undefined;
+    };
+    const followOk = (staffId: string, date: string): boolean => {
+      const prev = grid.get(`${staffId}:${prevDate(date)}`)?.shiftTypeId ?? (dateSet.has(prevDate(date)) ? off.id : null);
+      if (prev && !isShiftAllowedAfter(followMap, prev, off.id, true)) return false;
+      const next = grid.get(`${staffId}:${nextDate(date)}`)?.shiftTypeId ?? (dateSet.has(nextDate(date)) ? off.id : null);
+      const nextSt = next ? stById.get(next) : undefined;
+      if (next && nextSt && !isShiftAllowedAfter(followMap, off.id, next, nextSt.isOffShift)) return false;
+      return true;
+    };
+    // Would a new cell on `date` change another owner's judgement there? (An engine work cell
+    // whose rules now fail, this run's leave now ruled out, or leave already turned into X now
+    // workable.) Compared before/after, so a cell that was already broken and kept does not block.
+    const HUMAN_STEPS = new Set(["request-leave", LEAVE_OFF_STEP, "request-shift", "request-tentative"]);
+    const judgements = (exceptId: string, date: string): string => owners
+      .filter((q) => q.id !== exceptId)
+      .map((q) => {
+        const c = grid.get(`${q.id}:${date}`);
+        if (!c || c.locked) return "";
+        if (c.step === "request-leave") return couldWorkOn(q.availabilityRules, date, payPeriods, knownFinal) ? "" : q.id;
+        // Codex #1423: leave already turned into X must stay ruled out — a refill that makes the
+        // day workable again would leave that X charging nothing on a day they could work.
+        if (c.step === LEAVE_OFF_STEP) return couldWorkOn(q.availabilityRules, date, payPeriods, knownFinal) ? `${q.id}:workable` : "";
+        if (c.step === undefined || HUMAN_STEPS.has(c.step) || isAwayShift(c.shiftTypeId)) return "";
+        if (stById.get(c.shiftTypeId)?.ignoresWorkingDays) return "";
+        return evaluateAvailability(q.availabilityRules, date, payPeriods, (pid, d) => isWorking(pid, d)).available ? "" : q.id;
+      })
+      .join(",");
+    // Give back the hours the swap took (Codex #1414): the fill shift on open days of the same
+    // pay period, up to the target, under every placement rule (isAvailable), never past target
+    // unless over-hours are allowed, and never where it would break someone else's conditional
+    // rule. Same shape as the other refills (refillHolder).
+    const refillAfterSwap = (p: ScheduleStaff, pp: PayPeriod) => {
+      if (!fillShift || followerBySource.has(fillShift.id) || !eligibleShiftSets.get(p.id)?.has(fillShift.id)) return;
+      const target = targetFor(p, pp);
+      for (const d of dates) {
+        if (ppHoursForStaff(p.id, pp) >= target) break;
+        if (d < pp.startDate || d > pp.endDate || !isOpenCell(p.id, d) || holidaySet.has(d)) continue;
+        if (!isAvailable(p, d, fillShift)) continue;
+        const add = getShiftHours(p.id, fillShift, overrideMap, dayTypeOf(d, holidaySet));
+        if (!fillMayOvershoot && fillShift.countsTowardFte && ppHoursForStaff(p.id, pp) + add > target) continue;
+        const before = judgements(p.id, d);
+        const prior = grid.get(`${p.id}:${d}`);
+        assign(p.id, d, fillShift, "Refill after requested leave became a day off", "fill", 0.8);
+        if (judgements(p.id, d) !== before) {
+          releaseEngineCell(p.id, d);
+          if (prior) grid.set(`${p.id}:${d}`, prior);
+        }
+      }
+    };
+    for (const p of owners) {
+      const touched = new Set<PayPeriod>();
+      for (const date of dates) {
+        const key = `${p.id}:${date}`;
+        const c = grid.get(key);
+        if (!c || c.step !== "request-leave" || c.locked) continue;
+        if (couldWorkOn(p.availabilityRules, date, payPeriods, knownFinal)) continue;
+        if (!followOk(p.id, date)) {
+          const msg = `${p.initials} ${date}: requested leave kept — their availability rule rules the day out, but a day off there would break a follow rule`;
+          if (!warnings.includes(msg)) warnings.push(msg); // STEP 0 may have said it already
+          continue;
+        }
+        const idx = suggestions.findIndex((x) => x.staffId === p.id && x.date === date && x.step === "request-leave");
+        grid.set(key, { ...c, shiftTypeId: off.id, code: off.code, step: LEAVE_OFF_STEP });
+        if (idx >= 0) {
+          suggestions[idx] = {
+            ...suggestions[idx],
+            shiftTypeId: off.id,
+            code: off.code,
+            step: LEAVE_OFF_STEP,
+            reason: `Requested leave on a day off: ${off.code} (no leave used — their availability rule rules the day out on the finished schedule)`,
+          };
+        }
+        byStep["request-leave"] = Math.max(0, (byStep["request-leave"] ?? 0) - 1);
+        byStep[LEAVE_OFF_STEP] = (byStep[LEAVE_OFF_STEP] ?? 0) + 1;
+        const pp = payPeriods.find((x) => date >= x.startDate && date <= x.endDate);
+        if (pp) touched.add(pp);
+      }
+      for (const pp of touched) refillAfterSwap(p, pp);
+    }
+  }
+
   function recheckConditionalRules() {
     const owners = activeStaff.filter((p) => p.availabilityRules.some((r) => r.conditionStaffId && r.conditionType));
     if (owners.length === 0) return;
@@ -5328,7 +5446,10 @@ function autoScheduleCore({
   // cells into X, latest first, while they are over by at least that day's hours —
   // never under target. Only cells this run placed (step "request-leave"): never a
   // loaded, locked or approval-placed cell, never a frozen earlier month.
-  if (leavePolicy === "up-to-target" && offShift) trimLeaveToTarget(offShift);
+  if (leavePolicy === "up-to-target" && offShift) {
+    leaveOffOnRuledOutDays(offShift);
+    trimLeaveToTarget(offShift);
+  }
 
   // ── Post-repair hours audit ──
   // Emit one warning per residual nonzero PP-hour deviation, AFTER the repair so

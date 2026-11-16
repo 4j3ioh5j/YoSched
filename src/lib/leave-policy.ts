@@ -57,13 +57,31 @@ export function excessLeaveDays(
 /**
  * Could this person work `date`, by their own availability rules? A requested leave
  * day they could NOT work is a day off anyway, so it is not charged as leave.
- * Conditional rules ("available when CD is working" / "unavailable when …") can't be
- * judged before the schedule exists, so they are read optimistically: a conditional
- * AVAILABLE rule counts as met, a conditional UNAVAILABLE rule is ignored. A day that
- * might be worked keeps its leave; any excess is trimmed against the hours target.
+ * A conditional rule ("available when CD is working" / "unavailable when …") is judged
+ * exactly when `known` says CD's day is decided (card #183). Otherwise it is read
+ * optimistically: a conditional AVAILABLE rule counts as met, a conditional UNAVAILABLE
+ * rule is ignored. A day that might be worked keeps its leave; any excess is trimmed
+ * against the hours target.
  */
-export function couldWorkOn(rules: readonly AvailabilityRule[], date: string, payPeriods: readonly PayPeriodRange[]): boolean {
-  const optimistic = rules.filter((r) => !(r.conditionStaffId && r.conditionType && r.type !== "available"));
-  // No isStaffAssigned: evaluateAvailability then applies the kept conditional rules unconditionally.
-  return evaluateAvailability([...optimistic], date, [...payPeriods]).available;
+export function couldWorkOn(
+  rules: readonly AvailabilityRule[],
+  date: string,
+  payPeriods: readonly PayPeriodRange[],
+  // Card #183: the condition person's day when it is already decided — true = working,
+  // false = not working, undefined = not decided yet (read optimistically, as above).
+  known?: (staffId: string, date: string) => boolean | undefined,
+): boolean {
+  const kept: AvailabilityRule[] = [];
+  for (const r of rules) {
+    if (!r.conditionStaffId || !r.conditionType) { kept.push(r); continue; }
+    const k = known?.(r.conditionStaffId, date);
+    if (k === undefined) {
+      // Optimistic: a conditional AVAILABLE rule counts as met, a conditional UNAVAILABLE one is ignored.
+      if (r.type === "available") kept.push({ ...r, conditionStaffId: null, conditionType: null });
+      continue;
+    }
+    const met = r.conditionType === "working" ? k : !k;
+    if (met) kept.push({ ...r, conditionStaffId: null, conditionType: null });
+  }
+  return evaluateAvailability(kept, date, [...payPeriods]).available;
 }

@@ -448,3 +448,39 @@ describe("helpers", () => {
     expect(reasonFromRejection({ staffId: "p1", date: MON, shiftTypeId: "st-orc", reason: "manual-locked" }, one)).toBe(`${dayLabel(MON)} is locked for AB`);
   });
 });
+
+describe("decideApproval — card #183: leave on a day a conditional rule rules out", () => {
+  const weekdays = [1, 2, 3, 4, 5].map((d) => ({ type: "available" as const, strength: "rule" as const, ...wEvery(d) }));
+  const notWhenCdWorks = { type: "unavailable" as const, strength: "rule" as const, ...wEvery(5), conditionStaffId: "p2", conditionType: "working" as const };
+  const onlyWhenCdWorks = { type: "available" as const, strength: "rule" as const, ...wEvery(5), conditionStaffId: "p2", conditionType: "working" as const };
+  const withAB = (rules: ScheduleStaff["availabilityRules"], existing: ScheduleAssignment[]) =>
+    makeInput({ staff: [makeStaff("p1", "AB", { availabilityRules: rules }), makeStaff("p2", "CD")], existingAssignments: existing });
+  const abFri = (d: ReturnType<typeof decideApproval>) => expectOk(d).writes.find((w) => w.staffId === "p1" && w.date === FRI)?.shiftTypeId;
+
+  it("CD locked working that Friday → AB's leave is pinned as X", () => {
+    expect(abFri(decide(withAB([...weekdays, notWhenCdWorks], [cell("p2", FRI, "st-or", "auto", true)]), wantLeave("r1", "p1", FRI), "st-al"))).toBe("st-off");
+  });
+  it("CD hand-entered working that Friday → X", () => {
+    expect(abFri(decide(withAB([...weekdays, notWhenCdWorks], [cell("p2", FRI, "st-or", "manual")]), wantLeave("r1", "p1", FRI), "st-al"))).toBe("st-off");
+  });
+  it("CD imported or request-placed working that Friday (never re-arranged) → X", () => {
+    expect(abFri(decide(withAB([...weekdays, notWhenCdWorks], [cell("p2", FRI, "st-or", "imported")]), wantLeave("r1", "p1", FRI), "st-al"))).toBe("st-off");
+    expect(abFri(decide(withAB([...weekdays, notWhenCdWorks], [cell("p2", FRI, "st-or", "request")]), wantLeave("r1", "p1", FRI), "st-al"))).toBe("st-off");
+  });
+  it("a day off that would break a follow rule is not pinned: the leave stays (Codex #1419)", () => {
+    const followRules = [
+      { sourceShiftId: "st-or", allowedShiftId: "st-or", allowOffShifts: false, mode: "allow" },
+      { sourceShiftId: "st-or", allowedShiftId: "st-al", allowOffShifts: false, mode: "allow" },
+    ];
+    const input = { ...withAB([...weekdays, notWhenCdWorks], [cell("p1", THU, "st-or", "manual", true), cell("p2", FRI, "st-or", "manual", true)]), followRules };
+    expect(abFri(decide(input, wantLeave("r1", "p1", FRI), "st-al"))).toBe("st-al");
+  });
+  it("CD's Friday not fixed (an auto cell) → undecided, leave kept", () => {
+    expect(abFri(decide(withAB([...weekdays, notWhenCdWorks], [cell("p2", FRI, "st-or", "auto")]), wantLeave("r1", "p1", FRI), "st-al"))).toBe("st-al");
+  });
+  it("'available only when CD works', CD locked off → X; CD locked working → leave", () => {
+    const monThu = weekdays.slice(0, 4);
+    expect(abFri(decide(withAB([...monThu, onlyWhenCdWorks], [cell("p2", FRI, "st-off", "manual", true)]), wantLeave("r1", "p1", FRI), "st-al"))).toBe("st-off");
+    expect(abFri(decide(withAB([...monThu, onlyWhenCdWorks], [cell("p2", FRI, "st-or", "manual", true)]), wantLeave("r1", "p1", FRI), "st-al"))).toBe("st-al");
+  });
+});

@@ -412,7 +412,28 @@ export function decideApproval(
   // past target (latest days first). X honours a LEAVE request (they are off either way).
   const offSt = input.shiftTypes.find((s) => s.isOffShift) ?? null;
   const capLeave = req.kind === "LEAVE" && (input.schedulingPreferences.leaveHoursPolicy ?? "up-to-target") === "up-to-target" && offSt !== null;
+  // Card #183: a conditional rule's condition person is judged exactly when their day is fixed
+  // already — a cell this approval never re-arranges (locked, hand-entered, imported or
+  // request-placed, as isNW), or a read-only cell outside the range. Anything else is
+  // undecided and read optimistically.
+  const knownFixed = (sid: string, d: string): boolean | undefined => {
+    const k = keyOf(sid, d);
+    const c = baseline.get(k);
+    if (c && (c.isLocked || c.source === "manual" || c.source === "imported" || c.source === "request")) return !isAway(c.shiftTypeId);
+    const x = contextMap.get(k);
+    return x ? !isAway(x.shiftTypeId) : undefined;
+  };
   const pinShift = new Map<string, string>(); // covered date → the shift pinned there
+  // Card #183 (Codex #1419): X only where a day off may follow the day before and precede the
+  // day after (an earlier pin of this request, else the saved cell); otherwise the leave stays.
+  const leaveFollowMap = buildFollowRuleMap(input.followRules ?? []);
+  const dayOffFollows = (d: string): boolean => {
+    const at = (x: string) => pinShift.get(x) ?? base.get(keyOf(req.staffId, x))?.shiftTypeId;
+    const prev = at(shiftDate(d, -1));
+    const next = at(shiftDate(d, 1));
+    return (!prev || isShiftAllowedAfter(leaveFollowMap, prev, offSt!.id, true))
+      && (!next || isShiftAllowedAfter(leaveFollowMap, offSt!.id, next, isOff(next)));
+  };
   const pins: ScenarioPin[] = [];
   const pinnedKeys = new Set<string>();
   const coveredPinned: string[] = [];
@@ -428,7 +449,7 @@ export function decideApproval(
     let shift = placement;
     if (capLeave) {
       if (cell && isOff(cell.shiftTypeId)) shift = cell.shiftTypeId; // already off: keep that X
-      else if (!couldWorkOn(requester.availabilityRules, d, input.payPeriods)) shift = offSt!.id;
+      else if (!couldWorkOn(requester.availabilityRules, d, input.payPeriods, knownFixed) && dayOffFollows(d)) shift = offSt!.id;
     }
     // V4-1: the requester's OTHER approvals on this day are hard rules too.
     for (const R of approvedCovering(req.staffId, d, req.id)) {
