@@ -1425,22 +1425,38 @@ function autoScheduleCore({
     }
   }
 
+  // Card #266 (speed): each pay period's dates and day types, worked out once per run (the
+  // same dates, in the same order, the day-by-day walk below always visited).
+  const ppDayCache = new Map<string, { d: string; t: DayType }[]>();
+  function ppDays(pp: PayPeriod): { d: string; t: DayType }[] {
+    const key = `${pp.startDate}|${pp.endDate}`;
+    let days = ppDayCache.get(key);
+    if (!days) {
+      days = [];
+      const cur = new Date(pp.startDate + "T12:00:00");
+      const end = new Date(pp.endDate + "T12:00:00");
+      while (cur <= end) {
+        const d = toDateStr(cur);
+        days.push({ d, t: dayTypeOf(d, holidaySet) });
+        cur.setDate(cur.getDate() + 1);
+      }
+      ppDayCache.set(key, days);
+    }
+    return days;
+  }
   function ppHoursForStaff(staffId: string, pp: PayPeriod): number {
     let hours = 0;
-    const cur = new Date(pp.startDate + "T12:00:00");
-    const end = new Date(pp.endDate + "T12:00:00");
-    while (cur <= end) {
-      const d = toDateStr(cur);
-      const cell = getCell(staffId, d);
-      if (cell) {
-        const st = stById.get(cell.shiftTypeId);
-        if (st?.countsTowardFte) {
-          // A weekend/holiday the shift doesn't accrue on resolves to 0 hours,
-          // so no explicit day-type gate is needed.
-          hours += getShiftHours(staffId, st, overrideMap, dayTypeOf(d, holidaySet));
-        }
+    const mine = grid.ofStaff(staffId);
+    if (mine.size === 0) return 0;
+    for (const { d, t } of ppDays(pp)) {
+      const cell = mine.get(d);
+      if (!cell || isFillableOffCell(cell)) continue;
+      const st = stById.get(cell.shiftTypeId);
+      if (st?.countsTowardFte) {
+        // A weekend/holiday the shift doesn't accrue on resolves to 0 hours,
+        // so no explicit day-type gate is needed.
+        hours += getShiftHours(staffId, st, overrideMap, t);
       }
-      cur.setDate(cur.getDate() + 1);
     }
     return hours;
   }
