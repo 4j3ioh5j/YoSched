@@ -43,7 +43,8 @@ afterAll(async () => {
 });
 
 /** A batch context whose here-runs are tagged (card #281: the main thread helps). */
-const here = () => ({ startedAt: 0, run: { stalled: false, inline: false }, runHere: (idx: number) => ({ n: idx, by: "here" }) as unknown as TrialRun });
+// A run here costs nothing (known up front), so the workers get every run of the batch.
+const here = () => ({ startedAt: 0, run: { stalled: false, inline: false, hereMs: 0, hereRuns: 1 }, runHere: (idx: number) => ({ n: idx, by: "here" }) as unknown as TrialRun });
 const sig = (r: ReturnType<typeof autoSchedule>) => JSON.stringify([r.suggestions, r.warnings, r.quality]);
 
 describe("engine pool (card #266)", { timeout: 60_000 }, () => {

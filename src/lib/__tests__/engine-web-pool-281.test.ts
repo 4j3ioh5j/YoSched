@@ -91,7 +91,7 @@ describe("the page helps its workers and takes over (card #281)", { timeout: 120
       setTimeout(() => reply({ job: m.job, idx: m.idx, run: { n: m.idx, by: d ? "late" : "worker" } }), d);
     }, { workers: 1, stallMs: 150 });
     await pool.warm();
-    const run = newRun();
+    const run: TrialRunState = { ...newRun(), hereMs: 0, hereRuns: 1 }; // cost known: the worker gets both runs
     const out = (await pool.runBatch({ base: fixture(6), variants: variants(2) }, tagged(run))) as unknown as { n: number; by: string }[];
     expect(out).toEqual([{ n: 0, by: "here" }, { n: 1, by: "worker" }]);
     await sleep(700);

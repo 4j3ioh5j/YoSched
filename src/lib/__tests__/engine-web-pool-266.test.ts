@@ -53,7 +53,8 @@ const edit = () => {
   const c = out.grid.find((g) => g.code !== "X")!;
   return { b2: { ...input, existingAssignments: out.grid.map((g) => ({ ...g, isLocked: false, source: "auto" })) }, free: { staffId: c.staffId, date: c.date } };
 };
-const newRun = () => ({ run: { stalled: false, inline: false } });
+// A run here costs nothing (known up front), so the workers get every run of the batch.
+const newRun = () => ({ run: { stalled: false, inline: false, hereMs: 0, hereRuns: 1 } });
 const runAllHere = (b: TrialBatch): TrialRun[] => b.variants.map((v) => trialRun(trialInput(b.base, v)));
 
 describe("Web Worker pool for Live edits (card #266 slice B)", { timeout: 120_000 }, () => {

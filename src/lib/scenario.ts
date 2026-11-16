@@ -29,6 +29,7 @@ import {
   type ScheduleStaff,
   type ScheduleShiftType,
 } from "./auto-scheduler";
+import { runTimed } from "./trial-run-cost";
 import { evaluateAvailability, type PayPeriodRange } from "./availability";
 import { evaluateShiftEligibility } from "./shift-eligibility";
 import { foldRequestsForDate, type PendingRequestMode, type ScheduleRequestData } from "./schedule-requests";
@@ -197,7 +198,17 @@ export async function runStepsAsync<R>(
     let runs: TrialRun[] | null = null;
     if (!state.inline) { try { runs = await run(batch, { run: state, isCurrent }); } catch { runs = null; } }
     if (!isCurrent()) return { ok: false };
-    if (!runs || runs.length !== batch.variants.length) runs = batch.variants.map((v) => trialRun(trialInput(batch.base, v)));
+    if (!runs || runs.length !== batch.variants.length) {
+      // Card #287: runs done here yield between them, so a cancel lands before the next run
+      // even once the rest of the edit is inline (no runner await left to let it through).
+      const here: TrialRun[] = [];
+      for (const v of batch.variants) {
+        await new Promise<void>((r) => setTimeout(r, 0));
+        if (!isCurrent()) return { ok: false };
+        here.push(runTimed(state, () => trialRun(trialInput(batch.base, v))));
+      }
+      runs = here;
+    }
     step = steps.next(runs);
   }
   return { ok: true, value: step.value };

@@ -117,7 +117,7 @@ describe("the main thread helps and takes over (card #281)", { timeout: 120_000 
       setTimeout(() => reply({ job: m.job, idx: m.idx, run: { n: m.idx, by: d ? "late" : "worker" } }), d);
     });`);
     const p = pool({ bundlePath: f, workers: 1, stallMs: 150 });
-    const run = newRun();
+    const run: TrialRunState = { ...newRun(), hereMs: 0, hereRuns: 1 }; // cost known: the worker gets both runs
     const t = performance.now();
     const out = p.runBatch({ base: fixture(6), variants: variants(2) }, tagged(run)) as unknown as { n: number; by: string }[];
     expect(performance.now() - t).toBeLessThan(650);

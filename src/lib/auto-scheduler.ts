@@ -16,6 +16,7 @@ import { readTuning, isWeekendDate, weekendSecondDow, type SchedulerTuning } fro
 import { insertSpacing, SPACING_KEY } from "./autogen-factor-order";
 import { spacingUnits, spacingPenalty, mostUnits, type SpacingUnit } from "./spacing-measure";
 import { isoDow, isoNext, isoPrev, isoNoonMs } from "./date-memo";
+import { runTimed } from "./trial-run-cost";
 
 export type ScheduleStaff = {
   id: string;
@@ -5902,8 +5903,10 @@ export function trialRun(input: AutoScheduleInput, core: (input: AutoScheduleInp
  * runner. `stalled`: the workers already stalled once in this run, so later batches take over at
  * once instead of waiting again (one stall per run at most). `inline`: a batch of this run got no
  * answer from any worker, so the rest of the run is done here without asking the runner.
+ * Card #287, the run's cost book (trial-run-cost.ts): `hereMs`/`hereRuns` time the runs done here,
+ * `lostMs` is how far the finished pool batches are behind the same runs done here.
  */
-export type TrialRunState = { stalled: boolean; inline: boolean };
+export type TrialRunState = { stalled: boolean; inline: boolean; hereMs?: number; hereRuns?: number; lostMs?: number };
 /** One batch's context: when its run began, that run's state, and the run of entry `idx` done here. */
 export type TrialBatchCtx = { startedAt: number; run: TrialRunState; runHere: (idx: number) => TrialRun };
 
@@ -5946,7 +5949,7 @@ export function trialBatchRunFor(
     let runs = batch.variants.length > 1 && runner ? runner(batch, { startedAt, run: state, runHere }) : null;
     if (runs && runs.length !== batch.variants.length) runs = null;
     if (opts.stats) opts.stats[runs ? "pooled" : "inline"]++;
-    return runs ?? batch.variants.map((_, i) => runHere(i));
+    return runs ?? batch.variants.map((_, i) => runTimed(state, () => runHere(i)));
   };
 }
 

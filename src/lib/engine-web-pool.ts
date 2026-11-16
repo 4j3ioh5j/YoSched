@@ -14,8 +14,14 @@
 // over at once. A batch where no worker answered (a stall, a load failure, an error) sends the rest
 // of the run here; two in a row turn the pool off. A batch only answers null when it was cancelled
 // (the job stopped being current, or the pool was closed) or the pool is off.
+//
+// Card #287: each run keeps a cost book (trial-run-cost.ts). Runs done here are timed (the first
+// batch with no known cost keeps its last run here to learn it), and once the run's pool batches
+// are a stall behind the same runs done here, this page takes over as after a stall. So workers
+// that answer slowly but steadily also cost at most one stall per run.
 import { trialRun, trialInput, type TrialBatch, type TrialRun, type TrialRunState } from "./auto-scheduler";
 import type { WorkerMessage, WorkerReply } from "./engine-worker-core";
+import { behindMs, hereCost, runTimed, settleBatch } from "./trial-run-cost";
 
 export type BundleStamp = { version: string; commit: string };
 /** What the pool needs of a Worker (a real one in the browser, a stand-in in tests). */
@@ -143,7 +149,12 @@ export function createWebEnginePool(o: WebPoolOptions): WebEnginePool | null {
     const n = b.variants.length;
     if (n === 0) return [];
     if (!ensure(Math.min(o.workers, n))) return null;
-    const runHere = ctx.runHere ?? ((idx: number) => trialRun(trialInput(b.base, b.variants[idx])));
+    const plainHere = ctx.runHere ?? ((idx: number) => trialRun(trialInput(b.base, b.variants[idx])));
+    // Card #287: every run done here is timed for the run's cost book. While a run here has no
+    // known cost yet, this page keeps the batch's last run for itself, to learn it.
+    const runHere = (idx: number) => runTimed(ctx.run, () => plainHere(idx));
+    const reserved = hereCost(ctx.run) == null && n >= 2 ? n - 1 : -1;
+    const end = reserved >= 0 ? n - 1 : n;
     const id = ++job;
     type Live = { slot: Slot; held: Set<number>; ok: boolean; staged: boolean; lastAnswer: number };
     const t0 = performance.now();
@@ -161,7 +172,7 @@ export function createWebEnginePool(o: WebPoolOptions): WebEnginePool | null {
     const back: number[] = [];
     const take = (): number | null => {
       while (back.length) { const i = back.shift()!; if (out[i] === undefined) return i; }
-      while (next < n) { const i = next++; if (out[i] === undefined) return i; }
+      while (next < end) { const i = next++; if (out[i] === undefined) return i; }
       return null;
     };
     const put = (idx: number, r: TrialRun) => { out[idx] = r; got++; };
@@ -211,14 +222,20 @@ export function createWebEnginePool(o: WebPoolOptions): WebEnginePool | null {
 
     try {
       fill();
+      if (reserved >= 0) { put(reserved, runHere(reserved)); await yieldToLoop(); }
       while (got < n) {
         if (aborted || !isCurrent()) return null;
         const free = take();
         if (free != null) { put(free, runHere(free)); await yieldToLoop(); continue; }
-        const idle = performance.now() - lastWorkerAnswer;
-        if (ctx.run.stalled || idle >= stallMs) {
+        const now = performance.now();
+        const idle = now - lastWorkerAnswer;
+        // Card #287: steady answers just inside the stall time still lose time against running here.
+        const behind = behindMs(ctx.run, n, now - t0);
+        if (ctx.run.stalled || idle >= stallMs || (behind != null && behind >= stallMs)) {
           if (!ctx.run.stalled) {
-            log(`engine workers: no answer for ${Math.round(idle)} ms; this page finishes the edit's batches itself`);
+            log(idle >= stallMs
+              ? `engine workers: no answer for ${Math.round(idle)} ms; this page finishes the edit's batches itself`
+              : `engine workers: the workers answer slower than this page runs the batches (${Math.round(behind!)} ms behind); this page finishes the edit's batches itself`);
             ctx.run.stalled = true;
             stalledHere = true;
           }
@@ -229,7 +246,7 @@ export function createWebEnginePool(o: WebPoolOptions): WebEnginePool | null {
           continue;
         }
         await new Promise<void>((r) => {
-          const timer = setTimeout(() => { if (wake === done) wake = null; r(); }, Math.max(1, stallMs - idle));
+          const timer = setTimeout(() => { if (wake === done) wake = null; r(); }, Math.max(1, Math.min(stallMs - idle, behind == null ? Infinity : stallMs - behind)));
           const done = () => { clearTimeout(timer); r(); };
           wake = done;
         });
@@ -239,6 +256,7 @@ export function createWebEnginePool(o: WebPoolOptions): WebEnginePool | null {
     }
 
     const now = performance.now();
+    settleBatch(ctx.run, n, now - t0);
     for (const l of active) if (l.ok && l.held.size > 0 && now - l.lastAnswer >= stallMs) { retire(l); }
     prune();
     if (answers > 0) fails = 0;

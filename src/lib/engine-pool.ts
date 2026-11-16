@@ -17,12 +17,18 @@
 // costs at most one stall per run on top of the plain loop, and the result is always the plain
 // loop's. A batch where no worker answered (a stall or an error) sends the rest of its run inline;
 // two such batches in a row turn the pool off for the process.
+//
+// Card #287: each run keeps a cost book (trial-run-cost.ts). Runs done here are timed (the first
+// batch with no known cost keeps its last run here to learn it), and once the run's pool batches
+// are a stall behind the same runs done here, this server takes over as after a stall. So workers
+// that answer slowly but steadily also cost at most one stall per run.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Worker, MessageChannel, receiveMessageOnPort, type MessagePort } from "node:worker_threads";
 import type { TrialBatch, TrialBatchCtx, TrialBatchRunner, TrialRun } from "./auto-scheduler";
 import type { WorkerReply } from "./engine-worker-core";
+import { behindMs, hereCost, runTimed, settleBatch } from "./trial-run-cost";
 
 export type BundleStamp = { version: string; commit: string };
 const STAMP_RE = /^\/\* yosched-engine-worker (\{[^\n]*?\}) \*\//;
@@ -138,11 +144,16 @@ export function createEnginePool(o: EnginePoolOptions): EnginePool | null {
     let stalledHere = false;
     let lastWorkerAnswer = t0;
     // Runs no worker holds: the never-sent ones from `next`, and any a failed worker gave back.
+    // Card #287: every run done here is timed for the run's cost book. While a run here has no
+    // known cost yet, this thread keeps the batch's last run for itself, to learn it.
+    const here = (idx: number) => runTimed(ctx.run, () => ctx.runHere(idx));
+    const reserved = hereCost(ctx.run) == null && n >= 2 ? n - 1 : -1;
+    const end = reserved >= 0 ? n - 1 : n;
     let next = 0;
     const back: number[] = [];
     const take = (): number | null => {
       while (back.length) { const i = back.shift()!; if (out[i] === undefined) return i; }
-      while (next < n) { const i = next++; if (out[i] === undefined) return i; }
+      while (next < end) { const i = next++; if (out[i] === undefined) return i; }
       return null;
     };
     const put = (idx: number, run: TrialRun) => { out[idx] = run; got++; };
@@ -169,6 +180,7 @@ export function createEnginePool(o: EnginePoolOptions): EnginePool | null {
       catch (e) { errors ??= `the batch could not be sent: ${errText(e)}`; retire(l); }
     }
     fill();
+    if (reserved >= 0) put(reserved, here(reserved));
     while (got < n) {
       const seen = Atomics.load(counter, 0);
       let progressed = false;
@@ -191,26 +203,32 @@ export function createEnginePool(o: EnginePoolOptions): EnginePool | null {
       if (got >= n || progressed) continue;
       // Help: a run nobody holds is run here.
       const free = take();
-      if (free != null) { put(free, ctx.runHere(free)); continue; }
-      const idle = performance.now() - lastWorkerAnswer;
-      if (ctx.run.stalled || idle >= stallMs) {
+      if (free != null) { put(free, here(free)); continue; }
+      const now = performance.now();
+      const idle = now - lastWorkerAnswer;
+      // Card #287: steady answers just inside the stall time still lose time against running here.
+      const behind = behindMs(ctx.run, n, now - t0);
+      if (ctx.run.stalled || idle >= stallMs || (behind != null && behind >= stallMs)) {
         if (!ctx.run.stalled) {
-          log(`engine pool: no answer from the workers for ${Math.round(idle)} ms; this server finishes the run's batches itself`);
+          log(idle >= stallMs
+            ? `engine pool: no answer from the workers for ${Math.round(idle)} ms; this server finishes the run's batches itself`
+            : `engine pool: the workers answer slower than this server runs the batches (${Math.round(behind!)} ms behind); this server finishes the run's batches itself`);
           ctx.run.stalled = true;
           stalledHere = true;
         }
         // Take over the lowest unanswered run; a worker's late answer for it is ignored.
         let low = -1;
         for (let i = 0; i < n; i++) if (out[i] === undefined) { low = i; break; }
-        if (low >= 0) put(low, ctx.runHere(low));
+        if (low >= 0) put(low, here(low));
         continue;
       }
       // A short slice: a reply posted just before `seen` was read is picked up on the next pass.
-      Atomics.wait(counter, 0, seen, Math.min(stallMs - idle, WAIT_SLICE_MS));
+      Atomics.wait(counter, 0, seen, Math.max(0, Math.min(stallMs - idle, behind == null ? Infinity : stallMs - behind, WAIT_SLICE_MS)));
     }
 
     // A worker that still holds runs and has said nothing for the stall time is replaced next batch.
     const now = performance.now();
+    settleBatch(ctx.run, n, now - t0);
     for (const l of active) if (l.ok && l.held.size > 0 && now - l.lastAnswer >= stallMs) retire(l);
     for (let i = slots.length - 1; i >= 0; i--) if (slots[i].dead) slots.splice(i, 1);
     if (answers > 0) fails = 0;
