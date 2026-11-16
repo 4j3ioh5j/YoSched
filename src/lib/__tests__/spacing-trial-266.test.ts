@@ -167,3 +167,21 @@ describe("raw coverage is guarded even where the graded term waives it (Codex #1
     expect(hard3.quality.breakdown.coverage, "fixture: the graded term waives it").toBe(off.quality.breakdown.coverage);
   });
 });
+
+// #1301 r1 WARNING: a hard per-person maximum was guarded as one total per person and target, so a
+// candidate that moved the over-cap days from one week to another passed the guard. Each over-cap
+// day is its own item now.
+describe("hard maximum items are per day (card #266 r1)", () => {
+  const capped = (dates: string[]) => input({
+    staff: [staff("a", { shiftMinimumTargets: [{ shiftTypeId: "st-or", minCount: 0, maxCount: 1, window: "week", windowDays: null, strength: "rule" }] } as Partial<ScheduleStaff>)],
+    existingAssignments: dates.map((d) => ({ ...manual("a", d, "st-or", "OR"), isLocked: true })),
+  });
+  it("keys each over-cap day, and a candidate that moves them to other days is blocked", () => {
+    const off = autoScheduleOnceWithItemsForTest(capped(["2025-05-12", "2025-05-14"])).items;
+    const moved = autoScheduleOnceWithItemsForTest(capped(["2025-05-19", "2025-05-21"])).items;
+    expect([...off.hardLimits.keys()].filter((k) => k.includes("|max")).sort()).toEqual(["a|0|max|2025-05-12", "a|0|max|2025-05-14"]);
+    expect([...moved.hardLimits.values()].reduce((s, v) => s + v, 0)).toBe([...off.hardLimits.values()].reduce((s, v) => s + v, 0));
+    expect(spacingGuardBlocks(moved, off, ["hardLimits"])).toBe("hardLimits");
+    expect(spacingGuardBlocks(off, off, ["hardLimits"])).toBeNull();
+  });
+});

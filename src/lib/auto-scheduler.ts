@@ -692,7 +692,7 @@ export type AutoScheduleInput = {
 export type QualityItems = {
   coverage: Map<string, number>;      // date|shiftTypeId → graded unmet count
   coverageRaw: Map<string, number>;   // date|shiftTypeId → required − assigned, unconditionally
-  hardLimits: Map<string, number>;    // staff|target#|min|window or staff|target#|max → amount
+  hardLimits: Map<string, number>;    // staff|target#|min|window → amount, or staff|target#|max|date → 1
   overHours: Map<string, number>;     // staff|ppStart → hours over
   underHours: Map<string, number>;    // staff|ppStart → hours under
   requestsHonoured: Set<string>;      // requestId|date of every REQUEST_SHIFT day the grid honours
@@ -5507,7 +5507,9 @@ function autoScheduleCore({
               : `${(target.windowCount ?? 1) > 1 ? `${target.windowCount} ` : ""}${target.window}`;
           warnings.push(`${staff.initials}: ${st.code} exceeds max ${target.maxCount} per ${windowDesc} (rolling) — ${overCap.join(", ")}`);
           qHardLimits += overCap.length; // hardLimits: hard per-staff (rolling) MAX overage
-          items.hardLimits.set(`${staff.id}|${tIdx}|max`, overCap.length);
+          // One item per over-cap day (card #266 r1): a total per person let a candidate move
+          // the over-cap days to another week and still pass the spacing guard.
+          for (const d of overCap) items.hardLimits.set(`${staff.id}|${tIdx}|max|${d}`, 1);
         }
       }
     }
