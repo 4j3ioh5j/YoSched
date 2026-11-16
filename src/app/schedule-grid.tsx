@@ -3414,7 +3414,8 @@ export function ScheduleGrid({
     if (!dates.length) return;
     setLiveLoading(true);
     try {
-      const res = await fetch(`/api/auto-schedule/inputs?start=${dates[0]}&end=${dates[dates.length - 1]}`);
+      // Card #266: `factors=spacing` tells the server this bundle's engine knows the spacing factor.
+      const res = await fetch(`/api/auto-schedule/inputs?start=${dates[0]}&end=${dates[dates.length - 1]}&factors=spacing`);
       if (!res.ok) {
         console.error("Live: failed to load engine inputs", res.status);
         return;

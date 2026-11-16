@@ -85,6 +85,11 @@ export const FACTOR_META: Record<string, FactorMeta> = {
     label: "Requested shifts honored",
     description: "Honor staff shift requests that aren’t already guaranteed by an approval.",
   },
+  spacing: {
+    label: "Spacing between the same shift",
+    description:
+      "Keep each person's shifts that are marked to spread over the month as far apart as possible. Each auto-generate tries several spacings and keeps the best one that costs nothing ranked above this; rank this above hours over target to accept a few hours over for wider spacing.",
+  },
   fairness: {
     label: "Fairness / equity spread",
     description: "Distribute undesirable shifts evenly across staff (FTE-normalized).",

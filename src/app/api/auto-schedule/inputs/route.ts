@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-guard";
 import { buildAutoScheduleInput } from "@/lib/build-auto-schedule-input";
 import { owningMonthKey, isValidDateRange } from "@/lib/auto-clear";
+import { factorRowsForClient, SPACING_CAPABILITY_PARAM } from "@/lib/autogen-factor-order";
 
 // Serves the engine input bundle (same data the POST generator runs on) so Live
 // mode can run client-side what-if re-solves without a round-trip per edit (#231).
@@ -24,5 +25,7 @@ export async function GET(req: NextRequest) {
   // Card #174: Live re-solves see the same frozen earlier month as POST/PUT.
   const runMonth = isValidDateRange(startDate, endDate) ? owningMonthKey(startDate, endDate) : undefined;
   const input = await buildAutoScheduleInput(startDate, endDate, { runMonth });
-  return NextResponse.json(input);
+  // Card #266: an old browser bundle (no capability flag) never sees the spacing row.
+  const factorOrder = input.factorOrder && factorRowsForClient(input.factorOrder, req.nextUrl.searchParams.get(SPACING_CAPABILITY_PARAM));
+  return NextResponse.json({ ...input, factorOrder });
 }

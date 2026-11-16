@@ -176,10 +176,11 @@ export function applyScenario(
   };
 
   // Grade the untouched, fully-locked baseline once — the quality-delta reference.
+  // Card #266: a reference grade, not a result anyone accepts — one run, no spacing trial.
   const baselineRun = autoSchedule({
     ...input,
     existingAssignments: input.existingAssignments.map((a) => ({ ...a, isLocked: true })),
-  });
+  }, { spacingTrial: false });
 
   // Validate every pin's HARD legality BEFORE applying. Any rejection snaps the
   // whole edit back (an edit is atomic — a half-applied move is never shown).
@@ -446,7 +447,7 @@ export function applyScenarioExpanding(
   const baselineShortfall = autoSchedule({
     ...input,
     existingAssignments: input.existingAssignments.map((a) => ({ ...a, isLocked: true })),
-  }).quality.breakdown.coverageShortfall;
+  }, { spacingTrial: false }).quality.breakdown.coverageShortfall; // card #266: a reference grade, one run
 
   let outcome: ScenarioOutcome | null = null;
   for (let ring = 0; ring <= ceiling; ring++) {

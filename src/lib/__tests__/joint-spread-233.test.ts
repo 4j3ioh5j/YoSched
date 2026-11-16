@@ -43,7 +43,7 @@ function run(o: Record<string, unknown> = {}): AutoScheduleResult {
     staffingRequirements: [1, 2, 3, 4, 5].map((d) => ({ shiftTypeId: "st-orl", dayKey: String(d), minCount: 1 })),
     schedulingPreferences: { holidayShiftId: "st-hol", prefer3DayWeekends: false, prefer4DayWeekends: false, preferSequentialOff: false, sequentialOffWeight: 1, threeDayWeekendWeight: 2, fourDayWeekendWeight: 3 },
     ...o,
-  } as Parameters<typeof autoSchedule>[0]));
+  } as Parameters<typeof autoSchedule>[0]), { spacingTrial: false }); // placement under test, not the card #266 trial
 }
 const orlDays = (r: AutoScheduleResult, id: string) => r.suggestions.filter((s) => s.staffId === id && s.code === "ORL").map((s) => s.date).sort();
 const gapDays = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);

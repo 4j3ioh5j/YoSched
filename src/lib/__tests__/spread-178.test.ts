@@ -101,11 +101,22 @@ describe("paired groups (card #178)", () => {
   const nearCall = (orls: string[]) => orls.filter((x) => callDays[x.slice(0, 2)].some((c) => Math.abs(c - Number(x.slice(2))) <= 3));
 
   it("each pair is hosted by whoever's OWN pair lands clear of their marked shifts", () => {
-    const [plain, marked] = both(o, ["st-orl", "st-call"]);
+    // Placement under test: the card #266 spacing trial is off here (see the next test).
+    const plain = autoSchedule(input({ ...o, shiftTypes: ALL }), { spacingTrial: false });
+    const marked = autoSchedule(input({ ...o, shiftTypes: mark(["st-orl", "st-call"]) }), { spacingTrial: false });
     expect(nearCall(ofShift(plain, "st-orl")).length).toBeGreaterThan(0);
     // Scored on the first need date alone, CD (nothing near Mon 12) took all four, two next to its CALL.
     expect(ofShift(marked, "st-orl")).toEqual(["ab19", "ab23", "cd12", "cd16"]);
     expect(nearCall(ofShift(marked, "st-orl"))).toEqual([]);
+  });
+
+  it("card #266: the spacing trial ranks same-shift spacing only, so it may move a pair next to another marked shift", () => {
+    // Off: each ORL pair is 4 days apart. The trial keeps a setting that puts them 7 apart,
+    // which is better spacing between the same shift; AB's ORL on Fri 16 is then the day
+    // after its CALL. Distance from OTHER marked shifts is not a ranked factor.
+    const marked = autoSchedule(input({ ...o, shiftTypes: mark(["st-orl", "st-call"]) }));
+    expect(ofShift(marked, "st-orl")).toEqual(["ab16", "ab23", "cd12", "cd19"]);
+    expect(marked.warnings.join("\n")).toMatch(/ORL: kept \d+ days apart/);
   });
 });
 
