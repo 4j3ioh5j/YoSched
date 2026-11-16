@@ -384,6 +384,55 @@ export function targetFor(
   return p.fixedHoursPerPp != null ? p.fixedHoursPerPp : pp.targetHours * p.ftePercentage;
 }
 
+/**
+ * The engine's grid: a Map keyed "staffId:date", plus the same entries indexed by date and by
+ * person (card #266, speed: the counts per day and per person were whole-grid scans). Every
+ * change to a key is applied to all three maps in the same order, so iterating one date's or
+ * one person's entries visits them in the order the full Map would. Values are the same objects.
+ */
+class IndexedGrid<V> extends Map<string, V> {
+  private byDate = new Map<string, Map<string, V>>();
+  private byStaff = new Map<string, Map<string, V>>();
+  private static readonly EMPTY = new Map<string, never>();
+  private parts(key: string): [string, string] {
+    return [key.slice(0, key.indexOf(":")), key.slice(key.lastIndexOf(":") + 1)];
+  }
+  override set(key: string, value: V): this {
+    super.set(key, value);
+    if (this.byDate === undefined) return this; // (never: the base constructor gets no entries)
+    const [who, date] = this.parts(key);
+    let d = this.byDate.get(date);
+    if (!d) this.byDate.set(date, (d = new Map()));
+    d.set(key, value);
+    let w = this.byStaff.get(who);
+    if (!w) this.byStaff.set(who, (w = new Map()));
+    w.set(key, value);
+    return this;
+  }
+  override delete(key: string): boolean {
+    const had = super.delete(key);
+    if (had) {
+      const [who, date] = this.parts(key);
+      this.byDate.get(date)?.delete(key);
+      this.byStaff.get(who)?.delete(key);
+    }
+    return had;
+  }
+  override clear(): void {
+    super.clear();
+    this.byDate.clear();
+    this.byStaff.clear();
+  }
+  /** This date's entries (do not mutate the returned map). */
+  onDate(date: string): ReadonlyMap<string, V> {
+    return this.byDate.get(date) ?? (IndexedGrid.EMPTY as ReadonlyMap<string, V>);
+  }
+  /** This person's entries (do not mutate the returned map). */
+  ofStaff(staffId: string): ReadonlyMap<string, V> {
+    return this.byStaff.get(staffId) ?? (IndexedGrid.EMPTY as ReadonlyMap<string, V>);
+  }
+}
+
 function toDateStr(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -872,7 +921,7 @@ function autoScheduleCore({
   // loaded from existingAssignments). The hour-balancing repair (STEP 3b) reads
   // it to swap only scheduler-placed coverage/fill cells, never authoritative
   // placements (leave, standing commitments, honored requests, followers).
-  const grid = new Map<string, { shiftTypeId: string; code: string; locked: boolean; noCount?: boolean; step?: string; source?: string }>();
+  const grid = new IndexedGrid<{ shiftTypeId: string; code: string; locked: boolean; noCount?: boolean; step?: string; source?: string }>();
   for (const a of existingAssignments) {
     grid.set(`${a.staffId}:${a.date}`, {
       shiftTypeId: a.shiftTypeId,
@@ -1449,8 +1498,8 @@ function autoScheduleCore({
       if (!bounds) continue;
 
       const assigned: string[] = [];
-      for (const [k, v] of grid.entries()) {
-        if (k.startsWith(staff.id + ":") && v.code === st.code && !v.noCount) {
+      for (const [k, v] of grid.ofStaff(staff.id)) {
+        if (v.code === st.code && !v.noCount) {
           const d = k.split(":")[1];
           if (d >= bounds.start && d <= bounds.end) assigned.push(d);
         }
@@ -1491,8 +1540,8 @@ function autoScheduleCore({
     // The candidate `date` is not yet in the grid, so these are the existing
     // counting placements only — isAtRollingMaximum adds the candidate implicitly.
     const assignedDates: string[] = [];
-    for (const [k, v] of grid.entries()) {
-      if (k.startsWith(staff.id + ":") && v.code === st.code && !v.noCount) {
+    for (const [k, v] of grid.ofStaff(staff.id)) {
+      if (v.code === st.code && !v.noCount) {
         assignedDates.push(k.split(":")[1]);
       }
     }
@@ -1533,9 +1582,7 @@ function autoScheduleCore({
 
   function countAssigned(code: string, date: string): number {
     let count = 0;
-    for (const [k, v] of grid.entries()) {
-      if (k.endsWith(`:${date}`) && v.code === code) count++;
-    }
+    for (const v of grid.onDate(date).values()) if (v.code === code) count++;
     return count;
   }
 
@@ -1544,9 +1591,7 @@ function autoScheduleCore({
   // satisfied — a non-counting follower must not falsely meet a requirement.
   function countCoverage(code: string, date: string): number {
     let count = 0;
-    for (const [k, v] of grid.entries()) {
-      if (k.endsWith(`:${date}`) && v.code === code && !v.noCount) count++;
-    }
+    for (const v of grid.onDate(date).values()) if (v.code === code && !v.noCount) count++;
     return count;
   }
 
@@ -2179,7 +2224,7 @@ function autoScheduleCore({
   function slotHolders(date: string, stId: string): string[] {
     if (dateSet.has(date)) {
       const out: string[] = [];
-      for (const [k, v] of grid.entries()) if (v.shiftTypeId === stId && k.endsWith(`:${date}`)) out.push(k.slice(0, k.indexOf(":")));
+      for (const [k, v] of grid.onDate(date)) if (v.shiftTypeId === stId) out.push(k.slice(0, k.indexOf(":")));
       return out;
     }
     return ruleContextCells.get(slotKey(stId, date)) ?? historyByDay.get(slotKey(stId, date)) ?? [];
@@ -4204,9 +4249,7 @@ function autoScheduleCore({
       /** One pass over the grid: per shift code on `date`, [cells, cells that count toward coverage]. */
       function dayCodeCounts(date: string): Map<string, [number, number]> {
         const out = new Map<string, [number, number]>();
-        const suffix = `:${date}`;
-        for (const [k, v] of grid.entries()) {
-          if (!k.endsWith(suffix)) continue;
+        for (const v of grid.onDate(date).values()) {
           const c = out.get(v.code) ?? [0, 0];
           c[0]++;
           if (!v.noCount) c[1]++;
@@ -4530,8 +4573,8 @@ function autoScheduleCore({
           const b = getWindowBounds(t, d, ppRangesAll);
           if (!b) continue;
           let n = 0;
-          for (const [k, v] of grid.entries()) {
-            if (!k.startsWith(A.id + ":") || v.code !== W.code || v.noCount) continue;
+          for (const [k, v] of grid.ofStaff(A.id)) {
+            if (v.code !== W.code || v.noCount) continue;
             const x = k.slice(A.id.length + 1);
             if (x >= b.start && x <= b.end) n++;
           }
@@ -4545,8 +4588,8 @@ function autoScheduleCore({
         const targets = (A.shiftMinimumTargets ?? []).filter((t) => t.shiftTypeId === W.id && t.maxCount != null);
         if (targets.length === 0) return true;
         const others: string[] = [];
-        for (const [k, v] of grid.entries()) {
-          if (!k.startsWith(A.id + ":") || v.code !== W.code || v.noCount) continue;
+        for (const [k, v] of grid.ofStaff(A.id)) {
+          if (v.code !== W.code || v.noCount) continue;
           const x = k.slice(A.id.length + 1);
           if (x !== d) others.push(x);
         }
