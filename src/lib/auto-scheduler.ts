@@ -5892,14 +5892,35 @@ export function trialRun(input: AutoScheduleInput, core: (input: AutoScheduleInp
   return { result: core(input, items), items };
 }
 
+/**
+ * Card #266: runs one trial batch somewhere else (the server's worker-thread pool), returning the
+ * runs in the batch's order, or null to have the batch run here, in a plain loop. Only the server
+ * installs one (src/instrumentation.ts); the browser and the tests run every batch inline.
+ */
+export type TrialBatchRunner = (batch: TrialBatch) => TrialRun[] | null;
+let trialBatchRunner: TrialBatchRunner | null = null;
+/** Installs (or with null removes) the batch runner; returns the one it replaces. */
+export function setTrialBatchRunner(runner: TrialBatchRunner | null): TrialBatchRunner | null {
+  const prev = trialBatchRunner;
+  trialBatchRunner = runner;
+  return prev;
+}
+
 export function autoSchedule(input: AutoScheduleInput, opts: AutoScheduleOptions = {}): AutoScheduleResult {
   if (opts.spacingTrial === false) return autoScheduleCore(input);
   const core = opts.coreForTest ?? autoScheduleCore;
+  // A test's stand-in core only runs here, so a test seam never goes to the pool.
+  const runner = opts.coreForTest ? null : trialBatchRunner;
   const steps = spacingTrialSteps(input);
   let step = steps.next();
   while (!step.done) {
-    const { base, variants } = step.value;
-    step = steps.next(variants.map((v) => trialRun(trialInput(base, v), core)));
+    const batch = step.value;
+    const inline = () => batch.variants.map((v) => trialRun(trialInput(batch.base, v), core));
+    // The off run is one run: nothing to share out. A runner that gives up, or answers with the
+    // wrong number of runs, leaves the batch to the plain loop (same result, just slower).
+    let runs = batch.variants.length > 1 && runner ? runner(batch) : null;
+    if (runs && runs.length !== batch.variants.length) runs = null;
+    step = steps.next(runs ?? inline());
   }
   return step.value ?? autoScheduleCore(input);
 }
