@@ -20,10 +20,21 @@ function fmt(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Cached (card #266: the spacing trial runs the engine many times, and the spacing scans call
+// this per day per radius step). Pure in (date, n); bounded by clearing when it grows large.
+const addDaysCache = new Map<string, Map<number, string>>();
+let addDaysCached = 0;
 export function addDays(date: string, n: number): string {
+  let byN = addDaysCache.get(date);
+  const hit = byN?.get(n);
+  if (hit !== undefined) return hit;
   const d = localDate(date);
   d.setDate(d.getDate() + n);
-  return fmt(d);
+  const out = fmt(d);
+  if (++addDaysCached > 200_000) { addDaysCache.clear(); addDaysCached = 1; byN = undefined; }
+  if (!byN) { byN = new Map(); addDaysCache.set(date, byN); }
+  byN.set(n, out);
+  return out;
 }
 
 export function dayGap(a: string, b: string): number {

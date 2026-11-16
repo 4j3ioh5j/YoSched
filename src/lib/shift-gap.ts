@@ -18,18 +18,28 @@ const MAX_BLOCK = 62;
 type Block = { start: string; end: string };
 
 /** The blocks of the shift that touch [from, to] (each with its real edges, even outside it). */
+// Day ↔ date string, cached (the scans below are hot: card #266's spacing trial runs the engine
+// many times). Bounded by the distinct days ever scanned, a few thousand at most.
+const isoCache = new Map<number, string>();
+const isoAt = (day: number): string => {
+  let s = isoCache.get(day);
+  if (s === undefined) { s = iso(day * DAY + DAY / 2); isoCache.set(day, s); }
+  return s;
+};
+const dayNo = (d: string): number => Math.floor(t(d) / DAY);
 function blocksIn(has: (d: string) => boolean, from: string, to: string): Block[] {
   const out: Block[] = [];
-  let d = from;
+  let x = dayNo(from);
+  const end = dayNo(to);
   // A block that started before `from` and runs into it: walk back to its first day.
-  if (has(d)) { let k = 0; while (k < MAX_BLOCK && has(addDays(d, -1))) { d = addDays(d, -1); k++; } }
-  while (t(d) <= t(to)) {
-    if (!has(d)) { d = addDays(d, 1); continue; }
-    const start = d;
+  if (has(isoAt(x))) { let k = 0; while (k < MAX_BLOCK && has(isoAt(x - 1))) { x--; k++; } }
+  while (x <= end) {
+    if (!has(isoAt(x))) { x++; continue; }
+    const start = isoAt(x);
     let k = 0;
-    while (k < MAX_BLOCK && has(addDays(d, 1))) { d = addDays(d, 1); k++; }
-    out.push({ start, end: d });
-    d = addDays(d, 1);
+    while (k < MAX_BLOCK && has(isoAt(x + 1))) { x++; k++; }
+    out.push({ start, end: isoAt(x) });
+    x++;
   }
   return out;
 }

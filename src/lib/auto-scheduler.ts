@@ -4099,7 +4099,11 @@ function autoScheduleCore({
   };
   /** The single writer of the compound repair: sets (st) or clears (null) one cell,
    *  keeping exactly one matching suggestion, and journals the prior state. */
+  // Card #266 (speed): the compound repair's lazy before-snapshot records a cell's
+  // surroundings just before its first write in an attempt (see snapshotBefore).
+  let beforeRepairWrite: ((staffId: string, date: string) => void) | null = null;
   function repairSet(staffId: string, date: string, st: ScheduleShiftType | null, step: string, reason: string): void {
+    beforeRepairWrite?.(staffId, date);
     const key = `${staffId}:${date}`;
     const prevCell = grid.get(key);
     const prev = prevCell ? { ...prevCell } : undefined;
@@ -4195,12 +4199,51 @@ function autoScheduleCore({
         return out;
       }
       const coverKey = (st: ScheduleShiftType, d: string) => `${st.id}:${d}`;
+      const peopleIds = new Set(people.map((p) => p.id));
+      const ppSorted = [...ppDates].sort(), ppFrom = ppSorted[0], ppTo = ppSorted[ppSorted.length - 1];
+      /** One pass over the grid: per shift code on `date`, [cells, cells that count toward coverage]. */
+      function dayCodeCounts(date: string): Map<string, [number, number]> {
+        const out = new Map<string, [number, number]>();
+        const suffix = `:${date}`;
+        for (const [k, v] of grid.entries()) {
+          if (!k.endsWith(suffix)) continue;
+          const c = out.get(v.code) ?? [0, 0];
+          c[0]++;
+          if (!v.noCount) c[1]++;
+          out.set(v.code, c);
+        }
+        return out;
+      }
+      /**
+       * The state before an attempt, read lazily (card #266, speed): a day's cell counts and a
+       * person's Hard-gap pairs are recorded just before the attempt's first write to that day /
+       * person (every write goes through repairSet), the conditional-rule breaks just before its
+       * first write at all. Untouched days and people are unchanged, so the end-state checks read
+       * exactly what an eager snapshot of the whole pay period held.
+       */
       function snapshotBefore(): Before {
         const cover = new Map<string, number>();
-        for (const d of ppDates) for (const st of shiftTypes) cover.set(coverKey(st, d), countAssigned(st.code, d));
+        const seenDays = new Set<string>(), seenPeople = new Set<string>();
         // Card #260: every participant's Hard-gap pairs over the pay period, so the end state is
         // judged with removals included (a swap/move/drop that splits a stretch is refused).
-        return { devs: new Map(people.map((p) => [p.id, devOf(p)])), cover, avail: availBroken(), gap: gapSnapshot(people.map((p) => p.id), ppDates) };
+        const gap: GapSnap | null = hardGapShifts.length ? { from: ppFrom, to: ppTo, pairs: new Map() } : null;
+        let avail: Set<string> | null = null;
+        beforeRepairWrite = (staffId, date) => {
+          if (avail === null) avail = availBroken();
+          if (!seenDays.has(date)) {
+            seenDays.add(date);
+            const counts = dayCodeCounts(date);
+            for (const st of shiftTypes) cover.set(coverKey(st, date), counts.get(st.code)?.[0] ?? 0);
+          }
+          if (gap && !seenPeople.has(staffId)) {
+            seenPeople.add(staffId);
+            if (peopleIds.has(staffId)) for (const st of hardGapShifts) gap.pairs.set(`${staffId}|${st.id}`, gapBreaks(holdsAt(staffId, st.id), ppFrom, ppTo, gapOf(st)));
+          }
+        };
+        return {
+          devs: new Map(people.map((p) => [p.id, devOf(p)])), cover, gap,
+          get avail() { return avail ?? availBroken(); }, // no write yet: the grid is as it was
+        };
       }
       /** Would anyone end further over (or under) target than in `start`, on a side the
        *  admin has made Prohibited? */
@@ -4228,12 +4271,15 @@ function autoScheduleCore({
         for (const k of availBroken()) if (!before.avail.has(k)) return false;
         if (gapNewSince(before.gap)) return false;
         const days = new Set(changed.map((c) => c.d));
-        for (const d of days) for (const st of shiftTypes) {
-          const was = before.cover.get(coverKey(st, d)) ?? 0, now = countCoverage(st.code, d), phys = countAssigned(st.code, d);
-          const min = getRequiredCount(st, d);
-          if (now < min && now < was) return false; // never takes a day below (or further below) its minimum
-          const cap = capOf(st.id, d);
-          if (cap != null && phys > cap && phys > was) return false; // never over a day's Max
+        for (const d of days) {
+          const counts = dayCodeCounts(d);
+          for (const st of shiftTypes) {
+            const was = before.cover.get(coverKey(st, d)) ?? 0, now = counts.get(st.code)?.[1] ?? 0, phys = counts.get(st.code)?.[0] ?? 0;
+            const min = getRequiredCount(st, d);
+            if (now < min && now < was) return false; // never takes a day below (or further below) its minimum
+            const cap = capOf(st.id, d);
+            if (cap != null && phys > cap && phys > was) return false; // never over a day's Max
+          }
         }
         return true;
       }
@@ -4322,7 +4368,9 @@ function autoScheduleCore({
         const m = mark();
         changed.length = 0;
         const before = snapshotBefore();
-        for (const s of steps) if (!s()) { rollback(m); return false; }
+        try {
+          for (const s of steps) if (!s()) { rollback(m); return false; }
+        } finally { beforeRepairWrite = null; } // the end-state checks and extra() read, never write
         if (!endStateOk(before, bounds) || (extra && !extra())) { rollback(m); return false; }
         return true;
       }
