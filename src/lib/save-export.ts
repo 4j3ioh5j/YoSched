@@ -36,7 +36,7 @@ const MIME = {
 } as const;
 
 const PICKER_CANCELLED =
-  "Cancelled. Nothing was saved. Chrome will not save straight into Downloads, Desktop or Documents: choose or make a folder inside one, or use Download instead.";
+  "Cancelled. Nothing was saved. This folder picker cannot use Downloads, Desktop or Documents themselves: make a folder inside one, or click Export to download the files instead.";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e)) || "unknown error";
 const outcome = (o: Partial<ExportOutcome> & Pick<ExportOutcome, "kind" | "message">): ExportOutcome => ({
@@ -103,7 +103,7 @@ export async function runYearExport(
 ): Promise<ExportOutcome> {
   const names = { xlsx: `${baseName}.xlsx`, pdf: `${baseName}.pdf` };
 
-  // Card #308: "Download instead" skips the folder picker even where the browser has one.
+  // Card #308: download mode (the dialog's Export) skips the folder picker even where the browser has one.
   if (env.showDirectoryPicker && opts.mode !== "download") {
     let dir: DirHandle;
     try {

@@ -24,18 +24,23 @@ describe("Export year button (card #299)", () => {
   });
 });
 
-describe("Export year: Download instead (card #308)", () => {
-  it("has a Download instead button that runs the export in download mode", () => {
-    expect(dialog).toMatch(/>Download instead</);
-    expect(dialog).toMatch(/onClick=\{\(\) => onExport\("download"\)\}/);
+describe("Export year: Export downloads, the folder picker is optional (card #308)", () => {
+  it("Export and Enter download both files (Chrome's own Save As reaches every folder)", () => {
+    expect(dialog).toMatch(/onClick=\{\(\) => onExport\(\)\}[^>]*>Export</);
+    expect(dialog).toMatch(/const onExport = \(mode: "auto" \| "download" = "download"\)/);
     expect(dialog).toMatch(/browserExportEnv\(\),\s*\{ mode \},/);
   });
 
-  it("the folder hint names the protected folders", () => {
-    expect(dialog).toMatch(/inside Downloads or Documents/);
+  it("Save to a folder… is the optional picker, shown only where one exists", () => {
+    expect(dialog).toMatch(/\{hasPicker && \(\s*<button[^>]*onClick=\{\(\) => onExport\("auto"\)\}[^>]*>Save to a folder…</);
+    expect(dialog).not.toMatch(/>Download instead</);
   });
 
-  it("Download instead also starts with no await before runYearExport", () => {
+  it("the hint says where downloads go and how to choose the folder", () => {
+    expect(dialog).toMatch(/Ask where to save each file/);
+  });
+
+  it("no await before runYearExport", () => {
     const body = dialog.slice(dialog.indexOf("const onExport = ("), dialog.indexOf("runYearExport("));
     expect(body).not.toMatch(/await|\.then\(/);
   });

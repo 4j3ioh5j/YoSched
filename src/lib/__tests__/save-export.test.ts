@@ -166,7 +166,7 @@ describe("Chrome folder refusal and Download instead (card #308)", () => {
     expect(r.message).toMatch(/Nothing was saved/);
     expect(r.message).toMatch(/Downloads, Desktop or Documents/);
     expect(r.message).toMatch(/folder inside/);
-    expect(r.message).toMatch(/Download instead/);
+    expect(r.message).toMatch(/click Export/);
   });
 
   it("download mode never opens the picker, even where one exists", async () => {
