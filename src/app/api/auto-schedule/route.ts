@@ -29,7 +29,12 @@ export async function POST(req: NextRequest) {
   // Card #174: a month's run never writes before the month's 1st.
   const runMonth = isValidDateRange(startDate, endDate) ? owningMonthKey(startDate, endDate) : undefined;
   const input = await buildAutoScheduleInput(startDate, endDate, { runMonth });
-  return NextResponse.json(autoSchedule(input));
+  // Card #266: how long generating took, and whether the engine pool ran the trial.
+  const t0 = performance.now();
+  const trialStats = { pooled: 0, inline: 0 };
+  const result = autoSchedule(input, { trialStats });
+  console.log(`auto-schedule ${startDate}..${endDate}: ${Math.round(performance.now() - t0)} ms (trial batches: ${trialStats.pooled} pooled, ${trialStats.inline} inline)`);
+  return NextResponse.json(result);
 }
 
 export async function PUT(req: NextRequest) {

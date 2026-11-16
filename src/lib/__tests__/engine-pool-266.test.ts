@@ -131,6 +131,23 @@ describe("engine pool (card #266)", { timeout: 60_000 }, () => {
     try { expect(sig(autoSchedule(input))).toBe(sig(plain)); } finally { setTrialBatchRunner(null); }
   });
 
+  it("counts the batches the runner did and the ones that ran inline (for the generate log)", () => {
+    const input = fixture();
+    const none = { pooled: 0, inline: 0 };
+    autoSchedule(input, { trialStats: none });
+    expect(none.pooled).toBe(0);
+    expect(none.inline).toBeGreaterThan(1); // the off run plus the candidate batches
+    const ok = { pooled: 0, inline: 0 };
+    setTrialBatchRunner((b) => b.variants.map((v) => trialRun(trialInput(b.base, v))));
+    try { autoSchedule(input, { trialStats: ok }); } finally { setTrialBatchRunner(null); }
+    expect(ok.inline).toBe(1); // only the off run
+    expect(ok.pooled).toBe(none.inline - 1);
+    const gaveUp = { pooled: 0, inline: 0 };
+    setTrialBatchRunner(() => null);
+    try { autoSchedule(input, { trialStats: gaveUp }); } finally { setTrialBatchRunner(null); }
+    expect(gaveUp).toEqual(none);
+  });
+
   it("a runner that returns the wrong number of runs is refused, not trusted", () => {
     const input = fixture();
     const plain = autoSchedule(input);

@@ -5774,6 +5774,8 @@ export type AutoScheduleOptions = {
   spacingTrial?: boolean;
   /** Test seam only: replaces the engine run inside the trial (the trial's choice logic under test). */
   coreForTest?: (input: AutoScheduleInput, items: QualityItems) => AutoScheduleResult;
+  /** Card #266: filled in with how many trial batches the pool ran and how many ran inline. */
+  trialStats?: { pooled: number; inline: number };
 };
 
 const GUARD_WORDS: Record<string, string> = {
@@ -5920,6 +5922,7 @@ export function autoSchedule(input: AutoScheduleInput, opts: AutoScheduleOptions
     // wrong number of runs, leaves the batch to the plain loop (same result, just slower).
     let runs = batch.variants.length > 1 && runner ? runner(batch) : null;
     if (runs && runs.length !== batch.variants.length) runs = null;
+    if (opts.trialStats) opts.trialStats[runs ? "pooled" : "inline"]++;
     step = steps.next(runs ?? inline());
   }
   return step.value ?? autoScheduleCore(input);
