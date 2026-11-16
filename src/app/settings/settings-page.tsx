@@ -4943,8 +4943,10 @@ function SpecialColumnOrderSection({
   const dirty = draft !== null && shown.join("|") !== savedKeys.join("|");
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
+  const saving = status === "saving";
 
   function move(idx: number, dir: -1 | 1) {
+    if (saving) return;
     const j = idx + dir;
     if (j < 0 || j >= shown.length) return;
     const next = [...shown];
@@ -4990,8 +4992,8 @@ function SpecialColumnOrderSection({
               <span className="flex-1">{labelByKey.get(key) ?? key}</span>
               {canEdit && (
                 <>
-                  <button type="button" aria-label="Move up" disabled={idx === 0} onClick={() => move(idx, -1)} className="px-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-30">▲</button>
-                  <button type="button" aria-label="Move down" disabled={idx === shown.length - 1} onClick={() => move(idx, 1)} className="px-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-30">▼</button>
+                  <button type="button" aria-label="Move up" disabled={saving || idx === 0} onClick={() => move(idx, -1)} className="px-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-30">▲</button>
+                  <button type="button" aria-label="Move down" disabled={saving || idx === shown.length - 1} onClick={() => move(idx, 1)} className="px-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-30">▼</button>
                 </>
               )}
             </li>
@@ -5001,7 +5003,7 @@ function SpecialColumnOrderSection({
       {canEdit && (
         <div className="mt-3 flex gap-2">
           <button type="button" disabled={!dirty || status === "saving"} onClick={() => put(shown)} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded text-white">Save</button>
-          <button type="button" disabled={!dirty} onClick={() => setDraft(null)} className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-300">Cancel</button>
+          <button type="button" disabled={saving || !dirty} onClick={() => setDraft(null)} className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-300">Cancel</button>
           <button type="button" disabled={savedOrder === null || status === "saving"} onClick={() => put(null)} className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-300">Reset to default</button>
         </div>
       )}
