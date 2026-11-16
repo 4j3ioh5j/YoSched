@@ -3971,6 +3971,9 @@ export function ScheduleGrid({
   const visibleAlerts = useMemo(() => allAlerts.filter((a) => !mutedKeys.has(a.key)), [allAlerts, mutedKeys]);
   // Hard error (red) only from zero-coverage staffing; PP-hours is always amber.
   const hasAlertError = useMemo(() => visibleAlerts.some((a) => a.type === "error"), [visibleAlerts]);
+  // The dates the grid covers (pay-period aligned): the month name's hover text, so the
+  // toolbar stays on one line (David, 2026-11-16).
+  const shownRange = `${formatDate(parseDate(dates[0]), dateFormat)} – ${formatDate(parseDate(dates[dates.length - 1]), dateFormat)}`;
 
   return (
     <div
@@ -4018,8 +4021,8 @@ export function ScheduleGrid({
         <div className="relative ml-4" ref={monthPickerRef}>
           <button
             onClick={() => setShowMonthPicker((v) => !v)}
-            className="text-base font-semibold text-slate-200 hover:text-white hover:bg-slate-700 px-2 py-0.5 rounded transition-colors"
-            title="Pick a month and year"
+            className="text-base font-semibold whitespace-nowrap text-slate-200 hover:text-white hover:bg-slate-700 px-2 py-0.5 rounded transition-colors"
+            title={`Showing ${shownRange}. Click to pick a month and year.`}
           >
             {MONTH_NAMES[viewMonth]} {viewYear}
           </button>
@@ -4047,9 +4050,6 @@ export function ScheduleGrid({
             </div>
           )}
         </div>
-        <span className="ml-2 text-xs text-slate-500">
-          {formatDate(parseDate(dates[0]), dateFormat)} – {formatDate(parseDate(dates[dates.length - 1]), dateFormat)}
-        </span>
         {/* Toolbar order: PP / RQ / Versions / Print (Show all staff trails when shown) */}
         <button
           onClick={() => setShowPPRows((v) => { const next = !v; localStorage.setItem("yosched:showPPRows", String(next)); return next; })}
