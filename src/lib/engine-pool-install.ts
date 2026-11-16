@@ -3,7 +3,7 @@
 // workers) leaves no runner installed: the spacing trial runs inline, as before.
 import os from "node:os";
 import { setTrialBatchRunner } from "./auto-scheduler";
-import { createEnginePool, deadlineRunner, poolOptionsFromEnv, type BundleStamp, type EnginePool } from "./engine-pool";
+import { createEnginePool, poolOptionsFromEnv, poolRunner, type BundleStamp, type EnginePool } from "./engine-pool";
 
 export function installEnginePool(
   env: Record<string, string | undefined>,
@@ -11,10 +11,12 @@ export function installEnginePool(
   log: (message: string) => void = console.log,
   cpus: number = os.availableParallelism(),
 ): EnginePool | null {
-  const { trialDeadlineMs, ...opts } = poolOptionsFromEnv(env, release, cpus);
+  const { obsolete, ...opts } = poolOptionsFromEnv(env, release, cpus);
+  // Card #281: the batch time limit and the trial deadline are gone (the stall takeover replaces them).
+  for (const k of obsolete) log(`engine pool: ${k} is no longer used (card #281: the server takes over after YOSCHED_ENGINE_STALL_MS instead)`);
   const pool = createEnginePool({ ...opts, log });
   if (!pool) return null;
-  setTrialBatchRunner(deadlineRunner(pool, { batchTimeoutMs: opts.batchTimeoutMs, trialDeadlineMs }));
-  log(`engine pool: ${pool.size} workers (batch limit ${opts.batchTimeoutMs} ms, trial deadline ${trialDeadlineMs} ms)`);
+  setTrialBatchRunner(poolRunner(pool));
+  log(`engine pool: ${pool.size} workers (stall ${opts.stallMs} ms)`);
   return pool;
 }

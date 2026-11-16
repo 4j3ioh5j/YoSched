@@ -21,6 +21,7 @@ import {
   trialInput,
   type TrialBatch,
   type TrialRun,
+  type TrialRunState,
   compareScheduleQuality,
   type AutoScheduleInput,
   type AutoScheduleResult,
@@ -180,18 +181,21 @@ export function runStepsSync<R>(steps: Generator<TrialBatch, R, TrialRun[]>, run
  * batch the runner gives up on (null, a throw, the wrong number of runs) runs here, so the
  * outcome is always the plain one. When `isCurrent` turns false (the edit was undone, Live
  * closed, the scope or month changed) the job stops at the next batch and is dropped.
+ * Card #281: every batch of the job gets the same run state; once a batch marks the rest of the
+ * run inline, the runner is not asked again.
  */
 export async function runStepsAsync<R>(
   steps: Generator<TrialBatch, R, TrialRun[]>,
-  run: (batch: TrialBatch) => Promise<TrialRun[] | null>,
+  run: (batch: TrialBatch, ctx: { run: TrialRunState; isCurrent: () => boolean }) => Promise<TrialRun[] | null>,
   isCurrent: () => boolean = () => true,
 ): Promise<{ ok: true; value: R } | { ok: false }> {
   if (!isCurrent()) return { ok: false };
+  const state: TrialRunState = { stalled: false, inline: false };
   let step = steps.next();
   while (!step.done) {
     const batch = step.value;
     let runs: TrialRun[] | null = null;
-    try { runs = await run(batch); } catch { runs = null; }
+    if (!state.inline) { try { runs = await run(batch, { run: state, isCurrent }); } catch { runs = null; } }
     if (!isCurrent()) return { ok: false };
     if (!runs || runs.length !== batch.variants.length) runs = batch.variants.map((v) => trialRun(trialInput(batch.base, v)));
     step = steps.next(runs);

@@ -5897,16 +5897,26 @@ export function trialRun(input: AutoScheduleInput, core: (input: AutoScheduleInp
 }
 
 /**
+ * Card #281: what every batch of one run (one autoSchedule call, one Live edit) shares with the
+ * runner. `stalled`: the workers already stalled once in this run, so later batches take over at
+ * once instead of waiting again (one stall per run at most). `inline`: a batch of this run got no
+ * answer from any worker, so the rest of the run is done here without asking the runner.
+ */
+export type TrialRunState = { stalled: boolean; inline: boolean };
+/** One batch's context: when its run began, that run's state, and the run of entry `idx` done here. */
+export type TrialBatchCtx = { startedAt: number; run: TrialRunState; runHere: (idx: number) => TrialRun };
+
+/**
  * Card #266: runs one trial batch somewhere else (the server's worker-thread pool), returning the
  * runs in the batch's order, or null to have the batch run here, in a plain loop. Only the server
  * installs one (src/instrumentation.ts); the browser and the tests run every batch inline.
- * `startedAt` is when the whole run (one autoSchedule call, one Live edit) began, so the runner can
- * hold an overall time limit across its batches.
+ * Card #281: the runner may run entries itself with `ctx.runHere` (the main thread helping, or
+ * taking over from a stalled worker); the result is the same either way.
  *
  * The runner is kept on globalThis, not in this module: Next's production build gives
  * instrumentation and each API route their own copy of this file (card #266 r1).
  */
-export type TrialBatchRunner = (batch: TrialBatch, ctx: { startedAt: number }) => TrialRun[] | null;
+export type TrialBatchRunner = (batch: TrialBatch, ctx: TrialBatchCtx) => TrialRun[] | null;
 const RUNNER_KEY = Symbol.for("yosched.trialBatchRunner");
 type RunnerHolder = { [RUNNER_KEY]?: TrialBatchRunner | null };
 const currentRunner = (): TrialBatchRunner | null => (globalThis as RunnerHolder)[RUNNER_KEY] ?? null;
@@ -5920,20 +5930,22 @@ export function setTrialBatchRunner(runner: TrialBatchRunner | null): TrialBatch
 /**
  * One run's batch function: each batch goes to the installed runner (the server's pool) when it
  * has more than one run and the runner answers in full, otherwise it runs here in a plain loop.
- * Every batch of the run shares one start time (see TrialBatchRunner).
+ * Every batch of the run shares one start time and one TrialRunState.
  */
 export function trialBatchRunFor(
   opts: { core?: (input: AutoScheduleInput, items: QualityItems) => AutoScheduleResult; noRunner?: boolean; stats?: { pooled: number; inline: number } } = {},
 ): (batch: TrialBatch) => TrialRun[] {
   const startedAt = performance.now();
+  const state: TrialRunState = { stalled: false, inline: false };
   return (batch) => {
-    const runner = opts.noRunner ? null : currentRunner();
+    const runner = opts.noRunner || state.inline ? null : currentRunner();
+    const runHere = (idx: number) => trialRun(trialInput(batch.base, batch.variants[idx]), opts.core);
     // The off run is one run: nothing to share out. A runner that gives up, or answers with the
     // wrong number of runs, leaves the batch to the plain loop (same result, just slower).
-    let runs = batch.variants.length > 1 && runner ? runner(batch, { startedAt }) : null;
+    let runs = batch.variants.length > 1 && runner ? runner(batch, { startedAt, run: state, runHere }) : null;
     if (runs && runs.length !== batch.variants.length) runs = null;
     if (opts.stats) opts.stats[runs ? "pooled" : "inline"]++;
-    return runs ?? batch.variants.map((v) => trialRun(trialInput(batch.base, v), opts.core));
+    return runs ?? batch.variants.map((_, i) => runHere(i));
   };
 }
 

@@ -16,7 +16,7 @@ import { LIVE_SCOPES, LIVE_SCOPE_LABELS, DEFAULT_LIVE_SCOPE, type LiveScope } fr
 import { rowPrintShade, screenHolidayTint, DEFAULT_DAY_SHADING, type DayShading } from "@/lib/day-shading";
 import { type AutoScheduleInput, type TrialBatch, type TrialRun } from "@/lib/auto-scheduler";
 import { createLiveJobs, runLiveSteps, webWorkerCount } from "@/lib/live-job";
-import { createWebEnginePool, type WebEnginePool } from "@/lib/engine-web-pool";
+import { createWebEnginePool, type WebEnginePool, type WebBatchCtx } from "@/lib/engine-web-pool";
 import { liveBundleProblem } from "@/lib/live-bundle";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { printStampText, unsavedPrintWarning } from "@/lib/print-stamp";
@@ -315,19 +315,20 @@ type PickerState = {
 // any failure (no Worker, the file missing, another release, no answer in time) runs the batch on
 // the page instead: slower, never different.
 let livePool: WebEnginePool | null | undefined;
-function liveBatchRunner(): (batch: TrialBatch) => Promise<TrialRun[] | null> {
+function liveBatchRunner(): (batch: TrialBatch, ctx: WebBatchCtx) => Promise<TrialRun[] | null> {
   if (livePool === undefined) {
     const commit = process.env.YOSCHED_COMMIT ?? "";
     livePool = typeof Worker === "undefined" || !commit ? null : createWebEnginePool({
       url: `${BASE_PATH}/engine-worker-${commit}.js`,
       workers: webWorkerCount(typeof navigator === "undefined" ? undefined : navigator.hardwareConcurrency),
       expect: { version: process.env.YOSCHED_VERSION ?? "", commit },
-      startTimeoutMs: 3000,
-      batchTimeoutMs: 3000,
+      // Card #281: the page takes over a worker's runs after 1 s without an answer.
+      stallMs: 1000,
     });
+    void livePool?.warm();
   }
   const pool = livePool;
-  return pool ? (b) => pool.runBatch(b) : async () => null;
+  return pool ? (b, ctx) => pool.runBatch(b, ctx) : async () => null;
 }
 
 const HOVER_OUTLINE: React.CSSProperties = { boxShadow: "inset 0 0 0 2px #60a5fa" };

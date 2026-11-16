@@ -3,7 +3,7 @@
 // earlier one stale; cancel() (Undo of the edit in flight, Cancel, Accept, leaving the page) makes
 // the one in flight stale too. `busy` is true while the current job runs and always clears, on
 // success, on a stale finish of the current job, on cancel, and when the engine throws.
-import type { TrialBatch, TrialRun } from "./auto-scheduler";
+import type { TrialBatch, TrialRun, TrialRunState } from "./auto-scheduler";
 import { runStepsAsync } from "./scenario";
 
 export type LiveJob = {
@@ -47,7 +47,7 @@ export function createLiveJobs(onBusy: (busy: boolean) => void = () => {}): Live
 export async function runLiveSteps<R>(
   jobs: LiveJobs,
   steps: () => Generator<TrialBatch, R, TrialRun[]>,
-  run: (batch: TrialBatch) => Promise<TrialRun[] | null>,
+  run: (batch: TrialBatch, ctx: { run: TrialRunState; isCurrent: () => boolean }) => Promise<TrialRun[] | null>,
 ): Promise<R | null> {
   const job = jobs.start();
   try {

@@ -3,14 +3,18 @@
 // The browser's main thread cannot wait (no Atomics.wait there), so this pool is ASYNC: runBatch
 // returns a promise, and the caller drives a Live edit's steps with runStepsAsync (scenario.ts).
 // The protocol is the server pool's (engine-worker-core.ts): one "stage" per worker per batch,
-// then the runs handed out one at a time, answers put back in the candidates' order. A worker
-// first says hello with the release it was built from; one from another release is never used.
+// then the runs handed out (up to two at a time per worker), answers put back in the candidates'
+// order. A worker first says hello with the release it was built from; it gets no work before
+// that, and one from another release is never used (the pool turns off for the page).
 //
-// Anything unexpected (the worker file fails to load, no hello within the start time limit, a
-// worker that throws or does not answer within the batch time limit) returns null, and the caller
-// runs that batch on the main thread: slower, never different. Two failures in a row, or a worker
-// from another release, turn the pool off for this page.
-import type { TrialBatch, TrialRun } from "./auto-scheduler";
+// Card #281: the same rules as the server pool. This page HELPS: a run no worker holds is run here
+// (between runs it yields, so worker answers and a cancel get through). When every remaining run is
+// held by a worker and none has answered for the stall time, the lowest unanswered run is run
+// here (a late answer for it is ignored); after one stall in a run, later batches of that run take
+// over at once. A batch where no worker answered (a stall, a load failure, an error) sends the rest
+// of the run here; two in a row turn the pool off. A batch only answers null when it was cancelled
+// (the job stopped being current, or the pool was closed) or the pool is off.
+import { trialRun, trialInput, type TrialBatch, type TrialRun, type TrialRunState } from "./auto-scheduler";
 import type { WorkerMessage, WorkerReply } from "./engine-worker-core";
 
 export type BundleStamp = { version: string; commit: string };
@@ -26,15 +30,19 @@ export type WebPoolOptions = {
   workers: number;
   /** The release this page was built from; each worker's hello must match it. */
   expect: BundleStamp;
-  /** How long a new worker may take to load and say hello. */
-  startTimeoutMs: number;
-  /** How long one batch may take before it is given up and run on the main thread. */
-  batchTimeoutMs: number;
+  /** How long the workers may go without answering before this page takes over their runs. */
+  stallMs: number;
   makeWorker?: (url: string) => WorkerLike;
   log?: (message: string) => void;
+  /** Lets worker answers and a cancel through between runs done here (default: a 0 ms timer). */
+  yieldToLoop?: () => Promise<void>;
 };
+/** One batch's context: its run's state, whether its job is still wanted, and a run done here. */
+export type WebBatchCtx = { run: TrialRunState; isCurrent?: () => boolean; runHere?: (idx: number) => TrialRun };
 export type WebEnginePool = {
-  runBatch(batch: TrialBatch): Promise<TrialRun[] | null>;
+  runBatch(batch: TrialBatch, ctx: WebBatchCtx): Promise<TrialRun[] | null>;
+  /** Starts the workers now; resolves once each has said hello or failed to load. */
+  warm(): Promise<void>;
   close(): void;
   readonly disabled: boolean;
 };
@@ -42,15 +50,19 @@ export type WebEnginePool = {
 export type WorkerHello = { type: "hello"; version: string; commit: string };
 
 const FAILS_TO_DISABLE = 2;
+const PER_WORKER = 2;
 const errText = (e: unknown) => (e instanceof Error ? e.message : typeof e === "object" && e && "message" in e ? String((e as { message: unknown }).message) : String(e));
 
 type Slot = {
   w: WorkerLike;
-  /** Resolves true once the worker said hello with this release, false on any failure. */
-  ready: Promise<"ok" | "error" | "release">;
+  ready: boolean;
+  dead: boolean;
+  /** Resolves once the worker said hello (either release), failed, or was terminated. */
+  settled: Promise<void>;
+  settle: () => void;
+  onReady: (() => void) | null;
   onReply: ((m: WorkerReply) => void) | null;
   onFail: ((why: string) => void) | null;
-  dead: boolean;
 };
 
 export function createWebEnginePool(o: WebPoolOptions): WebEnginePool | null {
@@ -58,6 +70,8 @@ export function createWebEnginePool(o: WebPoolOptions): WebEnginePool | null {
   if (!Number.isInteger(o.workers) || o.workers < 1) return null;
   if (!o.expect.version || !o.expect.commit) return null;
   const makeWorker = o.makeWorker ?? ((url: string) => new Worker(url) as unknown as WorkerLike);
+  const yieldToLoop = o.yieldToLoop ?? (() => new Promise<void>((r) => setTimeout(r, 0)));
+  const stallMs = Math.max(0, o.stallMs);
   const slots: Slot[] = [];
   let job = 0;
   let fails = 0;
@@ -66,10 +80,9 @@ export function createWebEnginePool(o: WebPoolOptions): WebEnginePool | null {
   let abortCurrent: (() => void) | null = null;
 
   const spawn = (): Slot => {
-    let settle: (v: "ok" | "error" | "release") => void = () => {};
-    const slot: Slot = { w: null as unknown as WorkerLike, ready: new Promise((r) => { settle = r; }), onReply: null, onFail: null, dead: false };
+    let settle: () => void = () => {};
+    const slot: Slot = { w: null as unknown as WorkerLike, ready: false, dead: false, settled: new Promise((r) => { settle = r; }), settle: () => settle(), onReady: null, onReply: null, onFail: null };
     let said = false;
-    const timer = setTimeout(() => settle("error"), o.startTimeoutMs);
     const w = makeWorker(o.url);
     slot.w = w;
     w.onmessage = (e) => {
@@ -77,94 +90,173 @@ export function createWebEnginePool(o: WebPoolOptions): WebEnginePool | null {
       if (m && typeof m === "object" && "type" in m && m.type === "hello") {
         if (said) return;
         said = true;
-        clearTimeout(timer);
-        settle(m.version === o.expect.version && m.commit === o.expect.commit ? "ok" : "release");
+        settle();
         if (m.version !== o.expect.version || m.commit !== o.expect.commit) {
           log(`engine workers off: a worker is from another release (${m.version} ${m.commit}; this page is ${o.expect.version} ${o.expect.commit}); Live edits run here`);
+          disabled = true;
+          slot.dead = true;
+          slot.onFail?.("a worker is from another release");
+          reset();
+          return;
         }
+        slot.ready = true;
+        slot.onReady?.();
         return;
       }
-      slot.onReply?.(m as WorkerReply);
+      if (slot.ready) slot.onReply?.(m as WorkerReply);
     };
     w.onerror = (e) => {
-      clearTimeout(timer);
       slot.dead = true;
-      if (!said) { said = true; log(`engine workers: a worker failed to load (${errText(e)})`); settle("error"); }
+      if (!said) { said = true; settle(); log(`engine workers: a worker failed to load (${errText(e)})`); }
       slot.onFail?.(`a worker failed: ${errText(e)}`);
     };
     return slot;
   };
-  const reset = () => { for (const s of slots.splice(0)) { s.onReply = null; s.onFail = null; s.w.terminate(); } };
-  const fail = (why: string): null => {
-    reset();
+  function reset() { for (const s of slots.splice(0)) { s.onReply = null; s.onFail = null; s.onReady = null; s.dead = true; s.w.terminate(); s.settle(); } }
+  const prune = () => { for (let i = slots.length - 1; i >= 0; i--) if (slots[i].dead) { const s = slots.splice(i, 1)[0]; s.w.terminate(); s.settle(); } };
+  const failed = (why: string) => {
     fails++;
     if (fails >= FAILS_TO_DISABLE) {
       disabled = true;
+      reset();
       log(`engine workers off for this page after ${fails} failures in a row (${why}); Live edits run here`);
     } else {
-      log(`engine workers: ${why}; this batch runs here`);
+      log(`engine workers: ${why}; the rest of this edit runs here`);
     }
-    return null;
   };
-
-  async function run(b: TrialBatch): Promise<TrialRun[] | null> {
-    if (disabled) return null;
-    const n = b.variants.length;
-    if (n === 0) return [];
-    const k = Math.min(o.workers, n);
-    for (let i = slots.length - 1; i >= 0; i--) if (slots[i].dead) slots.splice(i, 1)[0].w.terminate();
+  const ensure = (k: number): boolean => {
+    prune();
     try {
       while (slots.length < k) slots.push(spawn());
-    } catch (e) { return fail(`a worker could not start: ${errText(e)}`); }
-    const active = slots.slice(0, k);
-    const states = await Promise.all(active.map((s) => s.ready));
-    if (disabled) return null; // closed while starting
-    if (states.includes("release")) { reset(); disabled = true; return null; }
-    if (states.includes("error")) return fail(`a worker could not start within ${o.startTimeoutMs} ms`);
+      return true;
+    } catch (e) {
+      reset();
+      failed(`a worker could not start: ${errText(e)}`);
+      return false;
+    }
+  };
 
+  async function run(b: TrialBatch, ctx: WebBatchCtx): Promise<TrialRun[] | null> {
+    if (disabled) return null;
+    const isCurrent = ctx.isCurrent ?? (() => true);
+    if (!isCurrent()) return null;
+    const n = b.variants.length;
+    if (n === 0) return [];
+    if (!ensure(Math.min(o.workers, n))) return null;
+    const runHere = ctx.runHere ?? ((idx: number) => trialRun(trialInput(b.base, b.variants[idx])));
     const id = ++job;
-    return new Promise<TrialRun[] | null>((resolve) => {
-      const out: (TrialRun | undefined)[] = new Array(n).fill(undefined);
-      let got = 0;
-      let next = 0;
-      let done = false;
-      const finish = (v: TrialRun[] | null) => {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
-        abortCurrent = null;
-        for (const s of active) { s.onReply = null; s.onFail = null; }
-        resolve(v);
-      };
-      const timer = setTimeout(() => finish(fail(`no answer within the batch time limit (${o.batchTimeoutMs} ms)`)), o.batchTimeoutMs);
-      abortCurrent = () => finish(null);
-      const send = (s: Slot, m: WorkerMessage) => s.w.postMessage(m);
-      const sendNext = (s: Slot) => { if (next < n) { const idx = next++; send(s, { type: "run", job: id, idx, variant: b.variants[idx] }); } };
-      for (const s of active) {
-        s.onFail = (why) => finish(fail(why));
-        s.onReply = (m) => {
-          if (done || !m || m.job !== id) return; // an answer for an earlier batch
-          if ("error" in m) { finish(fail(`a worker failed: ${m.error}`)); return; }
-          if (!Number.isInteger(m.idx) || m.idx < 0 || m.idx >= n || out[m.idx] !== undefined) { finish(fail("a worker answered out of turn")); return; }
-          out[m.idx] = m.run;
-          got++;
-          if (got >= n) { fails = 0; finish(out as TrialRun[]); return; }
-          sendNext(s);
-        };
+    type Live = { slot: Slot; held: Set<number>; ok: boolean; staged: boolean; lastAnswer: number };
+    const t0 = performance.now();
+    const active: Live[] = slots.slice(0, Math.min(o.workers, n)).map((slot) => ({ slot, held: new Set(), ok: true, staged: false, lastAnswer: t0 }));
+    const out: (TrialRun | undefined)[] = new Array(n).fill(undefined);
+    let got = 0;
+    let answers = 0;
+    let errors: string | null = null;
+    let stalledHere = false;
+    let lastWorkerAnswer = t0;
+    let aborted = false;
+    let wake: (() => void) | null = null;
+    const poke = () => { const w = wake; wake = null; w?.(); };
+    let next = 0;
+    const back: number[] = [];
+    const take = (): number | null => {
+      while (back.length) { const i = back.shift()!; if (out[i] === undefined) return i; }
+      while (next < n) { const i = next++; if (out[i] === undefined) return i; }
+      return null;
+    };
+    const put = (idx: number, r: TrialRun) => { out[idx] = r; got++; };
+    const retire = (l: Live) => {
+      if (!l.ok) return;
+      l.ok = false;
+      for (const i of l.held) if (out[i] === undefined) back.push(i);
+      back.sort((x, y) => x - y);
+      l.held.clear();
+      l.slot.onReady = null; l.slot.onReply = null; l.slot.onFail = null;
+      l.slot.dead = true;
+    };
+    const send = (l: Live, m: WorkerMessage): boolean => {
+      try { l.slot.w.postMessage(m); return true; } catch (e) { errors ??= `the batch could not be sent: ${errText(e)}`; retire(l); return false; }
+    };
+    const fill = () => {
+      for (const l of active) {
+        if (!l.ok || !l.slot.ready) continue;
+        if (!l.staged) { if (!send(l, { type: "stage", job: id, base: b.base })) continue; l.staged = true; l.lastAnswer = performance.now(); }
+        while (l.ok && l.held.size < PER_WORKER) {
+          const idx = take();
+          if (idx == null) return;
+          if (send(l, { type: "run", job: id, idx, variant: b.variants[idx] })) l.held.add(idx);
+          else back.push(idx);
+        }
       }
-      try {
-        for (const s of active) send(s, { type: "stage", job: id, base: b.base });
-        for (const s of active) sendNext(s);
-      } catch (e) { finish(fail(`the batch could not be sent: ${errText(e)}`)); }
-    });
+    };
+    for (const l of active) {
+      l.slot.onReady = () => { fill(); poke(); };
+      l.slot.onFail = (why) => { errors ??= why; retire(l); poke(); };
+      l.slot.onReply = (m) => {
+        if (!l.ok || !m || m.job !== id) return; // an answer for an earlier batch
+        if ("error" in m) { errors ??= `a worker failed: ${m.error}`; retire(l); poke(); return; }
+        if (!Number.isInteger(m.idx) || !l.held.has(m.idx)) { errors ??= "a worker answered out of turn"; retire(l); poke(); return; }
+        l.held.delete(m.idx);
+        l.lastAnswer = lastWorkerAnswer = performance.now();
+        if (out[m.idx] === undefined) { put(m.idx, m.run); answers++; }
+        fill();
+        poke();
+      };
+    }
+    abortCurrent = () => { aborted = true; poke(); };
+    const cleanup = () => {
+      abortCurrent = null;
+      for (const l of active) { if (l.ok) { l.slot.onReady = null; l.slot.onReply = null; l.slot.onFail = null; } }
+    };
+
+    try {
+      fill();
+      while (got < n) {
+        if (aborted || !isCurrent()) return null;
+        const free = take();
+        if (free != null) { put(free, runHere(free)); await yieldToLoop(); continue; }
+        const idle = performance.now() - lastWorkerAnswer;
+        if (ctx.run.stalled || idle >= stallMs) {
+          if (!ctx.run.stalled) {
+            log(`engine workers: no answer for ${Math.round(idle)} ms; this page finishes the edit's batches itself`);
+            ctx.run.stalled = true;
+            stalledHere = true;
+          }
+          let low = -1;
+          for (let i = 0; i < n; i++) if (out[i] === undefined) { low = i; break; }
+          if (low >= 0) put(low, runHere(low));
+          await yieldToLoop();
+          continue;
+        }
+        await new Promise<void>((r) => {
+          const timer = setTimeout(() => { if (wake === done) wake = null; r(); }, Math.max(1, stallMs - idle));
+          const done = () => { clearTimeout(timer); r(); };
+          wake = done;
+        });
+      }
+    } finally {
+      cleanup();
+    }
+
+    const now = performance.now();
+    for (const l of active) if (l.ok && l.held.size > 0 && now - l.lastAnswer >= stallMs) { retire(l); }
+    prune();
+    if (answers > 0) fails = 0;
+    else if (!disabled && (stalledHere || errors)) { ctx.run.inline = true; failed(errors ?? `no worker answered within ${stallMs} ms`); }
+    else if (disabled) ctx.run.inline = true;
+    return out as TrialRun[];
   }
 
   return {
     // One batch at a time: the workers hold one stage each.
-    runBatch(b) {
-      const p = chain.then(() => run(b));
+    runBatch(b, ctx) {
+      const p = chain.then(() => run(b, ctx));
       chain = p.catch(() => undefined);
       return p.catch(() => null);
+    },
+    async warm() {
+      if (disabled || !ensure(o.workers)) return;
+      await Promise.all(slots.map((s) => s.settled));
     },
     close() { disabled = true; abortCurrent?.(); reset(); },
     get disabled() { return disabled; },

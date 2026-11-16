@@ -2,23 +2,27 @@
 //
 // The trial (auto-scheduler.ts spacingTrialSteps) is a sequence of batches whose candidate runs
 // all start from one base and do not depend on each other. runBatch sends the base to each worker
-// once, hands out the candidates one at a time, and returns the runs in the candidates' order,
-// so the trial picks exactly what the plain loop picks.
+// once, hands out the candidates (up to two at a time per worker), and returns the runs in the
+// candidates' order, so the trial picks exactly what the plain loop picks.
 //
 // runBatch is SYNCHRONOUS: the caller (autoSchedule, and through it applyScenario and request
 // approval) stays a plain function. It waits on a shared counter with Atomics.wait, which Node
-// allows on its main thread, and reads replies with receiveMessageOnPort. The server's event loop
-// is blocked for the batch, as it already was for the whole trial before; it is just shorter now.
+// allows on its main thread, and reads replies with receiveMessageOnPort. Node's worker `error`
+// and `exit` events cannot fire while it loops, so a dead worker looks like a silent one.
 //
-// Anything unexpected (no bundle, a bundle from another release, a worker that throws, dies or
-// does not answer within the batch time limit) returns null, and the caller runs that batch
-// inline: slower, never different. Two failures in a row turn the pool off for the process.
+// Card #281: the main thread HELPS. Whenever a run is held by no worker, it runs that run itself
+// (ctx.runHere). When every remaining run is held by a worker and no worker has answered for the
+// stall time, it runs the lowest unanswered run itself (a late answer for it is ignored); after
+// one stall in a run, later batches of that run take over at once. So a hung, dead or broken pool
+// costs at most one stall per run on top of the plain loop, and the result is always the plain
+// loop's. A batch where no worker answered (a stall or an error) sends the rest of its run inline;
+// two such batches in a row turn the pool off for the process.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Worker, MessageChannel, receiveMessageOnPort, type MessagePort } from "node:worker_threads";
-import type { TrialBatch, TrialBatchRunner, TrialRun } from "./auto-scheduler";
-import type { WorkerMessage, WorkerReply } from "./engine-worker-core";
+import type { TrialBatch, TrialBatchCtx, TrialBatchRunner, TrialRun } from "./auto-scheduler";
+import type { WorkerReply } from "./engine-worker-core";
 
 export type BundleStamp = { version: string; commit: string };
 const STAMP_RE = /^\/\* yosched-engine-worker (\{[^\n]*?\}) \*\//;
@@ -46,21 +50,25 @@ export function readBundleStamp(file: string): BundleStamp | null {
 export type EnginePoolOptions = {
   bundlePath: string;
   workers: number;
-  /** How long one batch may take before it is given up and run inline. */
-  batchTimeoutMs: number;
+  /** How long the workers may go without answering before this thread takes over their runs. */
+  stallMs: number;
   /** The release this server was built from; the bundle must carry the same stamp. */
   expect: BundleStamp;
   log?: (message: string) => void;
 };
+/** What runBatch needs of its batch's context (auto-scheduler.ts TrialBatchCtx). */
+export type PoolBatchCtx = Pick<TrialBatchCtx, "run" | "runHere">;
 export type EnginePool = {
-  /** `timeoutMs` (when shorter) replaces the pool's batch time limit for this batch. */
-  runBatch(batch: TrialBatch, timeoutMs?: number): TrialRun[] | null;
+  /** Every run of the batch, in order (some run here, through ctx.runHere), or null when the pool is off or cannot start. */
+  runBatch(batch: TrialBatch, ctx: PoolBatchCtx): TrialRun[] | null;
   close(): Promise<void>;
   readonly size: number;
   readonly disabled: boolean;
 };
 
 const FAILS_TO_DISABLE = 2;
+/** Runs handed to one worker at a time: one to work on, one queued so it never waits on us. */
+const PER_WORKER = 2;
 const WAIT_SLICE_MS = 50;
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -74,6 +82,7 @@ export function createEnginePool(o: EnginePoolOptions): EnginePool | null {
   if (!o.expect.version || stamp.version !== o.expect.version || stamp.commit !== o.expect.commit) {
     return off(`the worker bundle is from another release (${stamp.version} ${stamp.commit}; this server is ${o.expect.version || "unknown"} ${o.expect.commit || "unknown"})`);
   }
+  const stallMs = Math.max(0, o.stallMs);
 
   type Slot = { worker: Worker; port: MessagePort; dead: boolean };
   const counter = new Int32Array(new SharedArrayBuffer(4));
@@ -94,19 +103,18 @@ export function createEnginePool(o: EnginePoolOptions): EnginePool | null {
   };
   const drop = (s: Slot): Promise<unknown> => { s.dead = true; s.port.close(); return s.worker.terminate().catch(() => undefined); };
   const reset = () => Promise.all(slots.splice(0).map(drop));
-  const fail = (why: string): null => {
-    void reset();
+  const failed = (why: string, what: string) => {
     fails++;
     if (fails >= FAILS_TO_DISABLE) {
       disabled = true;
+      void reset();
       log(`engine pool off for this process after ${fails} failures in a row (${why}); the spacing trial runs inline`);
     } else {
-      log(`engine pool: ${why}; this batch runs inline`);
+      log(`engine pool: ${why}; ${what}`);
     }
-    return null;
   };
 
-  function runBatch(b: TrialBatch, timeoutMs?: number): TrialRun[] | null {
+  function runBatch(b: TrialBatch, ctx: PoolBatchCtx): TrialRun[] | null {
     if (disabled) return null;
     const n = b.variants.length;
     if (n === 0) return [];
@@ -114,42 +122,102 @@ export function createEnginePool(o: EnginePoolOptions): EnginePool | null {
     const k = Math.min(o.workers, n);
     try {
       while (slots.length < k) slots.push(spawn());
-    } catch (e) { return fail(`a worker could not start: ${errText(e)}`); }
-    const active = slots.slice(0, k);
+    } catch (e) {
+      void reset();
+      failed(`a worker could not start: ${errText(e)}`, "this batch runs inline");
+      return null;
+    }
     const id = ++job;
-    const limitMs = timeoutMs != null && timeoutMs > 0 ? Math.min(timeoutMs, o.batchTimeoutMs) : o.batchTimeoutMs;
-    const deadline = performance.now() + limitMs;
+    type Live = { slot: Slot; held: Set<number>; ok: boolean; lastAnswer: number };
+    const t0 = performance.now();
+    const active: Live[] = slots.slice(0, k).map((slot) => ({ slot, held: new Set(), ok: true, lastAnswer: t0 }));
     const out: (TrialRun | undefined)[] = new Array(n).fill(undefined);
     let got = 0;
+    let answers = 0;
+    let errors: string | null = null;
+    let stalledHere = false;
+    let lastWorkerAnswer = t0;
+    // Runs no worker holds: the never-sent ones from `next`, and any a failed worker gave back.
     let next = 0;
-    const send = (s: Slot, m: WorkerMessage) => s.port.postMessage(m);
-    const sendNext = (s: Slot) => { if (next < n) { const idx = next++; send(s, { type: "run", job: id, idx, variant: b.variants[idx] }); } };
-    try {
-      for (const s of active) send(s, { type: "stage", job: id, base: b.base });
-      for (const s of active) sendNext(s);
-      while (got < n) {
-        const seen = Atomics.load(counter, 0);
-        let progressed = false;
-        for (const s of active) {
-          for (let r = receiveMessageOnPort(s.port); r; r = receiveMessageOnPort(s.port)) {
-            const m = r.message as WorkerReply;
-            if (m.job !== id) continue; // an answer for an earlier batch
-            if ("error" in m) return fail(`a worker failed: ${m.error}`);
-            if (!Number.isInteger(m.idx) || m.idx < 0 || m.idx >= n || out[m.idx] !== undefined) return fail("a worker answered out of turn");
-            out[m.idx] = m.run;
-            got++;
-            progressed = true;
-            sendNext(s);
-          }
+    const back: number[] = [];
+    const take = (): number | null => {
+      while (back.length) { const i = back.shift()!; if (out[i] === undefined) return i; }
+      while (next < n) { const i = next++; if (out[i] === undefined) return i; }
+      return null;
+    };
+    const put = (idx: number, run: TrialRun) => { out[idx] = run; got++; };
+    const retire = (l: Live) => {
+      l.ok = false;
+      for (const i of [...l.held].sort((x, y) => x - y)) if (out[i] === undefined) back.push(i);
+      back.sort((x, y) => x - y);
+      l.held.clear();
+      void drop(l.slot);
+    };
+    const fill = () => {
+      for (const l of active) {
+        while (l.ok && l.held.size < PER_WORKER) {
+          const idx = take();
+          if (idx == null) return;
+          try { l.slot.port.postMessage({ type: "run", job: id, idx, variant: b.variants[idx] }); l.held.add(idx); }
+          catch (e) { back.push(idx); errors ??= `a run could not be sent: ${errText(e)}`; retire(l); }
         }
-        if (got >= n || progressed) continue;
-        const left = deadline - performance.now();
-        if (left <= 0) return fail(`no answer within the batch time limit (${Math.round(limitMs)} ms)`);
-        // A short slice: a reply posted just before `seen` was read is picked up on the next pass.
-        Atomics.wait(counter, 0, seen, Math.min(left, WAIT_SLICE_MS));
       }
-    } catch (e) { return fail(`the batch could not be sent: ${errText(e)}`); }
-    fails = 0;
+    };
+
+    for (const l of active) {
+      try { l.slot.port.postMessage({ type: "stage", job: id, base: b.base }); }
+      catch (e) { errors ??= `the batch could not be sent: ${errText(e)}`; retire(l); }
+    }
+    fill();
+    while (got < n) {
+      const seen = Atomics.load(counter, 0);
+      let progressed = false;
+      for (const l of active) {
+        if (!l.ok) continue;
+        for (let r = receiveMessageOnPort(l.slot.port); r; r = receiveMessageOnPort(l.slot.port)) {
+          const m = r.message as WorkerReply;
+          if (!m || m.job !== id) continue; // an answer for an earlier batch
+          if ("error" in m) { errors ??= `a worker failed: ${m.error}`; retire(l); break; }
+          if (!Number.isInteger(m.idx) || !l.held.has(m.idx)) { errors ??= "a worker answered out of turn"; retire(l); break; }
+          l.held.delete(m.idx);
+          l.lastAnswer = lastWorkerAnswer = performance.now();
+          if (out[m.idx] !== undefined) continue; // already run here after a stall: the late answer is ignored
+          put(m.idx, m.run);
+          answers++;
+          progressed = true;
+        }
+      }
+      fill();
+      if (got >= n || progressed) continue;
+      // Help: a run nobody holds is run here.
+      const free = take();
+      if (free != null) { put(free, ctx.runHere(free)); continue; }
+      const idle = performance.now() - lastWorkerAnswer;
+      if (ctx.run.stalled || idle >= stallMs) {
+        if (!ctx.run.stalled) {
+          log(`engine pool: no answer from the workers for ${Math.round(idle)} ms; this server finishes the run's batches itself`);
+          ctx.run.stalled = true;
+          stalledHere = true;
+        }
+        // Take over the lowest unanswered run; a worker's late answer for it is ignored.
+        let low = -1;
+        for (let i = 0; i < n; i++) if (out[i] === undefined) { low = i; break; }
+        if (low >= 0) put(low, ctx.runHere(low));
+        continue;
+      }
+      // A short slice: a reply posted just before `seen` was read is picked up on the next pass.
+      Atomics.wait(counter, 0, seen, Math.min(stallMs - idle, WAIT_SLICE_MS));
+    }
+
+    // A worker that still holds runs and has said nothing for the stall time is replaced next batch.
+    const now = performance.now();
+    for (const l of active) if (l.ok && l.held.size > 0 && now - l.lastAnswer >= stallMs) retire(l);
+    for (let i = slots.length - 1; i >= 0; i--) if (slots[i].dead) slots.splice(i, 1);
+    if (answers > 0) fails = 0;
+    else if (stalledHere || errors) {
+      ctx.run.inline = true;
+      failed(errors ?? `no worker answered within ${stallMs} ms`, "the rest of this run is done here");
+    }
     return out as TrialRun[];
   }
 
@@ -162,31 +230,19 @@ export function createEnginePool(o: EnginePoolOptions): EnginePool | null {
 }
 
 const DEFAULT_WORKERS = 8;
-// David's budget for generating a month is 10 s at most. A hung or broken pool waits at most the
-// trial deadline in total before every remaining batch runs inline (a batch the pool gives up on
-// reruns inline too), so the deadline plus an inline trial stays near that budget.
-const DEFAULT_BATCH_TIMEOUT_MS = 3_000;
-const DEFAULT_TRIAL_DEADLINE_MS = 6_000;
+// David's budget for generating a month is 10 s at most, 3 s preferred. A broken pool costs at
+// most one stall per run on top of the plain loop.
+const DEFAULT_STALL_MS = 1_000;
+/** Settings card #281 removed: still read once at start-up, only to say they are ignored. */
+export const OBSOLETE_POOL_ENV = ["YOSCHED_ENGINE_BATCH_TIMEOUT_MS", "YOSCHED_ENGINE_TRIAL_DEADLINE_MS"] as const;
 
-/**
- * The installed runner: one run's batches go to the pool until `trialDeadlineMs` after the run
- * started; each gets the pool's batch limit or the time left, whichever is less. After that, null:
- * the rest of the run's batches run inline (the same result).
- */
-export function deadlineRunner(
-  pool: Pick<EnginePool, "runBatch">,
-  o: { batchTimeoutMs: number; trialDeadlineMs: number },
-  now: () => number = () => performance.now(),
-): TrialBatchRunner {
-  return (batch, { startedAt }) => {
-    const left = o.trialDeadlineMs - (now() - startedAt);
-    if (left <= 0) return null;
-    return pool.runBatch(batch, Math.min(o.batchTimeoutMs, left));
-  };
+/** The installed runner: each batch goes to the pool with its run's context. */
+export function poolRunner(pool: Pick<EnginePool, "runBatch">): TrialBatchRunner {
+  return (batch, ctx) => pool.runBatch(batch, ctx);
 }
 
 /** The pool's settings from the environment (server operations, not scheduling policy). */
-export function poolOptionsFromEnv(env: Record<string, string | undefined>, expect: BundleStamp, cpus: number = os.availableParallelism()): Omit<EnginePoolOptions, "log"> & { trialDeadlineMs: number } {
+export function poolOptionsFromEnv(env: Record<string, string | undefined>, expect: BundleStamp, cpus: number = os.availableParallelism()): Omit<EnginePoolOptions, "log"> & { obsolete: string[] } {
   const int = (v: string | undefined, dflt: number, min: number) => {
     if (v == null || v.trim() === "") return dflt;
     const n = Number(v);
@@ -195,8 +251,8 @@ export function poolOptionsFromEnv(env: Record<string, string | undefined>, expe
   return {
     bundlePath: env.YOSCHED_ENGINE_WORKER?.trim() || path.join(process.cwd(), "engine-worker.cjs"),
     workers: Math.min(int(env.YOSCHED_ENGINE_WORKERS, DEFAULT_WORKERS, 0), Math.max(0, cpus - 1)),
-    batchTimeoutMs: int(env.YOSCHED_ENGINE_BATCH_TIMEOUT_MS, DEFAULT_BATCH_TIMEOUT_MS, 1),
-    trialDeadlineMs: int(env.YOSCHED_ENGINE_TRIAL_DEADLINE_MS, DEFAULT_TRIAL_DEADLINE_MS, 1),
+    stallMs: int(env.YOSCHED_ENGINE_STALL_MS, DEFAULT_STALL_MS, 0),
     expect,
+    obsolete: OBSOLETE_POOL_ENV.filter((k) => (env[k] ?? "").trim() !== ""),
   };
 }
