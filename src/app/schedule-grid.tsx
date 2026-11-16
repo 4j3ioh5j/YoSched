@@ -344,8 +344,8 @@ function printBlockStyle(b: PrintBlock): React.CSSProperties {
 }
 
 /** On-screen widths of the split DATE / DAY columns (px). */
-const DATE_COL_W = 50; // card #305: tighter against the DAY column
-const dayColW = (fmt: PrintLayout["dayColumnFormat"]) => (fmt === "Dddd" ? 84 : 44);
+const DATE_COL_W = 48; // cards #305/#306: date + day = 88px, as the old single column
+const dayColW = (fmt: PrintLayout["dayColumnFormat"]) => (fmt === "Dddd" ? 80 : 40);
 
 function formatDateLabel(dateStr: string, dateFormat: DateFormatKey = DEFAULT_DATE_FORMAT): { day: string; date: string; dow: number; dayNum: number; month: number } {
   const d = parseDate(dateStr);
@@ -4307,7 +4307,7 @@ export function ScheduleGrid({
                 <>
                   <th
                     data-date-col
-                    className="sticky left-0 z-20 bg-slate-800 pl-2 pr-1 py-2 text-left text-xs font-medium text-slate-400 border-b border-slate-700"
+                    className="sticky left-0 z-20 bg-slate-800 pl-2 pr-0.5 py-2 text-left text-xs font-medium text-slate-400 border-b border-slate-700"
                     style={{ width: DATE_COL_W, minWidth: DATE_COL_W }}
                   >
                     Date
@@ -4518,7 +4518,7 @@ export function ScheduleGrid({
                     if (printLayout.splitDateDay) {
                       return (
                         <>
-                          <td data-date-col className={[base, "pl-2 pr-1", "left-0", ppTop].join(" ")} style={{ ...cellBase, ...hoverStyle(HOVER_OUTLINE_DATE) }} {...cellProps}>
+                          <td data-date-col className={[base, "pl-2 pr-0.5", "left-0", ppTop].join(" ")} style={{ ...cellBase, ...hoverStyle(HOVER_OUTLINE_DATE) }} {...cellProps}>
                             <span className={dateClass}>{formatDateColumn(date, printLayout.dateColumnFormat)}</span>
                           </td>
                           <td data-day-col data-date-block-end className={[base, "pl-1 pr-2", "border-r border-slate-700", ppTop].join(" ")} style={{ ...cellBase, ...hoverStyle(HOVER_OUTLINE_DAY), left: DATE_COL_W }} {...cellProps}>

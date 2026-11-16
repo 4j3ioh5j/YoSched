@@ -22,11 +22,13 @@ describe("date block hover is one box", () => {
 
 describe("less space between date and day", () => {
   it("the DATE column is narrower and the facing paddings are halved", () => {
-    expect(grid).toContain("const DATE_COL_W = 50;");
+    expect(grid).toContain("const DATE_COL_W = 48;");
+    // Card #306: DATE + DAY together are 88px again (the old single column's width).
+    expect(grid).toContain('const dayColW = (fmt: PrintLayout["dayColumnFormat"]) => (fmt === "Dddd" ? 80 : 40);');
     const block = grid.slice(grid.indexOf("if (printLayout.splitDateDay) {\n                      return ("));
     const dateTd = block.slice(block.indexOf("<td data-date-col"), block.indexOf(">", block.indexOf("<td data-date-col")));
     const dayTd = block.slice(block.indexOf("<td data-day-col"), block.indexOf(">", block.indexOf("<td data-day-col")));
-    expect(dateTd).toContain('"pl-2 pr-1"');
+    expect(dateTd).toContain('"pl-2 pr-0.5"');
     expect(dayTd).toContain('"pl-1 pr-2"');
   });
 });
