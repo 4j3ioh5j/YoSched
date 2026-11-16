@@ -10,6 +10,7 @@ import { getPageSession } from "@/lib/auth-guard";
 import { resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { isRequestVisibleToViewer } from "@/lib/schedule-requests";
 import { coerceConditions } from "@/lib/print-column-visibility";
+import { liveCriteria } from "@/lib/print-criteria";
 import { parseLiveScope } from "@/lib/live-scope";
 import { orderStaff, parseStaffOrderCriteria } from "@/lib/staff-order";
 import { parseSpecialColumnOrder } from "@/lib/special-columns";
@@ -313,6 +314,7 @@ export default async function Home() {
           maxFtePercentage: c.maxFtePercentage,
           conditions: coerceConditions(c.conditions),
           conditionScope: c.conditionScope,
+          criteria: liveCriteria(c), // card #309: null = the single rule above
         }))}
         dateFormat={schedPrefs?.dateFormat ?? "MMMM D, YYYY"}
         defaultLiveScope={parseLiveScope(schedPrefs?.defaultLiveScope)}

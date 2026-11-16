@@ -28,7 +28,8 @@ export function conditionsReference(conditions: readonly ShiftCondition[], shift
 /** Where the Settings sections save. The pre-slice server has no such routes (404), so a
  *  save from a new tab against a rolled-back server fails closed. */
 export const PRINT_COLUMN_RULES_SAVE_URL = "/api/settings/print-column-rules/by-shift-id";
-export const PRINT_AGGREGATE_COLUMNS_SAVE_URL = "/api/settings/print-aggregate-columns/by-shift-id";
+// Card #309: the rule-line save path (the by-shift-id path answers 409 "reload" since then).
+export const PRINT_AGGREGATE_COLUMNS_SAVE_URL = "/api/settings/print-aggregate-columns/criteria";
 
 /** The conditions of a save payload: ids only, no `codes` / `except` key, and no condition
  *  without a selector (it would impose no constraint). The shift codes are display state

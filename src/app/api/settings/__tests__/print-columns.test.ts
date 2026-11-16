@@ -20,6 +20,7 @@ vi.mock("@/lib/prisma", () => {
     createMany: async (a: { data: Omit<Rule, "id">[] }) => { for (const d of a.data) db.rules.push({ id: `r${++db.seq}`, ...clone(d) }); },
   };
   const printAggregateColumn = {
+    findUnique: async (a: { where: { id: string } }) => { const r = db.aggs.find((x) => x.id === a.where.id); return r ? clone(r) : null; },
     findMany: async () => clone([...db.aggs].sort((a, b) => a.sortOrder - b.sortOrder)),
     deleteMany: async (a?: { where?: { id?: { in: string[] } } }) => {
       const ids = a?.where?.id?.in;
@@ -54,7 +55,9 @@ vi.mock("@/lib/prisma", () => {
 
 import { PUT as putRulesById } from "../print-column-rules/by-shift-id/route";
 import { GET as getRules } from "../print-column-rules/route";
-import { PUT as putAggById } from "../print-aggregate-columns/by-shift-id/route";
+import { PUT as putAggOldRoute } from "../print-aggregate-columns/by-shift-id/route";
+import { PUT as putAggCriteria } from "../print-aggregate-columns/criteria/route";
+import { STALE_CLIENT } from "@/lib/stale-client";
 import { GET as getAggs } from "../print-aggregate-columns/route";
 import { PUT as putShiftType, DELETE as deleteShiftType } from "../shift-types/route";
 
@@ -63,6 +66,16 @@ const OR = "st-or", ICU = "st-icu", CARD = "st-card", AL = "st-al";
 const cond = (shiftTypeIds: string[], exceptIds: string[] = [], over: Partial<Cond> = {}): Cond => ({ quantifier: "has_any", categories: [], shiftTypeIds, exceptIds, ...over });
 const rule = (label: string, conditions: Cond[], over: Partial<Rule> = {}) => ({ label, enabled: true, mode: "include", employmentTypeIds: [], minFtePercentage: null, maxFtePercentage: null, conditions, ...over });
 const agg = (label: string, conditions: Cond[], over: Partial<Agg> = {}) => ({ label, enabled: true, suppressMembers: true, isOther: false, employmentTypeIds: [], minFtePercentage: null, maxFtePercentage: null, conditions, conditionScope: "month", ...over });
+
+// Card #309: columns save through the criteria route, with each column's single rule sent as one
+// Include line. The tests below were written for the by-shift-id route and still hold.
+const putAggById = (r: NextRequest) =>
+  r.json().then((body: { columns?: unknown }) => putAggCriteria(req(Array.isArray(body?.columns) ? {
+    columns: body.columns.map((c) => (c && typeof c === "object" ? {
+      ...c,
+      criteria: [{ mode: "include", employmentTypeIds: (c as Agg).employmentTypeIds, minFtePercentage: (c as Agg).minFtePercentage, maxFtePercentage: (c as Agg).maxFtePercentage, conditions: (c as Agg).conditions, staffIds: [] }],
+    } : c)),
+  } : body)));
 
 beforeEach(() => {
   db.shifts = [
@@ -147,8 +160,18 @@ describe("PUT /api/settings/print-column-rules/by-shift-id", () => {
   });
 });
 
-describe("PUT /api/settings/print-aggregate-columns/by-shift-id", () => {
-  it("replaces the list by id; catch-all columns are sanitised (no rule, no suppression, month scope)", async () => {
+describe("PUT /api/settings/print-aggregate-columns/by-shift-id (card #309: old tabs)", () => {
+  it("answers 409 reload and writes nothing", async () => {
+    const before = structuredClone(db.aggs);
+    const res = await putAggOldRoute();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual(STALE_CLIENT);
+    expect(db.aggs).toEqual(before);
+  });
+});
+
+describe("PUT /api/settings/print-aggregate-columns/criteria", () => {
+  it("replaces the list by id; a catch-all keeps no old single rule and never suppresses", async () => {
     const res = await putAggById(req({ columns: [
       agg("ICU", [cond([ICU])], { conditionScope: "day" }),
       null,
@@ -158,8 +181,9 @@ describe("PUT /api/settings/print-aggregate-columns/by-shift-id", () => {
     const body = await res.json();
     expect(body.map((c: Agg) => [c.label, c.sortOrder, c.isOther, c.suppressMembers, c.conditionScope, c.employmentTypeIds, c.minFtePercentage])).toEqual([
       ["ICU", 0, false, true, "day", [], null],
-      ["Rest", 1, true, false, "month", [], null],
+      ["Rest", 1, true, false, "day", [], null], // its rule line makes the scope apply
     ]);
+    expect(body[1].criteria).toHaveLength(1);
     expect(body[0].conditions).toEqual([{ quantifier: "has_any", categories: [], shiftTypeIds: [ICU], exceptIds: [], codes: ["ICU"], except: [] }]);
     expect(body[1].conditions).toEqual([]);
   });
@@ -175,7 +199,7 @@ describe("PUT /api/settings/print-aggregate-columns/by-shift-id", () => {
 });
 
 
-describe("PUT /api/settings/print-aggregate-columns/by-shift-id keeps column ids (card #300)", () => {
+describe("PUT /api/settings/print-aggregate-columns/criteria keeps column ids (card #300)", () => {
   it("columns sent with ids keep them across save → reorder → save; new columns get new ids; omitted ones go", async () => {
     db.aggs = [];
     const first = await (await putAggById(req({ columns: [agg("A", [cond([ICU])]), agg("B", [cond([OR])]), agg("C", [], { isOther: true })] }))).json();
@@ -214,5 +238,41 @@ describe("DELETE /api/settings/shift-types", () => {
     expect((await deleteShiftType(req({ id: OR }))).status).toBe(200);
     expect((await deleteShiftType(req({ id: AL }))).status).toBe(200); // never referenced
     expect((await deleteShiftType(req({ id: CARD }))).status).toBe(409); // still in the rule
+  });
+});
+
+describe("card #309: rule lines through the criteria route", () => {
+  const line = (over: Record<string, unknown> = {}) => ({ mode: "include", employmentTypeIds: [], minFtePercentage: null, maxFtePercentage: null, conditions: [], staffIds: [], ...over });
+  it("saves Include/Exclude lines; legacy fields kept as stored when one Include line cannot express them; base snapshot written", async () => {
+    db.aggs = [];
+    const first = await (await putAggById(req({ columns: [agg("Other", [cond([ICU])], { maxFtePercentage: 0.5 })] }))).json();
+    const id = first[0].id;
+    expect(db.aggs[0]).toMatchObject({ maxFtePercentage: 0.5, conditions: [cond([ICU])] }); // one Include line → mirrored
+    const res = await putAggCriteria(req({ columns: [{ ...agg("Other", []), id, isOther: true, criteria: [
+      line({ mode: "exclude", conditions: [cond([ICU]), cond([], [ICU], { quantifier: "has_none", categories: ["work"] })] }),
+      line({ staffIds: ["removed-person"] }),
+    ] }] }));
+    expect(res.status).toBe(200);
+    const row = db.aggs[0] as Agg & { criteria: unknown; criteriaBase: unknown };
+    expect(row.criteria).toHaveLength(2);
+    expect((row.criteria as { staffIds: string[] }[])[1].staffIds).toEqual(["removed-person"]); // never pruned
+    expect(row.employmentTypeIds).toEqual([]); // a catch-all has no single rule
+    const { liveCriteria } = await import("@/lib/print-criteria");
+    expect(liveCriteria(row)).toHaveLength(2);
+  });
+
+  it("a shift named only inside a rule line cannot be deleted", async () => {
+    db.rules = [];
+    db.aggs = [];
+    await putAggCriteria(req({ columns: [{ ...agg("Other", []), isOther: true, criteria: [line({ mode: "exclude", conditions: [cond([CARD])] }), line({ staffIds: ["p"] })] }] }));
+    expect(db.aggs[0].conditions).toEqual([]);
+    expect((await deleteShiftType(req({ id: CARD }))).status).toBe(409);
+  });
+
+  it("refuses FTE min above max and writes nothing", async () => {
+    const before = structuredClone(db.aggs);
+    const res = await putAggCriteria(req({ columns: [{ ...agg("X", []), criteria: [line({ minFtePercentage: 0.9, maxFtePercentage: 0.1 })] }] }));
+    expect(res.status).toBe(400);
+    expect(db.aggs).toEqual(before);
   });
 });

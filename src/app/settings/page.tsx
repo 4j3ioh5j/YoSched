@@ -9,6 +9,7 @@ import { NavHeader } from "../nav-header";
 import { getPageSession } from "@/lib/auth-guard";
 import { parsePendingRequestMode, parseRequestConflictPolicy, parseApprovalConflictPolicy, parseOffStrategyOrder, DEFAULT_OFF_STRATEGY_ORDER } from "@/lib/schedule-requests";
 import { coerceConditions } from "@/lib/print-column-visibility";
+import { liveCriteria } from "@/lib/print-criteria";
 import { parseLiveScope } from "@/lib/live-scope";
 import { parseShiftShareBasis } from "@/lib/shift-share";
 import { parseHolidayPolicy } from "@/lib/holiday-policy";
@@ -57,6 +58,8 @@ export default async function Settings() {
       include: { employmentType: { select: { sortOrder: true, name: true, usesFtePercentage: true, allowsFixedHours: true, includedInFairness: true, defaultFtePercentage: true } } },
     }),
   ]);
+  // Card #309: everyone a printed-column People rule may name, inactive staff included.
+  const printPeople = await prisma.staff.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, isActive: true } });
   // Card #210: holiday types and holiday rules (settings data).
   const [holidayTypes, holidayRuleList] = await Promise.all([
     prisma.holidayType.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
@@ -262,9 +265,11 @@ export default async function Settings() {
           maxFtePercentage: c.maxFtePercentage,
           conditions: coerceConditions(c.conditions),
           conditionScope: c.conditionScope,
+          criteria: liveCriteria(c), // card #309: null = the single rule above
         }))}
         staffColumnOrder={parseStaffOrderCriteria(schedulingPrefsRow?.staffColumnOrder)}
         specialColumnOrder={parseSpecialColumnOrder(schedulingPrefsRow?.specialColumnOrder)}
+        printPeople={printPeople.map((p) => ({ id: p.id, name: p.name, isActive: p.isActive }))}
         orderableStaff={staffRows.map((p) => ({
           id: p.id,
           name: p.name,

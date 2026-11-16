@@ -14,6 +14,8 @@ import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope
 import { EQUITY_FACTORS_SAVE_URL, buildEquityFactorsSave, equitySaveErrorMessage } from "@/lib/equity-factors";
 import { COUNT_COLUMNS_SAVE_URL, buildCountColumnsSave, countColumnsSaveErrorMessage } from "@/lib/count-columns";
 import { PRINT_COLUMN_RULES_SAVE_URL, PRINT_AGGREGATE_COLUMNS_SAVE_URL, buildConditionsSave, printSaveErrorMessage } from "@/lib/print-conditions";
+import { effectiveCriteria, isInertLine } from "@/lib/print-aggregate-columns";
+import { buildCriteriaSave } from "@/lib/print-criteria";
 import { SHIFT_SHARE_BASES, type ShiftShareBasis } from "@/lib/shift-share";
 import { HOLIDAY_POLICIES, type HolidayPolicy, isHolidayCreditShift } from "@/lib/holiday-policy";
 import { holidayRulesVersion } from "@/lib/holiday-rules-db";
@@ -252,7 +254,20 @@ type PrintAggregateColumnData = {
   maxFtePercentage: number | null;
   conditions: PrintShiftCondition[];
   conditionScope: string; // "month" | "day"
+  // Card #309: the Include / Exclude rule lines; null/absent = the single rule above.
+  criteria?: {
+    mode: string;
+    staffIds: string[];
+    employmentTypeIds: string[];
+    minFtePercentage: number | null;
+    maxFtePercentage: number | null;
+    conditions: PrintShiftCondition[];
+  }[] | null;
 };
+
+/** Card #309: everyone a printed-column People rule may name, inactive staff included (a rule
+ *  naming someone who has since gone inactive keeps them, and shows them as such). */
+type PrintPerson = { id: string; name: string; isActive: boolean };
 
 type Props = {
   about?: About;
@@ -276,6 +291,7 @@ type Props = {
   countColumns: { id: string; label: string; shiftTypeIds: string[] }[];
   printColumnRules: PrintColumnRuleData[];
   printAggregateColumns: PrintAggregateColumnData[];
+  printPeople?: PrintPerson[];
   staffColumnOrder: StaffOrderCriterion[];
   specialColumnOrder?: string[] | null;
   orderableStaff: OrderableStaffRow[];
@@ -5439,7 +5455,11 @@ type EditAggCol = {
   isOther: boolean;
   suppressMembers: boolean;
   conditionScope: string; // "month" (match over the whole month) | "day" (match per day)
-} & RuleFields;
+  lines: EditAggLine[]; // card #309
+};
+
+// Card #309: one Include / Exclude rule line of a printed column.
+type EditAggLine = RuleFields & { mode: "include" | "exclude"; staffIds: string[] };
 
 // Configurable AGGREGATE columns on the printed schedule (the replacement for the old
 // hardcoded "FB" column). Each named column lists, per day, the initials of the staff
@@ -5951,15 +5971,53 @@ function DateColumnsSection({ initial }: { initial: PrintLayout }) {
   );
 }
 
+// Card #309: the named people of a printed-column rule. A person who has since gone inactive or
+// been removed stays selected (shown as such): dropping them could turn an Include rule into
+// "everyone".
+function PeoplePicker({ value, people, canEdit, onChange }: { value: string[]; people: PrintPerson[]; canEdit: boolean; onChange: (ids: string[]) => void }) {
+  const byId = new Map(people.map((p) => [p.id, p] as const));
+  const choices = people.filter((p) => p.isActive && !value.includes(p.id));
+  return (
+    <div className="flex items-center gap-1 flex-wrap text-xs text-slate-400">
+      <span>People:</span>
+      {value.length === 0 && <span className="text-[11px] text-slate-500">any</span>}
+      {value.map((id) => {
+        const p = byId.get(id);
+        const label = p ? (p.isActive ? p.name : `${p.name} (inactive)`) : "(removed person)";
+        return (
+          <span key={id} className="inline-flex items-center gap-1 rounded bg-slate-700 px-1.5 py-0.5 text-slate-200">
+            {label}
+            {canEdit && (
+              <button type="button" onClick={() => onChange(value.filter((x) => x !== id))} className="text-slate-400 hover:text-red-400" title="Remove">×</button>
+            )}
+          </span>
+        );
+      })}
+      {canEdit && choices.length > 0 && (
+        <select
+          value=""
+          onChange={(e) => { if (e.target.value) onChange([...value, e.target.value]); }}
+          className="bg-slate-700 text-slate-200 rounded px-1 py-0.5 text-xs border border-slate-600"
+        >
+          <option value="">+ person…</option>
+          {choices.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
+
 function AdditionalColumnsSection({
   initial,
   shiftTypes,
   employmentTypes,
+  people = [],
   onSaved,
 }: {
   initial: PrintAggregateColumnData[];
   shiftTypes: ShiftType[];
   employmentTypes: EmploymentTypeData[];
+  people?: PrintPerson[];
   onSaved?: (saved: { id: string; label: string }[]) => void;
 }) {
   const canEdit = useCanEdit();
@@ -5971,14 +6029,23 @@ function AdditionalColumnsSection({
       isOther: c.isOther,
       suppressMembers: c.suppressMembers,
       conditionScope: c.conditionScope === "day" ? "day" : "month",
-      employmentTypeIds: [...c.employmentTypeIds],
-      minFtePercentage: c.minFtePercentage,
-      maxFtePercentage: c.maxFtePercentage,
-      conditions: (c.conditions ?? []).map((x) => ({
-        quantifier: x.quantifier,
-        categories: [...x.categories],
-        shiftTypeIds: [...x.shiftTypeIds],
-        exceptIds: [...x.exceptIds],
+      // Stored lines, or the old single rule as one Include line (effectiveCriteria).
+      lines: effectiveCriteria({
+        ...c,
+        conditions: c.conditions ?? [],
+        criteria: Array.isArray(c.criteria) ? c.criteria.map((l) => ({ ...l, mode: l.mode === "exclude" ? ("exclude" as const) : ("include" as const) })) : null,
+      }).map((l) => ({
+        mode: l.mode,
+        staffIds: [...l.staffIds],
+        employmentTypeIds: [...l.employmentTypeIds],
+        minFtePercentage: l.minFtePercentage,
+        maxFtePercentage: l.maxFtePercentage,
+        conditions: l.conditions.map((x) => ({
+          quantifier: x.quantifier,
+          categories: [...x.categories],
+          shiftTypeIds: [...x.shiftTypeIds],
+          exceptIds: [...x.exceptIds],
+        })),
       })),
     }));
   const [cols, setCols] = useState<EditAggCol[]>(() => toEdit(initial));
@@ -5989,7 +6056,16 @@ function AdditionalColumnsSection({
     setCols(cols.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
   }
   function addCol() {
-    setCols([...cols, { label: "", enabled: true, isOther: false, suppressMembers: true, conditionScope: "month", employmentTypeIds: [], minFtePercentage: null, maxFtePercentage: null, conditions: [] }]);
+    setCols([...cols, { label: "", enabled: true, isOther: false, suppressMembers: true, conditionScope: "month", lines: [] }]);
+  }
+  function updateLine(idx: number, li: number, patch: Partial<EditAggLine>) {
+    update(idx, { lines: cols[idx].lines.map((l, j) => (j === li ? { ...l, ...patch } : l)) });
+  }
+  function addLine(idx: number, mode: "include" | "exclude") {
+    update(idx, { lines: [...cols[idx].lines, { mode, staffIds: [], employmentTypeIds: [], minFtePercentage: null, maxFtePercentage: null, conditions: [] }] });
+  }
+  function removeLine(idx: number, li: number) {
+    update(idx, { lines: cols[idx].lines.filter((_, j) => j !== li) });
   }
   function removeCol(idx: number) { setCols(cols.filter((_, i) => i !== idx)); }
   function move(idx: number, dir: -1 | 1) {
@@ -6004,9 +6080,13 @@ function AdditionalColumnsSection({
     setStatus("saving");
     setError("");
     try {
-      // Ids only; the Other column carries no rule; named columns drop empty-selector conditions.
-      // A pre-slice server has no such route and answers 404: the message asks for a reload.
-      const payload = cols.map((c) => ({ ...c, conditions: c.isOther ? [] : buildConditionsSave(c.conditions) }));
+      // Card #309: each column's rule lines, ids only, no line with nothing set; people are never
+      // dropped (a removed person matches nobody). A server from before the lines has no such
+      // route and answers 404: the message asks for a reload.
+      const payload = cols.map((c) => ({
+        id: c.id, label: c.label, enabled: c.enabled, isOther: c.isOther, suppressMembers: c.suppressMembers,
+        conditionScope: c.conditionScope, criteria: buildCriteriaSave(c.lines),
+      }));
       const res = await fetch(PRINT_AGGREGATE_COLUMNS_SAVE_URL, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -6029,20 +6109,17 @@ function AdditionalColumnsSection({
     <CollapsibleSection
       id="print-additional-columns"
       title="Additional Columns on Printed Schedule"
-      description="Extra aggregate columns for the printed schedule. Each lists, per day, the initials of the staff matching its rule who are scheduled that day. 'Suppress members' hides those staff's own individual columns in print (otherwise they appear both places). Tick 'Catch-all' to make a column the residual — it lists everyone who appears in no other column (no rule of its own). A column with no one to show that month is hidden automatically. Print-only — the on-screen grid is unchanged."
+      description="Extra aggregate columns for the printed schedule. Each lists, per day, the initials of the staff matching its rules who are scheduled that day: anyone who matches an Include rule (everyone, if there is none) and no Exclude rule. 'Suppress members' hides those staff's own individual columns in print (otherwise they appear both places). Tick 'Catch-all' to make a column the residual: it lists everyone who appears in no other column, and its rules take people out (Exclude) or add them (Include). A column with no one to show that month is hidden automatically. Print-only — the on-screen grid is unchanged."
       status={status}
       error={error}
     >
 
       <div className="space-y-3">
         {cols.map((col, idx) => {
-          // A non-catch-all column with no selector at all matches EVERY staff — flag it
-          // so the admin doesn't accidentally sweep everyone into one column.
-          const hasSelector =
-            col.employmentTypeIds.length > 0 ||
-            col.minFtePercentage != null ||
-            col.maxFtePercentage != null ||
-            col.conditions.some((c) => c.categories.length > 0 || c.shiftTypeIds.length > 0);
+          // Card #309: lines with something set; a named column with none matches EVERY staff —
+          // flag it so the admin doesn't accidentally sweep everyone into one column.
+          const active = col.lines.filter((l) => !isInertLine(l));
+          const hasRule = active.length > 0;
           return (
           <div key={idx} className="bg-slate-900/50 rounded p-3 border border-slate-700 space-y-2">
             <div className="flex items-center gap-2 flex-wrap">
@@ -6070,36 +6147,71 @@ function AdditionalColumnsSection({
               )}
             </div>
 
-            {col.isOther ? (
-              <p className="text-[11px] text-slate-500 italic">Catch-all — lists staff who appear in no other column (no rule).</p>
-            ) : (
-              <>
-                <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
-                  <span>Conditions apply to:</span>
+            <p className="text-[11px] text-slate-500">
+              {col.isOther
+                ? "Catch-all: lists the staff who appear in no other column. Exclude rules take people out of that list; Include rules add people to it."
+                : "Lists the staff who match any Include rule (everyone, if there is none) and no Exclude rule."}
+            </p>
+            {(!col.isOther || hasRule) && (
+              <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
+                <span>Shift conditions apply to:</span>
+                <div className="inline-flex rounded border border-slate-600 overflow-hidden">
+                  {(["month", "day"] as const).map((scope) => (
+                    <button
+                      key={scope}
+                      type="button"
+                      disabled={!canEdit}
+                      onClick={() => update(idx, { conditionScope: scope })}
+                      className={`px-2 py-0.5 ${col.conditionScope === scope ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"} disabled:opacity-50`}
+                    >
+                      {scope === "month" ? "Whole month" : "Each day"}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-[11px] text-slate-500">
+                  {col.conditionScope === "day"
+                    ? "a rule's shift conditions are checked against each day's shift"
+                    : "a rule's shift conditions are checked against the person's shifts over the whole month"}
+                </span>
+              </div>
+            )}
+            {col.lines.map((line, li) => (
+              <div key={li} className={`rounded border p-2 space-y-2 ${line.mode === "exclude" ? "border-red-900/60 bg-red-950/20" : "border-emerald-900/60 bg-emerald-950/20"}`}>
+                <div className="flex items-center gap-2 text-xs">
                   <div className="inline-flex rounded border border-slate-600 overflow-hidden">
-                    {(["month", "day"] as const).map((scope) => (
+                    {(["include", "exclude"] as const).map((mode) => (
                       <button
-                        key={scope}
+                        key={mode}
                         type="button"
                         disabled={!canEdit}
-                        onClick={() => update(idx, { conditionScope: scope })}
-                        className={`px-2 py-0.5 ${col.conditionScope === scope ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"} disabled:opacity-50`}
+                        onClick={() => updateLine(idx, li, { mode })}
+                        className={`px-2 py-0.5 ${line.mode === mode ? (mode === "include" ? "bg-emerald-700 text-white" : "bg-red-700 text-white") : "bg-slate-700 text-slate-300 hover:bg-slate-600"} disabled:opacity-50`}
                       >
-                        {scope === "month" ? "Whole month" : "Each day"}
+                        {mode === "include" ? "Include" : "Exclude"}
                       </button>
                     ))}
                   </div>
-                  <span className="text-[11px] text-slate-500">
-                    {col.conditionScope === "day"
-                      ? "lists a person only on the days their shift meets the conditions"
-                      : "lists a person on every scheduled day if they meet the conditions anytime that month"}
-                  </span>
+                  <span className="text-[11px] text-slate-500">staff who match everything set in this rule</span>
+                  {canEdit && (
+                    <button type="button" onClick={() => removeLine(idx, li)} className="ml-auto text-slate-500 hover:text-red-400 text-sm" title="Remove this rule">×</button>
+                  )}
                 </div>
-                <RuleFieldsEditor value={col} onChange={(patch) => update(idx, patch)} employmentTypes={employmentTypes} shifts={shiftTypes} canEdit={canEdit} />
-                {col.enabled && !hasSelector && (
-                  <p className="text-[11px] text-amber-400/90">No rule set — this column matches <strong>all staff</strong>. Add an employment type, FTE bound, or shift condition, or tick Catch-all.</p>
+                <RuleFieldsEditor value={line} onChange={(patch) => updateLine(idx, li, patch)} employmentTypes={employmentTypes} shifts={shiftTypes} canEdit={canEdit} />
+                <PeoplePicker value={line.staffIds} people={people} canEdit={canEdit} onChange={(staffIds) => updateLine(idx, li, { staffIds })} />
+                {isInertLine(line) && (
+                  <p className="text-[11px] text-amber-400/90">This rule has nothing set and does nothing.</p>
                 )}
-              </>
+              </div>
+            ))}
+            {canEdit && (
+              <div className="flex items-center gap-3 text-xs flex-wrap">
+                <button type="button" onClick={() => addLine(idx, "include")} className="text-emerald-400 hover:text-emerald-300">+ Include rule</button>
+                <button type="button" onClick={() => addLine(idx, "exclude")} className="text-red-400 hover:text-red-300">+ Exclude rule</button>
+                <span className="text-[11px] text-slate-500">{"Example: to keep people who only work ICU out of Other, add an Exclude rule with two shift conditions: \"has any of ICU\" and \"has none of work, except ICU\"."}</span>
+              </div>
+            )}
+            {!col.isOther && col.enabled && !hasRule && (
+              <p className="text-[11px] text-amber-400/90">No rule set — this column matches <strong>all staff</strong>. Add an Include rule, or tick Catch-all.</p>
             )}
           </div>
           );
@@ -6473,7 +6585,7 @@ function StaffColumnOrderSection({ initial, staff }: { initial: StaffOrderCriter
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, holidayTypes = [], holidayRules = EMPTY_HOLIDAY_RULES, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, followAvoids: initialFollowAvoids = [], requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, staffColumnOrder, specialColumnOrder = null, orderableStaff, canEdit = true, canEditAutoGenPriority = false, about = EMPTY_ABOUT }: Props) {
+export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, holidayTypes = [], holidayRules = EMPTY_HOLIDAY_RULES, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, followAvoids: initialFollowAvoids = [], requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, printPeople = [], staffColumnOrder, specialColumnOrder = null, orderableStaff, canEdit = true, canEditAutoGenPriority = false, about = EMPTY_ABOUT }: Props) {
   const undo = useUndo();
   // One shift list for the whole page: Shift Types edits it, every other section reads it.
   const [shiftTypes, setShiftTypes] = useState(initialShiftTypes);
@@ -6526,7 +6638,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
         <div className="space-y-4 mb-8 mt-3">
           <StaffColumnOrderSection initial={staffColumnOrder} staff={orderableStaff} />
           <PrintColumnRulesSection initial={initialPrintColumnRules} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
-          <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} onSaved={setSavedAggColumns} />
+          <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} people={printPeople} onSaved={setSavedAggColumns} />
           <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} onSaved={setSavedCountColumns} />
           <SpecialColumnOrderSection
             initial={specialColumnOrder}

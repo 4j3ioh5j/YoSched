@@ -56,7 +56,7 @@ describe("buildConditionsSave", () => {
     payload[0].shiftTypeIds.push("x");
     expect(state[0].shiftTypeIds).toEqual(["st-a"]);
     expect(PRINT_COLUMN_RULES_SAVE_URL).toBe("/api/settings/print-column-rules/by-shift-id");
-    expect(PRINT_AGGREGATE_COLUMNS_SAVE_URL).toBe("/api/settings/print-aggregate-columns/by-shift-id");
+    expect(PRINT_AGGREGATE_COLUMNS_SAVE_URL).toBe("/api/settings/print-aggregate-columns/criteria"); // card #309
   });
 });
 

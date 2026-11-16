@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { coerceConditions } from "@/lib/print-column-visibility";
+import { coerceCriteria } from "@/lib/print-criteria";
 import { conditionsReference } from "@/lib/print-conditions";
 import { lockEligibility } from "@/lib/eligibility-write";
 import { SHIFT_TYPE_EDITABLE_FIELDS as EDITABLE_FIELDS, sanitizePrintBg, minGapError } from "@/lib/shift-type-fields";
@@ -138,9 +139,11 @@ export async function DELETE(req: NextRequest) {
   // Printed-schedule rules/columns name shifts inside their conditions Json (few rows; scan in code).
   const [printRules, printAggregates] = await Promise.all([
     prisma.printColumnRule.findMany({ select: { conditions: true } }),
-    prisma.printAggregateColumn.findMany({ select: { conditions: true } }),
+    prisma.printAggregateColumn.findMany({ select: { conditions: true, criteria: true } }),
   ]);
-  if ([...printRules, ...printAggregates].some((r) => conditionsReference(coerceConditions(r.conditions), id))) {
+  // Card #309: an aggregate column's Include / Exclude rule lines name shifts too.
+  const lineConditions = printAggregates.flatMap((r) => (coerceCriteria(r.criteria) ?? []).map((l) => ({ conditions: l.conditions })));
+  if ([...printRules, ...printAggregates, ...lineConditions].some((r) => conditionsReference(coerceConditions(r.conditions), id))) {
     const st = await prisma.shiftType.findUnique({ where: { id }, select: { code: true } });
     return NextResponse.json(
       { error: `Cannot delete: Printed Schedule Columns has a rule using ${st?.code ?? "this shift"}. Remove it there first.`, reason: "print-column-linked" },

@@ -816,6 +816,12 @@ model PrintAggregateColumn {
   // listing the member only on days whose shift satisfies the conditions. Forced "month"
   // for the isOther catch-all (it has no conditions). See print-aggregate-columns.ts.
   conditionScope    String   @default("month")
+  // Card #309: Include / Exclude rule lines (CriteriaLine[], see src/lib/print-criteria.ts).
+  // NULL = a row from before them: the single rule above is its one Include line.
+  criteria          Json?
+  // The single rule above as it was when criteria was written; differs = an old server edited it
+  // since (rollback), and the single rule wins again. See liveCriteria().
+  criteriaBase      Json?
 
   @@map("print_aggregate_columns")
 }
