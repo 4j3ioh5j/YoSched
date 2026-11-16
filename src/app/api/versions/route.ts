@@ -1,20 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
-import { type AssignmentSnapshot, monthDateRange, hashSnapshot, nextVersionNumber } from "@/lib/versions";
+import { monthDateRange, hashSnapshot, nextVersionNumber } from "@/lib/versions";
+import { snapshotMonth, VERSION_LIST_SELECT } from "@/lib/versions-db";
+import { lockDayCaps, dateKeysBetween, DAY_CAP_TX, isTxTimeout, busyResponse } from "@/lib/day-cap-db";
 
-// Metadata returned for listing — excludes the (potentially large) snapshot blob.
-const LIST_SELECT = {
-  id: true,
-  year: true,
-  month: true,
-  versionNumber: true,
-  comment: true,
-  isCurrent: true,
-  isAutoBackup: true,
-  snapshotHash: true,
-  createdAt: true,
-} as const;
+const LIST_SELECT = VERSION_LIST_SELECT;
 
 function parseYearMonth(req: NextRequest): { year: number; month: number } | null {
   const sp = req.nextUrl.searchParams;
@@ -22,23 +13,6 @@ function parseYearMonth(req: NextRequest): { year: number; month: number } | nul
   const month = Number(sp.get("month"));
   if (!Number.isInteger(year) || !Number.isInteger(month) || month < 0 || month > 11) return null;
   return { year, month };
-}
-
-/** Build the snapshot of a calendar month's current assignments. */
-async function snapshotMonth(year: number, month: number): Promise<AssignmentSnapshot[]> {
-  const { start, end } = monthDateRange(year, month);
-  const rows = await prisma.assignment.findMany({
-    where: { date: { gte: start, lt: end } },
-    select: { staffId: true, date: true, shiftTypeId: true, isLocked: true, source: true, notes: true },
-  });
-  return rows.map((a) => ({
-    staffId: a.staffId,
-    date: a.date.toISOString().split("T")[0],
-    shiftTypeId: a.shiftTypeId,
-    isLocked: a.isLocked,
-    source: a.source,
-    notes: a.notes,
-  }));
 }
 
 // GET /api/versions?year=&month= — list versions for a calendar month, newest first.
@@ -71,21 +45,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid year/month" }, { status: 400 });
   }
 
-  const snapshot = await snapshotMonth(year, month);
-  const snapshotHash = hashSnapshot(snapshot);
-
-  const created = await prisma.$transaction(async (tx) => {
-    const existing = await tx.scheduleVersion.findMany({
-      where: { year, month },
-      select: { versionNumber: true },
-    });
-    const versionNumber = nextVersionNumber(existing.map((v) => v.versionNumber));
-    await tx.scheduleVersion.updateMany({ where: { year, month, isCurrent: true }, data: { isCurrent: false } });
-    return tx.scheduleVersion.create({
-      data: { year, month, versionNumber, comment, snapshot, snapshotHash, isCurrent: true },
-      select: LIST_SELECT,
-    });
-  });
-
-  return NextResponse.json({ version: created });
+  // Card #312: snapshot and number the version under the month's day locks, so a save
+  // in flight is either wholly in the snapshot or waits, and this writer cannot race
+  // /api/versions/ensure or a restore on the (year, month, versionNumber) key.
+  const { start, end } = monthDateRange(year, month);
+  try {
+    const created = await prisma.$transaction(async (tx) => {
+      await lockDayCaps(tx, dateKeysBetween(start, end));
+      const snapshot = await snapshotMonth(tx, year, month);
+      const snapshotHash = hashSnapshot(snapshot);
+      const existing = await tx.scheduleVersion.findMany({
+        where: { year, month },
+        select: { versionNumber: true },
+      });
+      const versionNumber = nextVersionNumber(existing.map((v) => v.versionNumber));
+      await tx.scheduleVersion.updateMany({ where: { year, month, isCurrent: true }, data: { isCurrent: false } });
+      return tx.scheduleVersion.create({
+        data: { year, month, versionNumber, comment, snapshot, snapshotHash, isCurrent: true },
+        select: LIST_SELECT,
+      });
+    }, DAY_CAP_TX);
+    return NextResponse.json({ version: created });
+  } catch (e) {
+    if (isTxTimeout(e)) return busyResponse();
+    throw e;
+  }
 }

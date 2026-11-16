@@ -404,6 +404,8 @@ model SchedulingPreferences {
   printPayPeriodLabels    Boolean  @default(true)
   // Card #299: year export base file name template ({YEAR} filled); null = built-in default.
   exportFileName          String?
+  // Card #312: Print / Export save a version first when a month changed: "auto" | "ask" | "off".
+  autoVersionMode         String   @default("auto")
   shiftBalanceFrom        DateTime? @db.Date // card #203: first day "Keep counts even across months" counts (null = each run on its own)
   shiftShareBasis         String   @default("fte") // auto-scheduler split of a scheduled shift's slots across eligible staff: "fte" (proportional to FTE) | "head" (equal per person) — see src/lib/shift-share.ts
   holidayShiftId          String?  // card #207: the shift credited on a holiday (leave, counts toward FTE); linked by id, never by code. null = none chosen

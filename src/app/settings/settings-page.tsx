@@ -50,6 +50,7 @@ import {
   type PrintLayout,
   type PrintTemplateContext,
 } from "@/lib/print-layout";
+import type { AutoVersionMode } from "@/lib/auto-version";
 import { DEFAULT_EXPORT_FILE_NAME, EXPORT_FILE_NAME_MAX, exportFileNameError, resolveExportFileName } from "@/lib/export-filename";
 import { RecurrencePicker } from "../staff/recurrence-picker";
 import { FrequencyPicker } from "../staff/frequency-picker";
@@ -147,6 +148,7 @@ type SchedulingPrefs = {
   screenHolidayColor: string | null; // card #209: null = no holiday tint on screen
   printLayout: PrintLayout; // card #301: header/footer, table font, DATE/DAY columns
   exportFileName: string | null; // card #299: year export file name template; null = built-in default
+  autoVersionMode: AutoVersionMode; // card #312: Print / Export save a version first
   leaveHoursPolicy: LeavePolicy;
   shiftBalanceFrom?: string | null;
   payPeriodAnchor: string | null;
@@ -5908,6 +5910,50 @@ function ExportFileNameSection({ initial }: { initial: string | null }) {
   );
 }
 
+// Card #312: what Print and Export year do when a month changed since its last version
+// (or never had one): save a new version first, ask first, or leave it (the old way).
+const AUTO_VERSION_CHOICES: { value: AutoVersionMode; label: string; help: string }[] = [
+  { value: "auto", label: "Automatic", help: "Save a new version first, so the printout or file always carries the right version number." },
+  { value: "ask", label: "Ask first", help: "Ask before saving the new version; Cancel prints or exports nothing." },
+  { value: "off", label: "Off", help: "Never save a version on Print or Export (versions are saved by hand only)." },
+];
+function AutoVersionSection({ initial }: { initial: AutoVersionMode }) {
+  const canEdit = useCanEdit();
+  const { saved, draft, setDraft, status, error, busy, dirty, save } = useSavedDraft({ mode: initial });
+  return (
+    <CollapsibleSection
+      id="auto-version"
+      title="Versions on Print and Export"
+      description="When a month has changed since its last saved version, or has never been saved (a blank month becomes Version 1), Print and Export year can save a new version first."
+      status={status}
+      error={error}
+    >
+      <div className="space-y-3">
+        {AUTO_VERSION_CHOICES.map((c) => (
+          <label key={c.value} className="flex items-start gap-2 text-sm text-slate-300">
+            <input
+              type="radio"
+              name="auto-version-mode"
+              className="mt-1"
+              checked={draft.mode === c.value}
+              disabled={!canEdit || busy}
+              onChange={() => setDraft({ mode: c.value })}
+            />
+            <span>
+              <span className="font-medium text-slate-200">{c.label}</span>
+              <span className="block text-xs text-slate-500">{c.help}</span>
+            </span>
+          </label>
+        ))}
+        <div className="flex gap-2">
+          <button type="button" disabled={!canEdit || busy || !dirty} onClick={() => save({ autoVersionMode: draft.mode }, draft)} className={BTN_SAVE}>Save</button>
+          <button type="button" disabled={!canEdit || busy || !dirty} onClick={() => setDraft(saved)} className={BTN_PLAIN}>Cancel</button>
+        </div>
+      </div>
+    </CollapsibleSection>
+  );
+}
+
 const DATE_COLUMN_SAMPLE = "2026-01-05"; // a Monday
 const DAY_COLUMN_SAMPLE_DOW = 1;
 
@@ -6650,6 +6696,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
           <PrintHeaderFooterSection initial={schedulingPrefs.printLayout} />
           <PrintFontSection initial={schedulingPrefs.printLayout} />
           <ExportFileNameSection initial={schedulingPrefs.exportFileName} />
+          <AutoVersionSection initial={schedulingPrefs.autoVersionMode} />
         </div>
 
         <SectionGroup label="Calendar" />

@@ -1,3 +1,4 @@
+import { parseAutoVersionMode } from "@/lib/auto-version";
 import { readTuning } from "@/lib/scheduler-tuning";
 import { prisma } from "@/lib/prisma";
 import { getPayPeriods } from "@/lib/pay-periods-server";
@@ -321,6 +322,7 @@ export default async function Home() {
         dayShading={dayShadingFrom(schedPrefs)}
         printLayout={printLayoutFrom(schedPrefs)}
         exportFileName={schedPrefs?.exportFileName ?? null}
+        autoVersionMode={parseAutoVersionMode(schedPrefs?.autoVersionMode)}
         weekendStartDow={readTuning(schedPrefs).weekendStartDow}
         currentVersions={currentVersions.map((v) => ({
           year: v.year,

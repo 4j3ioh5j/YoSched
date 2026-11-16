@@ -18,6 +18,8 @@ import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { liveBundleProblem } from "@/lib/live-bundle";
 import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { unsavedPrintWarning } from "@/lib/print-stamp";
+import { autoVersionComment, yearMonths, type AutoVersionMode } from "@/lib/auto-version";
+import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMeta } from "@/lib/auto-version-flow";
 import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { monthGridDates } from "@/lib/grid-dates";
@@ -274,6 +276,7 @@ type Props = {
   printLayout?: PrintLayout;
   /** Card #299: year export file name template ({YEAR}); null = the built-in default. */
   exportFileName?: string | null;
+  autoVersionMode?: AutoVersionMode; // card #312
   weekendStartDow: number; // card #215: the weekend's first day from Settings (0 = Sunday … 6 = Saturday)
   currentVersions?: CurrentVersionMeta[];
   scheduleRequests?: GridRequest[];
@@ -500,6 +503,7 @@ export function ScheduleGrid({
   dayShading = DEFAULT_DAY_SHADING,
   printLayout = DEFAULT_PRINT_LAYOUT,
   exportFileName = null,
+  autoVersionMode = "auto",
   weekendStartDow,
   currentVersions = [],
   scheduleRequests = [],
@@ -757,37 +761,82 @@ export function ScheduleGrid({
   // when the month has edits not in its saved version.
   const printTitleRef = useRef<HTMLDivElement>(null);
   const printFooterRef = useRef<HTMLDivElement>(null);
+  // Card #312: the printed version number lives in a ref, so the beforeprint stamp uses
+  // the number Print just ensured, never a stale render's.
+  const printVersionRef = useRef<number | null>(null);
+  useEffect(() => { printVersionRef.current = focalVersion ? focalVersion.versionNumber : null; }, [focalVersion]);
   const printCtx = useCallback(
-    (printedAt: Date): PrintTemplateContext => ({
+    (printedAt: Date, version: number | null): PrintTemplateContext => ({
       year: viewYear,
       month: viewMonth,
       printedAt,
       dateFormat,
-      version: focalVersion ? focalVersion.versionNumber : null,
+      version,
     }),
-    [viewYear, viewMonth, dateFormat, focalVersion],
+    [viewYear, viewMonth, dateFormat],
   );
+  const stampPrint = useCallback((version: number | null) => {
+    const now = new Date();
+    if (printTitleRef.current) printTitleRef.current.textContent = renderPrintTemplate(printLayout.header.text, printCtx(now, version));
+    if (printFooterRef.current) printFooterRef.current.textContent = footerLine(printLayout.footer.text, printCtx(now, version));
+  }, [printCtx, printLayout.header.text, printLayout.footer.text]);
   useEffect(() => {
-    const stamp = () => {
-      if (printTitleRef.current) printTitleRef.current.textContent = renderPrintTemplate(printLayout.header.text, printCtx(new Date()));
-      if (printFooterRef.current) printFooterRef.current.textContent = footerLine(printLayout.footer.text, printCtx(new Date()));
-    };
+    const stamp = () => stampPrint(printVersionRef.current);
     stamp();
     window.addEventListener("beforeprint", stamp);
     return () => window.removeEventListener("beforeprint", stamp);
-  }, [printCtx, printLayout.header.text, printLayout.footer.text]);
+  }, [stampPrint, focalVersion]);
   // Card #301: the date block is one column, or DATE + DAY.
   const dateCols = printLayout.splitDateDay ? 2 : 1;
-  const printMonth = useCallback(() => {
-    const warning = unsavedPrintWarning(focalVersion ? focalVersion.versionNumber : null, monthModified);
-    if (warning && !window.confirm(warning)) return;
-    window.print();
-  }, [focalVersion, monthModified]);
+
+  // Card #312: Print and Export save a version first when a month changed or has none.
+  // Refs give the async flows the CURRENT screen and versions after their wait.
+  const currentVersionMapRef = useRef(currentVersionMap);
+  useEffect(() => { currentVersionMapRef.current = currentVersionMap; }, [currentVersionMap]);
+  const showingRef = useRef({ year: viewYear, month: viewMonth, hash: liveMonthHash });
+  useEffect(() => { showingRef.current = { year: viewYear, month: viewMonth, hash: liveMonthHash }; }, [viewYear, viewMonth, liveMonthHash]);
+  // Codex r1: a pending Print must not print another page (grid unmounted) or Live cells.
+  const printMountedRef = useRef(false);
+  useEffect(() => { printMountedRef.current = true; return () => { printMountedRef.current = false; }; }, []);
+  const showingNow = useCallback(() => (printMountedRef.current ? { ...showingRef.current, live: liveModeRef.current } : null), []);
+  const adoptVersions = useCallback((vs: VersionMeta[]) => {
+    const next = new Map(currentVersionMapRef.current);
+    for (const v of vs) next.set(`${v.year}-${v.month}`, v);
+    currentVersionMapRef.current = next;
+    setCurrentVersionMap(next);
+  }, []);
+  const ensureVersions = useCallback(
+    (kind: "print" | "export", comment: string) => (months: Parameters<typeof postEnsure>[4]) => postEnsure(fetch, "/api/versions/ensure", kind, comment, months),
+    [],
+  );
+  const autoVersionOn = !liveMode && canEdit && autoVersionMode !== "off";
+  // One Print at a time: a second click while the first waits for the server is ignored.
+  const [printGate] = useState(() => exclusive((run: () => Promise<void>) => run()));
+  const printMonth = useCallback(() => printGate(async () => {
+    if (!autoVersionOn) {
+      const warning = unsavedPrintWarning(focalVersion ? focalVersion.versionNumber : null, monthModified);
+      if (warning && !window.confirm(warning)) return;
+      window.print();
+      return;
+    }
+    await runPrintFlow({
+      mode: autoVersionMode,
+      frozen: { year: viewYear, month: viewMonth, hash: liveMonthHash },
+      currentOf: (y, m) => currentVersionMapRef.current.get(`${y}-${m}`) ?? null,
+      confirm: (t) => window.confirm(t),
+      ensure: ensureVersions("print", autoVersionComment("print", new Date(), dateFormat)),
+      showing: showingNow,
+      adopt: adoptVersions,
+      stamp: (n) => { printVersionRef.current = n; stampPrint(n); },
+      print: () => window.print(),
+      alert: (t) => window.alert(t),
+    });
+  }), [printGate, autoVersionOn, autoVersionMode, focalVersion, monthModified, viewYear, viewMonth, liveMonthHash, ensureVersions, dateFormat, adoptVersions, stampPrint, showingNow]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
-        printMonth();
+        void printMonth();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -4074,7 +4123,7 @@ export function ScheduleGrid({
           )}
         </button>
         <button
-          onClick={printMonth}
+          onClick={() => void printMonth()}
           className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors text-slate-300"
           title="Print this month"
         >
@@ -5167,7 +5216,10 @@ export function ScheduleGrid({
           defaultYear={today.getFullYear()}
           fileNameTemplate={exportFileName}
           // The SAVED schedule (never a Live sandbox), copied at the Export click.
-          snapshot={() => structuredClone({
+          // Card #312: the input AND the months' hashes are frozen together at the click,
+          // from the same cells; versions from the server apply to that frozen input only.
+          prepare={(year: number) => {
+            const input = structuredClone({
             staff: staff.map((p) => ({ id: p.id, initials: p.initials, employmentTypeId: p.employmentTypeId, ftePercentage: p.ftePercentage, isActive: p.isActive })),
             assignments: localAssignments.map((a) => ({ staffId: a.staffId, date: a.date, shiftTypeId: a.shiftTypeId, code: a.code })),
             shiftTypes: shiftTypes.map((st) => ({ id: st.id, code: st.code, isOffShift: st.isOffShift, isLeave: st.isLeave, dedicatedColumn: st.dedicatedColumn, boldOnSchedule: st.boldOnSchedule, printBackgroundColor: st.printBackgroundColor })),
@@ -5181,8 +5233,32 @@ export function ScheduleGrid({
             printLayout,
             weekendStartDow,
             dateFormat,
-            versions: currentVersions.map((v) => ({ year: v.year, month: v.month, versionNumber: v.versionNumber })),
-          })}
+            versions: [...currentVersionMapRef.current.values()].map((v) => ({ year: v.year, month: v.month, versionNumber: v.versionNumber })),
+          });
+            if (!autoVersionOn) return Promise.resolve({ ok: true as const, input });
+            const byMonth = new Map<string, { staffId: string; date: string; shiftTypeId: string; isLocked: boolean }[]>();
+            for (const a of localAssignments) {
+              const [y, m] = a.date.split("-").map(Number);
+              if (y !== year) continue;
+              const k = `${y}-${m - 1}`;
+              const list = byMonth.get(k) ?? [];
+              list.push({ staffId: a.staffId, date: a.date, shiftTypeId: a.shiftTypeId, isLocked: a.isLocked });
+              byMonth.set(k, list);
+            }
+            const months = yearMonths(year).map((ym) => ({ ...ym, hash: hashSnapshot(byMonth.get(`${ym.year}-${ym.month}`) ?? []) }));
+            return prepareYearExport({
+              mode: autoVersionMode,
+              input,
+              months,
+              currentOf: (y, m) => currentVersionMapRef.current.get(`${y}-${m}`) ?? null,
+              confirm: (t) => window.confirm(t),
+              ensure: async (ms) => {
+                const out = await ensureVersions("export", autoVersionComment("export", new Date(), dateFormat, year))(ms);
+                if (out.ok) adoptVersions(out.versions);
+                return out;
+              },
+            });
+          }}
           onClose={() => setShowExport(false)}
         />
       )}

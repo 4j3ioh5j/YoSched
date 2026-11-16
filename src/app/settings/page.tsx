@@ -1,3 +1,4 @@
+import { parseAutoVersionMode } from "@/lib/auto-version";
 import { readTuning } from "@/lib/scheduler-tuning";
 import { parseSpecialColumnOrder } from "@/lib/special-columns";
 import { prisma } from "@/lib/prisma";
@@ -89,6 +90,7 @@ export default async function Settings() {
     ...dayShadingFrom(schedulingPrefsRow), // card #209: explicit null stays off
     printLayout: printLayoutFrom(schedulingPrefsRow), // card #301
     exportFileName: schedulingPrefsRow?.exportFileName ?? null, // card #299
+    autoVersionMode: parseAutoVersionMode(schedulingPrefsRow?.autoVersionMode), // card #312
     leaveHoursPolicy: parseLeavePolicy(schedulingPrefsRow?.leaveHoursPolicy),
     shiftBalanceFrom: schedulingPrefsRow?.shiftBalanceFrom?.toISOString().split("T")[0] ?? null,
     payPeriodAnchor: schedulingPrefsRow?.payPeriodAnchor?.toISOString().split("T")[0] ?? null,

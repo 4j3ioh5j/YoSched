@@ -18,9 +18,13 @@ describe("Export year button (card #299)", () => {
     expect(snap).not.toMatch(/effectiveAssignmentMap|liveDisplayMap|liveOutcome/);
   });
 
-  it("starts the downloads straight from the click (no await before runYearExport)", () => {
+  // The "no await before runYearExport" pin protected the folder picker's user activation;
+  // the picker is gone (card #311) and Export now awaits the version save first (card #312).
+  it("the only wait before the downloads is the version save (card #312)", () => {
     const body = dialog.slice(dialog.indexOf("const onExport = () => {"), dialog.indexOf("runYearExport("));
-    expect(body).not.toMatch(/await|\.then\(/);
+    expect(body.match(/await /g)).toEqual(["await ", "await "]); // prepare(year), then runYearExport itself
+    expect(body.endsWith("await ")).toBe(true);
+    expect(body).toContain("await prepare(year)");
   });
 });
 
@@ -38,8 +42,8 @@ describe("Export year: Export downloads; no folder button (cards #308, #311)", (
     expect(dialog).toMatch(/Ask where to save each file/);
   });
 
-  it("no await before runYearExport", () => {
+  it("no .then chains before runYearExport", () => {
     const body = dialog.slice(dialog.indexOf("const onExport = ("), dialog.indexOf("runYearExport("));
-    expect(body).not.toMatch(/await|\.then\(/);
+    expect(body).not.toMatch(/\.then\(/);
   });
 });

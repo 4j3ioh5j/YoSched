@@ -11,6 +11,7 @@ import { exportFileNameError, exportNameEdit, exportNameSetYear, initExportName 
 import { browserExportEnv, runYearExport, type ExportOutcome } from "@/lib/save-export";
 import { buildYearExportFiles, fetchPdfFonts } from "@/lib/export-year-files";
 import type { ExportScheduleInput } from "@/lib/print-month-model";
+import type { ExportPrep } from "@/lib/auto-version-flow";
 
 
 type Props = {
@@ -18,12 +19,13 @@ type Props = {
   defaultYear: number;
   /** Settings template ({YEAR}); null = the built-in default. */
   fileNameTemplate: string | null;
-  /** Returns a frozen copy of the saved schedule, taken at the Export click. */
-  snapshot: () => ExportScheduleInput;
+  /** Card #312: freezes the saved schedule at the click, then saves versions for the
+   *  year's changed months (per the Settings choice) and returns that frozen input. */
+  prepare: (year: number) => Promise<ExportPrep<ExportScheduleInput>>;
   onClose: () => void;
 };
 
-export function ExportYearDialog({ yearChoices, defaultYear, fileNameTemplate, snapshot, onClose }: Props) {
+export function ExportYearDialog({ yearChoices, defaultYear, fileNameTemplate, prepare, onClose }: Props) {
   const [nameState, setNameState] = useState(() => initExportName(fileNameTemplate, defaultYear));
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ExportOutcome | null>(null);
@@ -56,27 +58,33 @@ export function ExportYearDialog({ yearChoices, defaultYear, fileNameTemplate, s
   const onExport = () => {
     if (!canExport) return;
     const token = ++runToken.current;
-    const input = snapshot();
     const year = nameState.year;
+    const name = nameState.name;
     const now = new Date();
+    const stale = () => !mounted.current || token !== runToken.current;
+    const fail = (message: string) => showResult({ kind: "failed", message, saved: [], failed: [], retry: [], release: () => {} });
     setBusy(true);
     showResult(null);
-    runYearExport(
-      nameState.name,
-      () => buildYearExportFiles(input, year, now, () => fetchPdfFonts(BASE_PATH)),
-      browserExportEnv(),
-    )
-      .then((r) => {
-        if (!mounted.current || token !== runToken.current) { r.release(); return; }
+    // Card #312: prepare() freezes the input synchronously, then may wait for the server
+    // to save versions; the files are built from that frozen input only.
+    void (async () => {
+      try {
+        const ensured = await prepare(year);
+        if (stale()) return;
+        if (!ensured.ok) {
+          if (ensured.message) fail(ensured.message);
+          return;
+        }
+        const input = ensured.input;
+        const r = await runYearExport(name, () => buildYearExportFiles(input, year, now, () => fetchPdfFonts(BASE_PATH)), browserExportEnv());
+        if (stale()) { r.release(); return; }
         showResult(r);
-      })
-      .catch((e) => {
-        if (!mounted.current || token !== runToken.current) return;
-        showResult({ kind: "failed", message: `Export failed: ${e instanceof Error ? e.message : String(e)}`, saved: [], failed: [], retry: [], release: () => {} });
-      })
-      .finally(() => {
-        if (mounted.current && token === runToken.current) setBusy(false);
-      });
+      } catch (e) {
+        if (!stale()) fail(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        if (!stale()) setBusy(false);
+      }
+    })();
   };
 
   const tone = result?.kind === "saved" || result?.kind === "downloads" ? "text-emerald-400" : result?.kind === "cancelled" ? "text-slate-400" : "text-red-400";

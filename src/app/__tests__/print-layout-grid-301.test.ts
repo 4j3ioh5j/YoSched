@@ -45,7 +45,7 @@ describe("title and footer are the Settings templates", () => {
   it("the title renders the header template with its size, weight and alignment", () => {
     const tag = tagAround(grid, "data-print-title");
     expect(tag).toContain("printBlockStyle(printLayout.header)");
-    expect(grid).toMatch(/renderPrintTemplate\(printLayout\.header\.text, printCtx\(new Date\(\)\)\)/);
+    expect(grid).toMatch(/renderPrintTemplate\(printLayout\.header\.text, printCtx\(now, version\)\)/);
   });
 
   it("the print stylesheet no longer forces the title's size, weight or alignment", () => {
@@ -56,7 +56,7 @@ describe("title and footer are the Settings templates", () => {
 
   it("beforeprint writes the footer line (template + ' - YoSched') into a print-only span", () => {
     expect(grid).toMatch(/addEventListener\("beforeprint", stamp\)/);
-    expect(grid).toMatch(/footerLine\(printLayout\.footer\.text, printCtx\(new Date\(\)\)\)/);
+    expect(grid).toMatch(/footerLine\(printLayout\.footer\.text, printCtx\(now, version\)\)/);
     const tag = tagAround(grid, "data-print-footer");
     expect(tag).toContain("ref={printFooterRef}");
     expect(tag).toContain("printBlockStyle(printLayout.footer)");
@@ -72,7 +72,8 @@ describe("title and footer are the Settings templates", () => {
   });
 
   it("{VERSION} is the month's saved version", () => {
-    expect(grid).toMatch(/version: focalVersion \? focalVersion\.versionNumber : null/);
+    // Card #312: the version comes from printVersionRef (the focal version, or the one Print just saved).
+    expect(grid).toMatch(/printVersionRef\.current = focalVersion \? focalVersion\.versionNumber : null/);
   });
 });
 

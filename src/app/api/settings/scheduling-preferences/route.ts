@@ -14,6 +14,7 @@ import { isHolidayPolicy, HOLIDAY_POLICIES, isHolidayCreditShift } from "@/lib/h
 import { isShadeColor } from "@/lib/day-shading";
 import { validateStaffOrderCriteria } from "@/lib/staff-order";
 import { exportFileNameError } from "@/lib/export-filename";
+import { AUTO_VERSION_MODES, type AutoVersionMode } from "@/lib/auto-version";
 import { isActivationGroupDefault, isActivationNewHireDefault, ACTIVATION_GROUP_DEFAULTS, ACTIVATION_NEW_HIRE_DEFAULTS } from "@/lib/shift-activation";
 
 export async function GET() {
@@ -32,7 +33,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, exportFileName } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, exportFileName, autoVersionMode } = body;
   // Card #203: "Count shifts from" — a YYYY-MM-DD date, or null to clear. Strictly validated.
   const balanceFromValid = shiftBalanceFrom === null || (typeof shiftBalanceFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(shiftBalanceFrom) && !Number.isNaN(Date.parse(shiftBalanceFrom + "T00:00:00Z")) && new Date(shiftBalanceFrom + "T00:00:00Z").toISOString().startsWith(shiftBalanceFrom));
   if (shiftBalanceFrom !== undefined && !balanceFromValid) {
@@ -149,8 +150,13 @@ export async function PUT(req: NextRequest) {
       exportName = t;
     }
   }
+  // Card #312: what Print / Export do when a month has no version or changed since it.
+  if (autoVersionMode !== undefined && !(AUTO_VERSION_MODES as readonly unknown[]).includes(autoVersionMode)) {
+    return NextResponse.json({ error: `autoVersionMode must be one of ${AUTO_VERSION_MODES.join(", ")}` }, { status: 400 });
+  }
   const printLayoutData = {
     ...(exportName !== undefined && { exportFileName: exportName }),
+    ...(autoVersionMode !== undefined && { autoVersionMode: autoVersionMode as AutoVersionMode }),
     ...(printFontFamily !== undefined && { printFontFamily: printFontFamily as string }),
     ...(printFontSize !== undefined && { printFontSize: printFontSize as number }),
     ...(splitDateDayColumns !== undefined && { splitDateDayColumns: splitDateDayColumns as boolean }),

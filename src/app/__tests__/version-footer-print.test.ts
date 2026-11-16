@@ -23,17 +23,22 @@ describe("unsaved edits: warned before printing, not printed (card #173)", () =>
     expect(unsavedPrintWarning(null, false)).toBeNull();
   });
 
-  it("the only window.print() call sits behind the unsaved-edits confirm", () => {
+  // Card #312: with auto-versioning off (or Live / view-only) the old confirm still guards
+  // the print; otherwise runPrintFlow prints only after the version holds the cells.
+  it("every window.print() call is inside printMonth: behind the confirm, or behind runPrintFlow", () => {
     const calls = grid.match(/window\.print\(\)/g) ?? [];
-    expect(calls.length).toBe(1);
-    const fn = grid.slice(grid.indexOf("const printMonth = useCallback"), grid.indexOf("window.print()") + 20);
+    expect(calls.length).toBe(2);
+    const start = grid.indexOf("const printMonth = useCallback(() => printGate(async () => {");
+    const fn = grid.slice(start, grid.indexOf("}), [", start));
+    expect((fn.match(/window\.print\(\)/g) ?? []).length).toBe(2);
     expect(fn).toContain("unsavedPrintWarning(");
-    expect(fn).toMatch(/if \(warning && !window\.confirm\(warning\)\) return;/);
+    expect(fn).toMatch(/if \(warning && !window\.confirm\(warning\)\) return;\s*window\.print\(\);/);
+    expect(fn).toMatch(/await runPrintFlow\(\{[\s\S]*print: \(\) => window\.print\(\),/);
   });
 
   it("the Print button and Ctrl/Cmd+P both go through printMonth", () => {
-    expect(grid).toContain("onClick={printMonth}");
-    expect(grid).toMatch(/\(e\.metaKey \|\| e\.ctrlKey\)[^\n]*e\.key\.toLowerCase\(\) === "p"[\s\S]{0,80}e\.preventDefault\(\);\s*printMonth\(\);/);
+    expect(grid).toContain("onClick={() => void printMonth()}");
+    expect(grid).toMatch(/\(e\.metaKey \|\| e\.ctrlKey\)[^\n]*e\.key\.toLowerCase\(\) === "p"[\s\S]{0,80}e\.preventDefault\(\);\s*void printMonth\(\);/);
   });
 
   it("the on-screen notice stays, but is print-hidden", () => {
