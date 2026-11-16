@@ -1,3 +1,4 @@
+import { isoDow } from "./date-memo";
 // Card #215: the scheduler's tuning numbers are department settings (SchedulingPreferences
 // columns), never constants in code. One home for their limits, the strict write check (API
 // and Settings) and the lenient read (engine input, grid): a missing or corrupt stored value
@@ -104,7 +105,7 @@ export function isWeekendDow(dow: number, startDow: number): boolean {
 
 /** Whether a YYYY-MM-DD date falls on the weekend that starts on `startDow`. */
 export function isWeekendDate(date: string, startDow: number): boolean {
-  return isWeekendDow(new Date(date + "T12:00:00").getDay(), startDow);
+  return isWeekendDow(isoDow(date), startDow);
 }
 
 export const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;

@@ -1,3 +1,4 @@
+import { isoDow } from "./date-memo";
 type Assignment = {
   staffId: string;
   date: Date | string;
@@ -75,7 +76,7 @@ function toDateStr(d: Date | string): string {
 }
 
 function getDow(d: Date | string): number {
-  if (typeof d === "string") return new Date(d + "T12:00:00").getDay();
+  if (typeof d === "string") return isoDow(d);
   return d.getDay();
 }
 

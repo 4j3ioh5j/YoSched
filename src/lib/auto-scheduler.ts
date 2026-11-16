@@ -15,6 +15,7 @@ import { gapBreaks, gapList, gapListShrank, gapTrialBeats, type GapTrialOutcome 
 import { readTuning, isWeekendDate, weekendSecondDow, type SchedulerTuning } from "./scheduler-tuning";
 import { insertSpacingAfterRequests, SPACING_KEY } from "./autogen-factor-order";
 import { spacingUnits, spacingPenalty, mostUnits, type SpacingUnit } from "./spacing-measure";
+import { isoDow, isoNext, isoPrev, isoNoonMs } from "./date-memo";
 
 export type ScheduleStaff = {
   id: string;
@@ -445,7 +446,7 @@ function toDateStr(d: Date): string {
 }
 
 function getDow(dateStr: string): number {
-  return new Date(dateStr + "T12:00:00").getDay();
+  return isoDow(dateStr);
 }
 
 // Classify a date for hour math. Holiday wins over weekend. Card #215: the weekend is the
@@ -518,15 +519,11 @@ export function maxReachableDailyHours(
 }
 
 function prevDate(dateStr: string): string {
-  const d = new Date(dateStr + "T12:00:00");
-  d.setDate(d.getDate() - 1);
-  return toDateStr(d);
+  return isoPrev(dateStr);
 }
 
 function nextDate(dateStr: string): string {
-  const d = new Date(dateStr + "T12:00:00");
-  d.setDate(d.getDate() + 1);
-  return toDateStr(d);
+  return isoNext(dateStr);
 }
 
 function gcd(a: number, b: number): number {
@@ -539,9 +536,7 @@ function gcd(a: number, b: number): number {
 }
 
 export function daysBetween(a: string, b: string): number {
-  return Math.abs(
-    (new Date(a + "T12:00:00").getTime() - new Date(b + "T12:00:00").getTime()) / 86400000
-  );
+  return Math.abs((isoNoonMs(a) - isoNoonMs(b)) / 86400000);
 }
 
 // Deterministic 32-bit string hash (FNV-1a). Used ONLY as the final seeded
@@ -1072,7 +1067,7 @@ function autoScheduleCore({
   }
 
   function getCell(staffId: string, date: string) {
-    const cell = grid.get(`${staffId}:${date}`);
+    const cell = grid.cellAt(staffId, date);
     if (cell && isFillableOffCell(cell)) return undefined;
     return cell;
   }

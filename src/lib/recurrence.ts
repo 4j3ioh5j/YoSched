@@ -1,3 +1,4 @@
+import { isoDow } from "./date-memo";
 // Unified recurrence model — the "WHEN" axis: which occurrences a rule lands on.
 //
 // This is the shared representation behind availability rules, shift-eligibility
@@ -63,7 +64,7 @@ export type WhenPattern = {
 };
 
 function dowOf(dateStr: string): number {
-  return new Date(dateStr + "T12:00:00").getDay();
+  return isoDow(dateStr);
 }
 
 // Any-day patterns (no weekday filter) only make sense as kind "every" — an
