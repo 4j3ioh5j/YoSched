@@ -406,7 +406,7 @@ class IndexedGrid<V> extends Map<string, V> {
     d.set(key, value);
     let w = this.byStaff.get(who);
     if (!w) this.byStaff.set(who, (w = new Map()));
-    w.set(key, value);
+    w.set(date, value);
     return this;
   }
   override delete(key: string): boolean {
@@ -414,7 +414,7 @@ class IndexedGrid<V> extends Map<string, V> {
     if (had) {
       const [who, date] = this.parts(key);
       this.byDate.get(date)?.delete(key);
-      this.byStaff.get(who)?.delete(key);
+      this.byStaff.get(who)?.delete(date);
     }
     return had;
   }
@@ -427,9 +427,13 @@ class IndexedGrid<V> extends Map<string, V> {
   onDate(date: string): ReadonlyMap<string, V> {
     return this.byDate.get(date) ?? (IndexedGrid.EMPTY as ReadonlyMap<string, V>);
   }
-  /** This person's entries (do not mutate the returned map). */
+  /** This person's entries, keyed by DATE (do not mutate the returned map). */
   ofStaff(staffId: string): ReadonlyMap<string, V> {
     return this.byStaff.get(staffId) ?? (IndexedGrid.EMPTY as ReadonlyMap<string, V>);
+  }
+  /** The same as get(`${staffId}:${date}`), without building the key. */
+  cellAt(staffId: string, date: string): V | undefined {
+    return this.byStaff.get(staffId)?.get(date);
   }
 }
 
@@ -1104,15 +1108,18 @@ function autoScheduleCore({
   const spreadIds = new Set(shiftTypes.filter((s) => s.spreadOverMonth).map((s) => s.id));
   // Cells outside the grid, read-only: history (before the covering pay periods) and the two
   // weeks after them (spreadContext). Never written; the grid always wins for its own dates.
-  const outsideCells = new Map<string, string>();
-  for (const a of historicalAssignments) outsideCells.set(`${a.staffId}:${a.date}`, a.shiftTypeId);
-  for (const a of spreadContext ?? []) outsideCells.set(`${a.staffId}:${a.date}`, a.shiftTypeId);
+  // Keyed person → date → shift (card #266, speed: no key string per lookup).
+  const outsideCells = new Map<string, Map<string, string>>();
+  for (const a of [...historicalAssignments, ...(spreadContext ?? [])]) {
+    let m = outsideCells.get(a.staffId);
+    if (!m) outsideCells.set(a.staffId, (m = new Map()));
+    m.set(a.date, a.shiftTypeId);
+  }
   /** The person's shift on any date: the grid's cell, else a history / forward-context cell. */
   function cellShiftAt(staffId: string, date: string): string | undefined {
-    const key = `${staffId}:${date}`;
-    const g = grid.get(key);
+    const g = grid.cellAt(staffId, date);
     if (g) return g.shiftTypeId;
-    return outsideCells.get(key);
+    return outsideCells.get(staffId)?.get(date);
   }
   /**
    * Card #266: the person's units of a marked shift over the run window ± the radius (grid, history
@@ -1498,9 +1505,8 @@ function autoScheduleCore({
       if (!bounds) continue;
 
       const assigned: string[] = [];
-      for (const [k, v] of grid.ofStaff(staff.id)) {
+      for (const [d, v] of grid.ofStaff(staff.id)) {
         if (v.code === st.code && !v.noCount) {
-          const d = k.split(":")[1];
           if (d >= bounds.start && d <= bounds.end) assigned.push(d);
         }
       }
@@ -1540,9 +1546,9 @@ function autoScheduleCore({
     // The candidate `date` is not yet in the grid, so these are the existing
     // counting placements only — isAtRollingMaximum adds the candidate implicitly.
     const assignedDates: string[] = [];
-    for (const [k, v] of grid.ofStaff(staff.id)) {
+    for (const [d, v] of grid.ofStaff(staff.id)) {
       if (v.code === st.code && !v.noCount) {
-        assignedDates.push(k.split(":")[1]);
+        assignedDates.push(d);
       }
     }
 
@@ -4573,9 +4579,8 @@ function autoScheduleCore({
           const b = getWindowBounds(t, d, ppRangesAll);
           if (!b) continue;
           let n = 0;
-          for (const [k, v] of grid.ofStaff(A.id)) {
+          for (const [x, v] of grid.ofStaff(A.id)) {
             if (v.code !== W.code || v.noCount) continue;
-            const x = k.slice(A.id.length + 1);
             if (x >= b.start && x <= b.end) n++;
           }
           if (n <= t.minCount) return true;
@@ -4588,9 +4593,8 @@ function autoScheduleCore({
         const targets = (A.shiftMinimumTargets ?? []).filter((t) => t.shiftTypeId === W.id && t.maxCount != null);
         if (targets.length === 0) return true;
         const others: string[] = [];
-        for (const [k, v] of grid.ofStaff(A.id)) {
+        for (const [x, v] of grid.ofStaff(A.id)) {
           if (v.code !== W.code || v.noCount) continue;
-          const x = k.slice(A.id.length + 1);
           if (x !== d) others.push(x);
         }
         return targets.every((t) => !isAtRollingMaximum(t, d, others, ppRangesAll));
