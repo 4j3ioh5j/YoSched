@@ -27,6 +27,7 @@ import { reconcileOrder, MAX_PROFILE_NAME_LENGTH } from "@/lib/autogen-profile";
 import { OffStrategyEditor } from "@/components/off-strategy-editor";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
+import { createStatusTimer } from "@/lib/status-timer";
 import {
   DEFAULT_PRINT_LAYOUT,
   DATE_COLUMN_FORMATS,
@@ -5656,9 +5657,13 @@ function useSavedDraft<T>(initial: T) {
   const [draft, setDraft] = useState<T>(initial);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState<string | undefined>();
+  // Card #303: one idle timer, cancelled by every new save (and on unmount).
+  const [statusTimer] = useState(() => createStatusTimer(() => setStatus("idle")));
+  useEffect(() => () => statusTimer.cancel(), [statusTimer]);
   const busy = status === "saving";
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   async function save(body: Record<string, unknown>, next: T) {
+    statusTimer.cancel();
     setStatus("saving");
     setError(undefined);
     try {
@@ -5671,7 +5676,7 @@ function useSavedDraft<T>(initial: T) {
       setSaved(next);
       setDraft(next);
       setStatus("saved");
-      setTimeout(() => setStatus("idle"), 2000);
+      statusTimer.arm();
     } catch (e) {
       setStatus("error");
       setError(e instanceof Error ? e.message : "Save failed");
