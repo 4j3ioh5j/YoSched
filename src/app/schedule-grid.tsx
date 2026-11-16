@@ -315,6 +315,10 @@ type PickerState = {
 // Hover marker for the staff header and the date: a light-blue outline drawn
 // inside the cell, so it never reads as the solid-blue selection.
 const HOVER_OUTLINE: React.CSSProperties = { boxShadow: "inset 0 0 0 2px #60a5fa" };
+// Card #305: split DATE + DAY hover as ONE box: the date cell draws the left, top and
+// bottom edges, the day cell the right, top and bottom, so no bar runs between them.
+const HOVER_OUTLINE_DATE: React.CSSProperties = { boxShadow: "inset 2px 0 0 #60a5fa, inset 0 2px 0 #60a5fa, inset 0 -2px 0 #60a5fa" };
+const HOVER_OUTLINE_DAY: React.CSSProperties = { boxShadow: "inset -2px 0 0 #60a5fa, inset 0 2px 0 #60a5fa, inset 0 -2px 0 #60a5fa" };
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = [
@@ -340,7 +344,7 @@ function printBlockStyle(b: PrintBlock): React.CSSProperties {
 }
 
 /** On-screen widths of the split DATE / DAY columns (px). */
-const DATE_COL_W = 56;
+const DATE_COL_W = 50; // card #305: tighter against the DAY column
 const dayColW = (fmt: PrintLayout["dayColumnFormat"]) => (fmt === "Dddd" ? 84 : 44);
 
 function formatDateLabel(dateStr: string, dateFormat: DateFormatKey = DEFAULT_DATE_FORMAT): { day: string; date: string; dow: number; dayNum: number; month: number } {
@@ -4303,7 +4307,7 @@ export function ScheduleGrid({
                 <>
                   <th
                     data-date-col
-                    className="sticky left-0 z-20 bg-slate-800 px-2 py-2 text-left text-xs font-medium text-slate-400 border-b border-slate-700"
+                    className="sticky left-0 z-20 bg-slate-800 pl-2 pr-1 py-2 text-left text-xs font-medium text-slate-400 border-b border-slate-700"
                     style={{ width: DATE_COL_W, minWidth: DATE_COL_W }}
                   >
                     Date
@@ -4311,7 +4315,7 @@ export function ScheduleGrid({
                   <th
                     data-day-col
                     data-date-block-end
-                    className="sticky z-20 bg-slate-800 px-2 py-2 text-left text-xs font-medium text-slate-400 border-b border-r border-slate-700"
+                    className="sticky z-20 bg-slate-800 pl-1 pr-2 py-2 text-left text-xs font-medium text-slate-400 border-b border-r border-slate-700"
                     style={{ left: DATE_COL_W, width: dayColW(printLayout.dayColumnFormat), minWidth: dayColW(printLayout.dayColumnFormat), "--day-col-w": printLayout.dayColumnFormat === "Dddd" ? "0.62in" : "0.36in" } as React.CSSProperties}
                   >
                     Day
@@ -4505,25 +4509,26 @@ export function ScheduleGrid({
                       onMouseEnter: (e: React.MouseEvent) => { setHoverRow(date); if (isHoliday) showTip(setTooltip, holidayNames.get(date) ?? "", e); },
                       onMouseLeave: () => { setHoverRow(null); if (isHoliday) setTooltip(null); },
                     };
-                    const cellStyle = { background: cellBg, ...(!isActiveRow && hoverRow === date ? HOVER_OUTLINE : null) } as React.CSSProperties;
-                    const base = "sticky z-[5] px-2 py-1 text-xs font-mono whitespace-nowrap cursor-pointer hover:brightness-125";
+                    const cellBase = { background: cellBg } as React.CSSProperties;
+                    const hoverStyle = (outline: React.CSSProperties) => (!isActiveRow && hoverRow === date ? outline : null);
+                    const base = "sticky z-[5] py-1 text-xs font-mono whitespace-nowrap cursor-pointer hover:brightness-125";
                     const ppTop = isNewPP ? "border-t-2 border-t-indigo-500" : "";
                     const dayClass = isActiveRow ? "text-blue-200 font-bold" : isWeekend ? "text-slate-500" : "text-slate-300";
                     const dateClass = isActiveRow ? "text-blue-200" : isOutsideMonth ? "text-slate-600" : "text-slate-400";
                     if (printLayout.splitDateDay) {
                       return (
                         <>
-                          <td data-date-col className={[base, "left-0", ppTop].join(" ")} style={cellStyle} {...cellProps}>
+                          <td data-date-col className={[base, "pl-2 pr-1", "left-0", ppTop].join(" ")} style={{ ...cellBase, ...hoverStyle(HOVER_OUTLINE_DATE) }} {...cellProps}>
                             <span className={dateClass}>{formatDateColumn(date, printLayout.dateColumnFormat)}</span>
                           </td>
-                          <td data-day-col data-date-block-end className={[base, "border-r border-slate-700", ppTop].join(" ")} style={{ ...cellStyle, left: DATE_COL_W }} {...cellProps}>
+                          <td data-day-col data-date-block-end className={[base, "pl-1 pr-2", "border-r border-slate-700", ppTop].join(" ")} style={{ ...cellBase, ...hoverStyle(HOVER_OUTLINE_DAY), left: DATE_COL_W }} {...cellProps}>
                             <span className={dayClass}>{formatDayColumn(label.dow, printLayout.dayColumnFormat)}</span>
                           </td>
                         </>
                       );
                     }
                     return (
-                      <td data-date-col data-date-block-end className={[base, "left-0 border-r border-slate-700", ppTop].join(" ")} style={cellStyle} {...cellProps}>
+                      <td data-date-col data-date-block-end className={[base, "px-2", "left-0 border-r border-slate-700", ppTop].join(" ")} style={{ ...cellBase, ...hoverStyle(HOVER_OUTLINE) }} {...cellProps}>
                         <span className={dayClass}>{label.day}</span>{" "}
                         <span className={dateClass}>{label.date}</span>
                       </td>

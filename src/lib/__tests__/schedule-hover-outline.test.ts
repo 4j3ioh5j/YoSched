@@ -16,7 +16,8 @@ describe("schedule hover outline (card #81)", () => {
   });
 
   it("date cell gets the outline on hover unless it is the selected date", () => {
-    expect(src).toContain("...(!isActiveRow && hoverRow === date ? HOVER_OUTLINE : null)");
+    // Card #305: one helper picks the outline (full box, or the date/day halves of one box).
+    expect(src).toContain("const hoverStyle = (outline: React.CSSProperties) => (!isActiveRow && hoverRow === date ? outline : null);");
   });
 
   it("staff cells, dedicated cells and the date cell set and clear the hovered date", () => {
