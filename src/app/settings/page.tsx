@@ -85,6 +85,7 @@ export default async function Settings() {
     holidayShiftId: schedulingPrefsRow?.holidayShiftId ?? null,
     ...dayShadingFrom(schedulingPrefsRow), // card #209: explicit null stays off
     printLayout: printLayoutFrom(schedulingPrefsRow), // card #301
+    exportFileName: schedulingPrefsRow?.exportFileName ?? null, // card #299
     leaveHoursPolicy: parseLeavePolicy(schedulingPrefsRow?.leaveHoursPolicy),
     shiftBalanceFrom: schedulingPrefsRow?.shiftBalanceFrom?.toISOString().split("T")[0] ?? null,
     payPeriodAnchor: schedulingPrefsRow?.payPeriodAnchor?.toISOString().split("T")[0] ?? null,

@@ -13,6 +13,7 @@ import { isShiftShareBasis, SHIFT_SHARE_BASES } from "@/lib/shift-share";
 import { isHolidayPolicy, HOLIDAY_POLICIES, isHolidayCreditShift } from "@/lib/holiday-policy";
 import { isShadeColor } from "@/lib/day-shading";
 import { validateStaffOrderCriteria } from "@/lib/staff-order";
+import { exportFileNameError } from "@/lib/export-filename";
 import { isActivationGroupDefault, isActivationNewHireDefault, ACTIVATION_GROUP_DEFAULTS, ACTIVATION_NEW_HIRE_DEFAULTS } from "@/lib/shift-activation";
 
 export async function GET() {
@@ -31,7 +32,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, exportFileName } = body;
   // Card #203: "Count shifts from" — a YYYY-MM-DD date, or null to clear. Strictly validated.
   const balanceFromValid = shiftBalanceFrom === null || (typeof shiftBalanceFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(shiftBalanceFrom) && !Number.isNaN(Date.parse(shiftBalanceFrom + "T00:00:00Z")) && new Date(shiftBalanceFrom + "T00:00:00Z").toISOString().startsWith(shiftBalanceFrom));
   if (shiftBalanceFrom !== undefined && !balanceFromValid) {
@@ -135,7 +136,21 @@ export async function PUT(req: NextRequest) {
   if (dayColumnFormat !== undefined && !isDayColumnFormat(dayColumnFormat)) {
     return NextResponse.json({ error: "dayColumnFormat is not a known format" }, { status: 400 });
   }
+  // Card #299: the year export's file name template. Strict: a string that, with {YEAR}
+  // filled in, is a valid file name; null clears it to the built-in default.
+  let exportName: string | null | undefined;
+  if (exportFileName !== undefined) {
+    if (exportFileName === null) exportName = null;
+    else if (typeof exportFileName !== "string") return NextResponse.json({ error: "exportFileName must be text or null" }, { status: 400 });
+    else {
+      const t = exportFileName.trim();
+      const why = exportFileNameError(t.replaceAll("{YEAR}", "2026"));
+      if (why) return NextResponse.json({ error: `exportFileName: ${why}` }, { status: 400 });
+      exportName = t;
+    }
+  }
   const printLayoutData = {
+    ...(exportName !== undefined && { exportFileName: exportName }),
     ...(printFontFamily !== undefined && { printFontFamily: printFontFamily as string }),
     ...(printFontSize !== undefined && { printFontSize: printFontSize as number }),
     ...(splitDateDayColumns !== undefined && { splitDateDayColumns: splitDateDayColumns as boolean }),

@@ -30,8 +30,9 @@ import { dayCapViolations, type DayCapCell } from "@/lib/max-per-day";
 import { buildDayCapLookup, dayKeyLabel, dayKeyOf } from "@/lib/day-cap";
 import { rejectionError, dayFullPopoverText, type RejectionError } from "@/lib/rejection-error";
 import { classifyRequestRefusal, requestFailureText, requestFlaggedText, type RequestRefusal } from "@/lib/request-refusal";
-import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
-import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
+import { type PrintRule } from "@/lib/print-column-visibility";
+import { type AggregateColumn } from "@/lib/print-aggregate-columns";
+import { computePrintColumns } from "@/lib/print-month-model"; // card #299: shared with the year export
 import { orderSpecialColumns } from "@/lib/special-columns";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, keysToRequestIntent, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory, type RequestKind, type RequestStrength, type RequestStatus } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
@@ -94,6 +95,9 @@ const REQUEST_FILTER_STATUSES: Record<RequestFilter, RequestStatus[]> = {
 // RQ visibility toggle or the status filter (which only shape the on-grid pills).
 const ALL_REQUEST_STATUSES: RequestStatus[] = ["pending", "approved", "declined", "withdrawn", "fulfilled"];
 import { useEscape } from "@/lib/use-escape";
+import { gridModalOpen } from "@/lib/grid-modal-guard";
+import { ExportYearDialog } from "./export-year-dialog";
+import { exportYearChoices } from "@/lib/export-filename";
 import { BASE_PATH } from "@/lib/base-path";
 
 type AvailabilityRuleData = {
@@ -268,6 +272,8 @@ type Props = {
   dayShading?: DayShading; // card #209: weekend/holiday shading colours from Settings (null = off)
   /** Card #301: header/footer templates, table font, DATE/DAY columns, PP labels (Settings). */
   printLayout?: PrintLayout;
+  /** Card #299: year export file name template ({YEAR}); null = the built-in default. */
+  exportFileName?: string | null;
   weekendStartDow: number; // card #215: the weekend's first day from Settings (0 = Sunday … 6 = Saturday)
   currentVersions?: CurrentVersionMeta[];
   scheduleRequests?: GridRequest[];
@@ -489,6 +495,7 @@ export function ScheduleGrid({
   defaultLiveScope = DEFAULT_LIVE_SCOPE,
   dayShading = DEFAULT_DAY_SHADING,
   printLayout = DEFAULT_PRINT_LAYOUT,
+  exportFileName = null,
   weekendStartDow,
   currentVersions = [],
   scheduleRequests = [],
@@ -608,6 +615,7 @@ export function ScheduleGrid({
   // Editing → ripple highlight is S3; rendering still flows through the saved
   // grid + suggestion overlay for now.
   const [liveMode, setLiveMode] = useState(false);
+  const [showExport, setShowExport] = useState(false); // card #299: Export year dialog
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveOutcome, setLiveOutcome] = useState<ScenarioOutcome | null>(null);
   // How wide the engine may re-solve to compensate for an edit (user-selectable in
@@ -885,6 +893,8 @@ export function ScheduleGrid({
     if (showAlerts) setCollapsedAlertSections(new Set(ALERT_CATEGORIES));
   }, [showAlerts]);
   const [showHelp, setShowHelp] = useState(false);
+  // Card #299: any modal over the grid suppresses its keyboard and clipboard handlers.
+  const modalOpen = gridModalOpen({ showVersions, showAlerts, showHelp, showExport });
   // Transient highlight on the day-row a user jumps to from the Alerts modal.
   const [flashDate, setFlashDate] = useState<string | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1401,78 +1411,20 @@ export function ScheduleGrid({
   //     PRINTED period — so the seeded default "Other" adds nothing when empty).
   // On-screen the grid still shows every staff; this only affects print. Shifts (by id)
   // are gathered from REAL assignments in the printed (in-month) dates.
-  const { printHiddenIds, printAggColumns } = useMemo(() => {
-    // Only scan dates the printed page actually shows — the grid's `dates` include
-    // leading/trailing outside-month padding rows that print CSS hides, so a shift
-    // landing only in a padding day must NOT make a staff's column print, nor make an
-    // aggregate column appear.
-    const inMonth = dates.filter((d) => d >= firstOfMonth && d <= lastOfMonth);
-    const shiftIdsByStaff = new Map<string, Set<string>>();
-    for (const p of visibleStaff) {
-      const set = new Set<string>();
-      for (const date of inMonth) {
-        const a = assignmentMap.get(`${p.id}:${date}`);
-        if (a?.shiftTypeId) set.add(a.shiftTypeId);
-      }
-      if (set.size > 0) shiftIdsByStaff.set(p.id, set);
-    }
-    // Shift id → kind (work | leave | off) for category-based shift conditions.
-    const kindById = new Map<string, ShiftKind>();
-    for (const st of shiftTypes) {
-      kindById.set(st.id, st.isOffShift ? "off" : st.isLeave ? "leave" : "work");
-    }
-    const visStaff = visibleStaff.map((p) => ({
-      id: p.id,
-      employmentTypeId: p.employmentTypeId,
-      ftePercentage: p.ftePercentage,
-    }));
-    const visIds = printVisibleStaffIds(visStaff, printColumnRules, shiftIdsByStaff, kindById);
-
-    // Render gate (assignment exists that day + not an off-shift) and per-day shift lookup,
-    // used by both scope modes of the aggregate columns.
-    const isScheduledNonOff = (staffId: string, date: string) => {
-      const a = assignmentMap.get(`${staffId}:${date}`);
-      return !!a && !offShiftTypeIds.has(a.shiftTypeId);
-    };
-    const shiftTypeIdByStaffDate = (staffId: string, date: string) => assignmentMap.get(`${staffId}:${date}`)?.shiftTypeId;
-
-    // Aggregate columns: per-day member ids + which individual columns they suppress.
-    // Pass ONLY in-month dates — ownership, suppression and the catch-all residual must
-    // ignore the leading/trailing padding rows (print CSS hides them), or a day-scoped
-    // suppressing column matching only on a padding day could hide a staff member's
-    // in-month individual column while its own (in-month-empty) column is filtered out.
-    const agg = computeAggregateColumns(
-      visStaff,
-      visIds,
-      printAggregateColumns,
-      inMonth,
-      shiftIdsByStaff,
-      shiftTypeIdByStaffDate,
-      kindById,
-      isScheduledNonOff,
-    );
-
-    // Hidden = not rule-visible (visIds null = everyone visible) ∪ suppressed-by-aggregate.
-    const hiddenIds = visIds
-      ? new Set(visibleStaff.filter((p) => !visIds.has(p.id)).map((p) => p.id))
-      : new Set<string>();
-    for (const id of agg.suppressedIndividualIds) hiddenIds.add(id);
-
-    // Per-column day initials over ALL dates (cells must align with every grid row),
-    // but only keep columns with a scheduled member on an in-month day (skip-empty).
-    const initialsById = new Map(visibleStaff.map((p) => [p.id, p.initials]));
-    const printAggColumns = agg.columns
-      .map((c) => {
-        const initialsByDate: Record<string, string[]> = {};
-        for (const d of dates) {
-          initialsByDate[d] = (c.memberIdsByDate[d] ?? []).map((id) => initialsById.get(id) ?? "");
-        }
-        return { id: c.id, label: c.label, initialsByDate };
-      })
-      .filter((c) => inMonth.some((d) => (c.initialsByDate[d]?.length ?? 0) > 0));
-
-    return { printHiddenIds: hiddenIds, printAggColumns };
-  }, [printColumnRules, printAggregateColumns, visibleStaff, dates, assignmentMap, firstOfMonth, lastOfMonth, shiftTypes, offShiftTypeIds]);
+  const { hiddenIds: printHiddenIds, aggColumns: printAggColumns } = useMemo(
+    () =>
+      computePrintColumns({
+        visibleStaff,
+        dates,
+        firstOfMonth,
+        lastOfMonth,
+        shiftTypeIdAt: (staffId, date) => assignmentMap.get(`${staffId}:${date}`)?.shiftTypeId,
+        shiftTypes,
+        printColumnRules,
+        printAggregateColumns,
+      }),
+    [printColumnRules, printAggregateColumns, visibleStaff, dates, assignmentMap, firstOfMonth, lastOfMonth, shiftTypes],
+  );
 
   // Card #300: every special column (print-only aggregate, dedicated shift, count) in the
   // admin-set order. Each entry points at its column by index in its own group list, so
@@ -2255,7 +2207,7 @@ export function ScheduleGrid({
       }
       // While a modal is open, grid hotkeys (letters, "/", "?", arrows, etc.)
       // are suppressed; each modal closes itself on Escape via useEscape.
-      if (showVersions || showAlerts || showHelp) return;
+      if (modalOpen) return;
       if (canEdit && (e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
         if (liveModeRef.current) liveUndoFnRef.current(); else undoRef.current();
@@ -2410,7 +2362,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit, activeRow, activeCol, activeDedCol, assignmentMap, dates, visibleStaff, dedicatedColumns, dedicatedColumnInitialsData, staff, shiftTypeMap, hotkeyMap, selection, showMonthPicker, requestMode, toggleShowRequests, showVersions, showAlerts, showHelp]);
+  }, [picker, canEdit, activeRow, activeCol, activeDedCol, assignmentMap, dates, visibleStaff, dedicatedColumns, dedicatedColumnInitialsData, staff, shiftTypeMap, hotkeyMap, selection, showMonthPicker, requestMode, toggleShowRequests, modalOpen]);
 
   // Copy the selected cells (or the active cell) to the clipboard as TSV so they paste
   // into Excel/Sheets matching the grid (dates rows, staff cols), values only. Read-only
@@ -2420,7 +2372,7 @@ export function ScheduleGrid({
     function onCopy(e: ClipboardEvent) {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-      if (showMonthPicker || showVersions || showAlerts || showHelp || picker) return;
+      if (showMonthPicker || modalOpen || picker) return;
 
       // Dedicated-column copy (ICU/CARD): a multi-date dedSelection range, OR the single
       // active dedicated cell (parity with a staff active-cell copy). Initials come from
@@ -2472,7 +2424,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("copy", onCopy);
     return () => document.removeEventListener("copy", onCopy);
-  }, [selection, activeRow, activeCol, activeDedCol, assignmentMap, dates, visibleStaff, showMonthPicker, showVersions, showAlerts, showHelp, picker, dedSelection, shiftTypeMap, staff]);
+  }, [selection, activeRow, activeCol, activeDedCol, assignmentMap, dates, visibleStaff, showMonthPicker, modalOpen, picker, dedSelection, shiftTypeMap, staff]);
 
   // Paste a clipboard block (from Excel/Sheets or our own copy) positionally from the
   // active cell, filling down and right. Same guards as keydown/copy. Gated to assignment
@@ -2582,7 +2534,7 @@ export function ScheduleGrid({
     async function onPaste(e: ClipboardEvent) {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
-      if (showMonthPicker || showVersions || showAlerts || showHelp || picker) return;
+      if (showMonthPicker || modalOpen || picker) return;
       if (!canEdit) return;
 
       const block = parseClipboardGrid(e.clipboardData?.getData("text/plain") ?? "");
@@ -2714,7 +2666,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-  }, [canEdit, requestMode, activeRow, activeCol, activeDedCol, dates, visibleStaff, staff, assignmentMap, codeToId, shiftTypeMap, dedSelection, showMonthPicker, showVersions, showAlerts, showHelp, picker]);
+  }, [canEdit, requestMode, activeRow, activeCol, activeDedCol, dates, visibleStaff, staff, assignmentMap, codeToId, shiftTypeMap, dedSelection, showMonthPicker, modalOpen, picker]);
 
   // Auto-dismiss the paste summary toast.
   useEffect(() => {
@@ -4124,6 +4076,14 @@ export function ScheduleGrid({
         >
           Print
         </button>
+        <button
+          onClick={() => setShowExport(true)}
+          disabled={liveMode}
+          className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded transition-colors text-slate-300"
+          title={liveMode ? "Exit Live to export the saved schedule" : "Save a whole year as Excel and PDF"}
+        >
+          Export year
+        </button>
         {pastMonth && (
           <button
             onClick={() => { clearColFocus(); setShowAllStaff((v) => !v); }}
@@ -5197,6 +5157,31 @@ export function ScheduleGrid({
       )}
 
       {/* Versions panel */}
+      {showExport && !liveMode && (
+        <ExportYearDialog
+          yearChoices={exportYearChoices([...localAssignments.map((a) => a.date), ...payPeriods.map((pp) => pp.startDate)], today.getFullYear())}
+          defaultYear={today.getFullYear()}
+          fileNameTemplate={exportFileName}
+          // The SAVED schedule (never a Live sandbox), copied at the Export click.
+          snapshot={() => structuredClone({
+            staff: staff.map((p) => ({ id: p.id, initials: p.initials, employmentTypeId: p.employmentTypeId, ftePercentage: p.ftePercentage, isActive: p.isActive })),
+            assignments: localAssignments.map((a) => ({ staffId: a.staffId, date: a.date, shiftTypeId: a.shiftTypeId, code: a.code })),
+            shiftTypes: shiftTypes.map((st) => ({ id: st.id, code: st.code, isOffShift: st.isOffShift, isLeave: st.isLeave, dedicatedColumn: st.dedicatedColumn, boldOnSchedule: st.boldOnSchedule, printBackgroundColor: st.printBackgroundColor })),
+            payPeriods: payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
+            holidays: holidays.map((h) => ({ date: h.date })),
+            countColumns,
+            specialColumnOrder,
+            printColumnRules,
+            printAggregateColumns,
+            dayShading,
+            printLayout,
+            weekendStartDow,
+            dateFormat,
+            versions: currentVersions.map((v) => ({ year: v.year, month: v.month, versionNumber: v.versionNumber })),
+          })}
+          onClose={() => setShowExport(false)}
+        />
+      )}
       {showVersions && (
         <div
           data-print-hide

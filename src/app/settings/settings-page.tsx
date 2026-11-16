@@ -48,6 +48,7 @@ import {
   type PrintLayout,
   type PrintTemplateContext,
 } from "@/lib/print-layout";
+import { DEFAULT_EXPORT_FILE_NAME, EXPORT_FILE_NAME_MAX, exportFileNameError, resolveExportFileName } from "@/lib/export-filename";
 import { RecurrencePicker } from "../staff/recurrence-picker";
 import { FrequencyPicker } from "../staff/frequency-picker";
 import { deptPickerTarget, deptTargetPutBody, DEPT_DEFAULT_STRENGTH, type DeptTargetRow, type DeptPickerTarget } from "./dept-target-row";
@@ -142,6 +143,7 @@ type SchedulingPrefs = {
   printHolidayColor: string | null; // card #209: null = no holiday shading in print
   screenHolidayColor: string | null; // card #209: null = no holiday tint on screen
   printLayout: PrintLayout; // card #301: header/footer, table font, DATE/DAY columns
+  exportFileName: string | null; // card #299: year export file name template; null = built-in default
   leaveHoursPolicy: LeavePolicy;
   shiftBalanceFrom?: string | null;
   payPeriodAnchor: string | null;
@@ -5850,6 +5852,48 @@ function PrintFontSection({ initial }: { initial: PrintLayout }) {
   );
 }
 
+// Card #299: the year export's file name. Stored as a template with {YEAR}; empty saves
+// null (the built-in default).
+function ExportFileNameSection({ initial }: { initial: string | null }) {
+  const canEdit = useCanEdit();
+  const { saved, draft, setDraft, status, error, busy, dirty, save } = useSavedDraft({ name: initial ?? "" });
+  const year = new Date().getFullYear();
+  const trimmed = draft.name.trim();
+  const example = resolveExportFileName(trimmed || null, year);
+  const why = trimmed ? exportFileNameError(trimmed.replaceAll("{YEAR}", String(year))) : null;
+  return (
+    <CollapsibleSection
+      id="export-file-name"
+      title="Year Export File Name"
+      description="The name the Export year button suggests for the Excel and PDF files. {YEAR} is replaced by the exported year. Leave it empty for the built-in name."
+      status={status}
+      error={error}
+    >
+      <div className="space-y-3">
+        <FieldRow label="File name" description={`Up to ${EXPORT_FILE_NAME_MAX} characters, without \\ / : * ? " < > |.`}>
+          <input
+            type="text"
+            aria-label="Year export file name"
+            maxLength={EXPORT_FILE_NAME_MAX}
+            placeholder={DEFAULT_EXPORT_FILE_NAME}
+            value={draft.name}
+            disabled={!canEdit || busy}
+            onChange={(e) => setDraft({ name: e.target.value })}
+            className={`${INPUT} w-72`}
+          />
+        </FieldRow>
+        <p className="text-xs text-slate-500">For {year}: {example}.xlsx and {example}.pdf</p>
+        {why && <p className="text-xs text-red-400">{why}</p>}
+        <div className="flex gap-2">
+          <button type="button" disabled={!canEdit || busy || !dirty || !!why} onClick={() => save({ exportFileName: trimmed || null }, { name: trimmed })} className={BTN_SAVE}>Save</button>
+          <button type="button" disabled={!canEdit || busy || !dirty} onClick={() => setDraft(saved)} className={BTN_PLAIN}>Cancel</button>
+          <button type="button" disabled={!canEdit || busy} onClick={() => save({ exportFileName: null }, { name: "" })} className={BTN_PLAIN}>Reset to default</button>
+        </div>
+      </div>
+    </CollapsibleSection>
+  );
+}
+
 const DATE_COLUMN_SAMPLE = "2026-01-05"; // a Monday
 const DAY_COLUMN_SAMPLE_DOW = 1;
 
@@ -6499,6 +6543,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
           <DayShadingSection initial={schedulingPrefs} />
           <PrintHeaderFooterSection initial={schedulingPrefs.printLayout} />
           <PrintFontSection initial={schedulingPrefs.printLayout} />
+          <ExportFileNameSection initial={schedulingPrefs.exportFileName} />
         </div>
 
         <SectionGroup label="Calendar" />

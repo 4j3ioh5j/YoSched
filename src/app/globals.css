@@ -296,7 +296,8 @@ input[type="checkbox"]:disabled {
   /* …and the cell holding a bolded shift gets a light shade so it stands out.
      Stamped on the <td> itself (not :has) so it shades in every browser, not just
      :has-capable ones. Placed after the weekend rule so it wins on a weekend cell too. */
-  tbody td[data-bold-cell] {
+  /* Card #299: `tbody tr td` matches the row-shade rule's specificity, so this later rule wins. */
+  tbody tr td[data-bold-cell] {
     background: #e6e6e6 !important;
   }
 

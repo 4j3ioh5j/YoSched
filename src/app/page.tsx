@@ -318,6 +318,7 @@ export default async function Home() {
         defaultLiveScope={parseLiveScope(schedPrefs?.defaultLiveScope)}
         dayShading={dayShadingFrom(schedPrefs)}
         printLayout={printLayoutFrom(schedPrefs)}
+        exportFileName={schedPrefs?.exportFileName ?? null}
         weekendStartDow={readTuning(schedPrefs).weekendStartDow}
         currentVersions={currentVersions.map((v) => ({
           year: v.year,

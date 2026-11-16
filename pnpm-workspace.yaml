@@ -4,3 +4,5 @@ allowBuilds:
   prisma: true
   sharp: true
   unrs-resolver: true
+  # core-js only prints a donation banner on install (jspdf → canvg); it needs no build.
+  core-js: false
