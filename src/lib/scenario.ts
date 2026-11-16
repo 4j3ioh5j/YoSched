@@ -15,7 +15,12 @@
 // This module is pure (no prisma/next/fs/process.env) so it runs client-side.
 
 import {
-  autoSchedule,
+  autoScheduleSteps,
+  runTrialBatch,
+  trialRun,
+  trialInput,
+  type TrialBatch,
+  type TrialRun,
   compareScheduleQuality,
   type AutoScheduleInput,
   type AutoScheduleResult,
@@ -153,6 +158,53 @@ export function applyScenario(
   pins: ScenarioPin[],
   frees: ScenarioFree[],
 ): ScenarioOutcome {
+  return runStepsSync(applyScenarioSteps(input, pins, frees), runTrialBatch);
+}
+
+/** Card #266 slice B: the engine work of one Live edit, as batches of independent runs. */
+export type ScenarioSteps = Generator<TrialBatch, ScenarioOutcome, TrialRun[]>;
+
+/** Drives steps here and now, each batch through `run` (which must answer every run, in order). */
+export function runStepsSync<R>(steps: Generator<TrialBatch, R, TrialRun[]>, run: (batch: TrialBatch) => TrialRun[]): R {
+  let step = steps.next();
+  while (!step.done) {
+    const runs = run(step.value);
+    if (runs.length !== step.value.variants.length) throw new Error("runStepsSync: a batch returned the wrong number of runs");
+    step = steps.next(runs);
+  }
+  return step.value;
+}
+
+/**
+ * Drives steps asynchronously (the browser: each batch on Web Workers, engine-web-pool.ts). A
+ * batch the runner gives up on (null, a throw, the wrong number of runs) runs here, so the
+ * outcome is always the plain one. When `isCurrent` turns false (the edit was undone, Live
+ * closed, the scope or month changed) the job stops at the next batch and is dropped.
+ */
+export async function runStepsAsync<R>(
+  steps: Generator<TrialBatch, R, TrialRun[]>,
+  run: (batch: TrialBatch) => Promise<TrialRun[] | null>,
+  isCurrent: () => boolean = () => true,
+): Promise<{ ok: true; value: R } | { ok: false }> {
+  if (!isCurrent()) return { ok: false };
+  let step = steps.next();
+  while (!step.done) {
+    const batch = step.value;
+    let runs: TrialRun[] | null = null;
+    try { runs = await run(batch); } catch { runs = null; }
+    if (!isCurrent()) return { ok: false };
+    if (!runs || runs.length !== batch.variants.length) runs = batch.variants.map((v) => trialRun(trialInput(batch.base, v)));
+    step = steps.next(runs);
+  }
+  return { ok: true, value: step.value };
+}
+
+/** applyScenario as steps: the same outcome, with every engine run yielded as a batch. */
+export function* applyScenarioSteps(
+  input: AutoScheduleInput,
+  pins: ScenarioPin[],
+  frees: ScenarioFree[],
+): ScenarioSteps {
   const staffById = new Map(input.staff.map((s) => [s.id, s] as const));
   const stById = new Map(input.shiftTypes.map((s) => [s.id, s] as const));
   const ppRanges = ppRangesOf(input);
@@ -177,7 +229,7 @@ export function applyScenario(
 
   // Grade the untouched, fully-locked baseline once — the quality-delta reference.
   // Card #266: a reference grade, not a result anyone accepts — one run, no spacing trial.
-  const baselineRun = autoSchedule({
+  const baselineRun = yield* autoScheduleSteps({
     ...input,
     existingAssignments: input.existingAssignments.map((a) => ({ ...a, isLocked: true })),
   }, { spacingTrial: false });
@@ -262,7 +314,7 @@ export function applyScenario(
   // (The engine's existingAssignments type has no `away`; pins reach it only as the
   // locked cells above, so the flag never leaks into the engine input.)
 
-  const result = autoSchedule({ ...input, existingAssignments: survivors });
+  const result = yield* autoScheduleSteps({ ...input, existingAssignments: survivors });
 
   // Result grid = locked survivors ∪ new suggestions. The engine never re-emits a
   // locked cell, and freed keys were removed from `survivors`, so suggestions
@@ -439,20 +491,32 @@ export function applyScenarioExpanding(
   pinned: { has(key: string): boolean },
   scope: "day" | "pp" | "range",
 ): ScenarioOutcome {
+  return runStepsSync(applyScenarioExpandingSteps(input, pins, explicitFrees, touchedDates, pinned, scope), runTrialBatch);
+}
+
+/** applyScenarioExpanding as steps (card #266 slice B): the same outcome. */
+export function* applyScenarioExpandingSteps(
+  input: AutoScheduleInput,
+  pins: ScenarioPin[],
+  explicitFrees: ScenarioFree[],
+  touchedDates: ReadonlySet<string>,
+  pinned: { has(key: string): boolean },
+  scope: "day" | "pp" | "range",
+): ScenarioSteps {
   const ceiling = SCOPE_RING[scope];
   // The locked-baseline coverage shortfall is the reference: only widen for a gap the
   // EDIT opened, never for one the baseline already had. (applyScenario also grades the
   // baseline internally for qualityDelta; we grade it once here so each ring can be
   // compared without widening applyScenario's return shape.)
-  const baselineShortfall = autoSchedule({
+  const baselineShortfall = (yield* autoScheduleSteps({
     ...input,
     existingAssignments: input.existingAssignments.map((a) => ({ ...a, isLocked: true })),
-  }, { spacingTrial: false }).quality.breakdown.coverageShortfall; // card #266: a reference grade, one run
+  }, { spacingTrial: false })).quality.breakdown.coverageShortfall; // card #266: a reference grade, one run
 
   let outcome: ScenarioOutcome | null = null;
   for (let ring = 0; ring <= ceiling; ring++) {
     const frees = [...explicitFrees, ...freesForRing(input, pinned, touchedDates, ring)];
-    outcome = applyScenario(input, pins, frees);
+    outcome = yield* applyScenarioSteps(input, pins, frees);
     // Hard-illegal pin: nothing to widen — snap back with the rejection.
     if (!outcome.applied) return outcome;
     // Smallest ring that doesn't leave the edit's coverage worse than baseline.

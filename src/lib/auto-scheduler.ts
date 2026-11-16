@@ -5928,6 +5928,33 @@ export function autoSchedule(input: AutoScheduleInput, opts: AutoScheduleOptions
   return step.value ?? autoScheduleCore(input);
 }
 
+/**
+ * Card #266 slice B: autoSchedule as steps. Yields every batch of independent runs it needs
+ * (a plain run is a one-run batch too, so a browser can do even that off the main thread),
+ * receives their runs in order, and returns exactly autoSchedule's result.
+ */
+export function* autoScheduleSteps(input: AutoScheduleInput, opts: { spacingTrial?: boolean } = {}): Generator<TrialBatch, AutoScheduleResult, TrialRun[]> {
+  const plain = function* (): Generator<TrialBatch, AutoScheduleResult, TrialRun[]> {
+    const runs = yield { base: input, variants: [null] };
+    if (runs.length !== 1) throw new Error("autoScheduleSteps: a batch returned the wrong number of runs");
+    return runs[0].result;
+  };
+  if (opts.spacingTrial === false) return yield* plain();
+  const trial = yield* spacingTrialSteps(input);
+  return trial ?? (yield* plain());
+}
+
+/**
+ * Runs one batch here and now: on the installed runner (the server's pool) when it has more than
+ * one run and the runner answers in full, otherwise in a plain loop. The same choice autoSchedule
+ * makes, for the step drivers (scenario.ts runStepsSync).
+ */
+export function runTrialBatch(batch: TrialBatch): TrialRun[] {
+  let runs = batch.variants.length > 1 && trialBatchRunner ? trialBatchRunner(batch) : null;
+  if (runs && runs.length !== batch.variants.length) runs = null;
+  return runs ?? batch.variants.map((v) => trialRun(trialInput(batch.base, v)));
+}
+
 /** Test seam (card #266): one engine run with its per-item quality maps. */
 export function autoScheduleOnceWithItemsForTest(input: AutoScheduleInput): { result: AutoScheduleResult; items: QualityItems } {
   const items = newQualityItems();
