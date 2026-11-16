@@ -19,7 +19,7 @@ import { HOLIDAY_POLICIES, type HolidayPolicy, isHolidayCreditShift } from "@/li
 import { holidayRulesVersion } from "@/lib/holiday-rules-db";
 import { buildHolidayGroups, RULE_OFFSET_MIN, RULE_OFFSET_MAX, RULE_NAME_MAX, type HolidayRuleSpec } from "@/lib/holiday-rules";
 import { createLatestWriter, type LatestWriter } from "@/lib/latest-writer";
-import { TUNING_DEFAULTS, TUNING_LIMITS, WEEKDAY_NAMES, isWeekendDow, readTuning, tuningError, tuningNeedsSave, weekendLabel, weekendSecondDow, type SchedulerTuning, type TuningKey } from "@/lib/scheduler-tuning";
+import { TUNING_DEFAULTS, WEEKDAY_NAMES, isWeekendDow, readTuning, tuningError, tuningNeedsSave, weekendLabel, weekendSecondDow, type SchedulerTuning, type TuningKey } from "@/lib/scheduler-tuning";
 import { LEAVE_POLICIES, type LeavePolicy } from "@/lib/leave-policy";
 import { PINNED_CONSTRAINTS, FACTOR_META, PRIORITY_ROADMAP_NOTE, type FactorMeta } from "@/lib/autogen-priority";
 import { HOURS_POLICIES, HOURS_POLICY_KEYS, parseHoursPolicy, isHoursPolicyKey, type HoursPolicy } from "@/lib/autogen-hours-policy";
@@ -52,6 +52,7 @@ import { DEFAULT_EXPORT_FILE_NAME, EXPORT_FILE_NAME_MAX, exportFileNameError, re
 import { RecurrencePicker } from "../staff/recurrence-picker";
 import { FrequencyPicker } from "../staff/frequency-picker";
 import { deptPickerTarget, deptTargetPutBody, DEPT_DEFAULT_STRENGTH, type DeptTargetRow, type DeptPickerTarget } from "./dept-target-row";
+import { DecimalField } from "@/components/decimal-field";
 import { DEFAULT_STAFF_ORDER, orderStaff, STAFF_ORDER_DEFAULT_DIR, type StaffOrderCriterion, type StaffOrderDir, type StaffOrderKey } from "@/lib/staff-order";
 
 const CanEditContext = createContext(true);
@@ -1430,13 +1431,13 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
                 <input disabled={!canEdit} className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50" value={editingShift.name} onChange={(e) => updateField(editingShift.id, "name", e.target.value)} />
               </FieldRow>
               <FieldRow label="Hours per shift (weekdays)" description="How many hours this shift counts for on a weekday">
-                <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.defaultHours} onChange={(e) => updateField(editingShift.id, "defaultHours", parseFloat(e.target.value) || 0)} />
+                <DecimalField disabled={!canEdit} aria-label="Hours per shift on weekdays" min={0} decimals={2} className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.defaultHours} onValueChange={(v) => updateField(editingShift.id, "defaultHours", v ?? 0)} />
               </FieldRow>
               <FieldRow label="Hours per shift (weekends)" description={`Hours this shift counts for on a weekend day (${weekendLabel(tuning.weekendStartDow)}). 0 = does not accrue weekend hours.`}>
-                <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.defaultHoursWeekend} onChange={(e) => updateField(editingShift.id, "defaultHoursWeekend", parseFloat(e.target.value) || 0)} />
+                <DecimalField disabled={!canEdit} aria-label="Hours per shift on weekends" min={0} decimals={2} className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.defaultHoursWeekend} onValueChange={(v) => updateField(editingShift.id, "defaultHoursWeekend", v ?? 0)} />
               </FieldRow>
               <FieldRow label="Hours per shift (holidays)" description="Hours this shift counts for on a holiday (takes precedence over weekend). 0 = does not accrue holiday hours.">
-                <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.defaultHoursHoliday} onChange={(e) => updateField(editingShift.id, "defaultHoursHoliday", parseFloat(e.target.value) || 0)} />
+                <DecimalField disabled={!canEdit} aria-label="Hours per shift on holidays" min={0} decimals={2} className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.defaultHoursHoliday} onValueChange={(v) => updateField(editingShift.id, "defaultHoursHoliday", v ?? 0)} />
               </FieldRow>
               <FieldRow label="Category" description="Work shifts, leave, or other">
                 <select disabled={!canEdit} className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50" value={editingShift.category} onChange={(e) => updateField(editingShift.id, "category", e.target.value)}>
@@ -2078,12 +2079,15 @@ function PayPeriodsSection({ initial, initialAnchor, initialLengthDays, pushUndo
       <div className="mb-4">
         <label className="text-xs text-slate-400 block mb-1">Hours per Pay Period (1.0 FTE)</label>
         <div className="flex gap-2 items-center">
-          <input
-            type="number"
+          <DecimalField
+            aria-label="Hours per pay period"
+            required
+            min={0}
+            decimals={2}
             disabled={!canEdit}
-            className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm font-mono disabled:opacity-50"
+            className="w-24 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm font-mono disabled:opacity-50"
             value={baseHours}
-            onChange={(e) => setBaseHours(parseFloat(e.target.value) || 80)}
+            onValueChange={(v) => { if (v != null && v > 0) setBaseHours(v); }}
           />
           {canEdit && (
             <button
@@ -3367,15 +3371,16 @@ function EquityFactorsSection({
 
             <div className="flex items-center gap-2 shrink-0">
               <span className="text-[10px] text-slate-500">Weight:</span>
-              <input
-                type="number"
+              <DecimalField
+                aria-label="Factor weight"
+                required
                 min={0.1}
                 max={10}
-                step={0.1}
+                decimals={2}
                 disabled={!canEdit}
                 className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-center text-slate-200 disabled:opacity-50"
                 value={f.weight}
-                onChange={(e) => updateFactor(idx, { weight: parseFloat(e.target.value) || 1 })}
+                onValueChange={(v) => { if (v != null) updateFactor(idx, { weight: v }); }}
               />
               <span className="text-[10px] text-slate-500 w-10 text-right">
                 {f.enabled ? `${((f.weight / totalWeight) * 100).toFixed(0)}%` : "off"}
@@ -5181,16 +5186,6 @@ const QUANTS: { key: string; label: string }[] = [
   { key: "has_all", label: "Has all of" },
 ];
 
-// FTE % shown as a whole-number percentage; stored as a fraction (1.0 = 100%) to
-// match Staff.ftePercentage and the visibility helper.
-const pctVal = (f: number | null) => (f == null ? "" : String(Math.round(f * 100)));
-const parsePct = (s: string): number | null => {
-  const t = s.trim();
-  if (t === "") return null;
-  const n = Number(t);
-  return Number.isFinite(n) ? n / 100 : null;
-};
-
 // The match fields shared by an individual-column rule and an aggregate-column rule.
 type RuleFields = {
   employmentTypeIds: string[];
@@ -5282,11 +5277,12 @@ function RuleFieldsEditor({
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-slate-500 w-20">FTE %:</span>
-        <input type="number" min={0} disabled={!canEdit} value={pctVal(value.minFtePercentage)} onChange={(e) => onChange({ minFtePercentage: parsePct(e.target.value) })} placeholder="min" className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-xs border border-slate-600 w-16 disabled:opacity-50" />
+        {/* FTE as a fraction, like the Staff page (1.0 = full time, 0.2 = one day a week). */}
+        <span className="text-xs text-slate-500 w-20">FTE:</span>
+        <DecimalField aria-label="Minimum FTE" min={0} decimals={3} disabled={!canEdit} value={value.minFtePercentage} onValueChange={(v) => onChange({ minFtePercentage: v })} placeholder="min" className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-xs border border-slate-600 w-20 disabled:opacity-50" />
         <span className="text-xs text-slate-500">to</span>
-        <input type="number" min={0} disabled={!canEdit} value={pctVal(value.maxFtePercentage)} onChange={(e) => onChange({ maxFtePercentage: parsePct(e.target.value) })} placeholder="max" className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-xs border border-slate-600 w-16 disabled:opacity-50" />
-        <span className="text-xs text-slate-600 italic">blank = no bound</span>
+        <DecimalField aria-label="Maximum FTE" min={0} decimals={3} disabled={!canEdit} value={value.maxFtePercentage} onValueChange={(v) => onChange({ maxFtePercentage: v })} placeholder="max" className="bg-slate-700 text-slate-200 rounded px-2 py-1 text-xs border border-slate-600 w-20 disabled:opacity-50" />
+        <span className="text-xs text-slate-600 italic">e.g. 0.2 to 0.8; blank = no bound</span>
       </div>
 
       <div className="space-y-1.5">
@@ -5453,12 +5449,12 @@ type EditAggCol = {
 // columns are otherwise identical and all freely editable / movable / deletable.
 // ─── Scheduler tuning (card #215) ────────────────────────────────────────────
 
-const TUNING_FIELDS: { key: Exclude<TuningKey, "weekendStartDow">; label: string; description: string; step: number }[] = [
-  { key: "spreadRadiusDays", label: "Spacing reach (days)", description: "For shifts marked \u201cSpread out as much as possible\u201d: how many days either side of a shift count as close to it. Larger keeps them further apart.", step: 1 },
-  { key: "evenBandCalls", label: "Even-counts band", description: "For shifts marked \u201cKeep counts even across months\u201d: a person this many shifts ahead of the lowest this month is passed over. 1 keeps everyone within one shift.", step: 0.5 },
-  { key: "softRequestOffWeight", label: "Soft \u201cprefer off\u201d pull", description: "How strongly a soft day-off request pulls that day into a person\u2019s days off. It only acts within the slack the hours target leaves. 0 = ignore soft requests here.", step: 1 },
-  { key: "softAvoidFollowWeight", label: "Soft \u201cavoid after\u201d cost", description: "How much one soft \u201cavoid this shift after that one\u201d pair counts against a choice of fill days. 0 = ignore these pairs here.", step: 1 },
-  { key: "scarcePoolSize", label: "Few-people warning", description: "A shift that at most this many people can work marks a pay period\u2019s hours gap as structural (no fix the scheduler can make). 0 = never.", step: 1 },
+const TUNING_FIELDS: { key: Exclude<TuningKey, "weekendStartDow">; label: string; description: string }[] = [
+  { key: "spreadRadiusDays", label: "Spacing reach (days)", description: "For shifts marked \u201cSpread out as much as possible\u201d: how many days either side of a shift count as close to it. Larger keeps them further apart." },
+  { key: "evenBandCalls", label: "Even-counts band", description: "For shifts marked \u201cKeep counts even across months\u201d: a person this many shifts ahead of the lowest this month is passed over. 1 keeps everyone within one shift." },
+  { key: "softRequestOffWeight", label: "Soft \u201cprefer off\u201d pull", description: "How strongly a soft day-off request pulls that day into a person\u2019s days off. It only acts within the slack the hours target leaves. 0 = ignore soft requests here." },
+  { key: "softAvoidFollowWeight", label: "Soft \u201cavoid after\u201d cost", description: "How much one soft \u201cavoid this shift after that one\u201d pair counts against a choice of fill days. 0 = ignore these pairs here." },
+  { key: "scarcePoolSize", label: "Few-people warning", description: "A shift that at most this many people can work marks a pay period\u2019s hours gap as structural (no fix the scheduler can make). 0 = never." },
 ];
 
 function SchedulerTuningSection({ initial, onSaved }: { initial: SchedulerTuning; onSaved: (t: SchedulerTuning) => void }) {
@@ -5526,16 +5522,14 @@ function SchedulerTuningSection({ initial, onSaved }: { initial: SchedulerTuning
           </select>
         </FieldRow>
         {TUNING_FIELDS.map((f) => {
-          const l = TUNING_LIMITS[f.key];
           return (
             <FieldRow key={f.key} label={f.label} description={`${f.description} Default ${TUNING_DEFAULTS[f.key]}.`}>
               <input
                 disabled={!canEdit}
-                type="number"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
                 aria-label={f.label}
-                min={l.min}
-                max={l.max}
-                step={f.step}
                 value={draft[f.key]}
                 onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
                 onBlur={(e) => canEdit && tuningNeedsSave(e.target.value, initial[f.key], writer.busy(f.key)) && commit(f.key, e.target.value)}

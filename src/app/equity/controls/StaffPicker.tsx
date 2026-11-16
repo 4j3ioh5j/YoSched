@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { GraphStaffFilter } from "@/lib/graph/spec";
+import { DecimalField } from "@/components/decimal-field";
 
 export type StaffPickerStaff = {
   id: string;
@@ -61,8 +62,9 @@ export function StaffPicker({
     onChange({ ...value, employmentTypeId, names: prunedNames(employmentTypeId, value.minFtePct ?? null) });
   }
 
-  function setMinFte(raw: string) {
-    const minFtePct = parseFloat(raw) || null;
+  // 0 or blank = no minimum.
+  function setMinFte(v: number | null) {
+    const minFtePct = v ? v : null;
     onChange({ ...value, minFtePct, names: prunedNames(value.employmentTypeId ?? null, minFtePct) });
   }
 
@@ -90,15 +92,14 @@ export function StaffPicker({
         </select>
 
         <label className="text-xs text-slate-500">Min FTE</label>
-        <input
-          type="number"
-          step="0.1"
-          min="0"
-          max="9.999"
+        <DecimalField
+          aria-label="Min FTE"
+          min={0}
+          max={9.999}
+          decimals={3}
           className="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-slate-300"
-          value={value.minFtePct || ""}
-          onChange={(e) => setMinFte(e.target.value)}
-          placeholder="0"
+          value={value.minFtePct ?? null}
+          onValueChange={setMinFte}
         />
 
         <button

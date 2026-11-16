@@ -14,6 +14,7 @@ import { RecurrencePicker } from "./recurrence-picker";
 import { FrequencyPicker } from "./frequency-picker";
 import { describeFrequency, type ShiftMinTarget } from "@/lib/shift-eligibility";
 import { isValidFixedHours } from "@/lib/fte";
+import { DecimalField } from "@/components/decimal-field";
 import { rulesPatch, undoRulesPatch, afterRulesSave, withoutRules, type RuleKey, type RulesPatch, type RuleVersions } from "@/lib/staff-rule-patch";
 
 // Login-setup badge shown per staff row. Credentials/activation are managed on /users
@@ -541,48 +542,48 @@ function ShiftHoursOverrideEditor({
     });
   }
 
-  function parse(v: string): number | null {
-    if (v.trim() === "") return null;
-    const n = Number(v);
-    return Number.isFinite(n) && n >= 0 ? n : null;
-  }
-
-  const inputCls = "w-16 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600 text-xs";
+  const inputCls = "w-20 bg-slate-700 text-slate-200 rounded px-1.5 py-0.5 border border-slate-600 text-xs";
 
   return (
     <div className="flex items-center gap-3 flex-wrap">
       <label className="flex items-center gap-1 text-xs text-slate-400">
         {countsWeekend || countsHoliday ? "Weekday" : "Hours"}
-        <input
-          type="number" min={0} step="0.5"
-          value={weekday ?? ""}
+        <DecimalField
+          aria-label="Weekday hours"
+          min={0}
+          decimals={2}
+          value={weekday}
           placeholder={String(defWd)}
-          onChange={(e) => commit(parse(e.target.value), weekend, holiday)}
+          onValueChange={(v) => commit(v, weekend, holiday)}
           className={inputCls}
         />
       </label>
       {countsWeekend && (
         <label className="flex items-center gap-1 text-xs text-slate-400">
           Weekend
-          <input
-            type="number" min={0} step="0.5"
-            value={weekend ?? ""}
-            placeholder={String(defWe)}
-            onChange={(e) => commit(weekday, parse(e.target.value), holiday)}
-            className={inputCls}
-          />
+          <DecimalField
+          aria-label="Weekend hours"
+          min={0}
+          decimals={2}
+          value={weekend}
+          placeholder={String(defWe)}
+          onValueChange={(v) => commit(weekday, v, holiday)}
+          className={inputCls}
+        />
         </label>
       )}
       {countsHoliday && (
         <label className="flex items-center gap-1 text-xs text-slate-400">
           Holiday
-          <input
-            type="number" min={0} step="0.5"
-            value={holiday ?? ""}
-            placeholder={String(defHol)}
-            onChange={(e) => commit(weekday, weekend, parse(e.target.value))}
-            className={inputCls}
-          />
+          <DecimalField
+          aria-label="Holiday hours"
+          min={0}
+          decimals={2}
+          value={holiday}
+          placeholder={String(defHol)}
+          onValueChange={(v) => commit(weekday, weekend, v)}
+          className={inputCls}
+        />
         </label>
       )}
       {override && (
@@ -1540,17 +1541,15 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
               </FieldRow>
               {typeOf(ep)?.usesFtePercentage && (
                 <FieldRow label="FTE" description="Target hours = FTE x pay period hours">
-                  <input
-                    type="number"
-                    step="0.001"
-                    min="0"
-                    max="9.999"
+                  <DecimalField
+                    aria-label="FTE"
+                    required
+                    min={0}
+                    max={9.999}
+                    decimals={3}
                     className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm font-mono"
                     value={ep.ftePercentage}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!isNaN(v) && v >= 0 && v <= 9.999) updateField(ep.id, "ftePercentage", Math.round(v * 1000) / 1000);
-                    }}
+                    onValueChange={(v) => { if (v != null) updateField(ep.id, "ftePercentage", v); }}
                   />
                 </FieldRow>
               )}
@@ -1566,19 +1565,16 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
                     />
                     {ep.fixedHoursPerPp != null && (
                       <>
-                        <input
-                          type="number"
-                          step="0.25"
-                          min="0.25"
-                          max="999"
+                        {/* 0 = ticked but not filled in yet (shown blank, flagged below). */}
+                        <DecimalField
                           aria-label="Hours per pay period"
-                          className={`w-20 bg-slate-700 border rounded px-2 py-1 text-sm font-mono ${isValidFixedHours(ep.fixedHoursPerPp) ? "border-slate-600" : "border-red-500"}`}
-                          value={ep.fixedHoursPerPp === 0 ? "" : ep.fixedHoursPerPp}
+                          min={0}
+                          max={999}
+                          decimals={2}
+                          className={`w-24 bg-slate-700 border rounded px-2 py-1 text-sm font-mono ${isValidFixedHours(ep.fixedHoursPerPp) ? "border-slate-600" : "border-red-500"}`}
+                          value={ep.fixedHoursPerPp === 0 ? null : ep.fixedHoursPerPp}
                           placeholder="hours"
-                          onChange={(e) => {
-                            const v = parseFloat(e.target.value);
-                            updateField(ep.id, "fixedHoursPerPp", Number.isFinite(v) ? v : 0);
-                          }}
+                          onValueChange={(v) => updateField(ep.id, "fixedHoursPerPp", v ?? 0)}
                         />
                         <span className="text-xs text-slate-500">hrs</span>
                         {!isValidFixedHours(ep.fixedHoursPerPp) && (
