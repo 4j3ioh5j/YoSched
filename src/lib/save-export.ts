@@ -35,6 +35,9 @@ const MIME = {
   pdf: "application/pdf",
 } as const;
 
+const PICKER_CANCELLED =
+  "Cancelled. Nothing was saved. Chrome will not save straight into Downloads, Desktop or Documents: choose or make a folder inside one, or use Download instead.";
+
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e)) || "unknown error";
 const outcome = (o: Partial<ExportOutcome> & Pick<ExportOutcome, "kind" | "message">): ExportOutcome => ({
   saved: [], failed: [], retry: [], release: () => {}, ...o,
@@ -92,15 +95,23 @@ async function writeOne(dir: DirHandle, name: string, data: Uint8Array, existed:
  * Pick, build, save. `baseName` is already validated; `generate` builds both files from
  * one frozen snapshot. Call it straight from the click handler (no await before it).
  */
-export async function runYearExport(baseName: string, generate: () => Promise<ExportBytes>, env: ExportEnv): Promise<ExportOutcome> {
+export async function runYearExport(
+  baseName: string,
+  generate: () => Promise<ExportBytes>,
+  env: ExportEnv,
+  opts: { mode?: "auto" | "download" } = {},
+): Promise<ExportOutcome> {
   const names = { xlsx: `${baseName}.xlsx`, pdf: `${baseName}.pdf` };
 
-  if (env.showDirectoryPicker) {
+  // Card #308: "Download instead" skips the folder picker even where the browser has one.
+  if (env.showDirectoryPicker && opts.mode !== "download") {
     let dir: DirHandle;
     try {
       dir = await env.showDirectoryPicker();
     } catch (e) {
-      if ((e as { name?: string })?.name === "AbortError") return outcome({ kind: "cancelled", message: "Cancelled. Nothing was saved." });
+      // Chrome refuses Downloads, Desktop and Documents themselves ("contains system
+      // files"); Cancel on that refusal arrives here as an ordinary cancel.
+      if ((e as { name?: string })?.name === "AbortError") return outcome({ kind: "cancelled", message: PICKER_CANCELLED });
       return outcome({ kind: "failed", message: `Could not open the folder: ${errText(e)}` });
     }
     let existed: Record<"xlsx" | "pdf", boolean>;

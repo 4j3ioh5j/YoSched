@@ -155,3 +155,35 @@ describe("runYearExport without a folder picker (card #299)", () => {
     expect(e.downloads).toEqual([]);
   });
 });
+
+// Card #308: Chrome refuses Downloads, Desktop and Documents themselves ("contains system
+// files"); Cancel there is an AbortError. The cancel says how to get past it, and
+// "Download instead" saves both files without any folder picker.
+describe("Chrome folder refusal and Download instead (card #308)", () => {
+  it("a cancelled picker explains Chrome's protected folders and the download way", async () => {
+    const r = await runYearExport("A", async () => bytes, env({ showDirectoryPicker: async () => { throw Object.assign(new Error("x"), { name: "AbortError" }); } }));
+    expect(r.kind).toBe("cancelled");
+    expect(r.message).toMatch(/Nothing was saved/);
+    expect(r.message).toMatch(/Downloads, Desktop or Documents/);
+    expect(r.message).toMatch(/folder inside/);
+    expect(r.message).toMatch(/Download instead/);
+  });
+
+  it("download mode never opens the picker, even where one exists", async () => {
+    let picked = false;
+    const e = env({ showDirectoryPicker: async () => { picked = true; return fakeDir().dir as never; } });
+    const r = await runYearExport("A", async () => bytes, e, { mode: "download" });
+    expect(picked).toBe(false);
+    expect(r.kind).toBe("downloads");
+    expect(e.downloads.map((d) => d.name)).toEqual(["A.xlsx", "A.pdf"]);
+    r.release();
+  });
+
+  it("the default mode still uses the picker where one exists", async () => {
+    let picked = false;
+    const d = fakeDir();
+    const r = await runYearExport("A", async () => bytes, env({ showDirectoryPicker: async () => { picked = true; return d.dir as never; } }), {});
+    expect(picked).toBe(true);
+    expect(r.kind).toBe("saved");
+  });
+});

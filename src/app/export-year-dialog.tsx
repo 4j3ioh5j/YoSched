@@ -4,13 +4,15 @@
 // PDF (one month per sheet / page), from the SAVED schedule. The folder picker (Chrome,
 // Edge) opens straight from the Export click; Safari and Firefox get two downloads.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { BASE_PATH } from "@/lib/base-path";
 import { exportFileNameError, exportNameEdit, exportNameSetYear, initExportName } from "@/lib/export-filename";
 import { browserExportEnv, runYearExport, type ExportOutcome } from "@/lib/save-export";
 import { buildYearExportFiles, fetchPdfFonts } from "@/lib/export-year-files";
 import type { ExportScheduleInput } from "@/lib/print-month-model";
+
+const noSubscribe = () => () => {};
 
 type Props = {
   yearChoices: number[];
@@ -50,8 +52,12 @@ export function ExportYearDialog({ yearChoices, defaultYear, fileNameTemplate, s
   const nameError = exportFileNameError(nameState.name);
   const canExport = !busy && !nameError;
 
+  // Card #308: where the browser has a folder picker, "Download instead" skips it.
+  // Read after mount so the server render and the first client render match.
+  const hasPicker = useSyncExternalStore(noSubscribe, () => !!browserExportEnv().showDirectoryPicker, () => false);
+
   // No await before runYearExport: the folder picker needs the click's user activation.
-  const onExport = () => {
+  const onExport = (mode: "auto" | "download" = "auto") => {
     if (!canExport) return;
     const token = ++runToken.current;
     const input = snapshot();
@@ -63,6 +69,7 @@ export function ExportYearDialog({ yearChoices, defaultYear, fileNameTemplate, s
       nameState.name,
       () => buildYearExportFiles(input, year, now, () => fetchPdfFonts(BASE_PATH)),
       browserExportEnv(),
+      { mode },
     )
       .then((r) => {
         if (!mounted.current || token !== runToken.current) { r.release(); return; }
@@ -116,7 +123,7 @@ export function ExportYearDialog({ yearChoices, defaultYear, fileNameTemplate, s
           />
         </label>
         <p className="text-xs text-slate-500">{nameError ? <span className="text-red-400">{nameError}</span> : <>Saves {nameState.name}.xlsx and {nameState.name}.pdf</>}</p>
-        <p className="text-xs text-slate-500">Chrome and Edge ask for a folder. Safari and Firefox download both files (they go where the browser saves downloads, or ask if it is set to ask).</p>
+        <p className="text-xs text-slate-500">Chrome and Edge ask for a folder: pick or make one inside Downloads or Documents (they will not save straight into Downloads, Desktop or Documents). Safari, Firefox and Download instead save both files where the browser saves downloads, or ask first if it is set to ask.</p>
         {busy && <p className="text-xs text-slate-300" role="status">Exporting…</p>}
         {result && (
           <div role="status" className={`text-xs ${tone} space-y-1`}>
@@ -132,7 +139,10 @@ export function ExportYearDialog({ yearChoices, defaultYear, fileNameTemplate, s
         )}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={close} disabled={busy} className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-300">Close</button>
-          <button type="button" onClick={onExport} disabled={!canExport} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded text-white">Export</button>
+          {hasPicker && (
+            <button type="button" onClick={() => onExport("download")} disabled={!canExport} className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-200">Download instead</button>
+          )}
+          <button type="button" onClick={() => onExport()} disabled={!canExport} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded text-white">Export</button>
         </div>
       </div>
     </div>

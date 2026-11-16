@@ -23,3 +23,20 @@ describe("Export year button (card #299)", () => {
     expect(body).not.toMatch(/await|\.then\(/);
   });
 });
+
+describe("Export year: Download instead (card #308)", () => {
+  it("has a Download instead button that runs the export in download mode", () => {
+    expect(dialog).toMatch(/>Download instead</);
+    expect(dialog).toMatch(/onClick=\{\(\) => onExport\("download"\)\}/);
+    expect(dialog).toMatch(/browserExportEnv\(\),\s*\{ mode \},/);
+  });
+
+  it("the folder hint names the protected folders", () => {
+    expect(dialog).toMatch(/inside Downloads or Documents/);
+  });
+
+  it("Download instead also starts with no await before runYearExport", () => {
+    const body = dialog.slice(dialog.indexOf("const onExport = ("), dialog.indexOf("runYearExport("));
+    expect(body).not.toMatch(/await|\.then\(/);
+  });
+});
