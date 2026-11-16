@@ -31,6 +31,7 @@ import { rejectionError, dayFullPopoverText, type RejectionError } from "@/lib/r
 import { classifyRequestRefusal, requestFailureText, requestFlaggedText, type RequestRefusal } from "@/lib/request-refusal";
 import { printVisibleStaffIds, type PrintRule, type ShiftKind } from "@/lib/print-column-visibility";
 import { computeAggregateColumns, type AggregateColumn } from "@/lib/print-aggregate-columns";
+import { orderSpecialColumns } from "@/lib/special-columns";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, keysToRequestIntent, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory, type RequestKind, type RequestStrength, type RequestStatus } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
 
@@ -256,7 +257,9 @@ type Props = {
   /** Card #222: the shifts Equity Factors track, in Settings order (the hover's shift lines). */
   equityShiftCodes?: string[];
   followRules?: FollowRuleRow[];
-  countColumns?: { label: string; shiftTypeIds: string[] }[];
+  countColumns?: { id?: string; label: string; shiftTypeIds: string[] }[];
+  /** Card #300: admin-set order of the special columns ("agg:<id>" | "ded:<id>" | "count:<id>"); null = built-in. */
+  specialColumnOrder?: string[] | null;
   printColumnRules?: PrintRule[];
   printAggregateColumns?: AggregateColumn[];
   dateFormat?: string;
@@ -463,6 +466,7 @@ export function ScheduleGrid({
   equityShiftCodes,
   followRules,
   countColumns = [],
+  specialColumnOrder = null,
   printColumnRules = [],
   printAggregateColumns = [],
   dateFormat: dateFormatProp,
@@ -1332,9 +1336,11 @@ export function ScheduleGrid({
   // Shift types flagged for a dedicated column, in sort order. Each gets its own
   // column (left of the count columns) listing the initials of whoever covers
   // that shift on a given day — additive to the normal in-cell shift display.
+  // Card #300: in the admin-set special-column order (the dedicated columns' relative order
+  // in the full resolved order), so arrow keys and the rendered cells agree.
   const dedicatedColumns = useMemo(
-    () => shiftTypes.filter((st) => st.dedicatedColumn),
-    [shiftTypes],
+    () => orderSpecialColumns({ agg: [], ded: shiftTypes.filter((st) => st.dedicatedColumn), count: [] }, specialColumnOrder).map((x) => x.col as ShiftType),
+    [shiftTypes, specialColumnOrder],
   );
 
   // Per dedicated column: date -> initials of staff covering that shift that
@@ -1425,12 +1431,27 @@ export function ScheduleGrid({
         for (const d of dates) {
           initialsByDate[d] = (c.memberIdsByDate[d] ?? []).map((id) => initialsById.get(id) ?? "");
         }
-        return { label: c.label, initialsByDate };
+        return { id: c.id, label: c.label, initialsByDate };
       })
       .filter((c) => inMonth.some((d) => (c.initialsByDate[d]?.length ?? 0) > 0));
 
     return { printHiddenIds: hiddenIds, printAggColumns };
   }, [printColumnRules, printAggregateColumns, visibleStaff, dates, assignmentMap, firstOfMonth, lastOfMonth, shiftTypes, offShiftTypeIds]);
+
+  // Card #300: every special column (print-only aggregate, dedicated shift, count) in the
+  // admin-set order. Each entry points at its column by index in its own group list, so
+  // per-column data (initials, counts) stays tied to its column.
+  const specialColumns = useMemo(
+    () => orderSpecialColumns(
+      {
+        agg: printAggColumns.map((c, i) => ({ id: c.id ?? `#${i}`, i })),
+        ded: dedicatedColumns.map((st, i) => ({ id: st.id, i })),
+        count: countColumns.map((c, i) => ({ id: c.id ?? `#${i}`, i })),
+      },
+      specialColumnOrder,
+    ),
+    [printAggColumns, dedicatedColumns, countColumns, specialColumnOrder],
+  );
 
   // Drop column focus + selection when the visible column set may change (month
   // change / Show-all toggle), so focus and selection rectangles never point at
@@ -4286,7 +4307,8 @@ export function ScheduleGrid({
                   in print via data-other-col). Replace the old hardcoded "FB" column.
                   --agg-col-w sizes the (table-layout:fixed) column to fit the full title
                   on one line, so a long title widens the column rather than wrapping. */}
-              {printAggColumns.map((c, ci) => (
+              {specialColumns.map((sc) => {
+                if (sc.kind === "agg") { const c = printAggColumns[sc.col.i]; const ci = sc.col.i; return (
                 <th
                   key={`agg-h-${ci}`}
                   data-other-col
@@ -4295,8 +4317,8 @@ export function ScheduleGrid({
                 >
                   {c.label}
                 </th>
-              ))}
-              {dedicatedColumns.map((st) => (
+              ); }
+                if (sc.kind === "ded") { const st = dedicatedColumns[sc.col.i]; return (
                 <th
                   key={`ded-h-${st.id}`}
                   title={st.name}
@@ -4306,12 +4328,13 @@ export function ScheduleGrid({
                 >
                   {st.code}
                 </th>
-              ))}
-              {countColumns.map((col, ci) => (
-                <th key={ci} className="px-2 py-2 text-center text-xs font-medium text-slate-400 border-b border-l border-slate-700 w-[32px] min-w-[32px]">
+              ); }
+                const col = countColumns[sc.col.i]; const ci = sc.col.i; return (
+                <th key={`cnt-h-${ci}`} className="px-2 py-2 text-center text-xs font-medium text-slate-400 border-b border-l border-slate-700 w-[32px] min-w-[32px]">
                   {col.label || "#"}
                 </th>
-              ))}
+              );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -4356,17 +4379,16 @@ export function ScheduleGrid({
                     })}
                     {/* Blank aggregate-column cells keep the PP-summary row aligned with the
                         day rows in print. */}
-                    {printAggColumns.map((c, ci) => (
-                      <td key={`agg-pp-${ci}`} data-other-col className="hidden border-slate-600/50 border border-y-indigo-500/60" />
-                    ))}
-                    {dedicatedColumns.length > 0 && (
-                      <td colSpan={dedicatedColumns.length} className="border-l border-slate-600 border-y border-y-indigo-500/60" />
+                    {specialColumns.map((sc) =>
+                      sc.kind === "agg" ? (
+                        <td key={`pp-${sc.key}`} data-other-col className="hidden border-slate-600/50 border border-y-indigo-500/60" />
+                      ) : sc.kind === "ded" ? (
+                        <td key={`pp-${sc.key}`} className="border-l border-slate-600 border-y border-y-indigo-500/60" />
+                      ) : (
+                        <td key={`pp-${sc.key}`} className="px-2 py-1 text-center text-[10px] font-mono border-l border-slate-600 text-indigo-400/60 border-y border-y-indigo-500/60" />
+                      ),
                     )}
-                    {countColumns.length > 0 ? (
-                      <td colSpan={countColumns.length} className="px-2 py-1 text-center text-[10px] font-mono border-l border-slate-600 text-indigo-400/60 border-y border-y-indigo-500/60" />
-                    ) : dedicatedColumns.length === 0 ? (
-                      <td className="border-y border-y-indigo-500/60" />
-                    ) : null}
+                    {dedicatedColumns.length === 0 && countColumns.length === 0 && <td className="border-y border-y-indigo-500/60" />}
                   </tr>
                 );
               }
@@ -4564,7 +4586,8 @@ export function ScheduleGrid({
                       </td>
                     );
                   })}
-                  {printAggColumns.map((c, ci) => (
+                  {specialColumns.map((sc) => {
+                    if (sc.kind === "agg") { const c = printAggColumns[sc.col.i]; const ci = sc.col.i; return (
                     <td
                       key={`agg-b-${ci}`}
                       data-other-col
@@ -4575,8 +4598,9 @@ export function ScheduleGrid({
                     >
                       {(c.initialsByDate[date] ?? []).join(", ")}
                     </td>
-                  ))}
-                  {dedicatedColumns.map((st, di) => {
+                  ); }
+                    if (sc.kind === "ded") { const st = dedicatedColumns[sc.col.i]; const di = sc.col.i;
+
                     const inits = dedicatedColumnInitialsData[di]?.[date] ?? [];
                     const isEditing = canEdit && dedEdit?.shiftTypeId === st.id && dedEdit?.date === date;
                     const isDedSaving = saving === `ded-${st.id}:${date}`;
@@ -4641,10 +4665,10 @@ export function ScheduleGrid({
                         )}
                       </td>
                     );
-                  })}
-                  {columnCounts.map((counts, ci) => (
+                  }
+                    const counts = columnCounts[sc.col.i]; const ci = sc.col.i; return (
                     <td
-                      key={ci}
+                      key={`cnt-${ci}`}
                       className={[
                         "px-2 py-1 text-center text-xs font-mono border-l border-slate-700",
                         isNewPP ? "border-t-2 border-t-indigo-500" : "",
@@ -4653,7 +4677,8 @@ export function ScheduleGrid({
                     >
                       {counts[date]}
                     </td>
-                  ))}
+                  );
+                  })}
                 </tr>
               );
             })}

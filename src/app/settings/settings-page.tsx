@@ -1,5 +1,6 @@
 "use client";
 
+import { orderSpecialColumns } from "@/lib/special-columns";
 import { followAvoidsChanged, type FollowAvoidData } from "@/lib/follow-avoids";
 import { saveErrorMessage } from "@/lib/stale-client";
 import { activationAlreadyCommitted, type CommittedActivation } from "@/lib/activation-retry";
@@ -251,6 +252,7 @@ type Props = {
   printColumnRules: PrintColumnRuleData[];
   printAggregateColumns: PrintAggregateColumnData[];
   staffColumnOrder: StaffOrderCriterion[];
+  specialColumnOrder?: string[] | null;
   orderableStaff: OrderableStaffRow[];
   canEdit?: boolean;
   canEditAutoGenPriority?: boolean;
@@ -4904,13 +4906,116 @@ function EmploymentTypesSection({ initial, pushUndo, shiftTypes }: { initial: Em
   );
 }
 
+// ─── Special column order (card #300) ───────────────────────────────────────
+// One order across the schedule's special columns: the printed Additional (aggregate)
+// columns, the shifts with their own column, and the Count columns. Screen + print.
+// Unlisted columns (e.g. one just added) follow in the built-in order.
+function SpecialColumnOrderSection({
+  initial,
+  aggColumns,
+  dedicatedShifts,
+  countColumns,
+}: {
+  initial: string[] | null;
+  aggColumns: { id: string; label: string }[];
+  dedicatedShifts: { id: string; code: string }[];
+  countColumns: { id: string; label: string }[];
+}) {
+  const canEdit = useCanEdit();
+  const [savedOrder, setSavedOrder] = useState<string[] | null>(initial);
+  const resolve = (order: string[] | null) =>
+    orderSpecialColumns({ agg: aggColumns, ded: dedicatedShifts, count: countColumns }, order).map((x) => ({
+      key: x.key,
+      label: x.kind === "agg" ? `${(x.col as { label: string }).label || "(untitled)"} · additional column (print only)`
+        : x.kind === "ded" ? `${(x.col as { code: string }).code} · shift column`
+        : `${(x.col as { label: string }).label || "#"} · count column`,
+    }));
+  const savedKeys = resolve(savedOrder).map((x) => x.key);
+  const [draft, setDraft] = useState<string[] | null>(null); // null = showing the saved order
+  const keys = draft ?? savedKeys;
+  const labelByKey = new Map(resolve(null).map((x) => [x.key, x.label]));
+  // A draft taken before a column was added/removed elsewhere on the page: keep its order
+  // for the columns still there and append new ones (same rule as the schedule).
+  const shown = orderSpecialColumns(
+    { agg: aggColumns, ded: dedicatedShifts, count: countColumns },
+    keys,
+  ).map((x) => x.key);
+  const dirty = draft !== null && shown.join("|") !== savedKeys.join("|");
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+
+  function move(idx: number, dir: -1 | 1) {
+    const j = idx + dir;
+    if (j < 0 || j >= shown.length) return;
+    const next = [...shown];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setDraft(next);
+  }
+
+  async function put(value: string[] | null) {
+    setStatus("saving");
+    setError("");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ specialColumnOrder: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setSavedOrder(value);
+      setDraft(null);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save");
+      setStatus("error");
+    }
+  }
+
+  return (
+    <CollapsibleSection
+      id="special-column-order"
+      title="Column Order"
+      description="The order of the extra columns to the right of the staff: Additional Columns (printed only), shifts with their own column, and Count Columns. Used on screen and on the printed schedule. A column added later goes last until you move it."
+      status={status}
+      error={error}
+    >
+      {shown.length === 0 ? (
+        <p className="text-xs text-slate-500">No extra columns are set up.</p>
+      ) : (
+        <ol className="space-y-1">
+          {shown.map((key, idx) => (
+            <li key={key} className="flex items-center gap-2 text-sm text-slate-300">
+              <span className="w-5 text-right text-xs text-slate-500">{idx + 1}.</span>
+              <span className="flex-1">{labelByKey.get(key) ?? key}</span>
+              {canEdit && (
+                <>
+                  <button type="button" aria-label="Move up" disabled={idx === 0} onClick={() => move(idx, -1)} className="px-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-30">▲</button>
+                  <button type="button" aria-label="Move down" disabled={idx === shown.length - 1} onClick={() => move(idx, 1)} className="px-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-30">▼</button>
+                </>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+      {canEdit && (
+        <div className="mt-3 flex gap-2">
+          <button type="button" disabled={!dirty || status === "saving"} onClick={() => put(shown)} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded text-white">Save</button>
+          <button type="button" disabled={!dirty} onClick={() => setDraft(null)} className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-300">Cancel</button>
+          <button type="button" disabled={savedOrder === null || status === "saving"} onClick={() => put(null)} className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-300">Reset to default</button>
+        </div>
+      )}
+    </CollapsibleSection>
+  );
+}
+
 // ─── Count Columns Section ──────────────────────────────────────────────────
 
-function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; label: string; shiftTypeIds: string[] }[]; shiftTypes: ShiftType[] }) {
+function CountColumnsSection({ initial, shiftTypes, onSaved }: { initial: { id: string; label: string; shiftTypeIds: string[] }[]; shiftTypes: ShiftType[]; onSaved?: (saved: { id: string; label: string }[]) => void }) {
   const canEdit = useCanEdit();
   // Columns name their shifts by id; the chip text is the shift's CURRENT code from the
   // page's shared shift list, so a rename shows here at once.
-  const [columns, setColumns] = useState(initial.map((c) => ({ label: c.label, shiftTypeIds: [...c.shiftTypeIds] })));
+  const [columns, setColumns] = useState<{ id?: string; label: string; shiftTypeIds: string[] }[]>(initial.map((c) => ({ id: c.id, label: c.label, shiftTypeIds: [...c.shiftTypeIds] })));
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
   const pickable = shiftTypes.filter((st) => !st.isOffShift);
@@ -4929,8 +5034,9 @@ function CountColumnsSection({ initial, shiftTypes }: { initial: { id: string; l
         body: JSON.stringify(buildCountColumnsSave(columns)),
       });
       if (!res.ok) throw new Error(countColumnsSaveErrorMessage(res.status, await res.text()));
-      const saved = (await res.json()) as { label: string; shiftTypeIds: string[] }[];
-      setColumns(saved.map((c) => ({ label: c.label, shiftTypeIds: [...c.shiftTypeIds] })));
+      const saved = (await res.json()) as { id: string; label: string; shiftTypeIds: string[] }[];
+      setColumns(saved.map((c) => ({ id: c.id, label: c.label, shiftTypeIds: [...c.shiftTypeIds] })));
+      onSaved?.(saved.map((c) => ({ id: c.id, label: c.label })));
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2000);
     } catch (e) {
@@ -5305,6 +5411,7 @@ function PrintColumnRulesSection({
 }
 
 type EditAggCol = {
+  id?: string; // card #300: the saved row's id (kept on save so the column order can name it)
   label: string;
   enabled: boolean;
   isOther: boolean;
@@ -5520,14 +5627,17 @@ function AdditionalColumnsSection({
   initial,
   shiftTypes,
   employmentTypes,
+  onSaved,
 }: {
   initial: PrintAggregateColumnData[];
   shiftTypes: ShiftType[];
   employmentTypes: EmploymentTypeData[];
+  onSaved?: (saved: { id: string; label: string }[]) => void;
 }) {
   const canEdit = useCanEdit();
-  const [cols, setCols] = useState<EditAggCol[]>(
-    initial.map((c) => ({
+  const toEdit = (rows: PrintAggregateColumnData[]): EditAggCol[] =>
+    rows.map((c) => ({
+      id: c.id,
       label: c.label,
       enabled: c.enabled,
       isOther: c.isOther,
@@ -5542,8 +5652,8 @@ function AdditionalColumnsSection({
         shiftTypeIds: [...x.shiftTypeIds],
         exceptIds: [...x.exceptIds],
       })),
-    })),
-  );
+    }));
+  const [cols, setCols] = useState<EditAggCol[]>(() => toEdit(initial));
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState("");
 
@@ -5575,6 +5685,10 @@ function AdditionalColumnsSection({
         body: JSON.stringify({ columns: payload }),
       });
       if (!res.ok) throw new Error(printSaveErrorMessage(res.status, await res.text()));
+      // Card #300: adopt the saved rows (with their ids), so the next save keeps them.
+      const saved = (await res.json()) as PrintAggregateColumnData[];
+      setCols(toEdit(saved));
+      onSaved?.(saved.map((c) => ({ id: c.id, label: c.label })));
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 2000);
     } catch (e) {
@@ -6031,10 +6145,13 @@ function StaffColumnOrderSection({ initial, staff }: { initial: StaffOrderCriter
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, holidayTypes = [], holidayRules = EMPTY_HOLIDAY_RULES, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, followAvoids: initialFollowAvoids = [], requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, staffColumnOrder, orderableStaff, canEdit = true, canEditAutoGenPriority = false, about = EMPTY_ABOUT }: Props) {
+export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, holidayTypes = [], holidayRules = EMPTY_HOLIDAY_RULES, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, followAvoids: initialFollowAvoids = [], requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, staffColumnOrder, specialColumnOrder = null, orderableStaff, canEdit = true, canEditAutoGenPriority = false, about = EMPTY_ABOUT }: Props) {
   const undo = useUndo();
   // One shift list for the whole page: Shift Types edits it, every other section reads it.
   const [shiftTypes, setShiftTypes] = useState(initialShiftTypes);
+  // Card #300: the saved Additional/Count columns (with ids), kept current by their sections' saves.
+  const [savedAggColumns, setSavedAggColumns] = useState(() => initialPrintAggregateColumns.map((c) => ({ id: c.id, label: c.label })));
+  const [savedCountColumns, setSavedCountColumns] = useState(() => initialCountColumns.map((c) => ({ id: c.id, label: c.label })));
   const [dateFormat, setDateFormat] = useState<DateFormatKey>((schedulingPrefs.dateFormat || DEFAULT_DATE_FORMAT) as DateFormatKey);
   // Card #215: the last SAVED tuning, shared with every section's help text and shading.
   const [savedTuning, setSavedTuning] = useState<SchedulerTuning>(() => readTuning(schedulingPrefs));
@@ -6081,8 +6198,14 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
         <div className="space-y-4 mb-8 mt-3">
           <StaffColumnOrderSection initial={staffColumnOrder} staff={orderableStaff} />
           <PrintColumnRulesSection initial={initialPrintColumnRules} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
-          <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} />
-          <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} />
+          <AdditionalColumnsSection initial={initialPrintAggregateColumns} shiftTypes={shiftTypes} employmentTypes={employmentTypes} onSaved={setSavedAggColumns} />
+          <CountColumnsSection initial={initialCountColumns} shiftTypes={shiftTypes} onSaved={setSavedCountColumns} />
+          <SpecialColumnOrderSection
+            initial={specialColumnOrder}
+            aggColumns={savedAggColumns}
+            dedicatedShifts={shiftTypes.filter((st) => st.dedicatedColumn).map((st) => ({ id: st.id, code: st.code }))}
+            countColumns={savedCountColumns}
+          />
           <DayShadingSection initial={schedulingPrefs} />
         </div>
 

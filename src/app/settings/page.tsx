@@ -1,4 +1,5 @@
 import { readTuning } from "@/lib/scheduler-tuning";
+import { parseSpecialColumnOrder } from "@/lib/special-columns";
 import { prisma } from "@/lib/prisma";
 import { loadHolidayRules, holidayRulesVersion } from "@/lib/holiday-rules-db";
 import { deriveEquityFactorCodes } from "@/lib/equity-factors";
@@ -260,6 +261,7 @@ export default async function Settings() {
           conditionScope: c.conditionScope,
         }))}
         staffColumnOrder={parseStaffOrderCriteria(schedulingPrefsRow?.staffColumnOrder)}
+        specialColumnOrder={parseSpecialColumnOrder(schedulingPrefsRow?.specialColumnOrder)}
         orderableStaff={staffRows.map((p) => ({
           id: p.id,
           name: p.name,

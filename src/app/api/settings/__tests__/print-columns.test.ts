@@ -21,8 +21,17 @@ vi.mock("@/lib/prisma", () => {
   };
   const printAggregateColumn = {
     findMany: async () => clone([...db.aggs].sort((a, b) => a.sortOrder - b.sortOrder)),
-    deleteMany: async () => { db.aggs = []; },
+    deleteMany: async (a?: { where?: { id?: { in: string[] } } }) => {
+      const ids = a?.where?.id?.in;
+      db.aggs = ids ? db.aggs.filter((r) => !ids.includes(r.id)) : [];
+    },
     createMany: async (a: { data: Omit<Agg, "id">[] }) => { for (const d of a.data) db.aggs.push({ id: `g${++db.seq}`, ...clone(d) }); },
+    create: async (a: { data: Omit<Agg, "id"> }) => { const r = { id: `g${++db.seq}`, ...clone(a.data) }; db.aggs.push(r); return clone(r); },
+    upsert: async (a: { where: { id: string }; create: Agg; update: Omit<Agg, "id"> }) => {
+      const r = db.aggs.find((x) => x.id === a.where.id);
+      if (r) Object.assign(r, clone(a.update)); else db.aggs.push(clone(a.create));
+      return clone(r ?? a.create);
+    },
   };
   const shiftType = {
     findMany: async () => db.shifts.map((s) => ({ ...s })),
@@ -165,6 +174,31 @@ describe("PUT /api/settings/print-aggregate-columns/by-shift-id", () => {
   });
 });
 
+
+describe("PUT /api/settings/print-aggregate-columns/by-shift-id keeps column ids (card #300)", () => {
+  it("columns sent with ids keep them across save → reorder → save; new columns get new ids; omitted ones go", async () => {
+    db.aggs = [];
+    const first = await (await putAggById(req({ columns: [agg("A", [cond([ICU])]), agg("B", [cond([OR])]), agg("C", [], { isOther: true })] }))).json();
+    const [a, b, c] = first.map((x: Agg) => x.id);
+    const second = await (await putAggById(req({ columns: [{ ...agg("B", [cond([OR])]), id: b }, { ...agg("A2", [cond([ICU])]), id: a }, agg("D", [cond([CARD])])] }))).json();
+    expect(second.map((x: Agg) => [x.id, x.label, x.sortOrder]).slice(0, 2)).toEqual([[b, "B", 0], [a, "A2", 1]]);
+    expect(second[2].id).not.toBe(c);
+    expect(db.aggs.some((x) => x.id === c)).toBe(false);
+  });
+
+  it("an old tab sending no ids recreates every column; a forged id is never written; duplicate ids → 400", async () => {
+    db.aggs = [];
+    const first = await (await putAggById(req({ columns: [agg("A", [cond([ICU])])] }))).json();
+    const again = await (await putAggById(req({ columns: [agg("A", [cond([ICU])])] }))).json();
+    expect(again[0].id).not.toBe(first[0].id);
+    const forged = await (await putAggById(req({ columns: [{ ...agg("A", [cond([ICU])]), id: "forged" }] }))).json();
+    expect(forged[0].id).not.toBe("forged");
+    const before = structuredClone(db.aggs);
+    const dup = await putAggById(req({ columns: [{ ...agg("A", []), id: forged[0].id }, { ...agg("B", []), id: forged[0].id }] }));
+    expect(dup.status).toBe(400);
+    expect(db.aggs).toEqual(before);
+  });
+});
 
 describe("DELETE /api/settings/shift-types", () => {
   it("409 print-column-linked while a rule (even via exceptIds) or an aggregate column names the shift; 200 after removal", async () => {

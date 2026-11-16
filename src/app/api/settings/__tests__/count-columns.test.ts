@@ -13,9 +13,18 @@ vi.mock("@/lib/prisma", () => {
   const countColumn = {
     findMany: async () => [...db.rows].sort((a, b) => a.sortOrder - b.sortOrder).map((r) => ({ ...r, shiftTypeIds: [...r.shiftTypeIds] })),
     count: async (a: { where: { shiftTypeIds: { has: string } } }) => db.rows.filter((r) => r.shiftTypeIds.includes(a.where.shiftTypeIds.has)).length,
-    deleteMany: async () => { db.rows = []; },
+    deleteMany: async (a?: { where?: { id?: { in: string[] } } }) => {
+      const ids = a?.where?.id?.in;
+      db.rows = ids ? db.rows.filter((r) => !ids.includes(r.id)) : [];
+    },
     createMany: async (a: { data: Omit<Row, "id">[] }) => {
       for (const d of a.data) db.rows.push({ id: `c${++db.seq}`, ...d });
+    },
+    create: async (a: { data: Omit<Row, "id"> }) => { const r = { id: `c${++db.seq}`, ...a.data }; db.rows.push(r); return { ...r }; },
+    upsert: async (a: { where: { id: string }; create: Row; update: Omit<Row, "id"> }) => {
+      const r = db.rows.find((x) => x.id === a.where.id);
+      if (r) Object.assign(r, a.update); else db.rows.push({ ...a.create });
+      return { ...(r ?? a.create) };
     },
   };
   const shiftType = {
@@ -129,6 +138,42 @@ describe("PUT /api/settings/count-columns/by-shift-id", () => {
   });
 });
 
+
+describe("PUT /api/settings/count-columns/by-shift-id keeps column ids (card #300)", () => {
+  it("a column sent with its id keeps it; a new column gets a new id; an omitted column is deleted", async () => {
+    db.rows.push({ id: "c-call", label: "Call", sortOrder: 1, shiftTypeIds: [ORC] });
+    const res = await putById(req({ columns: [{ id: "c-call", ...col("Call2", [ORC]) }, col("New", [PAIN])] }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.map((c: Row) => [c.id, c.label, c.sortOrder])).toEqual([["c-call", "Call2", 0], ["c1", "New", 1]]);
+    expect(db.rows.some((r) => r.id === "c-or")).toBe(false);
+  });
+
+  it("save → reorder → save without a reload keeps both ids", async () => {
+    const first = await (await putById(req({ columns: [{ id: "c-or", ...col("OR", [OR]) }, col("Pain", [PAIN])] }))).json();
+    const ids = first.map((c: Row) => c.id);
+    const second = await (await putById(req({ columns: [{ id: ids[1], ...col("Pain", [PAIN]) }, { id: ids[0], ...col("OR", [OR]) }] }))).json();
+    expect(second.map((c: Row) => c.id)).toEqual([ids[1], ids[0]]);
+  });
+
+  it("an old tab sending no ids recreates every column (today's behaviour)", async () => {
+    const body = await (await putById(req({ columns: [col("OR", [OR])] }))).json();
+    expect(body).toHaveLength(1);
+    expect(body[0].id).not.toBe("c-or");
+  });
+
+  it("an id that does not exist is never written: the column gets a fresh id", async () => {
+    const body = await (await putById(req({ columns: [{ id: "forged", ...col("OR", [OR]) }] }))).json();
+    expect(body[0].id).not.toBe("forged");
+  });
+
+  it("the same id twice → 400, nothing written", async () => {
+    const before = structuredClone(db.rows);
+    const res = await putById(req({ columns: [{ id: "c-or", ...col("A", [OR]) }, { id: "c-or", ...col("B", [ORC]) }] }));
+    expect(res.status).toBe(400);
+    expect(db.rows).toEqual(before);
+  });
+});
 
 describe("DELETE /api/settings/shift-types", () => {
   it("409 count-column-linked while a column names the shift; 200 after the column drops it", async () => {

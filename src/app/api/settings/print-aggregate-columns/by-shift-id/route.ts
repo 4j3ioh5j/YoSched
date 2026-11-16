@@ -1,3 +1,4 @@
+import { planKeepIds } from "@/lib/special-columns";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { coerceConditions, type ShiftCondition } from "@/lib/print-column-visibility";
@@ -75,11 +76,23 @@ export async function PUT(req: NextRequest) {
     });
   }
 
+  // Card #300: a column sent with its id keeps it (the special-column order names columns
+  // by id); a column without one — or naming no existing row — is created fresh; rows not
+  // sent are deleted. An older tab sends no ids and gets today's replace-all.
+  const bodyIds = columns.map((c) => (c as { id?: unknown }).id);
   const result = await prisma.$transaction(async (tx) => {
-    await tx.printAggregateColumn.deleteMany();
-    if (rows.length > 0) await tx.printAggregateColumn.createMany({ data: rows });
+    const existing = new Set((await tx.printAggregateColumn.findMany({ select: { id: true } })).map((r) => r.id));
+    const plan = planKeepIds(existing, bodyIds);
+    if (!plan.ok) return plan;
+    if (plan.deleteIds.length > 0) await tx.printAggregateColumn.deleteMany({ where: { id: { in: plan.deleteIds } } });
+    for (const [i, row] of rows.entries()) {
+      const id = plan.keep[i];
+      if (id) await tx.printAggregateColumn.upsert({ where: { id }, create: { id, ...row }, update: row });
+      else await tx.printAggregateColumn.create({ data: row });
+    }
     return tx.printAggregateColumn.findMany({ orderBy: { sortOrder: "asc" } });
   });
+  if (!Array.isArray(result)) return bad(result.error, "duplicate-id");
 
   return NextResponse.json(result.map((c) => ({ ...c, conditions: deriveConditionCodes(coerceConditions(c.conditions), shiftTypes) })));
 }

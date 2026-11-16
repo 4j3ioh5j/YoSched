@@ -25,14 +25,15 @@ export function deriveCountColumnCodes<R extends CountColumnRow>(
  *  save from a new tab against a rolled-back server fails closed. */
 export const COUNT_COLUMNS_SAVE_URL = "/api/settings/count-columns/by-shift-id";
 
-export type CountColumnIn = { label: string; shiftTypeIds: string[]; sortOrder: number };
+export type CountColumnIn = { id?: string; label: string; shiftTypeIds: string[]; sortOrder: number };
 
 /** The save payload: ids only. The shift codes are display state (from the shared shift
  *  list) and must never travel in a write — a server could resolve a renamed-and-reused
  *  code to the wrong shift. */
-export function buildCountColumnsSave(columns: readonly CountColumnRow[]): { columns: CountColumnIn[] } {
+export function buildCountColumnsSave(columns: readonly (CountColumnRow & { id?: string })[]): { columns: CountColumnIn[] } {
+  // Card #300: a saved column sends its id so the server keeps it (the special-column order names it).
   return {
-    columns: columns.map((c, i) => ({ label: c.label, shiftTypeIds: [...c.shiftTypeIds], sortOrder: i })),
+    columns: columns.map((c, i) => ({ ...(c.id ? { id: c.id } : {}), label: c.label, shiftTypeIds: [...c.shiftTypeIds], sortOrder: i })),
   };
 }
 

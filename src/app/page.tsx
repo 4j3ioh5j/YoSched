@@ -12,6 +12,7 @@ import { isRequestVisibleToViewer } from "@/lib/schedule-requests";
 import { coerceConditions } from "@/lib/print-column-visibility";
 import { parseLiveScope } from "@/lib/live-scope";
 import { orderStaff, parseStaffOrderCriteria } from "@/lib/staff-order";
+import { parseSpecialColumnOrder } from "@/lib/special-columns";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { MarketingLanding } from "./marketing-landing";
@@ -287,6 +288,7 @@ export default async function Home() {
           mode: r.mode,
         }))}
         countColumns={countColumns.map((c) => ({
+          id: c.id,
           label: c.label,
           shiftTypeIds: c.shiftTypeIds,
         }))}
@@ -298,7 +300,9 @@ export default async function Home() {
           maxFtePercentage: r.maxFtePercentage,
           conditions: coerceConditions(r.conditions),
         }))}
+        specialColumnOrder={parseSpecialColumnOrder(schedPrefs?.specialColumnOrder)}
         printAggregateColumns={printAggregateColumns.map((c) => ({
+          id: c.id,
           label: c.label,
           enabled: c.enabled,
           isOther: c.isOther,

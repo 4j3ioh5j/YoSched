@@ -391,6 +391,7 @@ model SchedulingPreferences {
   payPeriodAnchor         DateTime? @db.Date // any real period start; with payPeriodLengthDays defines the infinite period ladder (null = legacy manually-generated periods)
   payPeriodLengthDays     Int      @default(14)
   staffColumnOrder        Json?    // ordered criteria stack for schedule column order, [{key, dir?}] (see src/lib/staff-order.ts); null = default (employmentType → ftePercentage desc → alphabetical)
+  specialColumnOrder      Json?    // card #300: order of the special schedule columns, ["agg:<id>"|"ded:<shiftTypeId>"|"count:<id>"] (see src/lib/special-columns.ts); null = built-in (agg → ded → count)
   shiftBalanceFrom        DateTime? @db.Date // card #203: first day "Keep counts even across months" counts (null = each run on its own)
   shiftShareBasis         String   @default("fte") // auto-scheduler split of a scheduled shift's slots across eligible staff: "fte" (proportional to FTE) | "head" (equal per person) — see src/lib/shift-share.ts
   holidayShiftId          String?  // card #207: the shift credited on a holiday (leave, counts toward FTE); linked by id, never by code. null = none chosen

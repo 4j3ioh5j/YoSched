@@ -3,12 +3,13 @@ import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { deriveCountColumnCodes } from "@/lib/count-columns";
 import { STALE_CLIENT } from "@/lib/stale-client";
+import { planKeepIds } from "@/lib/special-columns";
 
 // Count columns, linked to the shifts' IDs. The list IS the setting: the body replaces all
 // rows. Every shift reference must be a current shift id and the body must carry no shift
 // code at all — this path exists so that a save from a new tab can never be interpreted by
 // a server that still resolves codes (a pre-slice server has no such route and answers 404).
-type ColumnIn = { label?: unknown; shiftTypeIds?: unknown; shiftCodes?: unknown; sortOrder?: unknown };
+type ColumnIn = { id?: unknown; label?: unknown; shiftTypeIds?: unknown; shiftCodes?: unknown; sortOrder?: unknown };
 
 function bad(error: string, reason: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ error, reason, ...extra }, { status: 400 });
@@ -48,11 +49,23 @@ export async function PUT(req: NextRequest) {
     rows.push({ label: c.label, shiftTypeIds: c.shiftTypeIds as string[], sortOrder });
   }
 
+  // Card #300: a column sent with its id keeps it (the special-column order names columns
+  // by id); a column without one — or naming no existing row — is created fresh; rows not
+  // sent are deleted. An older tab sends no ids and gets today's replace-all.
+  const bodyIds = columns.map((c) => c.id);
   const result = await prisma.$transaction(async (tx) => {
-    await tx.countColumn.deleteMany({});
-    if (rows.length > 0) await tx.countColumn.createMany({ data: rows });
+    const existing = new Set((await tx.countColumn.findMany({ select: { id: true } })).map((r) => r.id));
+    const plan = planKeepIds(existing, bodyIds);
+    if (!plan.ok) return plan;
+    if (plan.deleteIds.length > 0) await tx.countColumn.deleteMany({ where: { id: { in: plan.deleteIds } } });
+    for (const [i, row] of rows.entries()) {
+      const id = plan.keep[i];
+      if (id) await tx.countColumn.upsert({ where: { id }, create: { id, ...row }, update: row });
+      else await tx.countColumn.create({ data: row });
+    }
     return tx.countColumn.findMany({ orderBy: { sortOrder: "asc" } });
   });
+  if (!Array.isArray(result)) return bad(result.error, "duplicate-id");
 
   return NextResponse.json(deriveCountColumnCodes(result, shiftTypes));
 }

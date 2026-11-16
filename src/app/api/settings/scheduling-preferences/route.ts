@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
+import { validateSpecialColumnOrder } from "@/lib/special-columns";
 import { isValidDateFormat } from "@/lib/date-format";
 import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES, isApprovalConflictPolicy, APPROVAL_CONFLICT_POLICIES, validateOffStrategyOrder } from "@/lib/schedule-requests";
 import { isLiveScope, LIVE_SCOPES } from "@/lib/live-scope";
@@ -29,7 +30,7 @@ export async function PUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor } = body;
   // Card #203: "Count shifts from" — a YYYY-MM-DD date, or null to clear. Strictly validated.
   const balanceFromValid = shiftBalanceFrom === null || (typeof shiftBalanceFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(shiftBalanceFrom) && !Number.isNaN(Date.parse(shiftBalanceFrom + "T00:00:00Z")) && new Date(shiftBalanceFrom + "T00:00:00Z").toISOString().startsWith(shiftBalanceFrom));
   if (shiftBalanceFrom !== undefined && !balanceFromValid) {
@@ -109,6 +110,19 @@ export async function PUT(req: NextRequest) {
     }
   }
 
+  // Card #300: order of the special schedule columns — strict on write, null resets to the
+  // built-in order (reads stay lenient via parseSpecialColumnOrder).
+  let specialOrder: string[] | null | undefined;
+  if (specialColumnOrder !== undefined) {
+    if (specialColumnOrder === null) {
+      specialOrder = null;
+    } else {
+      const validated = validateSpecialColumnOrder(specialColumnOrder);
+      if (!validated.ok) return NextResponse.json({ error: validated.error }, { status: 400 });
+      specialOrder = validated.value;
+    }
+  }
+
   // Department-default day-off fulfillment order: validate LEAVE:<id> tokens against
   // the currently eligible leave shift types (strict on write). Only touched when sent.
   let offOrder: string[] | undefined;
@@ -145,6 +159,7 @@ export async function PUT(req: NextRequest) {
       ...shadeData,
       ...tuningUpdate,
       ...(columnOrder !== undefined && { staffColumnOrder: columnOrder === null ? Prisma.DbNull : columnOrder }),
+      ...(specialOrder !== undefined && { specialColumnOrder: specialOrder === null ? Prisma.DbNull : specialOrder }),
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),
       ...(isActivationNewHireDefault(activationNewHireDefault) && { activationNewHireDefault }),
@@ -168,6 +183,7 @@ export async function PUT(req: NextRequest) {
       ...shadeData,
       ...tuningUpdate,
       ...(columnOrder != null && { staffColumnOrder: columnOrder }),
+      ...(specialOrder != null && { specialColumnOrder: specialOrder }),
       ...(isActivationGroupDefault(activationWorkedDefault) && { activationWorkedDefault }),
       ...(isActivationGroupDefault(activationNeverDefault) && { activationNeverDefault }),
       ...(isActivationNewHireDefault(activationNewHireDefault) && { activationNewHireDefault }),

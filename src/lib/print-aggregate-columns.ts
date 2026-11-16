@@ -58,6 +58,8 @@ export function coerceConditionScope(value: unknown): ConditionScope {
 }
 
 export type AggregateColumn = {
+  /** Card #300: the row id (the special-column order names columns by it). */
+  id?: string;
   label: string;
   enabled: boolean;
   isOther: boolean;
@@ -69,7 +71,7 @@ export type AggregateColumn = {
 export type AggregateColumnResult = {
   /** The enabled columns, in input order, each with per-date member ids (in input staff
    *  order). May include all-empty columns — the grid skips those. */
-  columns: { label: string; isOther: boolean; memberIdsByDate: Record<string, string[]> }[];
+  columns: { id?: string; label: string; isOther: boolean; memberIdsByDate: Record<string, string[]> }[];
   /** Staff whose individual column should be HIDDEN in print (claimed by a named column
    *  with suppressMembers = true on at least one day). */
   suppressedIndividualIds: Set<string>;
@@ -156,11 +158,11 @@ export function computeAggregateColumns(
   }
 
   // Re-assemble in the original input order (named + other interleaved as given).
-  const columnsOut: { label: string; isOther: boolean; memberIdsByDate: Record<string, string[]> }[] = [];
+  const columnsOut: AggregateColumnResult["columns"] = [];
   let ni = 0;
   for (const c of enabled) {
-    if (c.isOther) columnsOut.push({ label: c.label, isOther: true, memberIdsByDate: otherIdsByDate });
-    else columnsOut.push({ label: c.label, isOther: false, memberIdsByDate: namedIdsByDate[ni++] });
+    if (c.isOther) columnsOut.push({ id: c.id, label: c.label, isOther: true, memberIdsByDate: otherIdsByDate });
+    else columnsOut.push({ id: c.id, label: c.label, isOther: false, memberIdsByDate: namedIdsByDate[ni++] });
   }
 
   return { columns: columnsOut, suppressedIndividualIds };
