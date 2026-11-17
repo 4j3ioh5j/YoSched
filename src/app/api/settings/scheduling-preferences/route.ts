@@ -17,6 +17,7 @@ import { exportFileNameError } from "@/lib/export-filename";
 import { AUTO_VERSION_MODES, type AutoVersionMode } from "@/lib/auto-version";
 import { isActivationGroupDefault, isActivationNewHireDefault, ACTIVATION_GROUP_DEFAULTS, ACTIVATION_NEW_HIRE_DEFAULTS } from "@/lib/shift-activation";
 import { gated } from "@/lib/write-gate";
+import { isArchiveLeaveRule, ARCHIVE_LEAVE_RULES, isValidArchiveDays, ARCHIVE_DAYS_MAX } from "@/lib/request-lines";
 
 async function handleGET() {
   const { error } = await getSession("settings:view");
@@ -34,7 +35,7 @@ async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, printPaperSize, printMarginHundredthsIn, exportFileName, autoVersionMode } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, printPaperSize, printMarginHundredthsIn, exportFileName, autoVersionMode, requestArchiveDays, archiveLeaveMetBy } = body;
   // Card #203: "Count shifts from" — a YYYY-MM-DD date, or null to clear. Strictly validated.
   const balanceFromValid = shiftBalanceFrom === null || (typeof shiftBalanceFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(shiftBalanceFrom) && !Number.isNaN(Date.parse(shiftBalanceFrom + "T00:00:00Z")) && new Date(shiftBalanceFrom + "T00:00:00Z").toISOString().startsWith(shiftBalanceFrom));
   if (shiftBalanceFrom !== undefined && !balanceFromValid) {
@@ -44,6 +45,13 @@ async function handlePUT(req: NextRequest) {
 
   // Mode is STRICTLY validated on write — a bad value is rejected, never coerced to
   // the default (which would silently turn a typo into "full"). Reads stay lenient.
+  // Card #332: the Requests archive settings. Strict on write; a missing key keeps the stored value.
+  if (requestArchiveDays !== undefined && !isValidArchiveDays(requestArchiveDays)) {
+    return NextResponse.json({ error: `requestArchiveDays must be a whole number from 0 to ${ARCHIVE_DAYS_MAX}` }, { status: 400 });
+  }
+  if (archiveLeaveMetBy !== undefined && !isArchiveLeaveRule(archiveLeaveMetBy)) {
+    return NextResponse.json({ error: `archiveLeaveMetBy must be one of ${ARCHIVE_LEAVE_RULES.join(", ")}` }, { status: 400 });
+  }
   if (pendingRequestMode !== undefined && !isPendingRequestMode(pendingRequestMode)) {
     return NextResponse.json({ error: `pendingRequestMode must be one of ${PENDING_REQUEST_MODES.join(", ")}` }, { status: 400 });
   }
@@ -213,6 +221,8 @@ async function handlePUT(req: NextRequest) {
       ...(typeof maxLeavePerDay === "number" && maxLeavePerDay >= 0 && maxLeavePerDay <= 999 && { maxLeavePerDay: Math.floor(maxLeavePerDay) }),
       ...(isPendingRequestMode(pendingRequestMode) && { pendingRequestMode }),
       ...(isRequestConflictPolicy(requestConflictPolicy) && { requestConflictPolicy }),
+      ...(isValidArchiveDays(requestArchiveDays) && { requestArchiveDays }),
+      ...(isArchiveLeaveRule(archiveLeaveMetBy) && { archiveLeaveMetBy }),
       ...(isApprovalConflictPolicy(approvalConflictPolicy) && { approvalConflictPolicy }),
       ...(offOrder !== undefined && { defaultOffStrategyOrder: offOrder }),
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
@@ -240,6 +250,8 @@ async function handlePUT(req: NextRequest) {
       ...(typeof dateFormat === "string" && isValidDateFormat(dateFormat) && { dateFormat }),
       ...(isPendingRequestMode(pendingRequestMode) && { pendingRequestMode }),
       ...(isRequestConflictPolicy(requestConflictPolicy) && { requestConflictPolicy }),
+      ...(isValidArchiveDays(requestArchiveDays) && { requestArchiveDays }),
+      ...(isArchiveLeaveRule(archiveLeaveMetBy) && { archiveLeaveMetBy }),
       ...(isApprovalConflictPolicy(approvalConflictPolicy) && { approvalConflictPolicy }),
       ...(offOrder !== undefined && { defaultOffStrategyOrder: offOrder }),
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),

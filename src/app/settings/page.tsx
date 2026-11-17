@@ -1,4 +1,5 @@
 import { parseAutoVersionMode } from "@/lib/auto-version";
+import { parseArchiveDays, parseArchiveLeaveRule } from "@/lib/request-lines";
 import { readTuning } from "@/lib/scheduler-tuning";
 import { parseSpecialColumnOrder } from "@/lib/special-columns";
 import { prisma } from "@/lib/prisma";
@@ -80,6 +81,8 @@ export default async function Settings() {
     pendingRequestMode: parsePendingRequestMode(schedulingPrefsRow?.pendingRequestMode),
     requestConflictPolicy: parseRequestConflictPolicy(schedulingPrefsRow?.requestConflictPolicy),
     approvalConflictPolicy: parseApprovalConflictPolicy(schedulingPrefsRow?.approvalConflictPolicy),
+    requestArchiveDays: parseArchiveDays(schedulingPrefsRow?.requestArchiveDays),
+    archiveLeaveMetBy: parseArchiveLeaveRule(schedulingPrefsRow?.archiveLeaveMetBy),
     defaultOffStrategyOrder: schedulingPrefsRow
       ? parseOffStrategyOrder(schedulingPrefsRow.defaultOffStrategyOrder, leaveShiftIds)
       : [...DEFAULT_OFF_STRATEGY_ORDER],

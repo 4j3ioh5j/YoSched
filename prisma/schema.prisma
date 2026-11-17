@@ -189,6 +189,7 @@ model Staff {
   shiftEligibilityRules   ShiftEligibilityRule[]
   shiftMinimumTargets     ShiftMinimumTarget[]
   scheduleRequests        ScheduleRequest[]
+  requestDayNotes         RequestDayNote[]
   loginUser               User?
 
   @@map("staff")
@@ -413,6 +414,11 @@ model SchedulingPreferences {
   autoVersionMode         String   @default("auto")
   /// Card #320: IANA time zone for every time shown or asked for; null = not chosen yet (behaves as UTC).
   timeZone                String?
+  // Card #332: the Requests archive. A month's requested days leave the main list N days after
+  // the month ends (0–60); archiveLeaveMetBy is what meets a leave request IN THE ARCHIVE only
+  // ("exact" | "any-leave" | "any-off") — the live approval rule is unchanged. src/lib/request-lines.ts
+  requestArchiveDays      Int     @default(0)
+  archiveLeaveMetBy       String  @default("any-off")
   shiftBalanceFrom        DateTime? @db.Date // card #203: first day "Keep counts even across months" counts (null = each run on its own)
   shiftShareBasis         String   @default("fte") // auto-scheduler split of a scheduled shift's slots across eligible staff: "fte" (proportional to FTE) | "head" (equal per person) — see src/lib/shift-share.ts
   holidayShiftId          String?  // card #207: the shift credited on a holiday (leave, counts toward FTE); linked by id, never by code. null = none chosen
@@ -971,4 +977,18 @@ model BackupSettings {
   updatedAt           DateTime  @updatedAt
 
   @@map("backup_settings")
+}
+
+// Card #332: a note on an archived Requests line, kept per person and day (not on the request,
+// so request delete / undo / restore never touch it).
+model RequestDayNote {
+  id        String   @id @default(cuid())
+  staffId   String
+  date      DateTime @db.Date
+  note      String
+  updatedAt DateTime @updatedAt
+  staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, date])
+  @@map("request_day_notes")
 }

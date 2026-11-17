@@ -1,5 +1,6 @@
 "use client";
 
+import { ARCHIVE_LEAVE_RULES, ARCHIVE_DAYS_MAX, isValidArchiveDays, type ArchiveLeaveRule } from "@/lib/request-lines";
 import { useTimeZone, TIME_ZONE_EVENT } from "@/app/time-zone-provider";
 import { formatClock, wallClock, zoneChoices } from "@/lib/time-zone";
 import { orderSpecialColumns } from "@/lib/special-columns";
@@ -145,6 +146,8 @@ type SchedulingPrefs = {
   pendingRequestMode: PendingRequestMode;
   requestConflictPolicy: RequestConflictPolicy;
   approvalConflictPolicy: ApprovalConflictPolicy;
+  requestArchiveDays: number;
+  archiveLeaveMetBy: ArchiveLeaveRule;
   defaultOffStrategyOrder: string[];
   defaultLiveScope: LiveScope;
   shiftShareBasis: ShiftShareBasis;
@@ -3710,6 +3713,42 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
     }
   }
 
+  // Card #332: the Requests archive settings.
+  const [archiveStatus, setArchiveStatus] = useState<SaveStatus>("idle");
+  const [archiveDaysText, setArchiveDaysText] = useState(String(prefs.requestArchiveDays));
+  async function saveArchive(patch: { requestArchiveDays?: number; archiveLeaveMetBy?: ArchiveLeaveRule }) {
+    const prev = { requestArchiveDays: prefs.requestArchiveDays, archiveLeaveMetBy: prefs.archiveLeaveMetBy };
+    setPrefs((p) => ({ ...p, ...patch }));
+    setArchiveStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setArchiveStatus("saved");
+      setTimeout(() => setArchiveStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, ...prev }));
+      setArchiveDaysText(String(prev.requestArchiveDays));
+      setArchiveStatus("error");
+    }
+  }
+  function commitArchiveDays() {
+    const n = Number(archiveDaysText.trim());
+    if (archiveDaysText.trim() === "" || !isValidArchiveDays(n)) {
+      setArchiveDaysText(String(prefs.requestArchiveDays));
+      return;
+    }
+    if (n !== prefs.requestArchiveDays) void saveArchive({ requestArchiveDays: n });
+  }
+  const ARCHIVE_LEAVE_LABELS: Record<ArchiveLeaveRule, { label: string; hint: string }> = {
+    exact: { label: "The leave type asked for", hint: "Met only when the person got the leave type they asked for" },
+    "any-leave": { label: "Any leave", hint: "Met when the person got any leave type that day" },
+    "any-off": { label: "Any day off", hint: "Met when the person was not working that day: any leave, a day off, or nothing scheduled" },
+  };
+
   const APPROVAL_POLICY_LABELS: Record<ApprovalConflictPolicy, { label: string; hint: string }> = {
     "resolve-pp": { label: "Re-arrange the day, then the pay period", hint: "Move auto-placed shifts on the day; if that is not enough, widen to the rest of the pay period. Hand-placed, locked and other approved shifts never move" },
     "resolve-day": { label: "Re-arrange the day only", hint: "Move auto-placed shifts on the requested day only; anything wider flags the request" },
@@ -4207,6 +4246,55 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="pt-2 border-t border-slate-700/50">
+          <div className="text-sm font-medium text-slate-200">Requests archive</div>
+          <div className="text-xs text-slate-400">
+            When a month is over, its requests leave the Requests list and move to the Archive, marked met or not met from the schedule as it stands. The schedule stays editable: changing a past month changes its archive at once.
+            {archiveStatus === "saving" && <span className="ml-2 text-slate-500">Saving…</span>}
+            {archiveStatus === "saved" && <span className="ml-2 text-emerald-400">Saved</span>}
+            {archiveStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
+          </div>
+          <label className="flex items-center gap-2 mt-3 text-sm text-slate-300">
+            Archive a month&apos;s requests
+            <input
+              type="number"
+              min={0}
+              max={ARCHIVE_DAYS_MAX}
+              step={1}
+              value={archiveDaysText}
+              disabled={!canEdit}
+              onChange={(e) => setArchiveDaysText(e.target.value)}
+              onBlur={commitArchiveDays}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              aria-label="Days after the month ends before its requests are archived"
+              className="w-16 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-slate-200 disabled:opacity-60"
+            />
+            days after the month ends (0 = the next day)
+          </label>
+          <div className="text-xs text-slate-400 mt-3">When a month is archived, a leave request counts as met by …</div>
+          <div className="grid grid-cols-3 gap-2 mt-2">
+            {ARCHIVE_LEAVE_RULES.map((rule) => (
+              <button
+                key={rule}
+                onClick={() => canEdit && rule !== prefs.archiveLeaveMetBy && saveArchive({ archiveLeaveMetBy: rule })}
+                disabled={!canEdit}
+                title={ARCHIVE_LEAVE_LABELS[rule].hint}
+                className={[
+                  "flex flex-col items-start px-3 py-2 rounded-lg border text-left transition-colors",
+                  prefs.archiveLeaveMetBy === rule
+                    ? "bg-blue-600/20 border-blue-500 text-blue-300"
+                    : "bg-slate-700/30 border-slate-600/50 text-slate-300 hover:border-slate-500",
+                  !canEdit ? "opacity-60 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                <span className="text-sm font-medium">{ARCHIVE_LEAVE_LABELS[rule].label}</span>
+                <span className="text-[11px] text-slate-500 mt-0.5">{ARCHIVE_LEAVE_LABELS[rule].hint}</span>
+              </button>
+            ))}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-1">This only decides the archive&apos;s met / not met. Approving requests and building the schedule are unchanged.</div>
         </div>
 
         <div className="pt-2 border-t border-slate-700/50">
