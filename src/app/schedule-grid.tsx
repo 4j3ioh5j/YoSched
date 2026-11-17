@@ -20,7 +20,7 @@ import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey,
 import { unsavedPrintWarning } from "@/lib/print-stamp";
 import { autoVersionComment, yearMonths, type AutoVersionMode } from "@/lib/auto-version";
 import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMeta } from "@/lib/auto-version-flow";
-import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
+import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
@@ -3979,7 +3979,7 @@ export function ScheduleGrid({
     <div
       data-print-root
       className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}
-      style={{ "--print-font": printFontStack(printLayout.fontFamily), "--print-font-size": `${printLayout.fontSize}pt` } as React.CSSProperties}
+      style={{ "--print-font": printFontStack(printLayout.fontFamily), "--print-font-size": `${printLayout.fontSize}pt`, "--print-row-h": `${printRowHeightIn(printLayout)}in` } as React.CSSProperties}
     >
       {/* Request mode indicator — "/" toggles; letters create requests, not
           assignments (Shift=avoid, Alt=soft). */}

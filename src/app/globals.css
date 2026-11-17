@@ -200,6 +200,7 @@ input[type="checkbox"]:disabled {
     font-weight: 700 !important;
     font-size: var(--print-font-size) !important;
     box-shadow: none !important;
+    height: var(--print-row-h, 0.19in) !important;
   }
   thead th[data-date-col], thead th[data-day-col] {
     text-transform: uppercase !important;
@@ -231,7 +232,9 @@ input[type="checkbox"]:disabled {
     padding: 2px 1px 0 !important;
     background: white !important;
     position: static !important;
-    height: 0.19in !important;
+    /* Card #322: --print-row-h (set on the grid root from the header and footer sizes) makes
+       the header row and a 31-day month fill the page; the same height every month. */
+    height: var(--print-row-h, 0.19in) !important;
   }
 
   /* Card #209: weekend / holiday row shading comes from Settings › Printed Schedule. The row
@@ -377,6 +380,7 @@ input[type="checkbox"]:disabled {
   }
   [data-print-footer] {
     display: block !important;
+    line-height: 1.2 !important;
     color: #000 !important;
     white-space: pre !important;
     /* Card #310: the footer spans the grid only, not the PP# strip right of it, so a

@@ -188,3 +188,25 @@ export function printLayoutFrom(p: PrintLayoutPrefs | null | undefined): PrintLa
     payPeriodLabels: typeof p.printPayPeriodLabels === "boolean" ? p.printPayPeriodLabels : d.payPeriodLabels,
   };
 }
+
+/** Card #322: the browser printout's page, in inches. The browser prints on whatever paper the
+ *  printer is set to, so the row height is sized for the shorter of US Letter (8.5in) and A4
+ *  (210mm) in landscape: a 31-day month then fits one page on either. The margin is the print
+ *  CSS's body padding (globals.css). The title and footer take their Settings size at line
+ *  height 1.2 plus their CSS padding; the slack covers the heavier grid lines (outer edges,
+ *  pay-period double lines) that add to the rows' height. */
+export const PRINT_PAGE = {
+  heightIn: Math.min(8.5, 210 / 25.4),
+  marginIn: 0.4,
+  titleIn: (pt: number) => (pt * 1.2) / 72 + 4 / 96,
+  footerIn: (pt: number) => (pt * 1.2) / 72 + 3 / 96,
+  slackIn: 0.15,
+} as const;
+
+/** The printout's row height in inches, the same for every month: the header row and a
+ *  31-day month fill the page between the title and the footer. */
+export function printRowHeightIn(layout: Pick<PrintLayout, "header" | "footer">): number {
+  const P = PRINT_PAGE;
+  const avail = P.heightIn - 2 * P.marginIn - P.titleIn(layout.header.size) - P.footerIn(layout.footer.size) - P.slackIn;
+  return Math.floor((avail / 32) * 10000) / 10000;
+}

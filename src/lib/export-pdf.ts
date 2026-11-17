@@ -13,6 +13,7 @@ const LABEL_W = 24.5; // 0.34", the printout's PP-label strip
 const CELL_PAD = 4;
 const MAX_STRETCH = 2.5;
 const FONT = "ArchivoNarrow";
+const MAX_MONTH_DAYS = 31;
 
 /** Width of a line of text in points: a safe upper estimate for a narrow font. */
 const textW = (s: string, size: number) => s.length * size * 0.52;
@@ -41,8 +42,9 @@ export function pdfMonthLayout(m: PrintedMonth): PdfMonthLayout {
   const labelW = L.payPeriodLabels ? LABEL_W : 0;
   const availW = PAGE.w - 2 * PAGE.margin - labelW;
   const availH = footerTop - 3 - tableTop;
-  const nRows = m.rows.length + 1;
-  const rowH = Math.min(availH / nRows, L.fontSize * 2);
+  // Card #322: one row height for every month, sized so the header row and a 31-day month
+  // fill the page down to the footer; a shorter month leaves room at the bottom.
+  const rowH = availH / (MAX_MONTH_DAYS + 1);
 
   const heads = headLabels(m);
   const texts = [heads, ...m.rows.map((r) => rowTexts(m, r))];
