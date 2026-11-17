@@ -111,10 +111,24 @@ export function zonedSlot(now: Date, hhmm: string, zone: string): Date {
   throw new Error("unreachable");
 }
 
-/** HH:MM in `fromZone` → the HH:MM in `toZone` of the same moment (the latest such slot at
- *  or before `at`), so a zone change keeps the next backup at the same moment. */
+/** The earliest instant strictly after `now` whose wall clock in `zone` is HH:MM (a time in a
+ *  spring-forward gap gives the first valid minute after it). */
+export function nextZonedSlot(now: Date, hhmm: string, zone: string): Date {
+  const [h, mi] = parseHHMM(hhmm);
+  const w = wallClock(now, zone);
+  for (let k = 0; k < 3; k++) {
+    const day = new Date(Date.UTC(w.year, w.month - 1, w.day + k));
+    const t = instantOf(day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate(), h, mi, zone);
+    if (t.getTime() > now.getTime()) return t;
+  }
+  throw new Error("unreachable");
+}
+
+/** HH:MM in `fromZone` → the HH:MM in `toZone` of the NEXT backup moment after `at` (card #324:
+ *  the previous one can sit on the other side of a clock change), so a zone change keeps the
+ *  next backup at the same moment. */
 export function convertWallTime(hhmm: string, fromZone: string, toZone: string, at: Date): string {
-  const w = wallClock(zonedSlot(at, hhmm, fromZone), toZone);
+  const w = wallClock(nextZonedSlot(at, hhmm, fromZone), toZone);
   return `${pad2(w.hour)}:${pad2(w.minute)}`;
 }
 

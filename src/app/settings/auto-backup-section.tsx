@@ -3,7 +3,7 @@
 import { formatClock, zoneLabel } from "@/lib/time-zone";
 import { useEffect, useRef, useState } from "react";
 import { KeyFilePicker } from "./key-file-picker";
-import { TIME_ZONE_EVENT } from "@/app/time-zone-provider";
+import { TIME_ZONE_EVENT, useTimeZone } from "@/app/time-zone-provider";
 
 // Card #315: Settings › Backup and Restore › Automatic backups. A daily backup written to a
 // folder on the server, locked with a key whose key file the admin keeps elsewhere.
@@ -48,6 +48,11 @@ async function errorOf(res: Response): Promise<string> {
   return body?.error ?? `The server answered ${res.status}`;
 }
 
+/** Card #324: the Settings zone (as last read) is not the one this view was read under. */
+export function zoneMovedUnder(view: { storedZone: string | null } | null, tz: { loaded: boolean; storedZone: string | null }): boolean {
+  return !!view && tz.loaded && tz.storedZone !== view.storedZone;
+}
+
 export function AutoBackupSection({ onError }: { onError: (e: string | undefined) => void }) {
   const [view, setView] = useState<AutoView | null>(null);
   const [form, setForm] = useState<Form | null>(null);
@@ -74,6 +79,14 @@ export function AutoBackupSection({ onError }: { onError: (e: string | undefined
     const res = await fetch("/api/backup/auto", { cache: "no-store" });
     if (res.ok) adopt((await res.json()) as AutoView);
   };
+
+  // Card #324: the zone changed in another tab (the shared reader refetches when this tab comes
+  // back into view): the backup time was converted, so read it again.
+  const tz = useTimeZone();
+  useEffect(() => {
+    if (zoneMovedUnder(view, tz)) void reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tz.loaded, tz.storedZone, view?.storedZone]);
 
   // Card #320: a zone saved elsewhere in Settings converts the backup time; show the new one.
   useEffect(() => {
