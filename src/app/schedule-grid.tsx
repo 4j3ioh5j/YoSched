@@ -22,7 +22,7 @@ import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey,
 import { unsavedPrintWarning } from "@/lib/print-stamp";
 import { autoVersionComment, yearMonths, type AutoVersionMode } from "@/lib/auto-version";
 import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMeta } from "@/lib/auto-version-flow";
-import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, aggPrintWidthCh, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
+import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, aggPrintWidthCss, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
@@ -4390,7 +4390,7 @@ export function ScheduleGrid({
                 <th
                   key={`agg-h-${ci}`}
                   data-other-col
-                  style={{ "--agg-col-w": `calc(${aggPrintWidthCh(c.label, Object.values(c.initialsByDate))}ch + 12px)` } as React.CSSProperties}
+                  style={{ "--agg-col-w": aggPrintWidthCss(c.label, Object.values(c.initialsByDate), printAggColumns.length, printLayout) } as React.CSSProperties}
                   className="hidden px-1 py-1 text-center text-xs font-medium border-b border-l border-slate-700"
                 >
                   {c.label}

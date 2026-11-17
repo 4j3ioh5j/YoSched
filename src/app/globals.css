@@ -149,6 +149,15 @@ input[type="checkbox"]:disabled {
   thead th *, tbody td * {
     line-height: inherit !important;
   }
+  /* Card #327: every body cell prints at the Settings size (the date block carried the
+     on-screen text-xs, larger than a small Settings size, so its rows outgrew printFit's
+     estimate); the pay-period strip keeps its own small size. */
+  tbody td:not([data-pp-label-col]) {
+    font-size: var(--print-font-size) !important;
+  }
+  tbody td:not([data-pp-label-col]) * {
+    font-size: inherit !important;
+  }
   /* Center every cell's content both ways. Table cells default to
      vertical-align:baseline, so in the fixed-height rows the text otherwise sits low
      instead of centered — force middle. Horizontal center applies to every column

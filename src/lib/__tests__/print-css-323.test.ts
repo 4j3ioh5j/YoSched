@@ -17,7 +17,7 @@ describe("print page from Settings", () => {
     expect(print).toMatch(/thead th, tbody td \{[^}]*white-space: nowrap !important;[^}]*line-height: 1\.2 !important;/);
   });
   it("aggregate cells no longer wrap in print, and their column fits the longest text of the month", () => {
-    expect(grid).toMatch(/"--agg-col-w": `calc\(\$\{aggPrintWidthCh\(c\.label, Object\.values\(c\.initialsByDate\)\)\}ch \+ 12px\)`/);
+    expect(grid).toMatch(/"--agg-col-w": aggPrintWidthCss\(c\.label, Object\.values\(c\.initialsByDate\)/);
   });
 });
 

@@ -279,3 +279,24 @@ export function printPageStyle(layout: PrintLayout): string {
 export function aggPrintWidthCh(label: string, lists: readonly (readonly string[])[]): number {
   return Math.max(3, label.length, ...lists.map((l) => l.join(", ").length));
 }
+
+/** Card #327: the most of the printable width the aggregate columns may take together, so the
+ *  staff columns keep their room when a day's list is long (the list is clipped, like every cell).
+ *  Trial: at 20% a 40-initial list already cut off staff codes (letter, 1in, 9pt); 15% kept them
+ *  whole in the other layouts tried. Staff codes are the schedule, so they win. */
+export const AGG_PRINT_SHARE = 0.15;
+
+/** Card #327: an aggregate column's print width (CSS): fits its longest text (aggPrintWidthCh),
+ *  but past its title never more than an equal part of AGG_PRINT_SHARE of the printable width
+ *  among `count` aggregate columns. The title always fits on one line (card #323). The cap is
+ *  in inches from the Settings paper and margin, divided by the shrink factor (the zoom in
+ *  printPageStyle scales inches too). Never a percentage: Chrome drops a min() holding a % for
+ *  a fixed-layout table cell, and the column loses its fit. */
+export function aggPrintWidthCss(label: string, lists: readonly (readonly string[])[], count: number, layout: PrintLayout): string {
+  const k = Number.isInteger(count) && count > 0 ? count : 1;
+  const page = printPage(layout);
+  const { scale } = printFit({ ...layout, paper: isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER, marginHundredths: page.marginIn * 100 });
+  const capIn = (AGG_PRINT_SHARE * (page.wIn - 2 * page.marginIn)) / scale / k;
+  const titleCh = aggPrintWidthCh(label, []);
+  return `min(calc(${aggPrintWidthCh(label, lists)}ch + 12px), max(calc(${titleCh}ch + 12px), ${+capIn.toFixed(4)}in))`;
+}
