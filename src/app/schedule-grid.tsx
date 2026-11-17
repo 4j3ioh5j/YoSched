@@ -1515,6 +1515,7 @@ export function ScheduleGrid({
   // then the need falls back to a generous width per character (AUTO_COL_FALLBACK_CH).
   const printRootRef = useRef<HTMLDivElement | null>(null);
   const [printAutoNeedPx, setPrintAutoNeedPx] = useState<number | null>(null);
+  const [printCountNeedPx, setPrintCountNeedPx] = useState<number | null>(null);
   useEffect(() => {
     const root = printRootRef.current;
     if (!root) return;
@@ -1526,18 +1527,24 @@ export function ScheduleGrid({
       const mono = document.createElement("span");
       const ruler = document.createElement("div");
       span.style.cssText = probe + "font-family:var(--print-font)";
-      mono.style.cssText = probe + "font-family:var(--font-mono)";
+      // Card #331: the count cells' own class (Tailwind's inline theme defines no --font-mono
+      // variable, so a var() here fell back to the narrow print font).
+      mono.className = "font-mono";
+      mono.style.cssText = probe;
       // Card #330: a measurement taken while the printout is shrunk (zoom on the print root)
       // comes back scaled; a known-width ruler gives that factor so it is undone.
       ruler.style.cssText = "position:absolute;left:-10000px;top:0;visibility:hidden;width:100px;height:0";
       root.append(span, mono, ruler);
       const width = (el: HTMLElement) => (t: string) => { el.textContent = t; return el.getBoundingClientRect().width; };
+      const zoom = ruler.getBoundingClientRect().width / 100;
+      const countPx = printNeedPx([{ texts: printAutoTexts.countTexts, measure: width(mono) }], zoom);
       const px = printNeedPx([
         { texts: printAutoTexts.texts, measure: width(span) },
         { texts: printAutoTexts.countTexts, measure: width(mono) },
-      ], ruler.getBoundingClientRect().width / 100);
+      ], zoom);
       span.remove(); mono.remove(); ruler.remove();
       setPrintAutoNeedPx(px);
+      setPrintCountNeedPx(countPx);
     };
     measure();
     const fonts = typeof document !== "undefined" ? document.fonts : undefined;
@@ -4052,6 +4059,7 @@ export function ScheduleGrid({
   return (
     <div
       ref={printRootRef}
+      data-print-count-need={printCountNeedPx ?? undefined}
       data-print-root
       className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}
       style={{ "--print-font": printFontStack(printLayout.fontFamily), "--print-font-size": `${printLayout.fontSize}pt`, "--print-row-h": `${printRowHeightIn(printLayout)}in` } as React.CSSProperties}

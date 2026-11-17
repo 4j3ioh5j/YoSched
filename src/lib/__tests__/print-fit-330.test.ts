@@ -8,6 +8,7 @@ import path from "node:path";
 import { printNeedPx } from "../print-layout";
 
 const grid = readFileSync(path.join(__dirname, "../../app/schedule-grid.tsx"), "utf8");
+const css = readFileSync(path.join(__dirname, "../../app/globals.css"), "utf8");
 
 describe("printNeedPx: widest text over every font group, at full size", () => {
   const narrow = (t: string) => t.length * 5;
@@ -35,7 +36,14 @@ describe("printNeedPx: widest text over every font group, at full size", () => {
 describe("the grid measures count text in the count cells' font, and undoes the zoom", () => {
   it("count texts are kept apart and measured in the monospace font as well", () => {
     expect(grid).toMatch(/countTexts/);
-    expect(grid).toMatch(/font-family:var\(--font-mono\)/);
+  });
+  it("card #331: the monospace probe takes the count cells' own class (Tailwind's inline theme defines no --font-mono variable)", () => {
+    expect(grid).not.toMatch(/var\(--font-mono\)/);
+    expect(grid).toContain('mono.className = "font-mono"');
+    expect(css).not.toMatch(/:root[^}]*--font-mono:/);
+  });
+  it("card #331: the count text's own need is on the print root for the browser check", () => {
+    expect(grid).toContain("data-print-count-need={printCountNeedPx ?? undefined}");
   });
   it("the zoom is read from a known-width probe inside the print root", () => {
     expect(grid).toMatch(/printNeedPx\(/);
