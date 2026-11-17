@@ -21,6 +21,6 @@ describe("zoneMovedUnder", () => {
   it("the section watches the shared zone reader", () => {
     const src = readFileSync(path.join(__dirname, "../auto-backup-section.tsx"), "utf8");
     expect(src).toMatch(/useTimeZone\(\)/);
-    expect(src).toMatch(/zoneMovedUnder\(view, tz\)/);
+    expect(src).toMatch(/onZone\(view, tz\)/);
   });
 });

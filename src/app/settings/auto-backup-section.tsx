@@ -53,6 +53,55 @@ export function zoneMovedUnder(view: { storedZone: string | null } | null, tz: {
   return !!view && tz.loaded && tz.storedZone !== view.storedZone;
 }
 
+type ReadResult<V> = { ok: true; view: V } | { ok: false; error: string };
+
+/** Card #326: one read of the automatic-backup view; failures come back as text, never a throw. */
+export async function readAutoView<V = AutoView>(fetchFn: (input: string, init?: RequestInit) => Promise<Response> = fetch): Promise<ReadResult<V>> {
+  try {
+    const res = await fetchFn("/api/backup/auto", { cache: "no-store" });
+    if (!res.ok) return { ok: false, error: await errorOf(res) };
+    return { ok: true, view: (await res.json()) as V };
+  } catch {
+    return { ok: false, error: "Could not reach the server" };
+  }
+}
+
+/** Card #326: re-reads the view when the zone moved under it (card #324). A failed re-read is
+ *  shown and tried again the next time the tab comes back into view, until one succeeds. One
+ *  read at a time; nothing lands after dispose. */
+export function makeZoneReloader<V extends { storedZone: string | null }>(o: {
+  fetchView: () => Promise<ReadResult<V>>;
+  onView: (v: V) => void;
+  onError: (e: string | undefined) => void;
+}) {
+  let failed = false;
+  let inFlight = false;
+  let alive = true;
+  async function run() {
+    if (inFlight || !alive) return;
+    inFlight = true;
+    try {
+      const r = await o.fetchView();
+      if (!alive) return;
+      if (r.ok) {
+        if (failed) o.onError(undefined);
+        failed = false;
+        o.onView(r.view);
+      } else {
+        failed = true;
+        o.onError(r.error);
+      }
+    } finally {
+      inFlight = false;
+    }
+  }
+  return {
+    onZone: (view: V | null, tz: { loaded: boolean; storedZone: string | null }) => (zoneMovedUnder(view, tz) ? run() : Promise.resolve()),
+    onVisible: () => (failed ? run() : Promise.resolve()),
+    dispose: () => { alive = false; },
+  };
+}
+
 export function AutoBackupSection({ onError }: { onError: (e: string | undefined) => void }) {
   const [view, setView] = useState<AutoView | null>(null);
   const [form, setForm] = useState<Form | null>(null);
@@ -82,9 +131,18 @@ export function AutoBackupSection({ onError }: { onError: (e: string | undefined
 
   // Card #324: the zone changed in another tab (the shared reader refetches when this tab comes
   // back into view): the backup time was converted, so read it again.
+  // Card #326: a failed re-read is shown and retried when the tab comes back into view.
   const tz = useTimeZone();
+  const reloader = useRef<ReturnType<typeof makeZoneReloader<AutoView>> | null>(null);
   useEffect(() => {
-    if (zoneMovedUnder(view, tz)) void reload();
+    const r = makeZoneReloader<AutoView>({ fetchView: () => readAutoView<AutoView>(), onView: adopt, onError: (e) => { if (alive.current) onError(e); } });
+    reloader.current = r;
+    const onVis = () => { if (document.visibilityState === "visible") void r.onVisible(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { document.removeEventListener("visibilitychange", onVis); r.dispose(); reloader.current = null; };
+  }, [onError]);
+  useEffect(() => {
+    void reloader.current?.onZone(view, tz);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tz.loaded, tz.storedZone, view?.storedZone]);
 
