@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CONFIRM_WORD } from "@/lib/backup/reminder";
 import { AutoBackupSection } from "./auto-backup-section";
+import { KeyFilePicker } from "./key-file-picker";
 
 // Card #314: Settings › Backup and Restore. Shown only to logins holding
 // "Back Up and Restore All Data".
@@ -145,9 +146,9 @@ export function BackupPanel({ onError }: { onError: (e: string | undefined) => v
         <p className="text-xs text-slate-500">This replaces ALL of YoSched&apos;s data and settings, including logins, with the file&apos;s contents. What is here now is saved on the server first. For an automatic backup, also choose its key file and enter the key&apos;s passphrase.</p>
         <div className="flex flex-wrap gap-2 items-center">
           <input type="file" accept=".yosched-backup" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setSummary(null); }} disabled={busy !== null} />
-          <label className="flex items-center gap-1 text-xs text-slate-400">Key file (automatic backups only):
-            <input type="file" accept=".yosched-key" onChange={(e) => { setKeyFile(e.target.files?.[0] ?? null); setSummary(null); }} disabled={busy !== null} />
-          </label>
+          <div className="flex items-center gap-1 text-xs text-slate-400">Key file (automatic backups only):
+            <KeyFilePicker file={keyFile} onChange={(f) => { setKeyFile(f); setSummary(null); }} disabled={busy !== null} />
+          </div>
           <input type="password" autoComplete="off" placeholder="The file's passphrase" className={INPUT} value={rpass} onChange={(e) => { setRpass(e.target.value); setSummary(null); }} disabled={busy !== null} />
           <button type="button" className={BTN} disabled={busy !== null || !file || !rpass} onClick={check}>{busy === "check" ? "Checking…" : "Check file"}</button>
         </div>

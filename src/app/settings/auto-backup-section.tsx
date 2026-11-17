@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { KeyFilePicker } from "./key-file-picker";
 
 // Card #315: Settings › Backup and Restore › Automatic backups. A daily backup written to a
 // folder on the server, locked with a key whose key file the admin keeps elsewhere.
@@ -173,7 +174,7 @@ export function AutoBackupSection({ onError }: { onError: (e: string | undefined
             with your file. Only then does the new key take over{view.key ? "" : " and automatic backups switch on"}. The file is not kept on the server.
           </p>
           <div className="flex flex-wrap gap-2 items-center">
-            <input type="file" accept=".yosched-key" onChange={(e) => setVfile(e.target.files?.[0] ?? null)} disabled={busy !== null} />
+            <KeyFilePicker file={vfile} onChange={setVfile} disabled={busy !== null} />
             <input type="password" autoComplete="off" placeholder="Key passphrase" className={INPUT} value={vpass} onChange={(e) => setVpass(e.target.value)} disabled={busy !== null} />
             <button type="button" className={BTN} disabled={busy !== null || !vfile || !vpass} onClick={verify}>{busy === "verify" ? "Checking…" : "Check key file"}</button>
           </div>
