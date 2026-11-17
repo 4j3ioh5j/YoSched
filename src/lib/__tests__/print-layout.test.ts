@@ -187,6 +187,8 @@ describe("printLayoutFrom (prefs row → the grid's print layout)", () => {
       dateColumnFormat: "MM-DD",
       dayColumnFormat: "DDD",
       payPeriodLabels: true,
+      paper: "letter",
+      marginHundredths: 25,
     });
   });
 
@@ -202,6 +204,8 @@ describe("printLayoutFrom (prefs row → the grid's print layout)", () => {
         dateColumnFormat: "D/M",
         dayColumnFormat: "Dddd",
         printPayPeriodLabels: false,
+        printPaperSize: "a4",
+        printMarginHundredthsIn: 50,
       }),
     ).toEqual({
       header: h,
@@ -212,6 +216,8 @@ describe("printLayoutFrom (prefs row → the grid's print layout)", () => {
       dateColumnFormat: "D/M",
       dayColumnFormat: "Dddd",
       payPeriodLabels: false,
+      paper: "a4",
+      marginHundredths: 50,
     });
   });
 

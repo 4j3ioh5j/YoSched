@@ -48,6 +48,10 @@ import {
   formatDateColumn,
   formatDayColumn,
   ppLabelText,
+  PRINT_PAPERS,
+  PAPER_IN,
+  validatePrintMargin,
+  printFit,
   type PrintAlign,
   type PrintBlock,
   type PrintLayout,
@@ -5939,6 +5943,71 @@ function PrintFontSection({ initial }: { initial: PrintLayout }) {
   );
 }
 
+/** Card #323: margin in hundredths of an inch → "0.25". */
+export function marginInchesText(h: number): string {
+  return (h / 100).toFixed(2);
+}
+/** "0.25" / ".5" / "1" → hundredths of an inch, or null unless it is 0.25 to 1.00 in steps of 0.01. */
+export function parseMarginInches(t: string): number | null {
+  const m = /^\s*(\d*)(?:\.(\d{0,2}))?\s*$/.exec(t);
+  if (!m || (m[1] === "" && !m[2])) return null;
+  const h = Number(m[1] || "0") * 100 + Number((m[2] ?? "").padEnd(2, "0"));
+  return validatePrintMargin(h) ? h : null;
+}
+
+// Card #323: the paper the printout and the year PDF are laid out for, and the margin.
+function PrintPaperSection({ initial }: { initial: PrintLayout }) {
+  const canEdit = useCanEdit();
+  const { saved, draft, setDraft, status, error, busy, dirty, save } = useSavedDraft({ paper: initial.paper, margin: marginInchesText(initial.marginHundredths) });
+  const hundredths = parseMarginInches(draft.margin);
+  const valid = hundredths !== null;
+  const d = DEFAULT_PRINT_LAYOUT;
+  const defaults = { paper: d.paper, margin: marginInchesText(d.marginHundredths) };
+  const shrinks = valid && printFit({ ...initial, paper: draft.paper, marginHundredths: hundredths }).scale < 1;
+  return (
+    <CollapsibleSection
+      id="print-paper"
+      title="Paper & Margin"
+      description="The paper the printed schedule and the year PDF are laid out for (landscape), and the blank edge on every side. 0.25 in is the smallest edge every common printer can print to."
+      status={status}
+      error={error}
+    >
+      <div className="space-y-3">
+        <FieldRow label="Paper" description="Load this paper in the printer. On other paper the browser scales the page to fit.">
+          <select
+            aria-label="Paper"
+            value={draft.paper}
+            disabled={!canEdit || busy}
+            onChange={(e) => setDraft({ ...draft, paper: e.target.value as PrintLayout["paper"] })}
+            className={`${INPUT} w-56`}
+          >
+            {PRINT_PAPERS.map((p) => <option key={p} value={p}>{PAPER_IN[p].label}</option>)}
+          </select>
+        </FieldRow>
+        <FieldRow label="Margin" description="Inches on every side, 0.25 to 1.00.">
+          <input
+            type="text"
+            inputMode="decimal"
+            aria-label="Margin in inches"
+            value={draft.margin}
+            disabled={!canEdit || busy}
+            onChange={(e) => setDraft({ ...draft, margin: e.target.value })}
+            className={`${INPUT} w-20`}
+          />
+          <span className="ml-2 text-xs text-slate-400">in</span>
+        </FieldRow>
+        {!valid && <p className="text-xs text-red-400">Margin: a number of inches from 0.25 to 1.00, at most two decimals.</p>}
+        {shrinks && <p className="text-xs text-amber-400">At this margin and the saved font, header and footer sizes, a 31-day month is shrunk slightly so it still fits one page.</p>}
+        <div className="flex gap-2">
+          <button type="button" disabled={!canEdit || busy || !dirty || !valid} onClick={() => save({ printPaperSize: draft.paper, printMarginHundredthsIn: hundredths }, draft)} className={BTN_SAVE}>Save</button>
+          <button type="button" disabled={!canEdit || busy || !dirty} onClick={() => setDraft(saved)} className={BTN_PLAIN}>Cancel</button>
+          <button type="button" disabled={!canEdit || busy} onClick={() => save({ printPaperSize: defaults.paper, printMarginHundredthsIn: d.marginHundredths }, defaults)} className={BTN_PLAIN}>Reset to default</button>
+        </div>
+      </div>
+    </CollapsibleSection>
+  );
+}
+
 // Card #299: the year export's file name. Stored as a template with {YEAR}; empty saves
 // null (the built-in default).
 function ExportFileNameSection({ initial }: { initial: string | null }) {
@@ -6782,6 +6851,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
           <DayShadingSection initial={schedulingPrefs} />
           <PrintHeaderFooterSection initial={schedulingPrefs.printLayout} />
           <PrintFontSection initial={schedulingPrefs.printLayout} />
+          <PrintPaperSection initial={schedulingPrefs.printLayout} />
           <ExportFileNameSection initial={schedulingPrefs.exportFileName} />
           <AutoVersionSection initial={schedulingPrefs.autoVersionMode} />
         </div>

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { exportYearPdf, pdfMonthLayout, PAGE } from "../export-pdf";
+import { exportYearPdf, pdfMonthLayout, pdfPage } from "../export-pdf";
 import { buildPrintedMonth, buildPrintedYear } from "../print-month-model";
 import { DEFAULT_PRINT_LAYOUT } from "../print-layout";
 import { input, NOW } from "./fixtures/export-input";
@@ -22,6 +22,7 @@ describe("pdfMonthLayout (card #299)", () => {
     const m = buildPrintedMonth(input({ staff: many, printLayout: big }), 2026, 11, NOW); // December: 31 days, future → whole roster
     expect(m.rows).toHaveLength(31);
     const l = pdfMonthLayout(m);
+    const PAGE = pdfPage(m.layout);
     expect(l.tableTop + l.rowH * 32).toBeLessThanOrEqual(l.footerTop + 0.01);
     expect(l.footerTop + l.footerSize).toBeLessThanOrEqual(PAGE.h - PAGE.margin + 0.01);
     expect(l.tableLeft).toBeGreaterThanOrEqual(PAGE.margin - 0.01);

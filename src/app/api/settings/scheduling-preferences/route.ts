@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { validateSpecialColumnOrder } from "@/lib/special-columns";
-import { validatePrintBlock, validatePrintFontFamily, validatePrintFontSize, isDateColumnFormat, isDayColumnFormat, type PrintBlock } from "@/lib/print-layout";
+import { validatePrintBlock, validatePrintFontFamily, validatePrintFontSize, isDateColumnFormat, isDayColumnFormat, type PrintBlock, isPrintPaper, validatePrintMargin } from "@/lib/print-layout";
 import { isValidDateFormat } from "@/lib/date-format";
 import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES, isApprovalConflictPolicy, APPROVAL_CONFLICT_POLICIES, validateOffStrategyOrder } from "@/lib/schedule-requests";
 import { isLiveScope, LIVE_SCOPES } from "@/lib/live-scope";
@@ -34,7 +34,7 @@ async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, exportFileName, autoVersionMode } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, printPaperSize, printMarginHundredthsIn, exportFileName, autoVersionMode } = body;
   // Card #203: "Count shifts from" — a YYYY-MM-DD date, or null to clear. Strictly validated.
   const balanceFromValid = shiftBalanceFrom === null || (typeof shiftBalanceFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(shiftBalanceFrom) && !Number.isNaN(Date.parse(shiftBalanceFrom + "T00:00:00Z")) && new Date(shiftBalanceFrom + "T00:00:00Z").toISOString().startsWith(shiftBalanceFrom));
   if (shiftBalanceFrom !== undefined && !balanceFromValid) {
@@ -135,6 +135,13 @@ async function handlePUT(req: NextRequest) {
   if (dateColumnFormat !== undefined && !isDateColumnFormat(dateColumnFormat)) {
     return NextResponse.json({ error: "dateColumnFormat is not a known format" }, { status: 400 });
   }
+  // Card #323: paper and margin; only a known paper and a whole margin from 0.25in to 1in.
+  if (printPaperSize !== undefined && !isPrintPaper(printPaperSize)) {
+    return NextResponse.json({ error: "printPaperSize must be letter or a4" }, { status: 400 });
+  }
+  if (printMarginHundredthsIn !== undefined && !validatePrintMargin(printMarginHundredthsIn)) {
+    return NextResponse.json({ error: "printMarginHundredthsIn must be a whole number from 25 to 100" }, { status: 400 });
+  }
   if (dayColumnFormat !== undefined && !isDayColumnFormat(dayColumnFormat)) {
     return NextResponse.json({ error: "dayColumnFormat is not a known format" }, { status: 400 });
   }
@@ -164,6 +171,8 @@ async function handlePUT(req: NextRequest) {
     ...(dateColumnFormat !== undefined && { dateColumnFormat: dateColumnFormat as string }),
     ...(dayColumnFormat !== undefined && { dayColumnFormat: dayColumnFormat as string }),
     ...(printPayPeriodLabels !== undefined && { printPayPeriodLabels: printPayPeriodLabels as boolean }),
+    ...(printPaperSize !== undefined && { printPaperSize: printPaperSize as string }),
+    ...(printMarginHundredthsIn !== undefined && { printMarginHundredthsIn: printMarginHundredthsIn as number }),
   };
 
   // Card #300: order of the special schedule columns — strict on write, null resets to the

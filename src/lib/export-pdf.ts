@@ -6,9 +6,15 @@
 // fallback the printout uses.
 
 import type { PrintedMonth } from "./print-month-model";
+import { PAPER_IN, DEFAULT_PRINT_PAPER, isPrintPaper, printPage, type PrintLayout } from "./print-layout";
 
-/** Landscape Letter in points, with the reference's 0.2" margins. */
-export const PAGE = { w: 792, h: 612, margin: 14.4 } as const;
+/** Card #323: the landscape page in points, with the Settings paper and margin (the same ones
+ *  the printout uses). */
+export function pdfPage(layout: Pick<PrintLayout, "paper" | "marginHundredths">): { w: number; h: number; margin: number; format: string } {
+  const p = printPage(layout);
+  const format = PAPER_IN[isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER].jspdf;
+  return { w: p.wIn * 72, h: p.hIn * 72, margin: p.marginIn * 72, format };
+}
 const LABEL_W = 24.5; // 0.34", the printout's PP-label strip
 const CELL_PAD = 4;
 const MAX_STRETCH = 2.5;
@@ -35,6 +41,7 @@ const rowTexts = (m: PrintedMonth, r: PrintedMonth["rows"][number]) => [...(m.sp
 
 export function pdfMonthLayout(m: PrintedMonth): PdfMonthLayout {
   const L = m.layout;
+  const PAGE = pdfPage(L);
   const titleTop = PAGE.margin;
   const tableTop = titleTop + L.header.size * 1.25 + 2;
   const footerSize = L.footer.size;
@@ -80,7 +87,8 @@ export async function exportYearPdf(
   opts: { compress?: boolean } = {},
 ): Promise<Uint8Array> {
   const { jsPDF } = await import("jspdf");
-  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "letter", compress: opts.compress ?? true });
+  const first = months[0] ? pdfPage(months[0].layout) : pdfPage({ paper: DEFAULT_PRINT_PAPER, marginHundredths: 25 });
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: first.format, compress: opts.compress ?? true });
   doc.addFileToVFS("ArchivoNarrow-Regular.ttf", base64(fonts.regular));
   doc.addFont("ArchivoNarrow-Regular.ttf", FONT, "normal");
   doc.addFileToVFS("ArchivoNarrow-Bold.ttf", base64(fonts.bold));
@@ -88,7 +96,7 @@ export async function exportYearPdf(
   doc.setProperties({ title: months[0] ? `${months[0].year} schedule` : "Schedule", creator: "YoSched" });
 
   months.forEach((m, pi) => {
-    if (pi > 0) doc.addPage("letter", "landscape");
+    if (pi > 0) doc.addPage(pdfPage(m.layout).format, "landscape");
     const L = m.layout;
     const lay = pdfMonthLayout(m);
     const { tableLeft, tableTop, rowH, colW } = lay;

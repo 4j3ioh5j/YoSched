@@ -22,7 +22,7 @@ import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey,
 import { unsavedPrintWarning } from "@/lib/print-stamp";
 import { autoVersionComment, yearMonths, type AutoVersionMode } from "@/lib/auto-version";
 import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMeta } from "@/lib/auto-version-flow";
-import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
+import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, aggPrintWidthCh, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
@@ -3995,6 +3995,9 @@ export function ScheduleGrid({
           <span>REQUEST MODE — letters add requests (Shift = avoid, Alt = soft) · + approve · ! deny · ^ reset to pending · Delete removes the request (not the shift). Press “/” to exit.</span>
         </div>
       )}
+      {/* Card #323: the page (paper, margin, and a shrink when the text needs it) from Settings.
+          Built only from a known paper name and numbers (printPageStyle). */}
+      <style media="print">{printPageStyle(printLayout)}</style>
       {/* Print-only title: the Settings header template (card #301), filled in by the
           print stamp above. */}
       <div data-print-title ref={printTitleRef} className="hidden" style={printBlockStyle(printLayout.header)} />
@@ -4387,7 +4390,7 @@ export function ScheduleGrid({
                 <th
                   key={`agg-h-${ci}`}
                   data-other-col
-                  style={{ "--agg-col-w": `calc(${Math.max(c.label.length, 3)}ch + 12px)` } as React.CSSProperties}
+                  style={{ "--agg-col-w": `calc(${aggPrintWidthCh(c.label, Object.values(c.initialsByDate))}ch + 12px)` } as React.CSSProperties}
                   className="hidden px-1 py-1 text-center text-xs font-medium border-b border-l border-slate-700"
                 >
                   {c.label}

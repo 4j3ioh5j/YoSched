@@ -54,6 +54,9 @@ input[type="checkbox"]:disabled {
 }
 
 @media print {
+  /* Card #323: the paper and the margin come from Settings: the grid adds a print-only
+     <style> (printPageStyle) after this sheet, which sets @page size and the body padding.
+     The 0.4in below is only the fallback before that style is on the page. */
   /* Zero page margin: browsers only draw their own header/footer (URL, page title,
      print date) inside the page margin, so with none they print nothing there
      (card #173). The 0.4in margin moves onto the body instead; the schedule is a
@@ -130,11 +133,21 @@ input[type="checkbox"]:disabled {
      shrinks the whole table again. width:auto lets fixed layout share 100% evenly. */
   /* clip, not ellipsis: a code that is a hair too wide loses a sliver of its last
      letter rather than becoming "R…" (card #173). */
+  /* Card #323: one line per cell at a fixed line height, so no cell's text can make a row
+     taller than --print-row-h (printFit in print-layout.ts sizes it from this line height;
+     when the text needs more, the whole printout is shrunk instead). */
   thead th, tbody td {
     width: auto !important;
     min-width: 0 !important;
     overflow: hidden !important;
     text-overflow: clip !important;
+    white-space: nowrap !important;
+    line-height: 1.2 !important;
+  }
+  /* Inner spans (shift codes, initials) carry on-screen text sizes with their own line
+     heights; in print they take the cell's. */
+  thead th *, tbody td * {
+    line-height: inherit !important;
   }
   /* Center every cell's content both ways. Table cells default to
      vertical-align:baseline, so in the fixed-height rows the text otherwise sits low

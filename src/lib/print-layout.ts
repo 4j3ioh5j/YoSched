@@ -149,6 +149,8 @@ export type PrintLayout = {
   dateColumnFormat: DateColumnFormat;
   dayColumnFormat: DayColumnFormat;
   payPeriodLabels: boolean;
+  paper: PrintPaper;
+  marginHundredths: number;
 };
 
 export const DEFAULT_PRINT_FONT_FAMILY = "Aptos Narrow";
@@ -163,6 +165,8 @@ export const DEFAULT_PRINT_LAYOUT: PrintLayout = {
   dateColumnFormat: DEFAULT_DATE_COLUMN_FORMAT,
   dayColumnFormat: DEFAULT_DAY_COLUMN_FORMAT,
   payPeriodLabels: true,
+  paper: "letter",
+  marginHundredths: 25,
 };
 
 type PrintLayoutPrefs = {
@@ -174,6 +178,8 @@ type PrintLayoutPrefs = {
   dateColumnFormat?: unknown;
   dayColumnFormat?: unknown;
   printPayPeriodLabels?: unknown;
+  printPaperSize?: unknown;
+  printMarginHundredthsIn?: unknown;
 };
 
 /** The SchedulingPreferences row (or null) → the print layout; each bad field → its default. */
@@ -189,27 +195,87 @@ export function printLayoutFrom(p: PrintLayoutPrefs | null | undefined): PrintLa
     dateColumnFormat: isDateColumnFormat(p.dateColumnFormat) ? p.dateColumnFormat : d.dateColumnFormat,
     dayColumnFormat: isDayColumnFormat(p.dayColumnFormat) ? p.dayColumnFormat : d.dayColumnFormat,
     payPeriodLabels: typeof p.printPayPeriodLabels === "boolean" ? p.printPayPeriodLabels : d.payPeriodLabels,
+    paper: isPrintPaper(p.printPaperSize) ? p.printPaperSize : d.paper,
+    marginHundredths: validatePrintMargin(p.printMarginHundredthsIn) ? p.printMarginHundredthsIn : d.marginHundredths,
   };
 }
 
-/** Card #322: the browser printout's page, in inches. The browser prints on whatever paper the
- *  printer is set to, so the row height is sized for the shorter of US Letter (8.5in) and A4
- *  (210mm) in landscape: a 31-day month then fits one page on either. The margin is the print
- *  CSS's body padding (globals.css). The title and footer take their Settings size at line
- *  height 1.2 plus their CSS padding; the slack covers the heavier grid lines (outer edges,
- *  pay-period double lines) that add to the rows' height. */
-export const PRINT_PAGE = {
-  heightIn: Math.min(8.5, 210 / 25.4),
-  marginIn: 0.4,
+/** Card #323: the paper the printout and the year PDF are laid out for (landscape), and the
+ *  margin on every side. The margin floor, 0.25in, is the widest unprintable edge among common
+ *  office printers, so "Actual size" never clips; the default is that floor (David: "the
+ *  largest that will print consistently on all standard printers using US letter"). */
+export const PRINT_PAPERS = ["letter", "a4"] as const;
+export type PrintPaper = (typeof PRINT_PAPERS)[number];
+export const PAPER_IN: Record<PrintPaper, { wIn: number; hIn: number; label: string; css: string; jspdf: string }> = {
+  letter: { wIn: 11, hIn: 8.5, label: "US Letter (11 × 8.5 in)", css: "letter", jspdf: "letter" },
+  a4: { wIn: 297 / 25.4, hIn: 210 / 25.4, label: "A4 (297 × 210 mm)", css: "A4", jspdf: "a4" },
+};
+export const PRINT_MARGIN_MIN = 25;
+export const PRINT_MARGIN_MAX = 100;
+export const DEFAULT_PRINT_PAPER: PrintPaper = "letter";
+export const DEFAULT_PRINT_MARGIN = 25;
+
+export function isPrintPaper(v: unknown): v is PrintPaper {
+  return typeof v === "string" && (PRINT_PAPERS as readonly string[]).includes(v);
+}
+/** Margin in hundredths of an inch: a whole number from 25 (0.25in) to 100 (1in). */
+export function validatePrintMargin(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= PRINT_MARGIN_MIN && v <= PRINT_MARGIN_MAX;
+}
+
+/** The landscape page and its margin, in inches. Junk in the layout falls back to the defaults. */
+export function printPage(layout: Pick<PrintLayout, "paper" | "marginHundredths">): { wIn: number; hIn: number; marginIn: number } {
+  const paper = PAPER_IN[isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER];
+  const m = validatePrintMargin(layout.marginHundredths) ? layout.marginHundredths : DEFAULT_PRINT_MARGIN;
+  return { wIn: paper.wIn, hIn: paper.hIn, marginIn: m / 100 };
+}
+
+/** What the print CSS puts around the rows (globals.css): the title and footer take their
+ *  Settings size at line height 1.2 plus their padding; a cell's text sits at line height 1.2
+ *  inside 2px of padding plus its borders; the slack covers the heavier grid lines. */
+export const PRINT_BOX = {
   titleIn: (pt: number) => (pt * 1.2) / 72 + 4 / 96,
   footerIn: (pt: number) => (pt * 1.2) / 72 + 3 / 96,
+  cellIn: (pt: number) => (pt * 1.2) / 72 + 4 / 96,
   slackIn: 0.15,
 } as const;
 
-/** The printout's row height in inches, the same for every month: the header row and a
- *  31-day month fill the page between the title and the footer. */
-export function printRowHeightIn(layout: Pick<PrintLayout, "header" | "footer">): number {
-  const P = PRINT_PAGE;
-  const avail = P.heightIn - 2 * P.marginIn - P.titleIn(layout.header.size) - P.footerIn(layout.footer.size) - P.slackIn;
-  return Math.floor((avail / 32) * 10000) / 10000;
+export type PrintFit = { rowIn: number; contentMinIn: number; neededIn: number; scale: number };
+
+/** Card #322 + #323: one row height for every month, so the header row and a 31-day month fill
+ *  the page between the title and the footer. When that is less than the text needs (big
+ *  margins, a big font or title), rows take what the text needs and the whole printout is
+ *  shrunk (`scale` < 1) so it still fits one page. */
+export function printFit(layout: Pick<PrintLayout, "header" | "footer" | "fontSize" | "paper" | "marginHundredths">): PrintFit {
+  const P = PRINT_BOX;
+  const page = printPage(layout);
+  const inside = page.hIn - 2 * page.marginIn;
+  const blocks = P.titleIn(layout.header.size) + P.footerIn(layout.footer.size) + P.slackIn;
+  const pageRow = Math.floor(((inside - blocks) / 32) * 10000) / 10000;
+  const contentMinIn = P.cellIn(layout.fontSize);
+  const rowIn = Math.max(pageRow, Math.ceil(contentMinIn * 10000) / 10000);
+  const neededIn = blocks + 32 * rowIn;
+  const scale = neededIn <= inside ? 1 : Math.floor((inside / neededIn) * 1000) / 1000;
+  return { rowIn, contentMinIn, neededIn, scale };
+}
+
+/** The printout's row height in inches (see printFit). */
+export function printRowHeightIn(layout: Pick<PrintLayout, "header" | "footer" | "fontSize" | "paper" | "marginHundredths">): number {
+  return printFit(layout).rowIn;
+}
+
+/** The print-only CSS for the page: built only from a known paper name and numbers, never from
+ *  stored text. Zero page margin keeps the browser's own header and footer off (card #173); the
+ *  margin is the body's padding instead. */
+export function printPageStyle(layout: PrintLayout): string {
+  const page = printPage(layout);
+  const css = PAPER_IN[isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER].css;
+  const { scale } = printFit({ ...layout, paper: isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER, marginHundredths: page.marginIn * 100 });
+  return `@page{size:${css} landscape;margin:0}body{padding:${page.marginIn}in !important}` + (scale < 1 ? `[data-print-root]{zoom:${scale}}` : "");
+}
+
+/** Card #323: an aggregate column's print width in characters: the widest of its title and
+ *  every day's list ("AB, CD"), so its cells stay on one line (rows never grow). */
+export function aggPrintWidthCh(label: string, lists: readonly (readonly string[])[]): number {
+  return Math.max(3, label.length, ...lists.map((l) => l.join(", ").length));
 }
