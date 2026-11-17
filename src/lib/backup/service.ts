@@ -8,6 +8,7 @@ import { decodeBackup, encodeBackup, BackupFileError, MAX_FILE_BYTES } from "./f
 import { planSafetyPrune } from "./auto";
 import { listBackupFolder, removeFiles, writeAtomic } from "./files";
 import { validatePayload, type BackupPayload } from "./tables";
+import { rotateEpoch } from "@/lib/auth-epoch";
 import { appliedMigrations, buildPayload, readCatalog, replaceAll, type Db, type SecretCodec } from "./engine";
 
 // Card #314: backup and restore, wired to the database. Both hold the write gate EXCLUSIVELY:
@@ -100,6 +101,9 @@ export async function restoreBackup(bytes: Buffer, passphrase: string, mode: "in
         safetyFile = await writeSafetyFile(await encodeBackup(current, passphrase));
       }
     });
+    // Card #319: every session and trusted-device cookie issued before the restore stops
+    // working, whatever sessionVersion the restored logins carry.
+    await rotateEpoch(db);
     await markBackedUp(db, new Date());
     return { counts, safetyFile };
   }, TX));

@@ -7,7 +7,7 @@ import { gated } from "@/lib/write-gate";
 
 async function handlePUT(req: NextRequest) {
   // Exempt from the forced-change gate: this IS the change.
-  const { error, session } = await getSession(undefined, { allowPendingPasswordChange: true });
+  const { error, session } = await getSession(undefined, { allowPendingPasswordChange: true, allowPendingTotpSetup: true }); // card #319: a setup-only session may still change its password
   if (error) return error;
 
   const { currentPassword, newPassword } = await req.json();
@@ -41,7 +41,7 @@ async function handlePUT(req: NextRequest) {
   // so no session token keeps the old flag.
   await prisma.user.update({
     where: { id: user.id },
-    data: { passwordHash, mustChangePassword: false },
+    data: { passwordHash, mustChangePassword: false, sessionVersion: { increment: 1 } }, // card #319: ends every other session
   });
 
   return NextResponse.json({ ok: true });

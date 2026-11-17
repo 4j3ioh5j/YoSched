@@ -3,7 +3,8 @@ import { authConfig } from "@/lib/auth.config";
 import { BASE_PATH } from "@/lib/base-path";
 import { CSP_RESPONSE_HEADER, buildCsp, generateNonce } from "@/lib/csp";
 import { NextResponse } from "next/server";
-import { shouldRedirectToPasswordChange, ACCOUNT_PATH, MUST_CHANGE_QUERY } from "@/lib/must-change-password";
+import { shouldRedirectToPasswordChange, ACCOUNT_PATH } from "@/lib/must-change-password";
+import { accountRedirectQuery } from "@/lib/require-totp";
 
 const { auth } = NextAuth(authConfig);
 
@@ -54,11 +55,13 @@ export default auth((req) => {
     return redirect;
   }
 
-  // Forced password change (pages only; APIs get a JSON 403 from getSession).
-  const mustChange = (req.auth?.user as { mustChangePassword?: boolean } | undefined)?.mustChangePassword === true;
-  if (req.auth && shouldRedirectToPasswordChange(path, mustChange, PUBLIC_PATHS)) {
+  // Forced password change, or (card #319) required two-factor setup: pages only; APIs get a
+  // JSON 403 from getSession.
+  const flags = req.auth?.user as { mustChangePassword?: boolean; mustSetUpTotp?: boolean } | undefined;
+  const query = accountRedirectQuery(flags?.mustChangePassword === true, flags?.mustSetUpTotp === true);
+  if (req.auth && query && shouldRedirectToPasswordChange(path, true, PUBLIC_PATHS)) {
     const accountUrl = new URL(`${BASE_PATH}${ACCOUNT_PATH}`, req.nextUrl.origin);
-    accountUrl.searchParams.set(MUST_CHANGE_QUERY, "1");
+    accountUrl.searchParams.set(query, "1");
     const redirect = NextResponse.redirect(accountUrl);
     if (csp) redirect.headers.set(CSP_RESPONSE_HEADER, csp.policy);
     return redirect;

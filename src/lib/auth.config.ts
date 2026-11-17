@@ -52,6 +52,12 @@ export const authConfig: NextAuthConfig = {
         // Drives the middleware's page redirect to /account. Set at sign-in only; the DB
         // flag (getSession) is authoritative, and the client signs out after the change.
         token.mustChangePassword = (user as { mustChangePassword?: boolean }).mustChangePassword === true;
+        // Card #319: the session's proof and generation (see src/lib/require-totp.ts).
+        const c = user as { secondFactor?: string; sv?: number; ep?: string; mustSetUpTotp?: boolean };
+        token.secondFactor = c.secondFactor;
+        token.sv = c.sv;
+        token.ep = c.ep;
+        token.mustSetUpTotp = c.mustSetUpTotp === true;
       }
       return token;
     },
@@ -64,6 +70,11 @@ export const authConfig: NextAuthConfig = {
         (session.user as { groupLevel?: number }).groupLevel = token.groupLevel as number | undefined;
         (session.user as { permissions?: string[] }).permissions = token.permissions as string[] | undefined;
         (session.user as { mustChangePassword?: boolean }).mustChangePassword = token.mustChangePassword === true;
+        const su = session.user as { secondFactor?: string; sv?: number; ep?: string; mustSetUpTotp?: boolean };
+        su.secondFactor = token.secondFactor as string | undefined;
+        su.sv = token.sv as number | undefined;
+        su.ep = token.ep as string | undefined;
+        su.mustSetUpTotp = token.mustSetUpTotp === true;
       }
       return session;
     },

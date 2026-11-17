@@ -11,7 +11,9 @@ function LoginForm() {
   const callbackUrl = searchParams.get("callbackUrl") || "/";
   const notice = searchParams.get("changed") === "1"
     ? "Password changed. Sign in with your new password."
-    : searchParams.get("relogin") === "1"
+    : searchParams.get("twofactor") === "1"
+      ? "Two-factor sign-in is on. Sign in again with a code from your authenticator app."
+      : searchParams.get("relogin") === "1"
       ? "Please sign in again."
       : "";
   const [error, setError] = useState("");

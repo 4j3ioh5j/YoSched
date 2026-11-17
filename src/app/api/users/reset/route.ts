@@ -39,7 +39,7 @@ async function handlePOST(req: NextRequest) {
 
   const user = await prisma.user.update({
     where: { id },
-    data: { isActive: false, email: null, passwordHash: null },
+    data: { isActive: false, email: null, passwordHash: null, sessionVersion: { increment: 1 } }, // card #319
     select: USER_SELECT,
   });
   return NextResponse.json(toClientUser(user));

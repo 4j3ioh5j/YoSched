@@ -148,6 +148,7 @@ async function handlePUT(req: NextRequest) {
     data.passwordHash = await hash(password, 12);
     // Someone else's password set by an admin must be replaced at their next sign-in.
     data.mustChangePassword = mustChangeAfterAdminSet(id, result.userId);
+    data.sessionVersion = { increment: 1 }; // card #319: the old password's sessions end
   }
 
   // Gate 3 of activation: a login may only be enabled once it has both an email and a

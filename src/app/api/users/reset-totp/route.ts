@@ -21,7 +21,7 @@ async function handlePOST(req: NextRequest) {
 
   await prisma.user.update({
     where: { id: userId },
-    data: { totpSecret: null, totpEnabled: false },
+    data: { totpSecret: null, totpEnabled: false, sessionVersion: { increment: 1 } }, // card #319: ends its sessions and trusted devices
   });
 
   return NextResponse.json({ ok: true });

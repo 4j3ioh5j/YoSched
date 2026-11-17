@@ -7,7 +7,8 @@ const state = vi.hoisted(() => ({
   dbUser: null as null | Record<string, unknown>,
 }));
 vi.mock("../auth", () => ({ auth: async () => state.session }));
-vi.mock("../prisma", () => ({ prisma: { user: { findUnique: async () => state.dbUser } } }));
+vi.mock("../prisma", () => ({ prisma: { user: { findUnique: async () => state.dbUser }, schedulingPreferences: { findFirst: async () => ({ requireTotp: false }) } } }));
+vi.mock("../auth-epoch", () => ({ getEpoch: async () => "E1" })); // card #319
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => {
     throw Object.assign(new Error("NEXT_REDIRECT"), { url });
@@ -19,8 +20,8 @@ import { getSession, getPageSession } from "../auth-guard";
 const group = { permissions: ["users:view", "users:edit", "schedule:view"], level: 100, name: "Admin" };
 
 beforeEach(() => {
-  state.session = { user: { id: "u1" } };
-  state.dbUser = { isActive: true, staffId: null, mustChangePassword: false, group };
+  state.session = { user: { id: "u1", sv: 0, ep: "E1" } as { id: string } };
+  state.dbUser = { isActive: true, staffId: null, mustChangePassword: false, sessionVersion: 0, totpEnabled: false, group };
 });
 
 describe("getSession forced-password-change gate (DB-authoritative)", () => {
@@ -30,7 +31,7 @@ describe("getSession forced-password-change gate (DB-authoritative)", () => {
   });
 
   it("pending in the DB → JSON 403 with mustChangePassword, even when the token says false (stale JWT)", async () => {
-    state.session = { user: { id: "u1", mustChangePassword: false } };
+    state.session = { user: { id: "u1", sv: 0, ep: "E1", mustChangePassword: false } as { id: string } };
     state.dbUser = { ...state.dbUser, mustChangePassword: true };
     const r = await getSession("users:view");
     expect(r.error?.status).toBe(403);
@@ -57,7 +58,7 @@ describe("getSession forced-password-change gate (DB-authoritative)", () => {
   });
 
   it("a token flag alone (DB false) does not block APIs", async () => {
-    state.session = { user: { id: "u1", mustChangePassword: true } };
+    state.session = { user: { id: "u1", sv: 0, ep: "E1", mustChangePassword: true } as { id: string } };
     expect((await getSession("users:view")).error).toBeNull();
   });
 

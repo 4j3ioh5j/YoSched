@@ -7,6 +7,13 @@ import { decrypt } from "./crypto";
 import { isDeviceTrusted } from "./device-trust";
 import { checkRateLimit } from "./rate-limit";
 import { logLogin } from "./login-log";
+import { getEpoch } from "./auth-epoch";
+import type { SecondFactor } from "./require-totp";
+
+async function requireTotpOn(): Promise<boolean> {
+  const prefs = await prisma.schedulingPreferences.findFirst({ select: { requireTotp: true } });
+  return prefs?.requireTotp === true;
+}
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
@@ -39,6 +46,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const rl = checkRateLimit(email.toLowerCase());
         if (!rl.allowed) return null;
 
+        // Card #319: the epoch is read BEFORE the login, so a restore landing in between leaves
+        // the token naming the old epoch (refused), never a new epoch with pre-restore data.
+        const epoch = await getEpoch();
         const user = await prisma.user.findUnique({ where: { email }, include: { group: true } });
         if (!user) return null;
 
@@ -53,9 +63,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }
 
         let totpVerifiedAt: number | undefined;
+        let secondFactor: SecondFactor = "none";
         if (user.totpEnabled && user.totpSecret) {
-          const trusted = await isDeviceTrusted(user.id);
-          if (!trusted) {
+          const trusted = await isDeviceTrusted(user);
+          if (trusted) secondFactor = "trusted";
+          else {
             if (!totpCode) return null;
             const secret = decrypt(user.totpSecret);
             const { verifySync } = await import("otplib");
@@ -67,6 +79,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             }
             await logLogin({ email, userId: user.id, success: true, reason: "totp_verified" });
             totpVerifiedAt = Date.now();
+            secondFactor = "totp";
           }
         }
 
@@ -82,6 +95,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           groupId: user.groupId, groupName: user.group?.name, groupLevel: user.group?.level,
           permissions: user.group?.permissions ?? [],
           mustChangePassword: user.mustChangePassword,
+          // Card #319: what this session proved and its generation. getSession judges them
+          // against the database on every call; mustSetUpTotp only steers page redirects.
+          secondFactor, sv: user.sessionVersion, ep: epoch,
+          mustSetUpTotp: secondFactor === "none" && !user.totpEnabled && (await requireTotpOn()),
         };
       },
     }),

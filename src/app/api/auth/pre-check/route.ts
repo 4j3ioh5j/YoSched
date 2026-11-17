@@ -61,7 +61,7 @@ async function handlePOST(req: NextRequest) {
   }
 
   if (user.totpEnabled) {
-    const trusted = await isDeviceTrusted(user.id);
+    const trusted = await isDeviceTrusted(user);
     if (trusted) {
       await logLogin({ email, userId: user.id, success: true, reason: "trusted_device" });
       return NextResponse.json({ requiresTotp: false });

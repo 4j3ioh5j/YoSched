@@ -1,5 +1,6 @@
 "use client";
 
+import { RequireTotpSwitch } from "./require-totp-switch";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
@@ -483,6 +484,7 @@ export function UsersPage({
           </div>
         )}
 
+        <RequireTotpSwitch canEdit={canEditSettings} />
         <div className="mb-4 px-3 py-2.5 bg-slate-800/40 border border-slate-700/50 rounded flex items-center gap-2 text-xs text-slate-500">
           <span>2FA trusted devices are remembered for</span>
           <input

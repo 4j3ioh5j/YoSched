@@ -33,7 +33,7 @@ async function handlePOST(req: NextRequest) {
   // A fresh password also lifts a lockout from failed attempts on the old one.
   await prisma.user.update({
     where: { id },
-    data: { passwordHash, mustChangePassword: true, failedAttempts: 0, lockedUntil: null },
+    data: { passwordHash, mustChangePassword: true, failedAttempts: 0, lockedUntil: null, sessionVersion: { increment: 1 } }, // card #319
   });
 
   return NextResponse.json(

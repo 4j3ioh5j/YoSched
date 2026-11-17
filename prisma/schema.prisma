@@ -20,6 +20,7 @@ model User {
   failedAttempts Int       @default(0)
   lockedUntil    DateTime?
   mustChangePassword Boolean @default(false) // set when an admin sets/generates the password; cleared when the person sets their own
+  sessionVersion Int       @default(0) // card #319: bumped on 2FA enrol/disable/reset and every password change; a token carrying an older one is refused
   uiPreferences  Json      @default("{}") // per-login UI state (e.g. { usersTableSort: { column, dir } })
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -381,6 +382,7 @@ model SchedulingPreferences {
   equityThresholdMed    Float   @default(0.75)
   equityThresholdHigh   Float   @default(1.5)
   deviceTrustDays       Int     @default(30)
+  requireTotp           Boolean @default(false) // card #319: every login must use two-factor sign-in
   dateFormat            String  @default("MMMM D, YYYY")
   maxLeavePerDay        Int     @default(0) // soft cap on staff off per day; 0 = no cap
   pendingRequestMode    String  @default("full") // auto-scheduler handling of PENDING (unapproved) requests: "off" | "soft" | "full"
@@ -932,6 +934,16 @@ model BackupStatus {
   updatedAt         DateTime  @updatedAt
 
   @@map("backup_status")
+}
+
+// Card #319: the install's auth epoch. Never backed up (EXCLUDED_TABLES); rotated by every
+// restore so tokens and trusted-device cookies issued before it stop working.
+model AuthState {
+  id        String   @id @default("default")
+  epoch     String
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@map("auth_state")
 }
 
 // Card #315: automatic daily backups. Included in every backup, so a restore brings back the

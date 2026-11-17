@@ -5,9 +5,12 @@
 import { BackupFileError } from "./format";
 import { ADMIN_PERMISSION } from "@/lib/user-admin-safety";
 
-/** Never backed up: sign-in history, who's online, the backup bookkeeping itself, and
- *  Prisma's migration ledger (the file records migration names separately). */
-export const EXCLUDED_TABLES = ["login_logs", "user_activity", "backup_status", "_prisma_migrations"] as const;
+/** Never backed up: sign-in history, who's online, the backup bookkeeping itself, Prisma's
+ *  migration ledger (the file records migration names separately) and the install's auth
+ *  epoch (card #319: a restore rotates it instead). A file that holds one of these anyway
+ *  (an older exporter) has that table ignored. */
+export const EXCLUDED_TABLES = ["login_logs", "user_activity", "backup_status", "_prisma_migrations", "auth_state"] as const;
+const IGNORED = new Set<string>(EXCLUDED_TABLES);
 
 export type Column = { name: string; nullable: boolean; hasDefault: boolean };
 export type ForeignKey = { columns: string[]; refTable: string; refColumns: string[] };
@@ -63,11 +66,12 @@ export function validatePayload(raw: unknown, catalog: Catalog, appliedMigration
 
   const byName = new Map(catalog.map((t) => [t.name, t]));
   for (const name of Object.keys(p.tables)) {
+    if (IGNORED.has(name) && !byName.has(name)) continue; // card #319: never restored, never refused
     if (!byName.has(name)) fail(`The backup holds a table this YoSched doesn't have: ${name}`);
     if (!Array.isArray(p.tables[name])) fail(`The backup's ${name} table is damaged`);
     if (p.counts[name] !== p.tables[name].length) fail(`The backup's ${name} table is incomplete`);
   }
-  if (Object.keys(p.counts).some((n) => !(n in p.tables))) fail("The backup is incomplete: a table listed in it is missing");
+  if (Object.keys(p.counts).some((n) => !(n in p.tables) && !IGNORED.has(n))) fail("The backup is incomplete: a table listed in it is missing");
 
   const rows = (t: string) => p.tables[t] ?? [];
   for (const t of catalog) {

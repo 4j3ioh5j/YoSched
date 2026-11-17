@@ -20,12 +20,14 @@ const GROUP_BADGE: Record<string, string> = {
   Staff: "bg-slate-600 text-slate-300",
 };
 
-export function AccountPage({ user, mustChangePassword = false, tokenSaysPending = false }: {
+export function AccountPage({ user, mustChangePassword = false, tokenSaysPending = false, totpRequired = false }: {
   user: User;
   /** An admin set or generated this password; the person must choose their own now. */
   mustChangePassword?: boolean;
   /** The session token still carries the flag although the DB has cleared it. */
   tokenSaysPending?: boolean;
+  /** Card #319: two-factor sign-in is required for every login (it can't be turned off). */
+  totpRequired?: boolean;
 }) {
   const [totpEnabled, setTotpEnabled] = useState(user.totpEnabled);
   const [setupState, setSetupState] = useState<"idle" | "scanning" | "verifying">("idle");
@@ -71,11 +73,12 @@ export function AccountPage({ user, mustChangePassword = false, tokenSaysPending
     setPwForm({ current: "", new_: "", confirm: "" });
     setPwSuccess(true);
     setPwLoading(false);
-    // After a forced change, sign out so the next sign-in gets a token without the flag.
-    if (mustChangePassword || tokenSaysPending) await signOutTo("changed");
+    // Card #319: a password change ends every session of the login, this one included, so
+    // always sign in again with the new password.
+    await signOutTo("changed");
   }
 
-  async function signOutTo(reason: "changed" | "relogin") {
+  async function signOutTo(reason: "changed" | "relogin" | "twofactor") {
     try {
       await signOut({ redirect: false });
     } finally {
@@ -111,12 +114,16 @@ export function AccountPage({ user, mustChangePassword = false, tokenSaysPending
     setSetupState("idle");
     setQrCode("");
     setSecret("");
+    // Card #319: turning two-factor on ends every session of the login, this one included.
+    await signOutTo("twofactor");
   }
 
   async function disable2FA() {
     if (!confirm("Disable two-factor authentication?")) return;
     const res = await fetch("/api/auth/totp", { method: "DELETE" });
-    if (res.ok) setTotpEnabled(false);
+    if (res.ok) { setTotpEnabled(false); await signOutTo("relogin"); return; } // card #319: sessions end
+    const data = await res.json().catch(() => ({}));
+    setError(data.error || "Two-factor authentication couldn't be turned off");
   }
 
   function handleInput(index: number, value: string) {
@@ -156,6 +163,15 @@ export function AccountPage({ user, mustChangePassword = false, tokenSaysPending
             <p className="text-amber-300/80">
               Your password was set by an administrator. Enter it as your current password below, then choose a new one.
               You&#39;ll be asked to sign in again with the new password.
+            </p>
+          </div>
+        )}
+        {totpRequired && !totpEnabled && (
+          <div role="alert" className="rounded border border-amber-700 bg-amber-900/30 p-4 text-sm text-amber-200 space-y-1">
+            <p className="font-medium">Set up two-factor sign-in to continue</p>
+            <p className="text-amber-300/80">
+              Every login must now use a code from an authenticator app when signing in. Set it up below
+              {mustChangePassword ? " after choosing your own password" : ""}. You&#39;ll be asked to sign in again with a code.
             </p>
           </div>
         )}
@@ -256,7 +272,10 @@ export function AccountPage({ user, mustChangePassword = false, tokenSaysPending
             </button>
           )}
 
-          {setupState === "idle" && totpEnabled && (
+          {setupState === "idle" && totpEnabled && totpRequired && (
+            <p className="text-xs text-slate-400">Two-factor sign-in is required for every login, so it can&#39;t be turned off here.</p>
+          )}
+          {setupState === "idle" && totpEnabled && !totpRequired && (
             <button
               onClick={disable2FA}
               className="px-3 py-1.5 text-sm text-red-400 hover:text-red-300 border border-red-800 hover:border-red-700 rounded transition-colors"
@@ -264,6 +283,7 @@ export function AccountPage({ user, mustChangePassword = false, tokenSaysPending
               Disable 2FA
             </button>
           )}
+          {setupState === "idle" && error && <p className="text-sm text-red-400">{error}</p>}
 
           {setupState === "scanning" && (
             <div className="space-y-4">
