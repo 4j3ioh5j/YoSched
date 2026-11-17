@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { describeRequest, describeOffStrategy, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
 import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { filterAndSortRequests, type RequestSort, type RequestSortKey } from "@/lib/request-list";
-import { groupRequestLines, isArchivedDay, type ArchiveLeaveRule, type LinePart, type PartOutcome, type RequestLine, type ShiftFacts } from "@/lib/request-lines";
+import { groupRequestLines, isArchivedDay, mergeStillCells, batchErrorText, outcomeRank, type StillCell, type ArchiveLeaveRule, type LinePart, type PartOutcome, type RequestLine, type ShiftFacts } from "@/lib/request-lines";
 
 type RequestStatus = "pending" | "approved" | "declined" | "withdrawn" | "fulfilled";
 
@@ -234,7 +234,8 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
           endDate: l.endDate,
           request: l.parts.map(describePart).join(" · "),
           // Rank by the status-tab order (pending → … → fulfilled), not alphabetical.
-          statusRank: Math.min(...l.parts.map((p) => STATUS_FILTERS.indexOf(p.status))),
+          // Archive: the Outcome column sorts by outcome (card #333).
+          statusRank: view === "archive" ? outcomeRank(l.parts) : Math.min(...l.parts.map((p) => STATUS_FILTERS.indexOf(p.status))),
           source: [...new Set(reqs.map((r) => r.source))].sort().join(", "),
           receivedAt: received,
           approvedAt: approved,
@@ -247,11 +248,26 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
   }, [lines, view, filter, search, sort, staffName, shiftCode, df, notes, byId]);
 
   // Card #332: one button acts on every request behind a part, one after another.
+  // Card #333: every failure and every still-scheduled day is reported, not just the last one's.
   async function runPart(p: LinePart, status: RequestStatus | "delete") {
-    for (const id of [...p.requestIds]) {
-      if (status === "delete") await remove(id);
-      else await patchStatus(id, status);
+    setError(null);
+    const ids = [...p.requestIds];
+    const failures: string[] = [];
+    const still: StillCell[][] = [];
+    let staffId = "";
+    for (const id of ids) {
+      if (status === "delete") {
+        const err = await remove(id);
+        if (err) failures.push(err);
+      } else {
+        const r = await patchStatus(id, status);
+        if (r.error) failures.push(r.error);
+        if (r.still.length) { still.push(r.still); staffId = r.staffId; }
+      }
     }
+    setError(batchErrorText(failures, ids.length));
+    const cells = mergeStillCells(still);
+    if (cells.length) setStillPrompt({ staffId, cells });
   }
 
   // A part's requests that also cover days outside this line (the action acts on the whole request).
@@ -298,9 +314,9 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
   function pickMonth(m: string) {
     router.push(`/requests?archive=${encodeURIComponent(m)}`);
   }
-  async function patchStatus(id: string, status: RequestStatus) {
+  // Returns what happened instead of showing it: a grouped action reports all its requests together.
+  async function patchStatus(id: string, status: RequestStatus): Promise<{ error: string | null; still: StillCell[]; staffId: string }> {
     setBusyId(id);
-    setError(null);
     // Per-row rollback: a part action runs several requests in a row, so a failure must undo only its own row.
     const prevRow = requestsRef.current.find((r) => r.id === id);
     const rollback = () => { if (prevRow) setRequests((rs) => rs.map((r) => (r.id === id ? prevRow : r))); };
@@ -320,27 +336,26 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
       });
       if (!res.ok) {
         rollback();
-        setError("Failed to update request.");
-      } else {
-        const updated = await res.json();
-        if (updated.flagged) {
-          // Card #67: not placed — the request stays pending, marked "needs resolving".
-          const why: string = typeof updated.flaggedReason === "string" ? updated.flaggedReason : "the day is full";
-          setRequests((rs) => rs.map((r) => (r.id === id ? { ...r, status: "pending", approvedAt: null, approverLabel: null, flaggedReason: why } : r)));
-          setError(`Not approved — ${why}.`);
-          return;
-        }
-        setRequests((rs) => rs.map((r) => (r.id === id ? { ...r, status: updated.status, approvedAt: updated.approvedAt, flaggedReason: updated.flaggedReason ?? null } : r)));
-        // Unapproved/reopened but a non-request shift still sits on the cell → it
-        // will re-approve unless that shift is cleared. Offer the one-click fix.
-        const still = updated.stillScheduled as { date: string; shiftTypeId: string; code: string }[] | undefined;
-        if (status === "pending" && still && still.length > 0) {
-          setStillPrompt({ staffId: prevRow?.staffId ?? "", cells: still.map((s) => ({ date: s.date, code: s.code })) });
-        }
+        return { error: "Failed to update request.", still: [], staffId: "" };
       }
+      const updated = await res.json();
+      if (updated.flagged) {
+        // Card #67: not placed — the request stays pending, marked "needs resolving".
+        const why: string = typeof updated.flaggedReason === "string" ? updated.flaggedReason : "the day is full";
+        setRequests((rs) => rs.map((r) => (r.id === id ? { ...r, status: "pending", approvedAt: null, approverLabel: null, flaggedReason: why } : r)));
+        return { error: `Not approved — ${why}.`, still: [], staffId: "" };
+      }
+      setRequests((rs) => rs.map((r) => (r.id === id ? { ...r, status: updated.status, approvedAt: updated.approvedAt, flaggedReason: updated.flaggedReason ?? null } : r)));
+      // Unapproved/reopened but a non-request shift still sits on the cell → it
+      // will re-approve unless that shift is cleared. Offer the one-click fix.
+      const still = updated.stillScheduled as { date: string; shiftTypeId: string; code: string }[] | undefined;
+      if (status === "pending" && still && still.length > 0) {
+        return { error: null, still: still.map((x) => ({ date: x.date, code: x.code })), staffId: prevRow?.staffId ?? "" };
+      }
+      return { error: null, still: [], staffId: "" };
     } catch {
       rollback();
-      setError("Failed to update request.");
+      return { error: "Failed to update request.", still: [], staffId: "" };
     } finally {
       setBusyId(null);
     }
@@ -369,9 +384,9 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
     }
   }
 
-  async function remove(id: string) {
+  // Returns the failure message (null on success); the grouped action reports it.
+  async function remove(id: string): Promise<string | null> {
     setBusyId(id);
-    setError(null);
     const prevRow = requestsRef.current.find((r) => r.id === id);
     const prevIndex = requestsRef.current.findIndex((r) => r.id === id);
     const rollback = () => {
@@ -383,11 +398,12 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
       const res = await fetch(`/api/requests/${id}`, { method: "DELETE" });
       if (!res.ok) {
         rollback();
-        setError("Failed to delete request.");
+        return "Failed to delete request.";
       }
+      return null;
     } catch {
       rollback();
-      setError("Failed to delete request.");
+      return "Failed to delete request.";
     } finally {
       setBusyId(null);
     }

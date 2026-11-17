@@ -265,3 +265,29 @@ export function groupRequestLines(
   }
   return lines;
 }
+
+// ── Grouped actions (card #333) ─────────────────────────────────────────────────────────
+
+export type StillCell = { date: string; code: string };
+
+/** The still-scheduled days reported by each request a grouped Unapprove/Reopen ran, once
+ *  each and in date order, so "Clear shifts" covers every request, not just the last. */
+export function mergeStillCells(perRequest: StillCell[][]): StillCell[] {
+  const byDate = new Map<string, StillCell>();
+  for (const cells of perRequest) for (const c of cells) if (!byDate.has(c.date)) byDate.set(c.date, c);
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** One message for a grouped action: null when all succeeded; never hidden by a later success. */
+export function batchErrorText(failures: string[], total: number): string | null {
+  if (failures.length === 0) return null;
+  const uniq = [...new Set(failures)];
+  if (total <= 1) return uniq.join(" ");
+  return `${failures.length} of ${total} requests were not changed: ${uniq.join(" ")}`;
+}
+
+/** Archive sort key: not met first, then met, then withdrawn. */
+export function outcomeRank(parts: { outcome?: PartOutcome }[]): number {
+  const rank = (o?: PartOutcome) => (o === "unmet" ? 0 : o === "met" ? 1 : o === "withdrawn" ? 2 : 3);
+  return Math.min(...parts.map((p) => rank(p.outcome)));
+}
