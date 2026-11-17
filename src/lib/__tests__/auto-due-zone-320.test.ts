@@ -52,6 +52,7 @@ describe("the job reads the zone with the settings, after taking the gate", () =
       write: async () => { calls.push("write"); },
       recordSuccess: async () => {},
       recordFailure: async () => {},
+      recordBusy: async () => {},
       list: async () => [],
       remove: async () => {},
       cleanPartials: async () => {},

@@ -1,5 +1,6 @@
 import { autoDue, autoFileName, planPrune, type AutoSettings, type AutoStatus } from "./auto";
 import { BackupFileError, type PublicKeyInfo } from "./format";
+import { GateBusyError, GateDrainTimeoutError } from "../write-gate";
 
 // Card #315: the automatic backup job and its scheduler. Pure over injected dependencies
 // (src/lib/backup/auto-service.ts wires them to the database and the backup folder).
@@ -22,11 +23,16 @@ export type JobDeps = {
   write(name: string, bytes: Buffer): Promise<void>;
   recordSuccess(at: Date): Promise<void>;
   recordFailure(at: Date, error: string): Promise<void>;
+  /** Card #316: a try the busy gate kept out. Records the attempt and the error (outside the job's gate). */
+  recordBusy(at: Date, error: string): Promise<void>;
   list(): Promise<string[]>;
   remove(names: string[]): Promise<void>;
   cleanPartials(): Promise<void>;
   log(msg: string): void;
 };
+/** Card #316: shown in Settings when busy saves kept the automatic backup from starting. */
+export const BUSY_REASON = "YoSched was too busy with other saves to start it. It will try again in an hour.";
+
 export type RunResult = "ok" | "not-due" | "failed" | "busy";
 
 function reason(e: unknown): string {
@@ -88,7 +94,14 @@ export async function autoTick(deps: JobDeps): Promise<RunResult> {
       if (!autoDue(deps.now(), settings, status, zone)) return "not-due";
       return await runAutoBackup(deps);
     } catch (e) {
-      // The gate was busy or the database unreachable: nothing could be recorded. The next tick tries again.
+      if (e instanceof GateBusyError || e instanceof GateDrainTimeoutError) {
+        // Card #316: busy saves kept the backup out. Record it like any failure (shown in Settings,
+        // the usual hour before the next try). If even that can't be written, the log keeps it.
+        deps.log(`[backup] automatic backup could not start: ${reason(e)}`);
+        try { await deps.recordBusy(deps.now(), BUSY_REASON); } catch (e2) { deps.log(`[backup] could not record the busy try: ${reason(e2)}`); }
+        return "failed";
+      }
+      // The database unreachable or similar: nothing could be recorded. The next tick tries again.
       deps.log(`[backup] automatic backup check failed: ${reason(e)}`);
       return "failed";
     }

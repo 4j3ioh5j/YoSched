@@ -36,6 +36,7 @@ function setup(over: Partial<JobDeps> = {}) {
     write: async (name) => { w.events.push(`write:${name}`); w.files.push(name); },
     recordSuccess: async (at) => { w.events.push("success"); w.status.lastAutoSuccessAt = at; w.status.lastAutoError = null; },
     recordFailure: async (at, err) => { w.events.push(`failure:${err}`); w.status.lastAutoError = err; },
+    recordBusy: async (at, err) => { w.events.push(`busy:${err}`); w.status.lastAutoAttemptAt = at; w.status.lastAutoError = err; },
     list: async () => [...w.files],
     remove: async (names) => { w.events.push(`remove:${names.length}`); w.files = w.files.filter((f) => !names.includes(f)); },
     cleanPartials: async () => { w.events.push("clean"); },

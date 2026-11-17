@@ -100,6 +100,7 @@ export function jobDeps(): JobDeps {
     write: async (name, bytes) => { await writeAtomic(dir, name, bytes); },
     recordSuccess: (at) => setStatus({ lastAutoSuccessAt: at, lastAutoError: null, lastBackupAt: at }),
     recordFailure: (_at, error) => setStatus({ lastAutoError: error.slice(0, 500) }),
+    recordBusy: (at, why) => writeGate.shared(() => setStatus({ lastAutoAttemptAt: at, lastAutoError: why.slice(0, 500) })),
     list: () => listBackupFolder(dir),
     remove: (names) => removeFiles(dir, names),
     cleanPartials: () => cleanPartials(dir),
