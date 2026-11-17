@@ -1,5 +1,6 @@
 import { getSession } from "@/lib/auth-guard";
 import { MANUAL_HTML } from "./manual-html";
+import { gated } from "@/lib/write-gate";
 
 // Serve the user manual as a standalone HTML page, gated on the manual:view
 // permission (granted to level-1+ groups by default). The HTML is generated from
@@ -15,7 +16,7 @@ const DENIED =
   "display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0\">" +
   "<p>You don’t have access to the user manual. Ask an administrator.</p>";
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("manual:view");
   if (error) {
     // The link is only shown to permitted users, so this is the shared-URL edge
@@ -33,3 +34,5 @@ export async function GET() {
     },
   });
 }
+
+export const GET = gated(handleGET);

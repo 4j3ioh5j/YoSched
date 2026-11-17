@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { validateHolidayRules } from "@/lib/holiday-rules";
 import { loadHolidayRules, holidayRulesVersion, HOLIDAY_RULES_LOCK_KEY } from "@/lib/holiday-rules-db";
+import { gated } from "@/lib/write-gate";
 
 // Card #210: holiday rules — user-named, editable settings data. GET returns the rules and their
 // version; PUT replaces the whole list, but only if nobody saved since (baseVersion), else 409.
@@ -10,7 +11,7 @@ import { loadHolidayRules, holidayRulesVersion, HOLIDAY_RULES_LOCK_KEY } from "@
 
 const STALE = { error: "Holiday rules were changed in another tab or by someone else — reload the page and try again.", reason: "stale" } as const;
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
   const rules = await loadHolidayRules(prisma);
@@ -19,7 +20,7 @@ export async function GET() {
 
 class Stale extends Error {}
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   let body: { baseVersion?: unknown; rules?: unknown };
@@ -74,3 +75,6 @@ export async function PUT(req: NextRequest) {
     throw e;
   }
 }
+
+export const GET = gated(handleGET);
+export const PUT = gated(handlePUT);

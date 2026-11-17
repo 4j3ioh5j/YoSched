@@ -785,6 +785,36 @@ staff):
   (Admin, Super User, Scheduler, Staff) have locked names; system groups can't be
   deleted, and a group with members can't be deleted.
 
+### 10.12 Backup and Restore
+
+Shown only to logins whose group has **Back Up and Restore All Data** (the Admin group by
+default).
+
+- **Download backup** — enter a passphrase of at least 12 characters, twice. You get one
+  file holding all of YoSched's data and settings: staff, shift types, every setting, the
+  schedule, saved versions, requests, holidays, pay periods, logins (with their two-factor
+  keys) and groups. Sign-in history and who's-online are not included. The file is encrypted
+  with the passphrase. **Without the passphrase the file can't be restored, and nobody can
+  recover a forgotten one.** Keep the file away from the YoSched server, and keep the
+  passphrase separately.
+- **Last backup / reminder** — the section shows when the last backup was made. After
+  *Remind me after N days* without one (7 by default; 0 = never), a **Backup due** note
+  appears in the top bar for the people who can back up.
+- **Restore from a backup** — choose the file, enter its passphrase and press **Check file**.
+  YoSched checks the whole file first: the passphrase, that nothing is missing or damaged,
+  and that it fits this version of YoSched. Nothing changes during the check. The check shows
+  the backup's date and what it holds. Type **REPLACE** and press **Restore** to replace
+  *everything* with the file's contents. Before replacing anything, YoSched saves what is
+  there now on the server, encrypted with the same passphrase; if that save fails, nothing is
+  restored. After a restore everyone signs in with the logins from the backup.
+- **A fresh install** — on a YoSched with no accounts at all, the sign-in page offers
+  **Restore from a backup file**. It also asks for a one-time setup code, which YoSched writes
+  on the server. Whoever does the reinstall gives it to you, so that nobody else who reaches
+  the site first can load their own file.
+- A backup made by a newer YoSched can't be restored into an older one: update YoSched first.
+- While a backup or restore runs (a few seconds), other saves wait for it. A save that waits
+  more than two minutes is refused with "busy — try again in a minute".
+
 ---
 
 ## 11. User Management
@@ -940,6 +970,7 @@ Confirmation receipts on the **My Requests** page print the same way.
 | View Settings | Settings | Open Settings (read-only) |
 | Edit Settings | Settings | Change settings |
 | Edit Auto-Generation Priority | Settings | Reorder auto-gen priority |
+| Back Up and Restore All Data | Settings | Download a backup of everything; restore one (Admin group by default) |
 | View Users | Users | See the users list |
 | Edit Users | Users | Create/edit/disable logins |
 | View Groups | Groups | See groups |

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { validateFactorOrder } from "@/lib/autogen-factor-order";
 import { validateHoursPolicies, HOURS_POLICY_KEYS } from "@/lib/autogen-hours-policy";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Auto-generation objective priority (#252, Slice 1). The negotiable factors are a
 // fixed catalog seeded by migration; Slice 1 only lets an admin REORDER them (no
@@ -11,14 +12,14 @@ import { NextRequest, NextResponse } from "next/server";
 // prohibited | discouraged | allowed), the pay-period hours policy on those two rows.
 // An order-only body leaves the policies untouched.
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
   const factors = await prisma.autoGenFactor.findMany({ orderBy: { sortOrder: "asc" } });
   return NextResponse.json(factors);
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   // Admin-level carveout (#252 follow-up): changing the priority order needs its own
   // permission, not the general settings:edit — a stray reorder shifts dept-wide scheduling.
   const { error } = await getSession("settings:autogen-priority");
@@ -60,3 +61,6 @@ export async function PUT(req: NextRequest) {
   const updated = await prisma.autoGenFactor.findMany({ orderBy: { sortOrder: "asc" } });
   return NextResponse.json(updated);
 }
+
+export const GET = gated(handleGET);
+export const PUT = gated(handlePUT);

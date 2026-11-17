@@ -5,6 +5,7 @@ import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attri
 import { dayCapViolations } from "@/lib/max-per-day";
 import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, refusalResponse, isTxTimeout, busyResponse } from "@/lib/day-cap-db";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 type BulkItem = { staffId: string; date: string };
 type AppliedRow = { id: string; staffId: string; date: string; shiftTypeId: string; isLocked: boolean; code: string; color: string; source: string; autoMonth: string | null; autoShiftTypeId: string | null; updatedByName: string | null; updatedAt: string };
@@ -13,7 +14,7 @@ type SkippedRow = { staffId: string; date: string; reason: string };
 const asUtcDate = (date: string) => new Date(date + "T00:00:00Z");
 const dateKey = (d: Date) => d.toISOString().split("T")[0];
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
   const { cells, shiftTypeId } = await req.json() as {
@@ -106,7 +107,7 @@ export async function PUT(req: NextRequest) {
   return NextResponse.json({ applied: outcome.results, skipped: outcome.skipped, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
 
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
   const { cells } = await req.json() as { cells: BulkItem[] };
@@ -142,3 +143,6 @@ export async function DELETE(req: NextRequest) {
 
   return NextResponse.json({ ok: true, cleared: clearedCells.length, skipped, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
+
+export const PUT = gated(handlePUT);
+export const DELETE = gated(handleDELETE);

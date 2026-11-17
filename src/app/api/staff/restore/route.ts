@@ -4,8 +4,9 @@ import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { restoreStaff, RestoreRefused, isRestoreConflict, REMOVAL_TX } from "@/lib/staff-removal";
 import { STAFF_PAGE_INCLUDE, toClientStaff } from "@/lib/staff-client-row";
+import { gated } from "@/lib/write-gate";
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error } = await getSession("staff:edit");
   if (error) return error;
   const { removalId } = await req.json().catch(() => ({}));
@@ -24,3 +25,5 @@ export async function POST(req: NextRequest) {
     throw e;
   }
 }
+
+export const POST = gated(handlePOST);

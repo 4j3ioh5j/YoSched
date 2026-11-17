@@ -1,12 +1,13 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Card #177: soft "avoid" follow rules — "avoid shift B the day after shift A". The
 // scheduler steers away from these pairs but still uses one when nothing better fills
 // the day. Kept apart from the hard allow/block rules (shift-follow-rules).
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
   const rows = await prisma.shiftFollowAvoid.findMany({
@@ -17,7 +18,7 @@ export async function GET() {
 }
 
 // Replace the avoid list of ONE source shift.
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
 
@@ -57,3 +58,6 @@ export async function PUT(req: NextRequest) {
   });
   return NextResponse.json(rows);
 }
+
+export const GET = gated(handleGET);
+export const PUT = gated(handlePUT);

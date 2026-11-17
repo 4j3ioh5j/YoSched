@@ -16,8 +16,9 @@ import { validateStaffOrderCriteria } from "@/lib/staff-order";
 import { exportFileNameError } from "@/lib/export-filename";
 import { AUTO_VERSION_MODES, type AutoVersionMode } from "@/lib/auto-version";
 import { isActivationGroupDefault, isActivationNewHireDefault, ACTIVATION_GROUP_DEFAULTS, ACTIVATION_NEW_HIRE_DEFAULTS } from "@/lib/shift-activation";
+import { gated } from "@/lib/write-gate";
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
   let prefs = await prisma.schedulingPreferences.findFirst();
@@ -29,7 +30,7 @@ export async function GET() {
   return NextResponse.json(prefs);
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
@@ -253,3 +254,6 @@ export async function PUT(req: NextRequest) {
 
   return NextResponse.json(prefs);
 }
+
+export const GET = gated(handleGET);
+export const PUT = gated(handlePUT);

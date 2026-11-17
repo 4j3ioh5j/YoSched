@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getPayPeriods } from "@/lib/pay-periods-server";
 import { isValidDateString, isValidPeriodLength, MIN_PERIOD_LENGTH_DAYS, MAX_PERIOD_LENGTH_DAYS } from "@/lib/pay-periods";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 function serialize(periods: { id: string; startDate: Date; endDate: Date; targetHours: number }[]) {
   return periods.map((p) => ({
@@ -13,7 +14,7 @@ function serialize(periods: { id: string; startDate: Date; endDate: Date; target
   }));
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { targetHours } = await req.json();
@@ -33,7 +34,7 @@ export async function PUT(req: NextRequest) {
 // Sets the pay-period ladder: an anchor date (any real period start) + period
 // length in days. Periods themselves are derived — regenerated here and
 // auto-extended on read as years roll over, so there is nothing to count.
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { anchorDate, periodLengthDays } = await req.json();
@@ -58,3 +59,6 @@ export async function POST(req: NextRequest) {
   // (preserving the existing targetHours).
   return NextResponse.json(serialize(await getPayPeriods()));
 }
+
+export const PUT = gated(handlePUT);
+export const POST = gated(handlePOST);

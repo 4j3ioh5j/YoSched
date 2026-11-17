@@ -3,8 +3,9 @@ import { getSession } from "@/lib/auth-guard";
 import { validatePassword } from "@/lib/password";
 import { NextRequest, NextResponse } from "next/server";
 import { compare, hash } from "bcryptjs";
+import { gated } from "@/lib/write-gate";
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   // Exempt from the forced-change gate: this IS the change.
   const { error, session } = await getSession(undefined, { allowPendingPasswordChange: true });
   if (error) return error;
@@ -45,3 +46,5 @@ export async function PUT(req: NextRequest) {
 
   return NextResponse.json({ ok: true });
 }
+
+export const PUT = gated(handlePUT);

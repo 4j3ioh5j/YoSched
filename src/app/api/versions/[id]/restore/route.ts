@@ -4,6 +4,7 @@ import { syncRequestApprovalsAfterCommit } from "@/lib/request-sync";
 import { lockDayCaps, dateKeysBetween, DAY_CAP_TX, isTxTimeout, busyResponse } from "@/lib/day-cap-db";
 import { NextRequest, NextResponse } from "next/server";
 import { type AssignmentSnapshot, monthDateRange, hashSnapshot, nextVersionNumber, restoreAffectedCells } from "@/lib/versions";
+import { gated } from "@/lib/write-gate";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -22,7 +23,7 @@ const LIST_SELECT = {
 // POST /api/versions/[id]/restore — overwrite the version's calendar month with
 // its saved snapshot. The current month state is auto-backed-up to a new version
 // first so nothing is ever lost, then the target version is marked current.
-export async function POST(_req: NextRequest, { params }: Ctx) {
+async function handlePOST(_req: NextRequest, { params }: Ctx) {
   const { error, userId } = await getSession("schedule:edit");
   if (error) return error;
   const { id } = await params;
@@ -123,3 +124,5 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
     );
   }
 }
+
+export const POST = gated(handlePOST);

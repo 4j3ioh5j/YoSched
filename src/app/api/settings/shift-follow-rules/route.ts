@@ -1,8 +1,9 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
   const rules = await prisma.shiftFollowRule.findMany({
@@ -12,7 +13,7 @@ export async function GET() {
   return NextResponse.json(rules);
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { sourceShiftId, mode, rules } = await req.json() as {
@@ -41,3 +42,6 @@ export async function PUT(req: NextRequest) {
 
   return NextResponse.json(result);
 }
+
+export const GET = gated(handleGET);
+export const PUT = gated(handlePUT);

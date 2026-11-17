@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { monthDateRange, hashSnapshot, nextVersionNumber } from "@/lib/versions";
 import { snapshotMonth, VERSION_LIST_SELECT } from "@/lib/versions-db";
 import { lockDayCaps, dateKeysBetween, DAY_CAP_TX, isTxTimeout, busyResponse } from "@/lib/day-cap-db";
+import { gated } from "@/lib/write-gate";
 
 const LIST_SELECT = VERSION_LIST_SELECT;
 
@@ -16,7 +17,7 @@ function parseYearMonth(req: NextRequest): { year: number; month: number } | nul
 }
 
 // GET /api/versions?year=&month= — list versions for a calendar month, newest first.
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const { error } = await getSession("schedule:view");
   if (error) return error;
 
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
 
 // POST /api/versions { year, month, comment? } — snapshot the current month as a
 // new version and mark it current.
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error } = await getSession("schedule:edit");
   if (error) return error;
 
@@ -71,3 +72,6 @@ export async function POST(req: NextRequest) {
     throw e;
   }
 }
+
+export const GET = gated(handleGET);
+export const POST = gated(handlePOST);

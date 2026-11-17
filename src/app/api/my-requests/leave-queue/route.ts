@@ -2,11 +2,12 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { summarizeLeaveQueue, isValidDateStr, type LeaveQueueRequest } from "@/lib/schedule-requests";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Aggregate leave-queue feedback for the staff composing a request: how many
 // OTHERS are already away over [start,end] and where they'd stand. Response is
 // COUNTS ONLY — never the other staff' identities.
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const result = await getSession("requests:self");
   if (result.error) return result.error;
   if (!result.staffId) {
@@ -74,3 +75,5 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ summary });
 }
+
+export const GET = gated(handleGET);

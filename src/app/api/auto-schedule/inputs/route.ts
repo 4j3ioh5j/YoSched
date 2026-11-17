@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-guard";
 import { buildAutoScheduleInput } from "@/lib/build-auto-schedule-input";
 import { owningMonthKey, isValidDateRange } from "@/lib/auto-clear";
+import { gated } from "@/lib/write-gate";
 
 // Serves the engine input bundle (same data the POST generator runs on) so Live
 // mode can run client-side what-if re-solves without a round-trip per edit (#231).
@@ -11,7 +12,7 @@ import { owningMonthKey, isValidDateRange } from "@/lib/auto-clear";
 // to schedule:auto: you can only obtain the raw request data if you're already
 // entitled to view requests. The client engine still gets the full request set it
 // needs for a correct re-solve.
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const { error } = await getSession(["schedule:auto", "requests:view"]);
   if (error) return error;
 
@@ -26,3 +27,5 @@ export async function GET(req: NextRequest) {
   const input = await buildAutoScheduleInput(startDate, endDate, { runMonth });
   return NextResponse.json(input);
 }
+
+export const GET = gated(handleGET);

@@ -1,0 +1,163 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { CONFIRM_WORD } from "@/lib/backup/reminder";
+
+// Card #314: Settings › Backup and Restore. Shown only to logins holding
+// "Back Up and Restore All Data".
+
+const MIN_PASS = 12;
+const BTN = "px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded text-white";
+const BTN_DANGER = "px-3 py-1.5 text-xs bg-red-700 hover:bg-red-600 disabled:opacity-40 rounded text-white";
+const INPUT = "bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 disabled:opacity-50";
+
+type Status = { lastBackupAt: string | null; reminderDays: number; due: boolean };
+type Summary = { createdAt: string; appVersion: string; counts: Record<string, number> };
+
+function when(iso: string | null): string {
+  if (!iso) return "never";
+  const d = new Date(iso);
+  const days = Math.floor((Date.now() - d.getTime()) / 86_400_000);
+  const stamp = d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  return `${stamp} (${days === 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`})`;
+}
+
+async function errorOf(res: Response): Promise<string> {
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  return body?.error ?? `The server answered ${res.status}`;
+}
+
+export function BackupPanel({ onError }: { onError: (e: string | undefined) => void }) {
+  const [status, setStatus] = useState<Status | null>(null);
+  const [days, setDays] = useState("");
+  const [pass, setPass] = useState("");
+  const [pass2, setPass2] = useState("");
+  const [busy, setBusy] = useState<null | "download" | "check" | "restore" | "days">(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [rpass, setRpass] = useState("");
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [confirm, setConfirm] = useState("");
+
+  const load = async () => {
+    const res = await fetch("/api/backup/status", { cache: "no-store" });
+    if (!res.ok) { onError(await errorOf(res)); return; }
+    const s = (await res.json()) as Status & { allowed: boolean };
+    if (s.allowed) { setStatus(s); setDays(String(s.reminderDays)); }
+  };
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/backup/status", { cache: "no-store" })
+      .then(async (res) => (res.ok ? ((await res.json()) as Status & { allowed: boolean }) : Promise.reject(await errorOf(res))))
+      .then((s) => { if (alive && s.allowed) { setStatus(s); setDays(String(s.reminderDays)); } })
+      .catch((e: unknown) => { if (alive) onError(typeof e === "string" ? e : "Could not reach the server"); });
+    return () => { alive = false; };
+  }, [onError]);
+
+  const fail = (e: string) => { onError(e); setNote(null); };
+
+  async function download() {
+    setBusy("download"); onError(undefined); setNote(null);
+    try {
+      const res = await fetch("/api/backup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ passphrase: pass }) });
+      if (!res.ok) return fail(await errorOf(res));
+      const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "YoSched backup.yosched-backup";
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url; a.download = name; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setPass(""); setPass2("");
+      setNote(`Saved as "${name}". Keep it somewhere safe, away from this server, and keep the passphrase separately.`);
+      await load();
+    } finally { setBusy(null); }
+  }
+
+  function form(): FormData {
+    const fd = new FormData();
+    if (file) fd.set("file", file);
+    fd.set("passphrase", rpass);
+    return fd;
+  }
+
+  async function check() {
+    setBusy("check"); onError(undefined); setNote(null); setSummary(null);
+    try {
+      const res = await fetch("/api/backup/check", { method: "POST", body: form() });
+      if (!res.ok) return fail(await errorOf(res));
+      setSummary((await res.json()) as Summary);
+    } finally { setBusy(null); }
+  }
+
+  async function restore() {
+    setBusy("restore"); onError(undefined); setNote(null);
+    try {
+      const fd = form();
+      fd.set("confirm", confirm);
+      const res = await fetch("/api/backup/restore", { method: "POST", body: fd });
+      if (!res.ok) return fail(await errorOf(res));
+      const out = (await res.json()) as { safetyFile: string | null };
+      setNote(`Restored. The data it replaced was saved on the server as "${out.safetyFile}". Reloading…`);
+      setTimeout(() => window.location.reload(), 2500);
+    } finally { setBusy(null); }
+  }
+
+  async function saveDays() {
+    setBusy("days"); onError(undefined);
+    try {
+      const res = await fetch("/api/backup/status", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ reminderDays: Number(days) }) });
+      if (!res.ok) return fail(await errorOf(res));
+      await load();
+    } finally { setBusy(null); }
+  }
+
+  if (!status) return <p className="text-sm text-slate-500">Loading…</p>;
+  const passOk = pass.length >= MIN_PASS && pass === pass2;
+  const total = summary ? Object.values(summary.counts).reduce((a, b) => a + b, 0) : 0;
+
+  return (
+    <div className="space-y-6 text-sm text-slate-300">
+      <div>
+        <p>Last backup: <span className={status.due ? "text-amber-400" : "text-slate-200"}>{when(status.lastBackupAt)}</span></p>
+        <label className="mt-2 flex items-center gap-2">
+          Remind me after
+          <input className={`${INPUT} w-16`} inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value)} disabled={busy !== null} />
+          days without a backup (0 = never)
+          <button type="button" className={BTN} disabled={busy !== null || days === String(status.reminderDays)} onClick={saveDays}>Save</button>
+        </label>
+      </div>
+
+      <div className="space-y-2">
+        <h4 className="font-medium text-slate-200">Download a backup</h4>
+        <p className="text-xs text-slate-500">Choose a passphrase of at least {MIN_PASS} characters. Without it the file can&apos;t be restored, and nobody, including YoSched, can recover a forgotten one.</p>
+        <div className="flex flex-wrap gap-2">
+          <input type="password" autoComplete="new-password" placeholder="Passphrase" className={INPUT} value={pass} onChange={(e) => setPass(e.target.value)} disabled={busy !== null} />
+          <input type="password" autoComplete="new-password" placeholder="Passphrase again" className={INPUT} value={pass2} onChange={(e) => setPass2(e.target.value)} disabled={busy !== null} />
+          <button type="button" className={BTN} disabled={busy !== null || !passOk} onClick={download}>{busy === "download" ? "Preparing…" : "Download backup"}</button>
+        </div>
+        {pass2 && pass !== pass2 && <p className="text-xs text-amber-400">The two passphrases differ.</p>}
+      </div>
+
+      <div className="space-y-2">
+        <h4 className="font-medium text-slate-200">Restore from a backup</h4>
+        <p className="text-xs text-slate-500">This replaces ALL of YoSched&apos;s data and settings, including logins, with the file&apos;s contents. What is here now is saved on the server first.</p>
+        <div className="flex flex-wrap gap-2 items-center">
+          <input type="file" accept=".yosched-backup" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setSummary(null); }} disabled={busy !== null} />
+          <input type="password" autoComplete="off" placeholder="The file's passphrase" className={INPUT} value={rpass} onChange={(e) => { setRpass(e.target.value); setSummary(null); }} disabled={busy !== null} />
+          <button type="button" className={BTN} disabled={busy !== null || !file || !rpass} onClick={check}>{busy === "check" ? "Checking…" : "Check file"}</button>
+        </div>
+        {summary && (
+          <div className="rounded border border-slate-700 p-3 space-y-2">
+            <p>Backup made {when(summary.createdAt)}{summary.appVersion ? ` by YoSched ${summary.appVersion}` : ""}: {total.toLocaleString()} records, including {summary.counts.staff ?? 0} staff, {summary.counts.users ?? 0} logins and {(summary.counts.assignments ?? 0).toLocaleString()} schedule cells.</p>
+            <label className="flex flex-wrap items-center gap-2">
+              Type {CONFIRM_WORD} to replace everything:
+              <input className={`${INPUT} w-28`} value={confirm} onChange={(e) => setConfirm(e.target.value)} disabled={busy !== null} />
+              <button type="button" className={BTN_DANGER} disabled={busy !== null || confirm !== CONFIRM_WORD} onClick={restore}>{busy === "restore" ? "Restoring…" : "Restore"}</button>
+            </label>
+          </div>
+        )}
+      </div>
+
+      {note && <p className="text-xs text-emerald-400">{note}</p>}
+    </div>
+  );
+}

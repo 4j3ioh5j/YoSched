@@ -8,6 +8,7 @@ import { lockEligibility, eligibilityDiff, EligibilityStale } from "@/lib/eligib
 import { RULE_KEYS, ruleListVersion, ruleSelect, ruleVersionsOf, lockStaffRules } from "@/lib/staff-rule-versions";
 import type { RuleKey, RuleVersions } from "@/lib/staff-rule-patch";
 import type { Prisma } from "@/generated/prisma/client";
+import { gated } from "@/lib/write-gate";
 
 class HoursError extends Error {}
 
@@ -142,7 +143,7 @@ function ruleRows(k: RuleKey, list: Row[], stored: Row[]): Row[] {
   }
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("staff:edit");
   if (error) return error;
   const { id, eligibleShiftTypeIds, eligibleShiftTypeIdsBase, ruleBases, availabilityRules, shiftEligibilityRules, shiftMinimumTargets, standingCommitments, shiftOverrides, ...data } = await req.json();
@@ -262,7 +263,7 @@ export async function PUT(req: NextRequest) {
   return NextResponse.json({ ...result, ruleVersions, ...(applied ? { eligibleShiftTypeIdsApplied: applied } : {}), ...(deactivationId ? { deactivationId } : {}) });
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error } = await getSession("staff:edit");
   if (error) return error;
   const data = await req.json();
@@ -346,7 +347,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(result ? { ...result, ruleVersions: ruleVersionsOf(result) } : result);
 }
 
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const { error } = await getSession("staff:edit");
   if (error) return error;
   const { id } = await req.json();
@@ -360,3 +361,7 @@ export async function DELETE(req: NextRequest) {
   if (result.kind === "deactivated") return NextResponse.json({ ok: true, deactivated: true, ...(result.deactivationId ? { deactivationId: result.deactivationId } : {}) });
   return NextResponse.json({ ok: true, deleted: true, removalId: result.removalId });
 }
+
+export const PUT = gated(handlePUT);
+export const POST = gated(handlePOST);
+export const DELETE = gated(handleDELETE);

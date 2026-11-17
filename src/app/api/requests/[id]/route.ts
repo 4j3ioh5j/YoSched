@@ -9,6 +9,7 @@ import { unapproveUnderLocks, RippleStale } from "@/lib/request-unapprove";
 import { parseRipple } from "@/lib/request-approval-outcome";
 import { resolveRequestPlacement, releasableDates, releasableOffDates, eachDateInclusive, isRequestSatisfied, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -151,7 +152,7 @@ async function stillScheduledDays(req: RequestRow): Promise<{ date: string; shif
 //   • approve a multi-option REQUEST_SHIFT / NEGATE_SHIFT → there's no single
 //     shift to place, so it's a sticky human override (autoApproved=false).
 //   • decline / withdraw / re-open → pull back any shift this request placed.
-export async function PATCH(req: NextRequest, { params }: Ctx) {
+async function handlePATCH(req: NextRequest, { params }: Ctx) {
   const result = await getSession("schedule:edit");
   if (result.error) return result.error;
   const { id } = await params;
@@ -280,7 +281,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 }
 
 // DELETE — remove a request entirely. Requires schedule:edit.
-export async function DELETE(_req: NextRequest, { params }: Ctx) {
+async function handleDELETE(_req: NextRequest, { params }: Ctx) {
   const result = await getSession("schedule:edit");
   if (result.error) return result.error;
   const { id } = await params;
@@ -307,3 +308,6 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   await syncRequestApprovals(cells, result.userId);
   return NextResponse.json({ ok: true });
 }
+
+export const PATCH = gated(handlePATCH);
+export const DELETE = gated(handleDELETE);

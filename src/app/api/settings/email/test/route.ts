@@ -2,9 +2,10 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { isEmailConfigured, sendSmtpMail, type EmailConfig } from "@/lib/email";
 import { NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Send a test email to the current user, to verify SMTP credentials.
-export async function POST() {
+async function handlePOST() {
   const result = await getSession("settings:edit");
   if (result.error) return result.error;
 
@@ -48,3 +49,5 @@ export async function POST() {
   }
   return NextResponse.json({ ok: true, sentTo: me.email });
 }
+
+export const POST = gated(handlePOST);

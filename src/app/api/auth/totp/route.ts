@@ -4,8 +4,9 @@ import { encrypt } from "@/lib/crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { generateSecret, generateURI, verifySync } from "otplib";
 import * as QRCode from "qrcode";
+import { gated } from "@/lib/write-gate";
 
-export async function GET() {
+async function handleGET() {
   const { error, session } = await getSession(undefined, { allowPendingPasswordChange: true }); // /account 2FA
   if (error) return error;
 
@@ -16,7 +17,7 @@ export async function GET() {
   return NextResponse.json({ secret, qrCode });
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error, session } = await getSession(undefined, { allowPendingPasswordChange: true }); // /account 2FA
   if (error) return error;
 
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ enabled: true });
 }
 
-export async function DELETE() {
+async function handleDELETE() {
   const { error, session } = await getSession(undefined, { allowPendingPasswordChange: true }); // /account 2FA
   if (error) return error;
 
@@ -49,3 +50,7 @@ export async function DELETE() {
 
   return NextResponse.json({ disabled: true });
 }
+
+export const GET = gated(handleGET);
+export const POST = gated(handlePOST);
+export const DELETE = gated(handleDELETE);

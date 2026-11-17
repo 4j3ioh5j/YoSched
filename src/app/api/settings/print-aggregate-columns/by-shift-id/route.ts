@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/auth-guard";
 import { STALE_CLIENT } from "@/lib/stale-client";
 import { NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Card #309: columns now save with their Include / Exclude rule lines through
 // /api/settings/print-aggregate-columns/criteria. This was the save path of the Settings screen
@@ -8,8 +9,10 @@ import { NextResponse } from "next/server";
 // server no longer prints by once a column has lines, and it cannot keep lines it does not know.
 // So it is refused with the "reload the page" answer, and that tab's save fails visibly
 // instead of quietly losing rules.
-export async function PUT() {
+async function handlePUT() {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   return NextResponse.json(STALE_CLIENT, { status: 409 });
 }
+
+export const PUT = gated(handlePUT);

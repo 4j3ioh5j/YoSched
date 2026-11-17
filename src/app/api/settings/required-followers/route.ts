@@ -1,12 +1,13 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Required followers: "after shift S, auto-place shift F on the next eligible day."
 // At most one rule per source shift (unique sourceShiftId). Fully editable — the
 // scheduler reads these rows; no shift codes are baked into the scheduling engine.
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
   const rules = await prisma.requiredFollower.findMany({
@@ -19,7 +20,7 @@ export async function GET() {
   return NextResponse.json(rules);
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
 
@@ -67,7 +68,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   let parsed: unknown;
@@ -86,3 +87,7 @@ export async function DELETE(req: NextRequest) {
   await prisma.requiredFollower.deleteMany({ where: { sourceShiftId } });
   return NextResponse.json({ ok: true });
 }
+
+export const GET = gated(handleGET);
+export const PUT = gated(handlePUT);
+export const DELETE = gated(handleDELETE);

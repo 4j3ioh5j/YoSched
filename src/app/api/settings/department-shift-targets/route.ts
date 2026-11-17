@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Department-wide shift count targets ("Pay-period preferences"). One row per
 // (shiftType, window, windowCount); counts are expressed per 1.0 FTE and scaled
@@ -11,7 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
 const WINDOWS = ["week", "pay_period", "month", "days"] as const;
 const STRENGTHS = ["preference", "rule"] as const;
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
   const rows = await prisma.departmentShiftTarget.findMany({
@@ -21,7 +22,7 @@ export async function GET() {
   return NextResponse.json(rows);
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
 
@@ -104,7 +105,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   let parsed: unknown;
@@ -123,3 +124,7 @@ export async function DELETE(req: NextRequest) {
   await prisma.departmentShiftTarget.deleteMany({ where: { id } });
   return NextResponse.json({ ok: true });
 }
+
+export const GET = gated(handleGET);
+export const PUT = gated(handlePUT);
+export const DELETE = gated(handleDELETE);

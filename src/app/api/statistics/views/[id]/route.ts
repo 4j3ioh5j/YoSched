@@ -3,11 +3,12 @@ import { getSession } from "@/lib/auth-guard";
 import { coerceSpec, hasLegacyEmploymentTypeName } from "@/lib/graph/spec";
 import { canManageView, nextOwnerId } from "@/lib/graph/view-access";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 // PUT — update name / spec / isShared. Requires statistics:manage.
-export async function PUT(req: NextRequest, { params }: Ctx) {
+async function handlePUT(req: NextRequest, { params }: Ctx) {
   const result = await getSession("statistics:manage");
   if (result.error) return result.error;
   const { id } = await params;
@@ -41,7 +42,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
 }
 
 // DELETE — remove a saved view. Requires statistics:manage.
-export async function DELETE(_req: NextRequest, { params }: Ctx) {
+async function handleDELETE(_req: NextRequest, { params }: Ctx) {
   const result = await getSession("statistics:manage");
   if (result.error) return result.error;
   const { id } = await params;
@@ -55,3 +56,6 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   await prisma.savedGraphView.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }
+
+export const PUT = gated(handlePUT);
+export const DELETE = gated(handleDELETE);

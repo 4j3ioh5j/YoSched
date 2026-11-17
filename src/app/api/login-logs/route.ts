@@ -1,8 +1,9 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("users:view");
   if (error) return error;
 
@@ -12,3 +13,5 @@ export async function GET() {
   });
   return NextResponse.json(logs);
 }
+
+export const GET = gated(handleGET);

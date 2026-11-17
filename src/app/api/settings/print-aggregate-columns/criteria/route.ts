@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth-guard";
 import { coerceConditionScope } from "@/lib/print-aggregate-columns";
 import { aggregateColumnOut, legacyMirror, legacySnapshot, parseCriteriaIn, type CriteriaLine } from "@/lib/print-criteria";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Card #309: printed-schedule aggregate columns with their Include / Exclude rule lines. The list
 // IS the setting: the body replaces all rows (a column sent with its id keeps it, see card #300).
@@ -23,7 +24,7 @@ function bad(error: string, reason: string) {
   return NextResponse.json({ error, reason }, { status: 400 });
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
 
@@ -81,3 +82,5 @@ export async function PUT(req: NextRequest) {
 
   return NextResponse.json(result.map((c) => aggregateColumnOut(c, shiftTypes)));
 }
+
+export const PUT = gated(handlePUT);

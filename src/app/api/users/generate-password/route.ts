@@ -5,12 +5,13 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { canManageGroupLevel } from "@/lib/permissions";
 import { generatePassword } from "@/lib/generate-password";
+import { gated } from "@/lib/write-gate";
 
 // POST {id}: give an existing login a fresh one-time password (Admin / Super User). The
 // password is returned ONCE in the response (never stored in clear, never logged); the
 // person must replace it at their next sign-in. Doesn't change whether the login is
 // active — that stays a separate, explicit step.
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
@@ -40,3 +41,5 @@ export async function POST(req: NextRequest) {
     { headers: { "Cache-Control": "no-store, private", Pragma: "no-cache" } },
   );
 }
+
+export const POST = gated(handlePOST);

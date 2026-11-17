@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { type AssignmentSnapshot, diffSnapshots, summarizeChanges } from "@/lib/versions";
+import { gated } from "@/lib/write-gate";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -10,7 +11,7 @@ type Ctx = { params: Promise<{ id: string }> };
 // month). The first version of a month is diffed against an empty schedule, so
 // every assignment shows as "added". Returns ID-based changes; the client
 // resolves staff initials and shift codes/colors from data it already holds.
-export async function GET(_req: NextRequest, { params }: Ctx) {
+async function handleGET(_req: NextRequest, { params }: Ctx) {
   const { error } = await getSession("schedule:view");
   if (error) return error;
   const { id } = await params;
@@ -37,3 +38,5 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     changes,
   });
 }
+
+export const GET = gated(handleGET);

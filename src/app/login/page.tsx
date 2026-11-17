@@ -1,6 +1,7 @@
 "use client";
 
 import { signIn } from "next-auth/react";
+import { FirstRunRestoreLink } from "./first-run-link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, Suspense, useRef } from "react";
 
@@ -150,6 +151,7 @@ function LoginForm() {
           </h1>
           <p className="text-lg text-white/40 font-light mt-2">Staff Scheduling</p>
         </div>
+        <FirstRunRestoreLink />
 
         {step === "credentials" ? (
           <form onSubmit={handleCredentials} className="space-y-4">

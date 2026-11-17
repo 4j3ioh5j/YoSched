@@ -30,6 +30,7 @@ import { OffStrategyEditor } from "@/components/off-strategy-editor";
 import { ruleToWhen, isPlainWeekdayWhen, whenToColumns, describeWhen } from "@/lib/recurrence";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
 import { createStatusTimer } from "@/lib/status-timer";
+import { BackupPanel } from "./backup-panel";
 import {
   DEFAULT_PRINT_LAYOUT,
   DATE_COLUMN_FORMATS,
@@ -299,6 +300,7 @@ type Props = {
   orderableStaff: OrderableStaffRow[];
   canEdit?: boolean;
   canEditAutoGenPriority?: boolean;
+  canBackup?: boolean; // card #314: holds "Back Up and Restore All Data"
 };
 
 type OrderableStaffRow = {
@@ -5917,6 +5919,22 @@ const AUTO_VERSION_CHOICES: { value: AutoVersionMode; label: string; help: strin
   { value: "ask", label: "Ask first", help: "Ask before saving the new version; Cancel prints or exports nothing." },
   { value: "off", label: "Off", help: "Never save a version on Print or Export (versions are saved by hand only)." },
 ];
+// Card #314: download a backup of everything, restore one, and the reminder's days.
+function BackupRestoreSection() {
+  const [error, setError] = useState<string | undefined>();
+  return (
+    <CollapsibleSection
+      id="backup-restore"
+      title="Backup and Restore"
+      description="Download one passphrase-protected file holding all of YoSched's data and settings, including logins and groups (not sign-in history). Use it to restore YoSched after a reinstall, or to go back to an earlier state."
+      status={error ? "error" : "idle"}
+      error={error}
+    >
+      <BackupPanel onError={setError} />
+    </CollapsibleSection>
+  );
+}
+
 function AutoVersionSection({ initial }: { initial: AutoVersionMode }) {
   const canEdit = useCanEdit();
   const { saved, draft, setDraft, status, error, busy, dirty, save } = useSavedDraft({ mode: initial });
@@ -6631,7 +6649,7 @@ function StaffColumnOrderSection({ initial, staff }: { initial: StaffOrderCriter
 
 // ─── Main Settings Page ─────────────────────────────────────────────────────
 
-export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, holidayTypes = [], holidayRules = EMPTY_HOLIDAY_RULES, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, followAvoids: initialFollowAvoids = [], requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, printPeople = [], staffColumnOrder, specialColumnOrder = null, orderableStaff, canEdit = true, canEditAutoGenPriority = false, about = EMPTY_ABOUT }: Props) {
+export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payPeriods, holidays, holidayTypes = [], holidayRules = EMPTY_HOLIDAY_RULES, desirabilityWeights, schedulingPrefs, departmentTargets, employmentTypes, equityFactors: initialEquityFactors, autoGenFactors: initialAutoGenFactors, autoGenProfiles: initialAutoGenProfiles, followRules: initialFollowRules, followAvoids: initialFollowAvoids = [], requiredFollowers: initialRequiredFollowers, countColumns: initialCountColumns, printColumnRules: initialPrintColumnRules, printAggregateColumns: initialPrintAggregateColumns, printPeople = [], staffColumnOrder, specialColumnOrder = null, orderableStaff, canEdit = true, canEditAutoGenPriority = false, canBackup = false, about = EMPTY_ABOUT }: Props) {
   const undo = useUndo();
   // One shift list for the whole page: Shift Types edits it, every other section reads it.
   const [shiftTypes, setShiftTypes] = useState(initialShiftTypes);
@@ -6711,6 +6729,15 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
           <DateColumnsSection initial={schedulingPrefs.printLayout} />
           <EmailSettingsSection />
         </div>
+
+        {canBackup && (
+          <>
+            <SectionGroup label="Backup and Restore" />
+            <div className="space-y-4 mt-3">
+              <BackupRestoreSection />
+            </div>
+          </>
+        )}
       </div>
 
       {undo.pending && (

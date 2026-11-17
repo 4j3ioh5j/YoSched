@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
+import { BackupDuePill } from "./backup-due-pill";
 import { BASE_PATH } from "@/lib/base-path";
 
 const NAV_ITEMS: { label: string; href: string; requiredPermission: string | null }[] = [
@@ -55,6 +56,7 @@ export function NavHeader() {
       </nav>
       {session?.user && (
         <div className="flex items-center gap-3">
+          <BackupDuePill />
           <Link href="/account" className="flex items-center gap-2 px-2.5 py-1 rounded border border-slate-700 hover:border-slate-500 hover:bg-slate-800 transition-colors">
             <span className="text-sm text-slate-200">{session.user.name}</span>
             {groupName && (

@@ -6,6 +6,7 @@ import { isEmailConfigured, buildConfirmationEmail, sendSmtpMail, type EmailConf
 import { formatDate, type DateFormatKey } from "@/lib/date-format";
 import { NextRequest, NextResponse } from "next/server";
 import type { ScheduleRequest } from "@/generated/prisma/client";
+import { gated } from "@/lib/write-gate";
 
 // Best-effort confirmation email to the requester's linked login. Never throws —
 // emailing must not break request submission. No-op unless SMTP is configured.
@@ -85,7 +86,7 @@ function notLinked() {
 }
 
 // GET — the caller's own requests (every status), newest first.
-export async function GET() {
+async function handleGET() {
   const result = await getSession("requests:self");
   if (result.error) return result.error;
   if (!result.staffId) return notLinked();
@@ -98,7 +99,7 @@ export async function GET() {
 }
 
 // POST — create a request for yourself (forced source=staff, status pending).
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const result = await getSession("requests:self");
   if (result.error) return result.error;
   if (!result.staffId) return notLinked();
@@ -147,7 +148,7 @@ export async function POST(req: NextRequest) {
 }
 
 // DELETE — withdraw one of your own still-pending requests (kept as an audit row).
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const result = await getSession("requests:self");
   if (result.error) return result.error;
   if (!result.staffId) return notLinked();
@@ -171,3 +172,7 @@ export async function DELETE(req: NextRequest) {
   });
   return NextResponse.json(serialize(updated));
 }
+
+export const GET = gated(handleGET);
+export const POST = gated(handlePOST);
+export const DELETE = gated(handleDELETE);

@@ -1,13 +1,14 @@
 import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { gated } from "@/lib/write-gate";
 
 /**
  * Batch-write Staff.sortOrder for the settings "Staff column ordering" section's
  * all-manual mode. Only display order is written (no other staff fields), so it
  * is gated on settings:edit like the section that drives it, not staff:edit.
  */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { orderedIds } = await req.json();
@@ -34,3 +35,5 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ ok: true });
 }
+
+export const POST = gated(handlePOST);

@@ -5,6 +5,7 @@ import { monthDateRange, hashSnapshot, nextVersionNumber } from "@/lib/versions"
 import { snapshotMonth, VERSION_LIST_SELECT } from "@/lib/versions-db";
 import { lockDayCaps, dateKeysBetween, DAY_CAP_TX, isTxTimeout, busyResponse } from "@/lib/day-cap-db";
 import type { EnsureMonth } from "@/lib/auto-version";
+import { gated } from "@/lib/write-gate";
 
 // Card #312: Print and Export call this first, so a printout or an exported file never
 // carries a stale or missing version number. For each month: no version yet (a blank
@@ -49,7 +50,7 @@ function parseBody(body: unknown): { comment: string; months: EnsureMonth[] } | 
 }
 
 // POST /api/versions/ensure { kind: "print"|"export", comment, months: [{ year, month, expectedHash }] }
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error } = await getSession("schedule:edit");
   if (error) return error;
 
@@ -114,3 +115,5 @@ export async function POST(req: NextRequest) {
     throw e;
   }
 }
+
+export const POST = gated(handlePOST);

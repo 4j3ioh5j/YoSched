@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { parseUserSort } from "@/lib/users-sort";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Self-service: any logged-in user reads/writes ONLY their own UI preferences. There is no
 // user id in the body — the target is always the session user — so this can't touch anyone
@@ -15,7 +16,7 @@ function asObject(value: unknown): Record<string, unknown> {
     : {};
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error, userId } = await getSession();
   if (error) return error;
 
@@ -42,3 +43,5 @@ export async function PUT(req: NextRequest) {
 
   return NextResponse.json({ ok: true, usersTableSort });
 }
+
+export const PUT = gated(handlePUT);

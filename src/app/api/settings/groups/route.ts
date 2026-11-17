@@ -3,8 +3,9 @@ import { getSession, type Permission } from "@/lib/auth-guard";
 import { PERMISSION_KEYS } from "@/lib/permission-catalog";
 import { assertUsersAdminSurvives, AdminGuardError } from "@/lib/user-lifecycle";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("groups:view");
   if (error) return error;
 
@@ -15,7 +16,7 @@ export async function GET() {
   return NextResponse.json(groups);
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const result = await getSession("groups:edit");
   if (result.error) return result.error;
 
@@ -44,7 +45,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(group);
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const result = await getSession("groups:edit");
   if (result.error) return result.error;
 
@@ -88,7 +89,7 @@ export async function PUT(req: NextRequest) {
   return NextResponse.json(updated);
 }
 
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const result = await getSession("groups:edit");
   if (result.error) return result.error;
 
@@ -114,3 +115,8 @@ export async function DELETE(req: NextRequest) {
   await prisma.group.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }
+
+export const GET = gated(handleGET);
+export const POST = gated(handlePOST);
+export const PUT = gated(handlePUT);
+export const DELETE = gated(handleDELETE);

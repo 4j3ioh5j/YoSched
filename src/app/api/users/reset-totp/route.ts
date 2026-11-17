@@ -2,8 +2,9 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { canManageGroupLevel } from "@/lib/permissions";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
@@ -25,3 +26,5 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ ok: true });
 }
+
+export const POST = gated(handlePOST);

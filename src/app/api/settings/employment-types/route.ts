@@ -4,6 +4,7 @@ import { ruleToWhen, whenToColumns } from "@/lib/recurrence";
 import { NextRequest, NextResponse } from "next/server";
 import { typeFlagsWrite } from "@/lib/fte";
 import { lockEligibility, eligibilityDiff, EligibilityStale } from "@/lib/eligibility-write";
+import { gated } from "@/lib/write-gate";
 
 // Derive the normalized WHEN columns for a default-availability rule on save,
 // keeping them in sync with the legacy columns. ruleToWhen prefers explicit when*
@@ -24,7 +25,7 @@ function whenColumns(r: Record<string, unknown>) {
   );
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { id, defaultEligibleShiftTypeIds, defaultEligibleShiftTypeIdsBase, defaultAvailabilityRules, ...data } = await req.json();
@@ -92,7 +93,7 @@ export async function PUT(req: NextRequest) {
   return NextResponse.json(applied ? { ...result, defaultEligibleShiftTypeIdsApplied: applied } : result);
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const data = await req.json();
@@ -145,7 +146,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(result);
 }
 
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { id } = await req.json();
@@ -162,3 +163,7 @@ export async function DELETE(req: NextRequest) {
   await prisma.employmentType.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }
+
+export const PUT = gated(handlePUT);
+export const POST = gated(handlePOST);
+export const DELETE = gated(handleDELETE);

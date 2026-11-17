@@ -2,9 +2,10 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { coerceSpec, hasLegacyEmploymentTypeName } from "@/lib/graph/spec";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // GET — list views the caller may see: all shared views plus their own private ones.
-export async function GET() {
+async function handleGET() {
   const result = await getSession("statistics:view");
   if (result.error) return result.error;
 
@@ -18,7 +19,7 @@ export async function GET() {
 }
 
 // POST — create a new saved view. Requires statistics:manage.
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const result = await getSession("statistics:manage");
   if (result.error) return result.error;
 
@@ -41,3 +42,6 @@ export async function POST(req: NextRequest) {
   });
   return NextResponse.json(view);
 }
+
+export const GET = gated(handleGET);
+export const POST = gated(handlePOST);

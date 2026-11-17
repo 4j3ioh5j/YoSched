@@ -9,6 +9,7 @@ import { canManageGroupLevel } from "@/lib/permissions";
 import { mustChangeAfterAdminSet } from "@/lib/must-change-password";
 import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
+import { gated } from "@/lib/write-gate";
 
 type Tx = Prisma.TransactionClient;
 
@@ -43,7 +44,7 @@ async function linkConflictResponse(e: unknown, staffId: string | null): Promise
   return null;
 }
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("users:view");
   if (error) return error;
 
@@ -56,7 +57,7 @@ export async function GET() {
   return NextResponse.json(users.filter((u) => !isHiddenStaffLogin(u)).map(toClientUser));
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
@@ -109,7 +110,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
@@ -198,7 +199,7 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
@@ -240,3 +241,8 @@ export async function DELETE(req: NextRequest) {
   await prisma.user.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }
+
+export const GET = gated(handleGET);
+export const POST = gated(handlePOST);
+export const PUT = gated(handlePUT);
+export const DELETE = gated(handleDELETE);

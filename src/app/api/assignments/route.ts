@@ -5,6 +5,7 @@ import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attri
 import { dayCapViolations } from "@/lib/max-per-day";
 import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, WriteRefused, refusalResponse, isTxTimeout, busyResponse } from "@/lib/day-cap-db";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 type AssignmentRow = { id: string; staffId: string; shiftTypeId: string; isLocked: boolean; source: string; autoMonth: string | null; autoShiftTypeId: string | null; updatedAt: Date; shiftType: { code: string; color: string | null } };
 
@@ -28,7 +29,7 @@ function formatAssignment(a: AssignmentRow, date: string, updatedByName: string 
   };
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
   const { staffId, date, shiftTypeId } = await req.json();
@@ -95,7 +96,7 @@ export async function PUT(req: NextRequest) {
   return NextResponse.json({ ...formatAssignment(assignment, date, actorName), requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
   const { action, from, to } = await req.json();
@@ -226,7 +227,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
 }
 
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
   const { staffId, date } = await req.json();
@@ -256,3 +257,7 @@ export async function DELETE(req: NextRequest) {
 
   return NextResponse.json({ ok: true, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
+
+export const PUT = gated(handlePUT);
+export const POST = gated(handlePOST);
+export const DELETE = gated(handleDELETE);

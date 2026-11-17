@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 type ReqIn = { shiftTypeId?: unknown; shiftCode?: unknown; dayKey?: unknown; minCount?: unknown; preferredCount?: unknown; maxCount?: unknown };
 
@@ -22,7 +23,7 @@ const STALE_CLIENT = {
 //    that session). A tab that simply lacks a newer column can't erase it by omission.
 //  - Min and Preferred may not exceed the effective Max (sent, else stored).
 //  - The whole save is one transaction.
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { requirements, columns, removedColumns } = await req.json() as {
@@ -114,3 +115,5 @@ export async function PUT(req: NextRequest) {
   rows.sort((a, b) => a.shiftCode.localeCompare(b.shiftCode) || a.dayKey.localeCompare(b.dayKey));
   return NextResponse.json(rows);
 }
+
+export const PUT = gated(handlePUT);

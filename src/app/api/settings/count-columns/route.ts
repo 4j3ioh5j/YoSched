@@ -2,9 +2,10 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { NextResponse } from "next/server";
 import { deriveCountColumnCodes } from "@/lib/count-columns";
+import { gated } from "@/lib/write-gate";
 
 // Read: rows linked by shift id, with the shifts' CURRENT codes derived alongside.
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
 
@@ -14,3 +15,5 @@ export async function GET() {
   ]);
   return NextResponse.json(deriveCountColumnCodes(columns, shiftTypes));
 }
+
+export const GET = gated(handleGET);

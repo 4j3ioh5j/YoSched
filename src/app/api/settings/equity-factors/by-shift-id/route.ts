@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { deriveEquityFactorCodes } from "@/lib/equity-factors";
 import { STALE_CLIENT } from "@/lib/stale-client";
+import { gated } from "@/lib/write-gate";
 
 // Equity factors, linked to the shift's ID. The list IS the setting: the body replaces all
 // rows. Every shift reference must be a current shift id and the body must carry no shift
@@ -16,7 +17,7 @@ function bad(error: string, reason: string, extra: Record<string, unknown> = {})
   return NextResponse.json({ error, reason, ...extra }, { status: 400 });
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
 
@@ -67,3 +68,5 @@ export async function PUT(req: NextRequest) {
 
   return NextResponse.json(deriveEquityFactorCodes(result, shiftTypes));
 }
+
+export const PUT = gated(handlePUT);

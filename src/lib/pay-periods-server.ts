@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { writeGate } from "@/lib/write-gate";
 import { periodsCovering } from "./pay-periods";
 
 // Serializes pay-period regeneration across concurrent requests (delete+recreate
@@ -19,6 +20,13 @@ function dateOnly(d: Date): string {
  * configured (legacy installs), the stored rows are returned untouched.
  */
 export async function getPayPeriods(): Promise<PayPeriodRow[]> {
+  // Card #314: pages call this too, outside any route. It reads the settings and may then
+  // regenerate the rows, so it holds the write gate from its FIRST read: a restore can't
+  // land between the two and have stale settings overwrite the restored periods.
+  return writeGate.shared(() => loadPayPeriods());
+}
+
+async function loadPayPeriods(): Promise<PayPeriodRow[]> {
   const prefs = await prisma.schedulingPreferences.findFirst();
   if (!prefs?.payPeriodAnchor) {
     return prisma.payPeriod.findMany({ orderBy: { startDate: "asc" } });

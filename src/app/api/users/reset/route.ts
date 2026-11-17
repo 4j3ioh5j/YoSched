@@ -4,12 +4,13 @@ import { assertUsersAdminSurvives, AdminGuardError } from "@/lib/user-lifecycle"
 import { USER_SELECT, toClientUser } from "@/lib/user-view";
 import { canManageGroupLevel } from "@/lib/permissions";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Reset a STAFF-LINKED login back to a bare, disabled shell: disabled, no email, no
 // password. The row + its staff link are kept (the staff member stays in the system).
 // This is the only "removal" action allowed for staff logins — they can't be deleted
 // from /users (see DELETE in ../route.ts); deletion happens only via the staff lifecycle.
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const result = await getSession("users:edit");
   if (result.error) return result.error;
 
@@ -43,3 +44,5 @@ export async function POST(req: NextRequest) {
   });
   return NextResponse.json(toClientUser(user));
 }
+
+export const POST = gated(handlePOST);

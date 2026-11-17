@@ -5,6 +5,7 @@ import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attri
 import { dayCapViolations } from "@/lib/max-per-day";
 import { loadDayCaps, lockDayCaps, DAY_CAP_TX, refusalResponse } from "@/lib/day-cap-db";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 type SavedRow = { id: string; staffId: string; shiftTypeId: string; isLocked: boolean; source: string; autoMonth: string | null; autoShiftTypeId: string | null; updatedAt: Date; shiftType: { code: string; color: string | null } };
 
@@ -20,7 +21,7 @@ const MAX_CELLS = 2000; // bounds the transaction; a paste is a human-sized sele
 
 const asUtcDate = (date: string) => new Date(date + "T00:00:00Z");
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
 
@@ -149,3 +150,5 @@ export async function PUT(req: NextRequest) {
 
   return NextResponse.json({ applied, skippedLocked, skippedDayCap, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
+
+export const PUT = gated(handlePUT);

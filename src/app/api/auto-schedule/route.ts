@@ -7,13 +7,14 @@ import { syncRequestApprovalsAfterCommit, visibleRequestChanges } from "@/lib/re
 import { owningMonthKey, isValidDateRange } from "@/lib/auto-clear";
 import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, refusalResponse, isTxTimeout, busyResponse } from "@/lib/day-cap-db";
 import { dayCapViolations } from "@/lib/max-per-day";
+import { gated } from "@/lib/write-gate";
 
 type AppliedRow = { id: string; staffId: string; date: string; shiftTypeId: string; isLocked: boolean; code: string; color: string; source: string; autoMonth: string | null; autoShiftTypeId: string | null };
 
 const dateKey = (d: Date) => d.toISOString().split("T")[0];
 const isStr = (v: unknown): v is string => typeof v === "string" && v.length > 0;
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error } = await getSession("schedule:auto");
   if (error) return error;
   const body = await req.json();
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(result);
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:auto");
   if (error) return error;
   const body = await req.json();
@@ -179,7 +180,7 @@ export async function PUT(req: NextRequest) {
   return NextResponse.json({ applied, skipped, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
 
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:auto");
   if (error) return error;
   const body = await req.json();
@@ -263,3 +264,7 @@ export async function DELETE(req: NextRequest) {
 
   return NextResponse.json({ removed, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
+
+export const POST = gated(handlePOST);
+export const PUT = gated(handlePUT);
+export const DELETE = gated(handleDELETE);

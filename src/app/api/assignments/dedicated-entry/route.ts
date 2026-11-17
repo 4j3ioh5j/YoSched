@@ -4,6 +4,7 @@ import { syncRequestApprovalsAfterCommit, visibleRequestChanges } from "@/lib/re
 import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
 import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, WriteRefused, refusalResponse } from "@/lib/day-cap-db";
+import { gated } from "@/lib/write-gate";
 
 // Atomic ROSTER edit for a single dedicated column (ICU/CARD) on ONE date: set who
 // holds the shift by passing the staff to add and the staff to remove. Unlike the
@@ -19,7 +20,7 @@ import { loadDayCaps, lockDayCaps, DAY_CAP_TX, DayCapRefused, WriteRefused, refu
 
 const asUtcDate = (date: string) => new Date(date + "T00:00:00Z");
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
 
@@ -133,3 +134,5 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ applied, cleared, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
+
+export const POST = gated(handlePOST);

@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -8,7 +9,7 @@ type Ctx = { params: Promise<{ id: string }> };
 // department-wide; removing one requires the admin-level settings:autogen-priority
 // permission. Deleting a profile never affects the active order — that lives in
 // AutoGenFactor.sortOrder.
-export async function DELETE(_req: Request, { params }: Ctx) {
+async function handleDELETE(_req: Request, { params }: Ctx) {
   const { error } = await getSession("settings:autogen-priority");
   if (error) return error;
 
@@ -16,3 +17,5 @@ export async function DELETE(_req: Request, { params }: Ctx) {
   await prisma.autoGenPriorityProfile.deleteMany({ where: { id } });
   return NextResponse.json({ ok: true });
 }
+
+export const DELETE = gated(handleDELETE);

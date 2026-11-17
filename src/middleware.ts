@@ -12,7 +12,8 @@ const { auth } = NextAuth(authConfig);
 // marketing landing for logged-out visitors and the schedule grid for logged-in
 // users; robots.txt/sitemap.xml/privacy give crawlers real, indexable content.
 // These are basePath-relative (i.e. what remains after /yosched is stripped).
-const PUBLIC_PATHS = new Set(["/", "/login", "/privacy", "/robots.txt", "/sitemap.xml"]);
+// Card #314: the first-run restore page and its API (they refuse once any login exists).
+const PUBLIC_PATHS = new Set(["/", "/login", "/privacy", "/robots.txt", "/sitemap.xml", "/setup/restore", "/api/backup/initial"]);
 
 // Return the path with the app basePath removed, so the public-path check works
 // regardless of whether Next has already stripped basePath from nextUrl.pathname.

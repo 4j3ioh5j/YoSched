@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getFederalHolidays } from "@/lib/federal-holidays";
 import { holidayTypeNameFor } from "@/lib/holiday-rules";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Card #210: every holiday row links to a holiday TYPE by id (holiday rules use the type). A new
 // row with no type given gets the type named like it (" (observed)" dropped), created if needed;
@@ -37,7 +38,7 @@ async function resolveType(date: Date, name: string, requested: unknown): Promis
   return { id: await typeIdForName(name) };
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(out(holiday));
 }
 
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { id } = await req.json();
@@ -90,3 +91,6 @@ export async function DELETE(req: NextRequest) {
   await prisma.holiday.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }
+
+export const POST = gated(handlePOST);
+export const DELETE = gated(handleDELETE);

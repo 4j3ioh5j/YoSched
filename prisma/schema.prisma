@@ -424,6 +424,7 @@ model SchedulingPreferences {
   weekendStartDow         Int      @default(6)  // the weekend's first day (0 = Sunday … 6 = Saturday); the weekend is it and the next day
   activationWorkedDefault  String  @default("eligible")     // card #75: turning a shift's Auto-schedule on — people who have worked it start "eligible" | "not_eligible" | "keep" (see src/lib/shift-activation.ts)
   activationNeverDefault   String  @default("not_eligible") // card #75: … everyone else
+  backupReminderDays       Int     @default(7) // card #314: "Backup due" reminder after this many days without a backup (0 = never)
   activationNewHireDefault String  @default("keep")         // card #75: employment-type defaults for new hires: "keep" | "match" | "none" | "all"
 
   @@map("scheduling_preferences")
@@ -918,4 +919,14 @@ model StaffRemoval {
 
   @@index([staffId])
   @@map("staff_removals")
+}
+
+// Card #314: when the last backup file was made. Never part of a backup itself (a restore
+// must not wind it back); one row, id "default".
+model BackupStatus {
+  id           String    @id @default("default")
+  lastBackupAt DateTime?
+  updatedAt    DateTime  @updatedAt
+
+  @@map("backup_status")
 }

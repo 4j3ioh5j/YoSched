@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { parseAlertKey } from "@/lib/alerts";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Mute/unmute a schedule alert. Mutes are SHARED across all logins, so mutating
 // them requires the same authority as editing the schedule (schedule:edit).
@@ -14,7 +15,7 @@ async function readKey(req: NextRequest): Promise<string | null> {
 
 // POST { alertKey } — mute. Idempotent: re-muting an already-muted key just
 // refreshes who muted it.
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error, userId } = await getSession("schedule:edit");
   if (error) return error;
 
@@ -33,7 +34,7 @@ export async function POST(req: NextRequest) {
 }
 
 // DELETE { alertKey } — unmute. Idempotent: deleting a missing key is a no-op.
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const { error } = await getSession("schedule:edit");
   if (error) return error;
 
@@ -46,3 +47,6 @@ export async function DELETE(req: NextRequest) {
 
   return NextResponse.json({ ok: true, alertKey, muted: false });
 }
+
+export const POST = gated(handlePOST);
+export const DELETE = gated(handleDELETE);

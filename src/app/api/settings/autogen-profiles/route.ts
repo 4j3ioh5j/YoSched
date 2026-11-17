@@ -2,6 +2,7 @@ import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { validateProfileInput } from "@/lib/autogen-profile";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Named snapshots of the auto-generation priority order (#252). A profile lets an admin
 // save the current AutoGenFactor arrangement under a name and reapply it later, guarding
@@ -27,14 +28,14 @@ function serialize(p: ProfileRow) {
   };
 }
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
   const profiles = await prisma.autoGenPriorityProfile.findMany({ orderBy: { createdAt: "desc" } });
   return NextResponse.json(profiles.map(serialize));
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error, userId } = await getSession("settings:autogen-priority");
   if (error) return error;
 
@@ -63,3 +64,6 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json(serialize(created), { status: 201 });
 }
+
+export const GET = gated(handleGET);
+export const POST = gated(handlePOST);

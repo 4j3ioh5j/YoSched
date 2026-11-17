@@ -7,8 +7,9 @@ import { coerceCriteria } from "@/lib/print-criteria";
 import { conditionsReference } from "@/lib/print-conditions";
 import { lockEligibility } from "@/lib/eligibility-write";
 import { SHIFT_TYPE_EDITABLE_FIELDS as EDITABLE_FIELDS, sanitizePrintBg, minGapError } from "@/lib/shift-type-fields";
+import { gated } from "@/lib/write-gate";
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { id, ...data } = await req.json();
@@ -44,7 +45,7 @@ export async function PUT(req: NextRequest) {
   return NextResponse.json(updated);
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const data = await req.json();
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(created);
 }
 
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { id } = await req.json();
@@ -154,3 +155,7 @@ export async function DELETE(req: NextRequest) {
   await prisma.shiftType.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }
+
+export const PUT = gated(handlePUT);
+export const POST = gated(handlePOST);
+export const DELETE = gated(handleDELETE);

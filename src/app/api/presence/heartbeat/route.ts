@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth-guard";
 import { effectivePermissions } from "@/lib/permissions";
 import { activeEditors, PRESENCE_TTL_MS } from "@/lib/presence";
 import { NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Heartbeat for the passive "other editors are active" banner. Editors-only: a
 // non-editor login is irrelevant to the banner, so getSession gates on schedule:edit
@@ -11,7 +12,7 @@ import { NextResponse } from "next/server";
 // edit-reverting / conflict-dialog problems that forced the earlier multi-editor
 // rollback. Each call does two cheap things: refresh my own lastSeen, and return the
 // OTHER editors currently active (within the TTL) so the caller can render the banner.
-export async function POST() {
+async function handlePOST() {
   const { error, userId } = await getSession("schedule:edit");
   if (error) return error;
 
@@ -53,3 +54,5 @@ export async function POST() {
 
   return NextResponse.json({ activeEditors: editors });
 }
+
+export const POST = gated(handlePOST);

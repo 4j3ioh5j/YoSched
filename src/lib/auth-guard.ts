@@ -10,7 +10,7 @@ export type Permission =
   | "requests:self" | "requests:view"
   | "staff:view" | "staff:edit"
   | "statistics:view" | "statistics:manage"
-  | "settings:view" | "settings:edit" | "settings:autogen-priority"
+  | "settings:view" | "settings:edit" | "settings:autogen-priority" | "data:backup"
   | "users:view" | "users:edit"
   | "groups:view" | "groups:edit"
   | "manual:view";

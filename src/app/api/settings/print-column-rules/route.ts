@@ -3,9 +3,10 @@ import { getSession } from "@/lib/auth-guard";
 import { coerceConditions } from "@/lib/print-column-visibility";
 import { deriveConditionCodes } from "@/lib/print-conditions";
 import { NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Read: rules whose conditions name shifts by id, with the shifts' CURRENT codes derived alongside.
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
 
@@ -15,3 +16,5 @@ export async function GET() {
   ]);
   return NextResponse.json(rules.map((r) => ({ ...r, conditions: deriveConditionCodes(coerceConditions(r.conditions), shiftTypes) })));
 }
+
+export const GET = gated(handleGET);

@@ -4,11 +4,12 @@ import { isDeviceTrusted } from "@/lib/device-trust";
 import { logLogin } from "@/lib/login-log";
 import { NextRequest, NextResponse } from "next/server";
 import { compare } from "bcryptjs";
+import { gated } from "@/lib/write-gate";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { email, password } = await req.json();
   if (!email || !password) {
     return NextResponse.json({ error: "Missing credentials" }, { status: 400 });
@@ -73,3 +74,5 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ requiresTotp: user.totpEnabled });
 }
+
+export const POST = gated(handlePOST);

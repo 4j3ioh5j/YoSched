@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // SMTP settings. The password is WRITE-ONLY: GET never returns it (only whether
 // one is set); PUT updates it only when a non-empty value is supplied.
@@ -24,13 +25,13 @@ function publicView(row: Awaited<ReturnType<typeof loadRow>>) {
   };
 }
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
   return NextResponse.json(publicView(await loadRow()));
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
 
@@ -54,3 +55,6 @@ export async function PUT(req: NextRequest) {
   });
   return NextResponse.json(publicView(row));
 }
+
+export const GET = gated(handleGET);
+export const PUT = gated(handlePUT);

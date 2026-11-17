@@ -286,6 +286,7 @@ export default async function Settings() {
         }))}
         canEdit={canEditSettings}
         canEditAutoGenPriority={canEditAutoGenPriority}
+        canBackup={permissions!.includes("data:backup")}
         about={aboutInfo({
           version: process.env.YOSCHED_VERSION,
           commit: process.env.YOSCHED_COMMIT,

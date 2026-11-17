@@ -7,6 +7,7 @@ import { busyResponse, isTxTimeout } from "@/lib/day-cap-db";
 import { resolveRequestPlacement, eachDateInclusive, validateRestoreInput, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
 import { Prisma } from "@/generated/prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -21,7 +22,7 @@ const at = (date: string) => new Date(date + "T00:00:00Z");
 // through the SAME resolve as PATCH approve (card #67): the grid is re-arranged
 // legally or the request comes back PENDING and flagged with the reason, never as
 // an approved row whose shift isn't actually placed.
-export async function PUT(req: NextRequest, { params }: Ctx) {
+async function handlePUT(req: NextRequest, { params }: Ctx) {
   const result = await getSession("schedule:edit");
   if (result.error) return result.error;
   const { id: routeId } = await params;
@@ -116,3 +117,5 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   if (v.status === "approved") await syncRequestApprovals(cells, result.userId, { excludeRequestId: v.id });
   return NextResponse.json({ id: created.id, status: created.status, affected: await affectedWindow(cells, viewer) }, { status: 201 });
 }
+
+export const PUT = gated(handlePUT);

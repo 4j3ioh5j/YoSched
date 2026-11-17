@@ -4,6 +4,7 @@ import { syncRequestApprovalsAfterCommit, visibleRequestChanges } from "@/lib/re
 import { resolveAutoOverride, resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
 import { loadDayCaps, lockDayCaps, DAY_CAP_TX, refusalResponse } from "@/lib/day-cap-db";
+import { gated } from "@/lib/write-gate";
 
 // Paste into a DEDICATED column (ICU/CARD): set each day's roster for one shift type.
 // The unit is a per-date GROUP { addStaffIds, removeStaffIds }, and the server enforces
@@ -21,7 +22,7 @@ const MAX_GROUPS = 200; // a paste spans at most a few months of one column
 const asUtcDate = (date: string) => new Date(date + "T00:00:00Z");
 const dateKey = (d: Date) => d.toISOString().split("T")[0];
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error, userId, permissions, staffId: viewerStaffId } = await getSession("schedule:edit");
   if (error) return error;
 
@@ -161,3 +162,5 @@ export async function PUT(req: NextRequest) {
 
   return NextResponse.json({ applied, cleared, skippedGroups, requestChanges: visibleRequestChanges(requestChanges, { permissions: permissions!, staffId: viewerStaffId ?? null }) });
 }
+
+export const PUT = gated(handlePUT);

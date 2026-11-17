@@ -2,6 +2,7 @@ import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { HOLIDAY_RULES_LOCK_KEY } from "@/lib/holiday-rules-db";
+import { gated } from "@/lib/write-gate";
 
 // Card #210: holiday types — what a dated holiday is (e.g. "Thanksgiving Day"), so rules link to
 // every year's row by id. Renaming keeps the id; deleting removes that type's rules and unlinks
@@ -15,14 +16,14 @@ const cleanName = (v: unknown): string | null => {
 };
 const isUniqueClash = (e: unknown): boolean => !!e && typeof e === "object" && (e as { code?: unknown }).code === "P2002";
 
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
   const types = await prisma.holidayType.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
   return NextResponse.json(types);
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = (await req.json().catch(() => null)) as { name?: unknown } | null;
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function PATCH(req: NextRequest) {
+async function handlePATCH(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = (await req.json().catch(() => null)) as { id?: unknown; name?: unknown } | null;
@@ -54,7 +55,7 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-export async function DELETE(req: NextRequest) {
+async function handleDELETE(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = (await req.json().catch(() => null)) as { id?: unknown } | null;
@@ -67,3 +68,8 @@ export async function DELETE(req: NextRequest) {
   });
   return NextResponse.json({ ok: true });
 }
+
+export const GET = gated(handleGET);
+export const POST = gated(handlePOST);
+export const PATCH = gated(handlePATCH);
+export const DELETE = gated(handleDELETE);

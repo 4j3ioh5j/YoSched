@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth-guard";
 import { coerceConditions, type ShiftCondition } from "@/lib/print-column-visibility";
 import { deriveConditionCodes, parseConditionsIn } from "@/lib/print-conditions";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
 // Printed-schedule column rules, with shifts named by ID inside the conditions. The list IS
 // the setting: the body replaces all rows. Every shift reference must be a current shift id
@@ -32,7 +33,7 @@ function bad(error: string, reason: string) {
   return NextResponse.json({ error, reason }, { status: 400 });
 }
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
 
@@ -74,3 +75,5 @@ export async function PUT(req: NextRequest) {
 
   return NextResponse.json(result.map((r) => ({ ...r, conditions: deriveConditionCodes(coerceConditions(r.conditions), shiftTypes) })));
 }
+
+export const PUT = gated(handlePUT);

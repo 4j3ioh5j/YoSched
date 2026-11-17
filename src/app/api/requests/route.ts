@@ -4,6 +4,7 @@ import { validateRequestInput } from "@/lib/schedule-requests";
 import { resolveUpdaterNames } from "@/lib/assignment-attribution";
 import { NextRequest, NextResponse } from "next/server";
 import type { ScheduleRequest } from "@/generated/prisma/client";
+import { gated } from "@/lib/write-gate";
 
 // approverName is the resolved display NAME of approvedBy, or null when the
 // viewer isn't schedule:edit (names are never sent to plain viewers) or the
@@ -34,7 +35,7 @@ function toDate(s: string): Date {
 }
 
 // GET — all schedule requests (the grid filters to the visible month client-side).
-export async function GET() {
+async function handleGET() {
   const result = await getSession("requests:view");
   if (result.error) return result.error;
 
@@ -51,7 +52,7 @@ export async function GET() {
 }
 
 // POST — create a new request (always starts pending; approval is a separate step).
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const result = await getSession("schedule:edit");
   if (result.error) return result.error;
 
@@ -77,3 +78,6 @@ export async function POST(req: NextRequest) {
   });
   return NextResponse.json(serialize(created), { status: 201 });
 }
+
+export const GET = gated(handleGET);
+export const POST = gated(handlePOST);

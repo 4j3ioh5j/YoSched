@@ -1,8 +1,9 @@
 import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { gated } from "@/lib/write-gate";
 
-export async function PUT(req: NextRequest) {
+async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const { targets } = await req.json() as {
@@ -37,3 +38,5 @@ export async function PUT(req: NextRequest) {
     })),
   );
 }
+
+export const PUT = gated(handlePUT);

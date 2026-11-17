@@ -2,9 +2,10 @@ import { getSession } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { deriveEquityFactorCodes } from "@/lib/equity-factors";
+import { gated } from "@/lib/write-gate";
 
 // Read: rows linked by shift id, with the shift's CURRENT code derived alongside.
-export async function GET() {
+async function handleGET() {
   const { error } = await getSession("settings:view");
   if (error) return error;
   const [factors, shiftTypes] = await Promise.all([
@@ -13,3 +14,5 @@ export async function GET() {
   ]);
   return NextResponse.json(deriveEquityFactorCodes(factors, shiftTypes));
 }
+
+export const GET = gated(handleGET);

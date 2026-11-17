@@ -12,8 +12,9 @@ import {
   parseActivationWorked, parseActivationNever, parseActivationNewHire,
 } from "@/lib/shift-activation";
 import { SHIFT_TYPE_EDITABLE_FIELDS, sanitizePrintBg, minGapError } from "@/lib/shift-type-fields";
+import { gated } from "@/lib/write-gate";
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const { error } = await getSession("settings:view");
   if (error) return error;
   const id = req.nextUrl.searchParams.get("id");
@@ -35,7 +36,7 @@ export async function GET(req: NextRequest) {
 
 const isIdList = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
@@ -67,3 +68,6 @@ export async function POST(req: NextRequest) {
     throw e;
   }
 }
+
+export const GET = gated(handleGET);
+export const POST = gated(handlePOST);
