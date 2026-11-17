@@ -323,6 +323,23 @@ export function autoColNeedPx(texts: Iterable<string>, measure: (text: string) =
   return any ? Math.ceil(max) : null;
 }
 
+/** Card #330: the widest text over groups measured in different fonts (staff text in the
+ *  Settings print font, count text also in the monospace font its cells print in), scaled back
+ *  to full size: a measurement taken while the printout is zoomed reports zoom × the width.
+ *  A group with nothing to measure is skipped; a bad measurement anywhere gives null (fallback). */
+export function printNeedPx(groups: readonly { texts: Iterable<string>; measure: (text: string) => number }[], zoom: number): number | null {
+  const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  let need: number | null = null;
+  for (const g of groups) {
+    const texts = [...g.texts].filter(Boolean);
+    if (texts.length === 0) continue;
+    const px = autoColNeedPx(texts, (t) => g.measure(t) / z);
+    if (px == null) return null;
+    need = Math.max(need ?? 0, px);
+  }
+  return need;
+}
+
 /** autoNeedPx: the measured widest staff/count text (null = not measured yet: autoNeedCh ×
  *  AUTO_COL_FALLBACK_CH is used instead). */
 export type AggRoom = { reservedIn: number; autoCount: number; autoNeedPx: number | null; autoNeedCh: number; titlesCh: readonly number[] };

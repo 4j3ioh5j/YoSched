@@ -121,8 +121,9 @@ describe("aggPrintWidthCss from the spare room", () => {
     expect(grid).toMatch(/"--agg-col-w": aggPrintWidthCss\(c\.label, Object\.values\(c\.initialsByDate\), printAggRoom, printLayout\)/);
     expect(grid).toMatch(/printHiddenIds\.has\(p\.id\)/);
     expect(grid).toContain("ref={printRootRef}");
-    expect(grid).toContain("autoColNeedPx(printAutoTexts.texts,");
+    expect(grid).toContain("{ texts: printAutoTexts.texts, measure: width(span) }");
     expect(grid).toContain('fonts?.addEventListener?.("loadingdone", measure)');
-    expect(grid).toMatch(/font-family:var\(--print-font\);font-size:var\(--print-font-size\);font-weight:700/);
+    expect(grid).toMatch(/font-size:var\(--print-font-size\);font-weight:700;letter-spacing:normal;";/);
+    expect(grid).toContain('probe + "font-family:var(--print-font)"');
   });
 });

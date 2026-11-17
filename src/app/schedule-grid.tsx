@@ -22,7 +22,7 @@ import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey,
 import { unsavedPrintWarning } from "@/lib/print-stamp";
 import { autoVersionComment, yearMonths, type AutoVersionMode } from "@/lib/auto-version";
 import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMeta } from "@/lib/auto-version-flow";
-import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, aggPrintWidthCss, aggPrintWidthCh, autoColNeedCh, autoColNeedPx, printReservedIn, PRINT_COL_IN, type AggRoom, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
+import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, aggPrintWidthCss, aggPrintWidthCh, autoColNeedCh, printNeedPx, printReservedIn, PRINT_COL_IN, type AggRoom, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
@@ -1502,11 +1502,13 @@ export function ScheduleGrid({
         if (sum) texts.add(sum.label);
       }
     }
+    // Card #330: count cells print in the monospace font, so their text is measured in it too.
+    const countTexts = new Set<string>();
     countColumns.forEach((col, i) => {
-      texts.add(col.label || "#");
-      for (const date of inMonth) texts.add(String(columnCounts[i]?.[date] ?? ""));
+      countTexts.add(col.label || "#");
+      for (const date of inMonth) countTexts.add(String(columnCounts[i]?.[date] ?? ""));
     });
-    return { texts: [...texts], autoCount: printed.length + countColumns.length };
+    return { texts: [...texts, ...countTexts], staffTexts: [...texts], countTexts: [...countTexts], autoCount: printed.length + countColumns.length };
   }, [visibleStaff, printHiddenIds, dates, firstOfMonth, lastOfMonth, liveMode, liveDisplayMap, assignmentMap, showRequests, requestsByCell, shiftTypeMap, countColumns, columnCounts]);
   // The browser measures that text in the Settings print font and size (bold, as the headers and
   // bold codes print), again once fonts finish loading (the print font loads on first use). Until
@@ -1519,11 +1521,22 @@ export function ScheduleGrid({
     let live = true;
     const measure = () => {
       if (!live) return;
+      const probe = "position:absolute;left:-10000px;top:0;visibility:hidden;white-space:nowrap;font-size:var(--print-font-size);font-weight:700;letter-spacing:normal;";
       const span = document.createElement("span");
-      span.style.cssText = "position:absolute;left:-10000px;top:0;visibility:hidden;white-space:nowrap;font-family:var(--print-font);font-size:var(--print-font-size);font-weight:700;letter-spacing:normal";
-      root.appendChild(span);
-      const px = autoColNeedPx(printAutoTexts.texts, (t) => { span.textContent = t; return span.getBoundingClientRect().width; });
-      span.remove();
+      const mono = document.createElement("span");
+      const ruler = document.createElement("div");
+      span.style.cssText = probe + "font-family:var(--print-font)";
+      mono.style.cssText = probe + "font-family:var(--font-mono)";
+      // Card #330: a measurement taken while the printout is shrunk (zoom on the print root)
+      // comes back scaled; a known-width ruler gives that factor so it is undone.
+      ruler.style.cssText = "position:absolute;left:-10000px;top:0;visibility:hidden;width:100px;height:0";
+      root.append(span, mono, ruler);
+      const width = (el: HTMLElement) => (t: string) => { el.textContent = t; return el.getBoundingClientRect().width; };
+      const px = printNeedPx([
+        { texts: printAutoTexts.texts, measure: width(span) },
+        { texts: printAutoTexts.countTexts, measure: width(mono) },
+      ], ruler.getBoundingClientRect().width / 100);
+      span.remove(); mono.remove(); ruler.remove();
       setPrintAutoNeedPx(px);
     };
     measure();
