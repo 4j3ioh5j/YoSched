@@ -10,7 +10,8 @@ import { BackupFileError, type PublicKeyInfo } from "./format";
 //   write the file whole → record the success → prune old automatic files.
 // Any failure before the write leaves no file and prunes nothing.
 
-export type AutoState = { settings: AutoSettings; status: AutoStatus };
+/** zone: the Settings time zone (card #320), read with the settings; the backup time is a wall clock in it. */
+export type AutoState = { settings: AutoSettings; status: AutoStatus; zone: string };
 export type JobDeps = {
   now(): Date;
   exclusive<T>(fn: () => Promise<T>): Promise<T>;
@@ -40,8 +41,8 @@ function reason(e: unknown): string {
 export async function runAutoBackup(deps: JobDeps): Promise<RunResult> {
   return deps.exclusive(async () => {
     const at = deps.now();
-    const { settings, status } = await deps.readState();
-    if (!autoDue(at, settings, status)) return "not-due";
+    const { settings, status, zone } = await deps.readState();
+    if (!autoDue(at, settings, status, zone)) return "not-due";
     await deps.recordAttempt(at);
     try {
       const key: PublicKeyInfo = { publicKey: settings.publicKey!, keyId: settings.keyId!, keyCreatedAt: (settings.keyCreatedAt ?? at).toISOString() };
@@ -83,8 +84,8 @@ export async function autoTick(deps: JobDeps): Promise<RunResult> {
   if (st.running) return "busy";
   const run = (async (): Promise<RunResult> => {
     try {
-      const { settings, status } = await deps.readState();
-      if (!autoDue(deps.now(), settings, status)) return "not-due";
+      const { settings, status, zone } = await deps.readState();
+      if (!autoDue(deps.now(), settings, status, zone)) return "not-due";
       return await runAutoBackup(deps);
     } catch (e) {
       // The gate was busy or the database unreachable: nothing could be recorded. The next tick tries again.

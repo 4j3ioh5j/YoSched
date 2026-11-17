@@ -1,5 +1,7 @@
 "use client";
 
+import { useTimeZone } from "@/app/time-zone-provider";
+import { formatClock, zonedCalendarDate } from "@/lib/time-zone";
 import { columnHoverText } from "@/lib/column-hover";
 import { isWeekendDow } from "@/lib/scheduler-tuning";
 import { StatusOpRecorder, undoOrder } from "@/lib/request-undo-ops";
@@ -509,6 +511,7 @@ export function ScheduleGrid({
   scheduleRequests = [],
   mutedAlertKeys = [],
 }: Props) {
+  const { zone } = useTimeZone(); // card #320
   const dateFormat = (dateFormatProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
@@ -771,9 +774,10 @@ export function ScheduleGrid({
       month: viewMonth,
       printedAt,
       dateFormat,
+      zone,
       version,
     }),
-    [viewYear, viewMonth, dateFormat],
+    [viewYear, viewMonth, dateFormat, zone],
   );
   const stampPrint = useCallback((version: number | null) => {
     const now = new Date();
@@ -824,14 +828,14 @@ export function ScheduleGrid({
       frozen: { year: viewYear, month: viewMonth, hash: liveMonthHash },
       currentOf: (y, m) => currentVersionMapRef.current.get(`${y}-${m}`) ?? null,
       confirm: (t) => window.confirm(t),
-      ensure: ensureVersions("print", autoVersionComment("print", new Date(), dateFormat)),
+      ensure: ensureVersions("print", autoVersionComment("print", new Date(), dateFormat, zone)),
       showing: showingNow,
       adopt: adoptVersions,
       stamp: (n) => { printVersionRef.current = n; stampPrint(n); },
       print: () => window.print(),
       alert: (t) => window.alert(t),
     });
-  }), [printGate, autoVersionOn, autoVersionMode, focalVersion, monthModified, viewYear, viewMonth, liveMonthHash, ensureVersions, dateFormat, adoptVersions, stampPrint, showingNow]);
+  }), [printGate, autoVersionOn, autoVersionMode, focalVersion, monthModified, viewYear, viewMonth, liveMonthHash, ensureVersions, dateFormat, zone, adoptVersions, stampPrint, showingNow]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p") {
@@ -5231,6 +5235,7 @@ export function ScheduleGrid({
             printAggregateColumns,
             dayShading,
             printLayout,
+            zone,
             weekendStartDow,
             dateFormat,
             versions: [...currentVersionMapRef.current.values()].map((v) => ({ year: v.year, month: v.month, versionNumber: v.versionNumber })),
@@ -5253,7 +5258,7 @@ export function ScheduleGrid({
               currentOf: (y, m) => currentVersionMapRef.current.get(`${y}-${m}`) ?? null,
               confirm: (t) => window.confirm(t),
               ensure: async (ms) => {
-                const out = await ensureVersions("export", autoVersionComment("export", new Date(), dateFormat, year))(ms);
+                const out = await ensureVersions("export", autoVersionComment("export", new Date(), dateFormat, zone, year))(ms);
                 if (out.ok) adoptVersions(out.versions);
                 return out;
               },
@@ -5410,7 +5415,7 @@ export function ScheduleGrid({
                           )}
                         </div>
                         <div className="text-xs text-slate-500 mt-0.5">
-                          {formatDate(parseDate(v.createdAt.slice(0, 10)), dateFormat)} · {new Date(v.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          {formatDate(zonedCalendarDate(new Date(v.createdAt), zone), dateFormat)} · {formatClock(new Date(v.createdAt), zone)}
                         </div>
                         {v.comment && (
                           <div className="text-xs text-slate-400 italic mt-0.5 truncate" title={v.comment}>{v.comment}</div>

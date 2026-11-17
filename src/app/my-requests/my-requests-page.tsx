@@ -1,5 +1,7 @@
 "use client";
 
+import { useTimeZone } from "@/app/time-zone-provider";
+import { formatDateTimeZoned } from "@/lib/time-zone";
 import { useEffect, useMemo, useState } from "react";
 import { describeRequest, describeOffStrategy, type LeaveQueueSummary } from "@/lib/schedule-requests";
 import { formatDate, type DateFormatKey } from "@/lib/date-format";
@@ -65,6 +67,7 @@ export function MyRequestsPage({
   initialRequests: RequestRow[];
 }) {
   const fmt = dateFormat as DateFormatKey;
+  const { zone } = useTimeZone();
   const codeOf = useMemo(() => {
     const m = new Map(shiftTypes.map((s) => [s.id, s.code]));
     return (id: string) => m.get(id) ?? id;
@@ -206,11 +209,9 @@ export function MyRequestsPage({
   }
 
   // Submission stamp: date + 24h time (matches the /requests audit page).
+  // Card #320: in the Settings time zone, with its label.
   function submittedLabel(iso: string) {
-    const d = new Date(iso);
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    return `${formatDate(d, fmt)} ${hh}:${mm}`;
+    return formatDateTimeZoned(new Date(iso), zone, fmt);
   }
 
   return (

@@ -1,8 +1,10 @@
 import { describe, it, expect, afterAll } from "vitest";
 import {
-  lastSlot, autoDue, autoHealth, planPrune, planSafetyPrune, autoFileName, parseAutoSettings, RETRY_MS,
+  autoDue, autoHealth, planPrune, planSafetyPrune, autoFileName, parseAutoSettings, RETRY_MS,
   type AutoSettings, type AutoStatus,
 } from "@/lib/backup/auto";
+import { zonedSlot } from "@/lib/time-zone";
+const LA = "America/Los_Angeles";
 
 // Card #315: when an automatic backup is due, when the amber note shows, and which files the
 // keep rule removes. All pure.
@@ -16,21 +18,21 @@ const on: AutoSettings = {
 const none: AutoStatus = { lastAutoSuccessAt: null, lastAutoAttemptAt: null, lastAutoError: null };
 const d = (s: string) => new Date(s);
 
-describe("the last scheduled time (server's local time)", () => {
+describe("the last scheduled time (Settings time zone, card #320)", () => {
   it("is today's time once it has passed, else yesterday's", () => {
     process.env.TZ = "UTC";
-    expect(lastSlot(d("2026-11-17T03:00:00Z"), "02:00").toISOString()).toBe("2026-11-17T02:00:00.000Z");
-    expect(lastSlot(d("2026-11-17T01:59:00Z"), "02:00").toISOString()).toBe("2026-11-16T02:00:00.000Z");
-    expect(lastSlot(d("2026-11-17T02:00:00Z"), "02:00").toISOString()).toBe("2026-11-17T02:00:00.000Z");
+    expect(zonedSlot(d("2026-11-17T03:00:00Z"), "02:00", "UTC").toISOString()).toBe("2026-11-17T02:00:00.000Z");
+    expect(zonedSlot(d("2026-11-17T01:59:00Z"), "02:00", "UTC").toISOString()).toBe("2026-11-16T02:00:00.000Z");
+    expect(zonedSlot(d("2026-11-17T02:00:00Z"), "02:00", "UTC").toISOString()).toBe("2026-11-17T02:00:00.000Z");
   });
 
-  it("follows daylight saving time in the server's time zone", () => {
+  it("follows daylight saving time in the Settings zone", () => {
     process.env.TZ = "America/Los_Angeles";
     // Summer (UTC-7) and winter (UTC-8): 02:00 local each day.
-    expect(lastSlot(d("2026-07-01T12:00:00Z"), "02:00").toISOString()).toBe("2026-07-01T09:00:00.000Z");
-    expect(lastSlot(d("2026-12-01T12:00:00Z"), "02:00").toISOString()).toBe("2026-12-01T10:00:00.000Z");
+    expect(zonedSlot(d("2026-07-01T12:00:00Z"), "02:00", LA).toISOString()).toBe("2026-07-01T09:00:00.000Z");
+    expect(zonedSlot(d("2026-12-01T12:00:00Z"), "02:00", LA).toISOString()).toBe("2026-12-01T10:00:00.000Z");
     // The day the clocks go forward (2026-03-08): 02:30 doesn't exist; it still runs that day.
-    const spring = lastSlot(d("2026-03-08T20:00:00Z"), "02:30");
+    const spring = zonedSlot(d("2026-03-08T20:00:00Z"), "02:30", LA);
     expect(spring.getTime()).toBeLessThanOrEqual(d("2026-03-08T20:00:00Z").getTime());
     expect(spring.getTime()).toBeGreaterThan(d("2026-03-08T08:00:00Z").getTime());
     process.env.TZ = "UTC";

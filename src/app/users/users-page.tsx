@@ -1,5 +1,7 @@
 "use client";
 
+import { useTimeZone } from "@/app/time-zone-provider";
+import { formatDateTimeZoned } from "@/lib/time-zone";
 import { RequireTotpSwitch } from "./require-totp-switch";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useEscape } from "@/lib/use-escape";
@@ -662,6 +664,7 @@ const REASON_LABELS: Record<string, { label: string; color: string }> = {
 };
 
 function LoginLogSection({ dateFormat }: { dateFormat: DateFormatKey }) {
+  const { zone } = useTimeZone(); // card #320
   const [logs, setLogs] = useState<LoginLogEntry[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -718,7 +721,7 @@ function LoginLogSection({ dateFormat }: { dateFormat: DateFormatKey }) {
                 return (
                   <tr key={log.id} className="border-b border-slate-800/50 hover:bg-slate-800/30">
                     <td className="py-1.5 px-2 text-slate-500 font-mono truncate">
-                      {(() => { const dt = new Date(log.createdAt); return `${formatDate(dt, dateFormat)} ${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`; })()}
+                      {formatDateTimeZoned(new Date(log.createdAt), zone, dateFormat)}
                     </td>
                     <td className="py-1.5 px-2 text-slate-300 truncate">{log.email}</td>
                     <td className="py-1.5 px-2">

@@ -25,6 +25,7 @@ const asg = (staffId: string, date: string, shiftTypeId: string) => ({ staffId, 
 
 export function input(over: Partial<ExportScheduleInput> = {}): ExportScheduleInput {
   return {
+    zone: "UTC",
     staff,
     assignments: [
       asg("a", "2026-01-01", "hol"),

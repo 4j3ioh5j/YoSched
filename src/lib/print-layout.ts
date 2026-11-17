@@ -2,6 +2,7 @@
 // Everything here is pure, so the printout and the year export (card #299) share it.
 // The values are Settings (SchedulingPreferences); these are only the defaults.
 
+import { formatClock, zonedCalendarDate } from "./time-zone";
 import { formatDate, type DateFormatKey } from "./date-format";
 
 export type PrintAlign = "left" | "center" | "right";
@@ -50,6 +51,8 @@ export type PrintTemplateContext = {
   dateFormat: DateFormatKey;
   /** The month's saved schedule version, or null when it has none. */
   version: number | null;
+  /** Card #320: the Settings time zone; {DATE} and {TIME} are in it, and {TIME} carries its label. */
+  zone: string;
 };
 
 const pad2 = (n: number) => (n < 10 ? "0" + n : String(n));
@@ -64,8 +67,8 @@ export function renderPrintTemplate(text: string, ctx: PrintTemplateContext): st
     Month: name,
     MON: name.slice(0, 3).toUpperCase(),
     YEAR: String(ctx.year),
-    DATE: formatDate(ctx.printedAt, ctx.dateFormat),
-    TIME: `${pad2(ctx.printedAt.getHours())}:${pad2(ctx.printedAt.getMinutes())}`,
+    DATE: formatDate(zonedCalendarDate(ctx.printedAt, ctx.zone), ctx.dateFormat),
+    TIME: formatClock(ctx.printedAt, ctx.zone),
     VERSION: ctx.version === null ? "—" : pad2(ctx.version),
   };
   return text.replace(/\{([A-Za-z]+)\}/g, (m, w: string) => (Object.prototype.hasOwnProperty.call(words, w) ? words[w] : m));

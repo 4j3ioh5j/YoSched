@@ -28,7 +28,7 @@ function setup(over: Partial<JobDeps> = {}) {
     exclusive: gate.exclusive,
     readState: async () => {
       w.events.push(`read:${gate.holding() ?? "none"}`);
-      return { settings: { ...w.settings }, status: { ...w.status } };
+      return { settings: { ...w.settings }, status: { ...w.status }, zone: "UTC" };
     },
     recordAttempt: async (at) => { w.events.push("attempt"); w.status.lastAutoAttemptAt = at; },
     buildPayload: async () => { w.events.push("build"); return { format: 1, tables: {} }; },

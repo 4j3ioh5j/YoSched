@@ -1,9 +1,11 @@
 // Card #315: automatic daily backups — the pure rules. When one is due, when the amber note
 // shows, the file names, which old files the keep rule removes, and the settings' bounds.
 
+import { resolveZone, zonedSlot } from "../time-zone";
+
 export type AutoSettings = {
   autoEnabled: boolean;
-  autoTime: string; // "HH:MM", server local time
+  autoTime: string; // "HH:MM", wall clock in the Settings time zone (card #320)
   keepDaily: number;
   keepWeekly: number;
   keepMonthly: number;
@@ -25,18 +27,10 @@ export const RETRY_MS = 60 * 60_000;
 /** No success for this long shows the amber note. */
 export const STALE_MS = 48 * 60 * 60_000;
 
-/** The most recent HH:MM (server local time, daylight saving included) at or before `now`. */
-export function lastSlot(now: Date, hhmm: string): Date {
-  const [h, m] = hhmm.split(":").map(Number);
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0, 0);
-  if (today.getTime() <= now.getTime()) return today;
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, h, m, 0, 0);
-}
-
 /** Due: switched on with a key, no success since the last scheduled time, and no failed try in the last hour. */
-export function autoDue(now: Date, s: AutoSettings, st: AutoStatus): boolean {
+export function autoDue(now: Date, s: AutoSettings, st: AutoStatus, zone: string = "UTC"): boolean {
   if (!s.autoEnabled || !s.publicKey || !s.keyId) return false;
-  const slot = lastSlot(now, s.autoTime).getTime();
+  const slot = zonedSlot(now, s.autoTime, resolveZone(zone)).getTime();
   if (st.lastAutoSuccessAt && st.lastAutoSuccessAt.getTime() >= slot) return false;
   if (st.lastAutoAttemptAt && st.lastAutoAttemptAt.getTime() >= slot && now.getTime() - st.lastAutoAttemptAt.getTime() < RETRY_MS) return false;
   return true;

@@ -1,3 +1,4 @@
+import { formatDateTimeZoned } from "./time-zone";
 import { formatDate, type DateFormatKey } from "@/lib/date-format";
 
 // Card #312: Print and Export save a schedule version first, so a printout or an
@@ -43,8 +44,8 @@ export function monthsNeedingVersion(
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
-/** The comment an automatic version carries: when, and why (24-hour time). */
-export function autoVersionComment(kind: "print" | "export", now: Date, format: DateFormatKey, year?: number): string {
-  const when = `${formatDate(now, format)} ${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+/** The comment an automatic version carries: when (24-hour, in the Settings zone, card #320), and why. */
+export function autoVersionComment(kind: "print" | "export", now: Date, format: DateFormatKey, zone: string, year?: number): string {
+  const when = formatDateTimeZoned(now, zone, format);
   return kind === "print" ? `Auto: printed ${when}` : `Auto: exported ${year} on ${when}`;
 }

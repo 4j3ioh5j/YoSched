@@ -92,6 +92,8 @@ export type ExportScheduleInput = {
   printAggregateColumns: readonly AggregateColumn[];
   dayShading: DayShading;
   printLayout: PrintLayout;
+  /** Card #320: the Settings time zone, for the footer's {DATE} and {TIME}. */
+  zone: string;
   weekendStartDow: number;
   dateFormat: DateFormatKey;
   versions: readonly { year: number; month: number; versionNumber: number }[];
@@ -217,7 +219,7 @@ export function buildPrintedMonth(input: ExportScheduleInput, year: number, mont
   });
 
   const v = input.versions.find((x) => x.year === year && x.month === month);
-  const ctx: PrintTemplateContext = { year, month, printedAt: now, dateFormat: input.dateFormat, version: v ? v.versionNumber : null };
+  const ctx: PrintTemplateContext = { year, month, printedAt: now, dateFormat: input.dateFormat, version: v ? v.versionNumber : null, zone: input.zone };
   return {
     year,
     month,

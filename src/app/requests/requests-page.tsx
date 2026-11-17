@@ -1,5 +1,7 @@
 "use client";
 
+import { useTimeZone } from "@/app/time-zone-provider";
+import { formatDateTimeZoned } from "@/lib/time-zone";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { describeRequest, describeOffStrategy, type RequestKind, type RequestStrength } from "@/lib/schedule-requests";
@@ -71,6 +73,7 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<RequestSort | null>(null);
   const df = (dfProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
+  const { zone } = useTimeZone();
   const router = useRouter();
 
   // Adopt fresh server data after a router.refresh() (below) or any navigation
@@ -116,12 +119,8 @@ export function RequestsPage({ canEdit, requests: initial, staffName, shiftCode,
   // Date-only (for the requested start/end @db.Date values).
   const fmt = (iso: string) => formatDate(new Date(iso.slice(0, 10) + "T12:00:00"), df);
   // Date + 24h time, for the received/approved audit timestamps.
-  const fmtDateTime = (iso: string) => {
-    const d = new Date(iso);
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    return `${formatDate(d, df)} ${hh}:${mm}`;
-  };
+  // Card #320: in the Settings time zone, with its label.
+  const fmtDateTime = (iso: string) => formatDateTimeZoned(new Date(iso), zone, df);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: requests.length };

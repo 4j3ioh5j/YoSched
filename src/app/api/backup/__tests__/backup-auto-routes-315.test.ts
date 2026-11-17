@@ -61,8 +61,9 @@ describe("automatic backup routes (card #315)", () => {
     expect((await PUT(json("PUT", { enabled: true }))).status).toBe(200);
     expect(h.enable).toHaveBeenCalledWith(true);
     expect((await PUT(json("PUT", { autoTime: "1:00", keepDaily: 7, keepWeekly: 4, keepMonthly: 12, keepSafety: 10 }))).status).toBe(400);
-    expect((await PUT(json("PUT", { autoTime: "01:00", keepDaily: 7, keepWeekly: 4, keepMonthly: 12, keepSafety: 10 }))).status).toBe(200);
-    expect(h.save).toHaveBeenCalledWith({ autoTime: "01:00", keepDaily: 7, keepWeekly: 4, keepMonthly: 12, keepSafety: 10 });
+    expect((await PUT(json("PUT", { autoTime: "01:00", keepDaily: 7, keepWeekly: 4, keepMonthly: 12, keepSafety: 10, zoneAtLoad: "America/Los_Angeles" }))).status).toBe(200);
+    // Card #320: the zone the page showed goes to the service, which refuses a stale page.
+    expect(h.save).toHaveBeenCalledWith({ autoTime: "01:00", keepDaily: 7, keepWeekly: 4, keepMonthly: 12, keepSafety: 10 }, "America/Los_Angeles");
   });
 
   it("switching on without a proved key is a 409 with a sentence", async () => {

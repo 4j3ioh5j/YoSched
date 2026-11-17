@@ -1,5 +1,7 @@
 "use client";
 
+import { useTimeZone, TIME_ZONE_EVENT } from "@/app/time-zone-provider";
+import { formatClock, wallClock, zoneChoices } from "@/lib/time-zone";
 import { orderSpecialColumns } from "@/lib/special-columns";
 import { followAvoidsChanged, type FollowAvoidData } from "@/lib/follow-avoids";
 import { saveErrorMessage } from "@/lib/stale-client";
@@ -2919,12 +2921,13 @@ const HOURS_POLICY_LABELS: Record<HoursPolicy, { label: string; hint: string }> 
   allowed: { label: "Allowed", hint: "Doesn't block anything." },
 };
 
-// Format a save stamp as `YYYY-MM-DD HH:mm` in 24-hour local time (project rule: never AM/PM).
-function formatProfileStamp(iso: string): string {
+// Format a save stamp as `YYYY-MM-DD HH:mm ZZZ`, 24-hour, in the Settings time zone (card #320).
+function formatProfileStamp(iso: string, zone: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
+  const w = wallClock(d, zone);
   const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return `${w.year}-${p(w.month)}-${p(w.day)} ${formatClock(d, zone)}`;
 }
 
 // Surfaces the order auto-generation applies its factors and the constraints it can
@@ -2949,6 +2952,7 @@ function AutoGenPrioritySection({
   // (settings:autogen-priority), independent of the general settings:edit context.
   canEdit: boolean;
 }) {
+  const { zone } = useTimeZone(); // card #320
   const [factors, setFactors] = useState(initial); // working draft
   const [savedFactors, setSavedFactors] = useState(initial); // last persisted order
   const [profiles, setProfiles] = useState(initialProfiles);
@@ -3225,7 +3229,7 @@ function AutoGenPrioritySection({
                 <div className="min-w-0 flex-1">
                   <span className="text-sm text-slate-200 font-medium truncate">{p.name}</span>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Saved by {p.createdByName} · {formatProfileStamp(p.createdAt)}
+                    Saved by {p.createdByName} · {formatProfileStamp(p.createdAt, zone)}
                   </p>
                 </div>
                 {canEdit && (
@@ -3455,6 +3459,70 @@ function EquityFactorsSection({
             {status === "saving" ? "Saving..." : "Save"}
           </button>
         )}
+      </div>
+    </CollapsibleSection>
+  );
+}
+
+// Card #320: the one time zone every time in YoSched is shown and asked in. Until one is saved,
+// YoSched works in UTC (as before) and this asks for one, suggesting this computer's zone; nothing
+// is saved until Save. Saving converts the automatic backup time so the next backup keeps its moment.
+function TimeZoneSection() {
+  const canEdit = useCanEdit();
+  const tz = useTimeZone();
+  const choices = useMemo(() => zoneChoices(), []);
+  const browserZone = useMemo(() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return "UTC"; } }, []);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+  const shown = draft ?? tz.storedZone ?? (choices.includes(browserZone) ? browserZone : "UTC");
+  const dirty = tz.loaded && shown !== tz.storedZone;
+
+  async function save() {
+    setStatus("saving"); setError("");
+    try {
+      const res = await fetch("/api/settings/time-zone", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timeZone: shown, zoneAtLoad: tz.storedZone }),
+      });
+      const body = (await res.json().catch(() => null)) as { error?: string; autoTime?: string } | null;
+      if (!res.ok) {
+        setError(body?.error ?? `The server answered ${res.status}`); setStatus("error");
+        if (res.status === 409) { setDraft(null); await tz.refresh(); }
+        return;
+      }
+      setDraft(null);
+      window.dispatchEvent(new Event(TIME_ZONE_EVENT)); // every open part of this tab rereads the zone
+      setStatus("saved"); setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed"); setStatus("error");
+    }
+  }
+
+  return (
+    <CollapsibleSection
+      id="time-zone"
+      title="Time Zone"
+      description="Every time YoSched shows or asks for (backups, requests, printouts, logins, versions) is in this zone."
+      status={status}
+      error={error}
+    >
+      <div className="mt-4 space-y-2 text-sm">
+        {tz.loaded && tz.storedZone === null && (
+          <p className="text-amber-400">No time zone is chosen yet, so times are in UTC. Choose yours and press Save.</p>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-slate-100 disabled:opacity-50"
+            value={shown} onChange={(e) => setDraft(e.target.value)} disabled={!canEdit || status === "saving"}
+          >
+            {choices.map((z) => <option key={z} value={z}>{z}</option>)}
+          </select>
+          <span className="text-slate-400">now {formatClock(new Date(), shown)}</span>
+          <button type="button" className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded text-white"
+            disabled={!canEdit || !dirty || status === "saving"} onClick={() => void save()}>Save</button>
+        </div>
+        <p className="text-xs text-slate-500">Changing it keeps the automatic backup at the same moment; its time is shown in the new zone.</p>
       </div>
     </CollapsibleSection>
   );
@@ -5763,12 +5831,13 @@ function PrintBlockEditor({ label, value, onChange, disabled }: { label: string;
 }
 
 function PrintHeaderFooterSection({ initial }: { initial: PrintLayout }) {
+  const { zone } = useTimeZone(); // card #320
   const canEdit = useCanEdit();
   const { saved, draft, setDraft, status, error, busy, dirty, save } = useSavedDraft({ header: initial.header, footer: initial.footer });
   const valid = validatePrintBlock(draft.header).ok && validatePrintBlock(draft.footer).ok;
   const now = new Date();
   // Preview: this month, the current time, and an example saved version.
-  const previewCtx: PrintTemplateContext = { year: now.getFullYear(), month: now.getMonth(), printedAt: now, dateFormat: "MM/DD/YYYY", version: 9 };
+  const previewCtx: PrintTemplateContext = { year: now.getFullYear(), month: now.getMonth(), printedAt: now, dateFormat: "MM/DD/YYYY", version: 9, zone };
   const previewStyle = (b: PrintBlock): React.CSSProperties => ({ fontFamily: printFontStack(initial.fontFamily), fontSize: `${b.size}pt`, fontWeight: b.bold ? 700 : 400, textAlign: b.align });
   const defaults = { header: DEFAULT_PRINT_LAYOUT.header, footer: DEFAULT_PRINT_LAYOUT.footer };
   return (
@@ -6726,6 +6795,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
         <SectionGroup label="General & System" />
         <div className="space-y-4 mt-3">
           <DateFormatSection selected={dateFormat} onChange={(fmt) => setDateFormat(fmt as DateFormatKey)} />
+          <TimeZoneSection />
           <DateColumnsSection initial={schedulingPrefs.printLayout} />
           <EmailSettingsSection />
         </div>

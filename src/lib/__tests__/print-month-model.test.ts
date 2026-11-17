@@ -28,6 +28,7 @@ const asg = (staffId: string, date: string, shiftTypeId: string) => ({ staffId, 
 
 function input(over: Partial<ExportScheduleInput> = {}): ExportScheduleInput {
   return {
+    zone: "UTC",
     staff,
     assignments: [
       asg("a", "2026-01-01", "hol"),
@@ -135,8 +136,8 @@ describe("buildPrintedMonth (card #299)", () => {
   it("title and footer come from the templates with that month's version, or a dash", () => {
     const m = buildPrintedMonth(input(), 2026, 0, NOW);
     expect(m.title).toBe("JANUARY 2026 SCHEDULE");
-    expect(m.footer).toBe("11/16/2026 20:05 VER: 09 - YoSched");
-    expect(buildPrintedMonth(input(), 2026, 1, NOW).footer).toBe("11/16/2026 20:05 VER: — - YoSched");
+    expect(m.footer).toBe("11/16/2026 20:05 UTC VER: 09 - YoSched");
+    expect(buildPrintedMonth(input(), 2026, 1, NOW).footer).toBe("11/16/2026 20:05 UTC VER: — - YoSched");
   });
 
   it("one combined date column when the split is off", () => {

@@ -1,7 +1,9 @@
 "use client";
 
+import { formatClock, zoneLabel } from "@/lib/time-zone";
 import { useEffect, useRef, useState } from "react";
 import { KeyFilePicker } from "./key-file-picker";
+import { TIME_ZONE_EVENT } from "@/app/time-zone-provider";
 
 // Card #315: Settings › Backup and Restore › Automatic backups. A daily backup written to a
 // folder on the server, locked with a key whose key file the admin keeps elsewhere.
@@ -14,6 +16,9 @@ const INPUT = "bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm te
 export type AutoView = {
   enabled: boolean;
   autoTime: string;
+  /** Card #320: the stored zone (sent back as zoneAtLoad) and the zone in use (UTC while none is chosen). */
+  storedZone: string | null;
+  zone: string;
   keepDaily: number; keepWeekly: number; keepMonthly: number; keepSafety: number;
   key: { keyId: string; createdAt: string | null; verifiedAt: string | null } | null;
   pendingKey: { keyId: string; createdAt: string | null } | null;
@@ -30,11 +35,13 @@ export type AutoView = {
 type Form = { autoTime: string; keepDaily: string; keepWeekly: string; keepMonthly: string; keepSafety: string };
 const formOf = (v: AutoView): Form => ({ autoTime: v.autoTime, keepDaily: String(v.keepDaily), keepWeekly: String(v.keepWeekly), keepMonthly: String(v.keepMonthly), keepSafety: String(v.keepSafety) });
 
-function stamp(iso: string | null): string {
+// Card #320: in the Settings time zone, with its label.
+function stamp(iso: string | null, zone: string): string {
   if (!iso) return "never";
-  return new Date(iso).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const d = new Date(iso);
+  return `${d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: zone })} ${formatClock(d, zone)}`;
 }
-const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "");
+const day = (iso: string | null, zone: string) => (iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: zone }) : "");
 
 async function errorOf(res: Response): Promise<string> {
   const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -67,6 +74,14 @@ export function AutoBackupSection({ onError }: { onError: (e: string | undefined
     const res = await fetch("/api/backup/auto", { cache: "no-store" });
     if (res.ok) adopt((await res.json()) as AutoView);
   };
+
+  // Card #320: a zone saved elsewhere in Settings converts the backup time; show the new one.
+  useEffect(() => {
+    const on = () => { void reload(); };
+    window.addEventListener(TIME_ZONE_EVENT, on);
+    return () => window.removeEventListener(TIME_ZONE_EVENT, on);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function put(body: unknown, kind: "save" | "toggle") {
     setBusy(kind); onError(undefined); setNote(null);
@@ -138,10 +153,10 @@ export function AutoBackupSection({ onError }: { onError: (e: string | undefined
 
       <div className="space-y-1">
         <p>Automatic backups are <span className={view.enabled ? "text-emerald-400" : "text-slate-200"}>{view.enabled ? "on" : "off"}</span>
-          {view.enabled ? `, every day at ${view.autoTime} (this server's time).` : "."}</p>
-        <p>Last automatic backup: {stamp(view.lastSuccessAt)}{view.lastError && view.lastAttemptAt ? `; last try ${stamp(view.lastAttemptAt)} failed` : ""}.</p>
+          {view.enabled ? `, every day at ${view.autoTime} ${zoneLabel(new Date(), view.zone)}.` : "."}</p>
+        <p>Last automatic backup: {stamp(view.lastSuccessAt, view.zone)}{view.lastError && view.lastAttemptAt ? `; last try ${stamp(view.lastAttemptAt, view.zone)} failed` : ""}.</p>
         <p>Folder on the server: <span className="font-mono text-xs text-slate-200">{view.folder}</span> ({view.autoFiles} automatic {view.autoFiles === 1 ? "backup" : "backups"} kept).</p>
-        <p>Key: {view.key ? `made ${day(view.key.createdAt)} (${view.key.keyId})` : "none yet"}.</p>
+        <p>Key: {view.key ? `made ${day(view.key.createdAt, view.zone)} (${view.key.keyId})` : "none yet"}.</p>
         <div className="flex gap-2 pt-1">
           {view.enabled
             ? <button type="button" className={BTN_QUIET} disabled={busy !== null} onClick={() => put({ enabled: false }, "toggle")}>Switch off</button>
@@ -186,7 +201,7 @@ export function AutoBackupSection({ onError }: { onError: (e: string | undefined
         <div className="flex flex-wrap gap-x-4 gap-y-2">
           <label className="flex items-center gap-2">Every day at
             <input className={`${INPUT} w-20`} placeholder="01:00" value={form.autoTime} onChange={(e) => setForm({ ...form, autoTime: e.target.value })} disabled={busy !== null} />
-            (24-hour clock)
+            <span data-zone-label>{zoneLabel(new Date(), view.zone)}</span> (24-hour clock)
           </label>
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-2">
@@ -198,7 +213,7 @@ export function AutoBackupSection({ onError }: { onError: (e: string | undefined
         <p className="text-xs text-slate-500">The newest backup is always kept. Backups you download yourself are never removed.</p>
         <button
           type="button" className={BTN} disabled={busy !== null || !dirty}
-          onClick={() => put({ autoTime: form.autoTime.trim(), keepDaily: Number(form.keepDaily), keepWeekly: Number(form.keepWeekly), keepMonthly: Number(form.keepMonthly), keepSafety: Number(form.keepSafety) }, "save")}
+          onClick={() => put({ zoneAtLoad: view.storedZone, autoTime: form.autoTime.trim(), keepDaily: Number(form.keepDaily), keepWeekly: Number(form.keepWeekly), keepMonthly: Number(form.keepMonthly), keepSafety: Number(form.keepSafety) }, "save")}
         >{busy === "save" ? "Saving…" : "Save"}</button>
       </div>
 

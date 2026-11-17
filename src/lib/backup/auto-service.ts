@@ -7,6 +7,7 @@ import { startAutoBackup, type AutoState, type JobDeps } from "./auto-job";
 import { BackupFileError, MIN_PASSPHRASE, createBackupKey, decodeBackup, encodeAutoBackup, readBackupHeader } from "./format";
 import { cleanPartials, findKeyFiles, listBackupFolder, removeFiles, writeAtomic } from "./files";
 import { backupDir, snapshotPayload } from "./service";
+import { convertWallTime, isValidZone, resolveZone } from "../time-zone";
 
 // Card #315: automatic daily backups, wired to the database and the backup folder.
 // The private key is never stored here: the admin keeps the key file. A new key is "pending"
@@ -34,12 +35,52 @@ function toStatus(row: StatusRow | null): AutoStatus {
 }
 
 /** Settings and status from one consistent read. */
-export async function readAutoState(): Promise<AutoState & { pending: SettingsRow | null }> {
-  const [s, st] = await prisma.$transaction(
-    async (tx) => [await tx.backupSettings.findUnique({ where: { id: ID } }), await tx.backupStatus.findUnique({ where: { id: ID } })] as const,
+export async function readAutoState(): Promise<AutoState & { pending: SettingsRow | null; storedZone: string | null }> {
+  const [s, st, prefs] = await prisma.$transaction(
+    async (tx) => [
+      await tx.backupSettings.findUnique({ where: { id: ID } }),
+      await tx.backupStatus.findUnique({ where: { id: ID } }),
+      await tx.schedulingPreferences.findFirst({ select: { timeZone: true } }),
+    ] as const,
     { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
   );
-  return { settings: toSettings(s), status: toStatus(st), pending: s };
+  // Card #320: the backup time is a wall clock in the Settings zone (UTC while none is chosen).
+  const storedZone = prefs?.timeZone ?? null;
+  return { settings: toSettings(s), status: toStatus(st), pending: s, zone: resolveZone(storedZone), storedZone };
+}
+
+/** Card #320: lock order for every writer of the backup time or the zone: backup_settings, then
+ *  scheduling_preferences. Both rows exist afterwards, so FOR UPDATE always locks something. */
+async function lockTimeRows(tx: Prisma.TransactionClient): Promise<{ autoTime: string; storedZone: string | null }> {
+  // Prisma upserts (not raw INSERTs): they fill @updatedAt, which has no database default.
+  await tx.backupSettings.upsert({ where: { id: ID }, create: { id: ID }, update: {} });
+  if (!(await tx.schedulingPreferences.findFirst({ select: { id: true } }))) {
+    await tx.schedulingPreferences.upsert({ where: { id: "default" }, create: { id: "default" }, update: {} });
+  }
+  const b = await tx.$queryRaw<{ autoTime: string }[]>`SELECT "autoTime" FROM "backup_settings" WHERE "id" = ${ID} FOR UPDATE`;
+  const p = await tx.$queryRaw<{ timeZone: string | null }[]>`SELECT "timeZone" FROM "scheduling_preferences" ORDER BY "id" LIMIT 1 FOR UPDATE`;
+  return { autoTime: b[0].autoTime, storedZone: p[0]?.timeZone ?? null };
+}
+
+/** The zone the page was loaded with must still be the stored one, or its clock time means something else now. */
+function checkZoneAtLoad(storedZone: string | null, zoneAtLoad: unknown): void {
+  if (zoneAtLoad === undefined || (zoneAtLoad ?? null) !== storedZone) {
+    throw new AutoConflictError("The time zone was changed since this page was opened. Reload the page.");
+  }
+}
+
+/** Card #320: change the app's time zone. The backup time is converted in the same transaction,
+ *  so the next automatic backup stays at the same moment. */
+export async function setTimeZone(zone: string, zoneAtLoad: unknown, now = new Date()): Promise<{ timeZone: string; autoTime: string }> {
+  if (!isValidZone(zone)) throw new BackupFileError("Choose a time zone from the list");
+  return prisma.$transaction(async (tx) => {
+    const { autoTime, storedZone } = await lockTimeRows(tx);
+    checkZoneAtLoad(storedZone, zoneAtLoad);
+    const converted = convertWallTime(autoTime, resolveZone(storedZone), zone, now);
+    await tx.backupSettings.update({ where: { id: ID }, data: { autoTime: converted } });
+    await tx.schedulingPreferences.updateMany({ where: {}, data: { timeZone: zone } });
+    return { timeZone: zone, autoTime: converted };
+  }, { timeout: 10_000 });
 }
 
 async function setStatus(data: Partial<Pick<StatusRow, "lastAutoAttemptAt" | "lastAutoSuccessAt" | "lastAutoError" | "lastBackupAt">>): Promise<void> {
@@ -52,7 +93,7 @@ export function jobDeps(): JobDeps {
   return {
     now: () => new Date(),
     exclusive: (fn) => writeGate.exclusive(fn),
-    readState: async () => { const { settings, status } = await readAutoState(); return { settings, status }; },
+    readState: async () => { const { settings, status, zone } = await readAutoState(); return { settings, status, zone }; },
     recordAttempt: (at) => setStatus({ lastAutoAttemptAt: at }),
     buildPayload: () => snapshotPayload(),
     encode: (payload, key) => encodeAutoBackup(payload, key),
@@ -74,6 +115,9 @@ export function startAutoBackups(): boolean {
 export type AutoView = {
   enabled: boolean;
   autoTime: string;
+  /** Card #320: the stored zone (null = none chosen; send back as zoneAtLoad) and the zone in use. */
+  storedZone: string | null;
+  zone: string;
   keepDaily: number; keepWeekly: number; keepMonthly: number; keepSafety: number;
   key: { keyId: string; createdAt: string | null; verifiedAt: string | null } | null;
   pendingKey: { keyId: string; createdAt: string | null } | null;
@@ -90,7 +134,7 @@ export type AutoView = {
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 
 export async function getAutoView(now = new Date()): Promise<AutoView> {
-  const { settings: s, status: st, pending } = await readAutoState();
+  const { settings: s, status: st, pending, zone, storedZone } = await readAutoState();
   const folder = backupDir();
   let autoFiles = 0, keyFilesInFolder: string[] = [], folderError: string | null = null;
   try {
@@ -102,7 +146,7 @@ export async function getAutoView(now = new Date()): Promise<AutoView> {
     folderError = `The backup folder can't be read (${(e as NodeJS.ErrnoException).code ?? "error"})`;
   }
   return {
-    enabled: s.autoEnabled, autoTime: s.autoTime,
+    enabled: s.autoEnabled, autoTime: s.autoTime, storedZone, zone,
     keepDaily: s.keepDaily, keepWeekly: s.keepWeekly, keepMonthly: s.keepMonthly, keepSafety: s.keepSafety,
     key: s.keyId ? { keyId: s.keyId, createdAt: iso(s.keyCreatedAt), verifiedAt: iso(s.verifiedAt) } : null,
     pendingKey: pending?.pendingKeyId ? { keyId: pending.pendingKeyId, createdAt: iso(pending.pendingKeyCreatedAt) } : null,
@@ -112,8 +156,13 @@ export async function getAutoView(now = new Date()): Promise<AutoView> {
   };
 }
 
-export async function saveAutoSettings(v: AutoSettingsInput): Promise<void> {
-  await prisma.backupSettings.upsert({ where: { id: ID }, create: { id: ID, ...v }, update: v });
+/** zoneAtLoad: the stored zone the page showed (null = none chosen). A stale page is refused (409). */
+export async function saveAutoSettings(v: AutoSettingsInput, zoneAtLoad: unknown): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const { storedZone } = await lockTimeRows(tx);
+    checkZoneAtLoad(storedZone, zoneAtLoad);
+    await tx.backupSettings.update({ where: { id: ID }, data: v });
+  }, { timeout: 10_000 });
 }
 
 /** Switch on (only with a key proved by its key file) or off. */

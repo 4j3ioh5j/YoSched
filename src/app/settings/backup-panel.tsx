@@ -1,5 +1,7 @@
 "use client";
 
+import { useTimeZone } from "@/app/time-zone-provider";
+import { formatClock } from "@/lib/time-zone";
 import { useEffect, useState } from "react";
 import { CONFIRM_WORD } from "@/lib/backup/reminder";
 import { AutoBackupSection } from "./auto-backup-section";
@@ -16,11 +18,12 @@ const INPUT = "bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm te
 type Status = { lastBackupAt: string | null; reminderDays: number; due: boolean };
 type Summary = { createdAt: string; appVersion: string; counts: Record<string, number> };
 
-function when(iso: string | null): string {
+// Card #320: in the Settings time zone, with its label.
+function when(iso: string | null, zone: string): string {
   if (!iso) return "never";
   const d = new Date(iso);
   const days = Math.floor((Date.now() - d.getTime()) / 86_400_000);
-  const stamp = d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const stamp = `${d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: zone })} ${formatClock(d, zone)}`;
   return `${stamp} (${days === 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`})`;
 }
 
@@ -30,6 +33,7 @@ async function errorOf(res: Response): Promise<string> {
 }
 
 export function BackupPanel({ onError }: { onError: (e: string | undefined) => void }) {
+  const { zone } = useTimeZone();
   const [status, setStatus] = useState<Status | null>(null);
   const [days, setDays] = useState("");
   const [pass, setPass] = useState("");
@@ -121,7 +125,7 @@ export function BackupPanel({ onError }: { onError: (e: string | undefined) => v
   return (
     <div className="space-y-6 text-sm text-slate-300">
       <div>
-        <p>Last backup: <span className={status.due ? "text-amber-400" : "text-slate-200"}>{when(status.lastBackupAt)}</span></p>
+        <p>Last backup: <span className={status.due ? "text-amber-400" : "text-slate-200"}>{when(status.lastBackupAt, zone)}</span></p>
         <label className="mt-2 flex items-center gap-2">
           Remind me after
           <input className={`${INPUT} w-16`} inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value)} disabled={busy !== null} />
@@ -154,7 +158,7 @@ export function BackupPanel({ onError }: { onError: (e: string | undefined) => v
         </div>
         {summary && (
           <div className="rounded border border-slate-700 p-3 space-y-2">
-            <p>Backup made {when(summary.createdAt)}{summary.appVersion ? ` by YoSched ${summary.appVersion}` : ""}: {total.toLocaleString()} records, including {summary.counts.staff ?? 0} staff, {summary.counts.users ?? 0} logins and {(summary.counts.assignments ?? 0).toLocaleString()} schedule cells.</p>
+            <p>Backup made {when(summary.createdAt, zone)}{summary.appVersion ? ` by YoSched ${summary.appVersion}` : ""}: {total.toLocaleString()} records, including {summary.counts.staff ?? 0} staff, {summary.counts.users ?? 0} logins and {(summary.counts.assignments ?? 0).toLocaleString()} schedule cells.</p>
             <label className="flex flex-wrap items-center gap-2">
               Type {CONFIRM_WORD} to replace everything:
               <input className={`${INPUT} w-28`} value={confirm} onChange={(e) => setConfirm(e.target.value)} disabled={busy !== null} />

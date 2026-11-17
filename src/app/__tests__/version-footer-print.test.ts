@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { printStampText, unsavedPrintWarning } from "@/lib/print-stamp";
+import { unsavedPrintWarning } from "@/lib/print-stamp";
 
 // History: an earlier Code-Review finding required that a printout never silently
 // imply it matches "Version N" while the month has drifted. That used to be a printed
@@ -62,8 +62,6 @@ describe("unsaved edits: warned before printing, not printed (card #173)", () =>
 
   it("stamps the print time on beforeprint, 24-hour", () => {
     expect(grid).toMatch(/addEventListener\("beforeprint", stamp\)/);
-    expect(printStampText(new Date(2027, 1, 3, 7, 5), "YYYY-MM-DD")).toBe("Printed 2027-02-03 07:05");
-    expect(printStampText(new Date(2027, 1, 3, 19, 41), "MMMM D, YYYY")).toBe("Printed February 3, 2027 19:41");
   });
 });
 

@@ -408,6 +408,8 @@ model SchedulingPreferences {
   exportFileName          String?
   // Card #312: Print / Export save a version first when a month changed: "auto" | "ask" | "off".
   autoVersionMode         String   @default("auto")
+  /// Card #320: IANA time zone for every time shown or asked for; null = not chosen yet (behaves as UTC).
+  timeZone                String?
   shiftBalanceFrom        DateTime? @db.Date // card #203: first day "Keep counts even across months" counts (null = each run on its own)
   shiftShareBasis         String   @default("fte") // auto-scheduler split of a scheduled shift's slots across eligible staff: "fte" (proportional to FTE) | "head" (equal per person) — see src/lib/shift-share.ts
   holidayShiftId          String?  // card #207: the shift credited on a holiday (leave, counts toward FTE); linked by id, never by code. null = none chosen
@@ -951,7 +953,7 @@ model AuthState {
 model BackupSettings {
   id                  String    @id @default("default")
   autoEnabled         Boolean   @default(false)
-  autoTime            String    @default("02:00") // HH:MM, server local time
+  autoTime            String    @default("02:00") // HH:MM, wall clock in scheduling_preferences.timeZone (UTC while null), card #320
   keepDaily           Int       @default(7)
   keepWeekly          Int       @default(4)
   keepMonthly         Int       @default(12)

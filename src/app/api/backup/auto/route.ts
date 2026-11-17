@@ -23,7 +23,8 @@ async function handlePUT(req: Request) {
     } else {
       const parsed = parseAutoSettings(body);
       if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
-      await saveAutoSettings(parsed.value);
+      // Card #320: the time is a clock time in the zone the page showed; a stale page is refused.
+      await saveAutoSettings(parsed.value, body?.zoneAtLoad);
     }
   } catch (e) {
     return refusal(e);

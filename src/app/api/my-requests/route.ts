@@ -1,4 +1,5 @@
 import { Prisma } from "@/generated/prisma/client";
+import { formatDateTimeZoned, resolveZone } from "@/lib/time-zone";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth-guard";
 import { buildSelfRequestInput, canWithdrawOwnRequest, describeRequest, validateOffStrategyOrder } from "@/lib/schedule-requests";
@@ -27,7 +28,7 @@ async function sendConfirmationEmail(created: ScheduleRequest, userId: string): 
   const [user, staff, prefs, shifts] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: { email: true, name: true } }),
     prisma.staff.findUnique({ where: { id: created.staffId }, select: { name: true } }),
-    prisma.schedulingPreferences.findFirst({ select: { dateFormat: true } }),
+    prisma.schedulingPreferences.findFirst({ select: { dateFormat: true, timeZone: true } }),
     ids.length ? prisma.shiftType.findMany({ where: { id: { in: ids } }, select: { id: true, code: true } }) : Promise.resolve([]),
   ]);
   if (!user?.email) return;
@@ -38,7 +39,8 @@ async function sendConfirmationEmail(created: ScheduleRequest, userId: string): 
   const startStr = onDay(created.startDate);
   const endStr = onDay(created.endDate);
   const ra = created.receivedAt;
-  const submitted = `${formatDate(ra, df)} ${String(ra.getHours()).padStart(2, "0")}:${String(ra.getMinutes()).padStart(2, "0")}`;
+  // Card #320: date and time in the Settings zone, with its label (the server's own clock is UTC).
+  const submitted = formatDateTimeZoned(ra, resolveZone(prefs?.timeZone), df);
 
   const { subject, text } = buildConfirmationEmail({
     staffName: staff?.name ?? user.name ?? "there",

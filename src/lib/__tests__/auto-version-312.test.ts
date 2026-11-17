@@ -51,15 +51,15 @@ describe("monthsNeedingVersion (card #312)", () => {
 });
 
 describe("autoVersionComment (card #312)", () => {
-  const now = new Date(2026, 10, 16, 14, 5);
+  const now = new Date(Date.UTC(2026, 10, 16, 14, 5));
   it("print: date in the chosen format, 24-hour time", () => {
-    expect(autoVersionComment("print", now, "YYYY-MM-DD")).toBe("Auto: printed 2026-11-16 14:05");
+    expect(autoVersionComment("print", now, "YYYY-MM-DD", "UTC")).toBe("Auto: printed 2026-11-16 14:05 UTC");
   });
   it("export: names the year exported", () => {
-    expect(autoVersionComment("export", now, "MM/DD/YYYY", 2027)).toBe("Auto: exported 2027 on 11/16/2026 14:05");
+    expect(autoVersionComment("export", now, "MM/DD/YYYY", "UTC", 2027)).toBe("Auto: exported 2027 on 11/16/2026 14:05 UTC");
   });
   it("afternoon hours stay 24-hour, single digits are padded", () => {
-    expect(autoVersionComment("print", new Date(2026, 0, 2, 9, 7), "YYYY-MM-DD")).toBe("Auto: printed 2026-01-02 09:07");
+    expect(autoVersionComment("print", new Date(Date.UTC(2026, 0, 2, 9, 7)), "YYYY-MM-DD", "UTC")).toBe("Auto: printed 2026-01-02 09:07 UTC");
   });
 });
 
