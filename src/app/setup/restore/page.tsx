@@ -10,6 +10,7 @@ const INPUT = "w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 t
 export default function FirstRunRestorePage() {
   const [file, setFile] = useState<File | null>(null);
   const [pass, setPass] = useState("");
+  const [keyFile, setKeyFile] = useState<File | null>(null); // card #315
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,6 +25,7 @@ export default function FirstRunRestorePage() {
     try {
       const fd = new FormData();
       fd.set("file", file); fd.set("passphrase", pass);
+      if (keyFile) fd.set("keyfile", keyFile);
       const res = await fetch("/api/backup/initial", { method: "POST", body: fd, headers: { "x-setup-code": code.trim() } });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -48,7 +50,10 @@ export default function FirstRunRestorePage() {
           <form onSubmit={submit} className="space-y-3 text-sm">
             <p className="text-slate-400">This YoSched has no data yet. Choose a backup file, enter its passphrase and the setup code from the server.</p>
             <input type="file" accept=".yosched-backup" onChange={(e) => setFile(e.target.files?.[0] ?? null)} disabled={busy} />
-            <input type="password" autoComplete="off" placeholder="The file's passphrase" className={INPUT} value={pass} onChange={(e) => setPass(e.target.value)} disabled={busy} />
+            <label className="block text-slate-400">Key file (only for an automatic backup):
+              <input type="file" accept=".yosched-key" className="block mt-1" onChange={(e) => setKeyFile(e.target.files?.[0] ?? null)} disabled={busy} />
+            </label>
+            <input type="password" autoComplete="off" placeholder="The file's passphrase (or the key's, for an automatic backup)" className={INPUT} value={pass} onChange={(e) => setPass(e.target.value)} disabled={busy} />
             <input autoComplete="off" placeholder="Setup code" className={INPUT} value={code} onChange={(e) => setCode(e.target.value)} disabled={busy} />
             {error && <p className="text-red-400">{error}</p>}
             <button type="submit" disabled={busy || !file || !pass || !code} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded text-white">{busy ? "Restoring…" : "Restore"}</button>

@@ -4,6 +4,7 @@ import { gated } from "@/lib/write-gate";
 import { prisma } from "@/lib/prisma";
 import { lastBackupAt } from "@/lib/backup/service";
 import { backupDue } from "@/lib/backup/reminder";
+import { currentAutoHealth } from "@/lib/backup/auto-service";
 
 // Card #314: when the last backup was made, and whether the reminder is showing.
 async function handleGET() {
@@ -13,7 +14,8 @@ async function handleGET() {
   const prefs = await prisma.schedulingPreferences.findFirst({ select: { backupReminderDays: true } });
   const reminderDays = prefs?.backupReminderDays ?? 7;
   const last = await lastBackupAt();
-  return NextResponse.json({ allowed: true, lastBackupAt: last?.toISOString() ?? null, reminderDays, due: backupDue(last, reminderDays, new Date()) });
+  const autoHealth = await currentAutoHealth(); // card #315: a failing automatic backup shows amber too
+  return NextResponse.json({ allowed: true, lastBackupAt: last?.toISOString() ?? null, reminderDays, due: backupDue(last, reminderDays, new Date()), autoHealth });
 }
 
 // Card #314: the reminder's number of days (0 = never). Same permission as backing up.

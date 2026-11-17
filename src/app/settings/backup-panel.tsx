@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CONFIRM_WORD } from "@/lib/backup/reminder";
+import { AutoBackupSection } from "./auto-backup-section";
 
 // Card #314: Settings › Backup and Restore. Shown only to logins holding
 // "Back Up and Restore All Data".
@@ -35,6 +36,7 @@ export function BackupPanel({ onError }: { onError: (e: string | undefined) => v
   const [busy, setBusy] = useState<null | "download" | "check" | "restore" | "days">(null);
   const [note, setNote] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [keyFile, setKeyFile] = useState<File | null>(null); // card #315: automatic backups need their key file
   const [rpass, setRpass] = useState("");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [confirm, setConfirm] = useState("");
@@ -75,6 +77,7 @@ export function BackupPanel({ onError }: { onError: (e: string | undefined) => v
   function form(): FormData {
     const fd = new FormData();
     if (file) fd.set("file", file);
+    if (keyFile) fd.set("keyfile", keyFile);
     fd.set("passphrase", rpass);
     return fd;
   }
@@ -139,9 +142,12 @@ export function BackupPanel({ onError }: { onError: (e: string | undefined) => v
 
       <div className="space-y-2">
         <h4 className="font-medium text-slate-200">Restore from a backup</h4>
-        <p className="text-xs text-slate-500">This replaces ALL of YoSched&apos;s data and settings, including logins, with the file&apos;s contents. What is here now is saved on the server first.</p>
+        <p className="text-xs text-slate-500">This replaces ALL of YoSched&apos;s data and settings, including logins, with the file&apos;s contents. What is here now is saved on the server first. For an automatic backup, also choose its key file and enter the key&apos;s passphrase.</p>
         <div className="flex flex-wrap gap-2 items-center">
           <input type="file" accept=".yosched-backup" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setSummary(null); }} disabled={busy !== null} />
+          <label className="flex items-center gap-1 text-xs text-slate-400">Key file (automatic backups only):
+            <input type="file" accept=".yosched-key" onChange={(e) => { setKeyFile(e.target.files?.[0] ?? null); setSummary(null); }} disabled={busy !== null} />
+          </label>
           <input type="password" autoComplete="off" placeholder="The file's passphrase" className={INPUT} value={rpass} onChange={(e) => { setRpass(e.target.value); setSummary(null); }} disabled={busy !== null} />
           <button type="button" className={BTN} disabled={busy !== null || !file || !rpass} onClick={check}>{busy === "check" ? "Checking…" : "Check file"}</button>
         </div>
@@ -158,6 +164,10 @@ export function BackupPanel({ onError }: { onError: (e: string | undefined) => v
       </div>
 
       {note && <p className="text-xs text-emerald-400">{note}</p>}
+
+      <div className="border-t border-slate-700 pt-4">
+        <AutoBackupSection onError={onError} />
+      </div>
     </div>
   );
 }

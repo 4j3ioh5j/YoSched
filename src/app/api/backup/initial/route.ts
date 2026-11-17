@@ -35,7 +35,7 @@ async function handlePOST(req: Request) {
   const up = await readUpload(req);
   if (up instanceof NextResponse) return up;
   try {
-    const { counts } = await restoreBackup(up.bytes, up.passphrase, "initial");
+    const { counts } = await restoreBackup(up.bytes, up.passphrase, "initial", up.keyFile);
     await removeSetupCode(backupDir());
     console.log(`[backup] first-run restore committed: ${Object.values(counts).reduce((a, b) => a + b, 0)} rows`);
     return NextResponse.json({ ok: true, counts });

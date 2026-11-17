@@ -15,7 +15,7 @@ async function handlePOST(req: Request) {
   if (up instanceof NextResponse) return up;
   if (up.form.get("confirm") !== CONFIRM_WORD) return NextResponse.json({ error: `Type ${CONFIRM_WORD} to confirm` }, { status: 400 });
   try {
-    const { counts, safetyFile } = await restoreBackup(up.bytes, up.passphrase, "replace");
+    const { counts, safetyFile } = await restoreBackup(up.bytes, up.passphrase, "replace", up.keyFile);
     console.log(`[backup] restore (replace) committed: ${Object.values(counts).reduce((a, b) => a + b, 0)} rows; safety file ${safetyFile}`);
     return NextResponse.json({ ok: true, counts, safetyFile: safetyFile ? safetyFile.split("/").pop() : null });
   } catch (e) {

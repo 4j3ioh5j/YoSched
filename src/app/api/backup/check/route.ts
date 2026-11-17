@@ -11,7 +11,7 @@ async function handlePOST(req: Request) {
   const up = await readUpload(req);
   if (up instanceof NextResponse) return up;
   try {
-    return NextResponse.json(await checkBackup(up.bytes, up.passphrase));
+    return NextResponse.json(await checkBackup(up.bytes, up.passphrase, up.keyFile));
   } catch (e) {
     return refusal(e);
   }

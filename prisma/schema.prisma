@@ -924,9 +924,34 @@ model StaffRemoval {
 // Card #314: when the last backup file was made. Never part of a backup itself (a restore
 // must not wind it back); one row, id "default".
 model BackupStatus {
-  id           String    @id @default("default")
-  lastBackupAt DateTime?
-  updatedAt    DateTime  @updatedAt
+  id                String    @id @default("default")
+  lastBackupAt      DateTime?
+  lastAutoSuccessAt DateTime? // card #315
+  lastAutoAttemptAt DateTime?
+  lastAutoError     String?
+  updatedAt         DateTime  @updatedAt
 
   @@map("backup_status")
+}
+
+// Card #315: automatic daily backups. Included in every backup, so a restore brings back the
+// public key and the schedule. The private key is never stored (the admin keeps the key file).
+model BackupSettings {
+  id                  String    @id @default("default")
+  autoEnabled         Boolean   @default(false)
+  autoTime            String    @default("02:00") // HH:MM, server local time
+  keepDaily           Int       @default(7)
+  keepWeekly          Int       @default(4)
+  keepMonthly         Int       @default(12)
+  keepSafety          Int       @default(10)
+  publicKey           String? // X25519 SPKI, base64
+  keyId               String?
+  keyCreatedAt        DateTime?
+  verifiedAt          DateTime?
+  pendingPublicKey    String? // a new key made but not yet proved with its key file
+  pendingKeyId        String?
+  pendingKeyCreatedAt DateTime?
+  updatedAt           DateTime  @updatedAt
+
+  @@map("backup_settings")
 }

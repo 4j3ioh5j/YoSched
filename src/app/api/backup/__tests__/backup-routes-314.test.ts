@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   restore: vi.fn(async () => ({ counts: { users: 1 }, safetyFile: "/srv/b/pre-restore-x.yosched-backup" })),
   create: vi.fn(async () => ({ bytes: Buffer.from("YOSCHED-BACKUP\n"), createdAt: new Date("2026-11-17T00:42:00Z") })),
   removeCode: vi.fn(async () => {}),
+  autoHealth: null as string | null,
 }));
 vi.mock("@/lib/auth-guard", () => ({
   getSession: async (need?: string) => (need && !h.perms.includes(need)
@@ -23,6 +24,7 @@ vi.mock("@/lib/backup/service", async () => {
     backupDir: () => "/tmp/none", createBackup: h.create, restoreBackup: h.restore, checkBackup: vi.fn(), lastBackupAt: async () => null,
   };
 });
+vi.mock("@/lib/backup/auto-service", () => ({ AutoConflictError: class extends Error {}, currentAutoHealth: async () => h.autoHealth }));
 vi.mock("@/lib/backup/setup-code", () => ({ ensureSetupCode: vi.fn(async () => {}), verifySetupCode: async () => h.codeOk, removeSetupCode: h.removeCode }));
 
 import { POST as create } from "../route";
@@ -73,7 +75,7 @@ describe("backup routes (card #314)", () => {
     const ok = await restore(upload({ confirm: "REPLACE" }));
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ safetyFile: "pre-restore-x.yosched-backup" }); // the name, never the server path
-    expect(h.restore).toHaveBeenCalledWith(expect.any(Buffer), "correct horse battery", "replace");
+    expect(h.restore).toHaveBeenCalledWith(expect.any(Buffer), "correct horse battery", "replace", null);
   });
 
   it("an oversized upload is refused before anything is read", async () => {
@@ -84,7 +86,7 @@ describe("backup routes (card #314)", () => {
   it("a chunked upload with no length is cut off at the limit, not read to the end (round 1)", async () => {
     const { req, seen } = endless();
     expect((await restore(req)).status).toBe(413);
-    expect(seen.bytes).toBeLessThan(1000 + 64 * 1024 + 200); // the cap plus the form's own overhead
+    expect(seen.bytes).toBeLessThan(1000 + 16 * 1024 + 64 * 1024 + 200); // the cap plus the form's own overhead
     expect(seen.cancelled).toBe(true);
     expect(h.restore).not.toHaveBeenCalled();
   });
@@ -111,7 +113,7 @@ describe("backup routes (card #314)", () => {
     expect(h.restore).not.toHaveBeenCalled();
     h.codeOk = true;
     expect((await initialPost(upload({}, 10, { "x-setup-code": "right" }))).status).toBe(200);
-    expect(h.restore).toHaveBeenCalledWith(expect.any(Buffer), "correct horse battery", "initial");
+    expect(h.restore).toHaveBeenCalledWith(expect.any(Buffer), "correct horse battery", "initial", null);
     expect(h.removeCode).toHaveBeenCalled();
   });
 
@@ -119,7 +121,16 @@ describe("backup routes (card #314)", () => {
     h.perms = ["settings:view"];
     expect(await (await status()).json()).toEqual({ allowed: false });
     h.perms = ["data:backup"];
-    expect(await (await status()).json()).toEqual({ allowed: true, lastBackupAt: null, reminderDays: 7, due: true });
+    expect(await (await status()).json()).toEqual({ allowed: true, lastBackupAt: null, reminderDays: 7, due: true, autoHealth: null });
+  });
+
+  it("status carries a failing automatic backup's sentence (card #315), only to data:backup holders", async () => {
+    h.autoHealth = "The last automatic backup failed: the backup folder can't be written (ENOSPC)";
+    try {
+      expect(await (await status()).json()).toMatchObject({ autoHealth: h.autoHealth });
+      h.perms = ["settings:view"];
+      expect(await (await status()).json()).toEqual({ allowed: false });
+    } finally { h.autoHealth = null; }
   });
 });
 

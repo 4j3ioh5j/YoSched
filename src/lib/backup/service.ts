@@ -1,11 +1,12 @@
-import { open, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { encrypt, decrypt } from "@/lib/crypto";
 import { writeGate } from "@/lib/write-gate";
-import { decodeBackup, encodeBackup, BackupFileError } from "./format";
+import { decodeBackup, encodeBackup, BackupFileError, MAX_FILE_BYTES } from "./format";
+import { planSafetyPrune } from "./auto";
+import { listBackupFolder, removeFiles, writeAtomic } from "./files";
 import { validatePayload, type BackupPayload } from "./tables";
 import { appliedMigrations, buildPayload, readCatalog, replaceAll, type Db, type SecretCodec } from "./engine";
 
@@ -14,7 +15,8 @@ import { appliedMigrations, buildPayload, readCatalog, replaceAll, type Db, type
 // restore has committed (src/lib/write-gate.ts).
 
 const TX = { timeout: 120_000, maxWait: 30_000 };
-export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+/** The largest file a restore accepts — and so the largest any backup may be (card #315). */
+export const MAX_UPLOAD_BYTES = MAX_FILE_BYTES;
 
 export function backupDir(): string {
   return process.env.YOSCHED_BACKUP_DIR || path.join(os.homedir(), "yosched-backups");
@@ -28,11 +30,13 @@ const asDb = (tx: Tx): Db => ({
 });
 const meta = () => ({ appVersion: process.env.YOSCHED_VERSION ?? "", createdAt: new Date().toISOString() });
 
-async function markBackedUp(db: Db, at: Date): Promise<void> {
+export async function markBackedUp(db: Db, at: Date): Promise<void> {
   await db.exec(
     `INSERT INTO "backup_status" ("id", "lastBackupAt", "updatedAt") VALUES ('default', $1, now())
      ON CONFLICT ("id") DO UPDATE SET "lastBackupAt" = EXCLUDED."lastBackupAt", "updatedAt" = now()`, at);
 }
+
+export const asDbOf = asDb;
 
 async function snapshot(tx: Tx): Promise<BackupPayload> {
   const db = asDb(tx);
@@ -40,10 +44,15 @@ async function snapshot(tx: Tx): Promise<BackupPayload> {
   return buildPayload(db, catalog, await appliedMigrations(db), secrets, meta());
 }
 
+/** Everything, from one consistent snapshot, checked as a restore would check it. Hold the gate exclusively. */
+export function snapshotPayload(): Promise<BackupPayload> {
+  return prisma.$transaction((tx) => snapshot(tx), { ...TX, isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+}
+
 /** A backup file of everything, from one consistent snapshot. */
 export async function createBackup(passphrase: string): Promise<{ bytes: Buffer; createdAt: Date }> {
   return writeGate.exclusive(async () => {
-    const payload = await prisma.$transaction((tx) => snapshot(tx), { ...TX, isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+    const payload = await snapshotPayload();
     const bytes = await encodeBackup(payload, passphrase);
     const createdAt = new Date(payload.createdAt);
     await prisma.$transaction((tx) => markBackedUp(asDb(tx), createdAt));
@@ -54,8 +63,8 @@ export async function createBackup(passphrase: string): Promise<{ bytes: Buffer;
 export type BackupSummary = { createdAt: string; appVersion: string; counts: Record<string, number> };
 
 /** Decode and check a file against this database, changing nothing. */
-export async function checkBackup(bytes: Buffer, passphrase: string): Promise<BackupSummary> {
-  const payload = (await decodeBackup(bytes, passphrase)) as BackupPayload;
+export async function checkBackup(bytes: Buffer, passphrase: string, keyFile: Buffer | null = null): Promise<BackupSummary> {
+  const payload = (await decodeBackup(bytes, passphrase, { keyFile })) as BackupPayload;
   const counts = await prisma.$transaction(async (tx) => {
     const db = asDb(tx);
     return validatePayload(payload, await readCatalog(db), await appliedMigrations(db));
@@ -67,21 +76,17 @@ export class NotEmptyError extends Error {
   constructor() { super("YoSched already has data, so a first-run restore isn't allowed. Sign in and use Settings › Backup and Restore."); this.name = "NotEmptyError"; }
 }
 
+/** Written whole and synced, folder included, before the restore replaces anything (r1). */
 async function writeSafetyFile(bytes: Buffer): Promise<string> {
-  const dir = backupDir();
-  await mkdir(dir, { recursive: true, mode: 0o700 });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const file = path.join(dir, `pre-restore-${stamp}.yosched-backup`);
-  const fh = await open(file, "wx", 0o600);
-  try { await fh.writeFile(bytes); await fh.sync(); } finally { await fh.close(); }
-  return file;
+  return writeAtomic(backupDir(), `pre-restore-${stamp}.yosched-backup`, bytes);
 }
 
 /** Replace everything with the file's contents. "initial" only on an empty install;
  *  "replace" first saves what is there now (encrypted with the same passphrase). */
-export async function restoreBackup(bytes: Buffer, passphrase: string, mode: "initial" | "replace"): Promise<{ counts: Record<string, number>; safetyFile: string | null }> {
-  const payload = (await decodeBackup(bytes, passphrase)) as BackupPayload; // CPU work, outside the gate
-  return writeGate.exclusive(() => prisma.$transaction(async (tx) => {
+export async function restoreBackup(bytes: Buffer, passphrase: string, mode: "initial" | "replace", keyFile: Buffer | null = null): Promise<{ counts: Record<string, number>; safetyFile: string | null }> {
+  const payload = (await decodeBackup(bytes, passphrase, { keyFile })) as BackupPayload; // CPU work, outside the gate
+  const result = await writeGate.exclusive(() => prisma.$transaction(async (tx) => {
     const db = asDb(tx);
     const catalog = await readCatalog(db);
     const counts = validatePayload(payload, catalog, await appliedMigrations(db));
@@ -98,6 +103,19 @@ export async function restoreBackup(bytes: Buffer, passphrase: string, mode: "in
     await markBackedUp(db, new Date());
     return { counts, safetyFile };
   }, TX));
+  if (result.safetyFile) await pruneSafetyFiles(path.basename(result.safetyFile));
+  return result;
+}
+
+/** Card #315: keep only the newest N safety copies (N from the restored settings). Never fails a restore. */
+async function pruneSafetyFiles(made: string): Promise<void> {
+  try {
+    const row = await prisma.backupSettings.findUnique({ where: { id: "default" }, select: { keepSafety: true } });
+    const dir = backupDir();
+    await removeFiles(dir, planSafetyPrune(await listBackupFolder(dir), row?.keepSafety ?? 10, made));
+  } catch (e) {
+    console.error(`[backup] old safety copies couldn't be removed: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 export async function lastBackupAt(): Promise<Date | null> {
