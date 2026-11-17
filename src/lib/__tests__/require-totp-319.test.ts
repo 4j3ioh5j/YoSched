@@ -45,13 +45,3 @@ describe("sessionAccess (card #319)", () => {
     expect(epochHash("abc")).not.toContain("abc");
   });
 });
-
-import { accountRedirectQuery } from "@/lib/require-totp";
-describe("accountRedirectQuery (middleware, card #319)", () => {
-  it("nothing pending → no redirect; password change wins over two-factor setup", () => {
-    expect(accountRedirectQuery(false, false)).toBeNull();
-    expect(accountRedirectQuery(false, true)).toBe("setup2fa");
-    expect(accountRedirectQuery(true, true)).toBe("mustChange");
-    expect(accountRedirectQuery(true, false)).toBe("mustChange");
-  });
-});

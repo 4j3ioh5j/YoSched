@@ -19,6 +19,19 @@ export function chooseKeyFile(files: ArrayLike<File> | null | undefined): { file
   return { file: f };
 }
 
+/** Card #318: hand the picked or dropped files over, then empty the hidden input. A browser
+ *  fires no change when the same file is chosen again, so a stale value would keep an earlier
+ *  drop in place. */
+export function resetAfterPick(
+  el: { value: string } | null | undefined,
+  files: ArrayLike<File> | null | undefined,
+  take: (files: ArrayLike<File> | null | undefined) => void,
+) {
+  const list = files ? Array.from(files) : files; // copy first: clearing the input empties its FileList
+  if (el) el.value = "";
+  take(list);
+}
+
 export function KeyFilePicker({ file, onChange, disabled, label = "Choose key file…" }: {
   file: File | null; onChange: (f: File | null) => void; disabled?: boolean; label?: string;
 }) {
@@ -37,7 +50,7 @@ export function KeyFilePicker({ file, onChange, disabled, label = "Choose key fi
       className={`flex flex-wrap items-center gap-2 rounded border border-dashed px-2 py-1.5 text-xs ${over ? "border-blue-400 bg-blue-950/40" : "border-slate-600"}`}
       onDragOver={(e) => { if (disabled) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setOver(true); }}
       onDragLeave={() => setOver(false)}
-      onDrop={(e) => { e.preventDefault(); setOver(false); if (!disabled) take(e.dataTransfer.files); }}
+      onDrop={(e) => { e.preventDefault(); setOver(false); if (!disabled) resetAfterPick(input.current, e.dataTransfer.files, take); }}
     >
       <button type="button" className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-white" disabled={disabled} onClick={() => input.current?.click()}>
         {label}
@@ -45,7 +58,7 @@ export function KeyFilePicker({ file, onChange, disabled, label = "Choose key fi
       <span className={file ? "text-slate-200" : "text-slate-500"}>{file ? file.name : "or drag the key file here"}</span>
       {file && !disabled && <button type="button" className="text-slate-400 underline" onClick={() => { onChange(null); if (input.current) input.current.value = ""; }}>clear</button>}
       {error && <span className="text-amber-400">{error}</span>}
-      <input ref={input} type="file" className="hidden" tabIndex={-1} aria-hidden onChange={(e) => take(e.target.files)} disabled={disabled} />
+      <input ref={input} type="file" className="hidden" tabIndex={-1} aria-hidden onChange={(e) => resetAfterPick(e.currentTarget, e.currentTarget.files, take)} disabled={disabled} />
     </div>
   );
 }

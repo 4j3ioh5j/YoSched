@@ -1,7 +1,4 @@
-import { MUST_CHANGE_QUERY } from "./must-change-password";
-
-// Card #319: required two-factor login. Pure rules, no Node-only imports (the middleware uses
-// this file); the database reads live in auth-guard.ts
+// Card #319: required two-factor login. Pure rules; the database reads live in auth-guard.ts
 // and auth-epoch.ts.
 //
 // A session is judged by what it proved AT SIGN-IN (`secondFactor` in the token) and by its
@@ -26,13 +23,4 @@ export function sessionAccess(
   const proved = claims.secondFactor === "totp" || claims.secondFactor === "trusted";
   if (proved) return "ok";
   return user.totpEnabled ? "signin" : "setup";
-}
-
-
-/** Middleware: which /account banner a signed-in page request is sent to, from the token's
- *  sign-in flags (the database decides again in getSession). A password change comes first. */
-export function accountRedirectQuery(mustChangePassword: boolean, mustSetUpTotp: boolean): string | null {
-  if (mustChangePassword) return MUST_CHANGE_QUERY;
-  if (mustSetUpTotp) return SETUP_2FA_QUERY;
-  return null;
 }
