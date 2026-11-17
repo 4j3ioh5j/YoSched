@@ -280,23 +280,76 @@ export function aggPrintWidthCh(label: string, lists: readonly (readonly string[
   return Math.max(3, label.length, ...lists.map((l) => l.join(", ").length));
 }
 
-/** Card #327: the most of the printable width the aggregate columns may take together, so the
- *  staff columns keep their room when a day's list is long (the list is clipped, like every cell).
- *  Trial: at 20% a 40-initial list already cut off staff codes (letter, 1in, 9pt); 15% kept them
- *  whole in the other layouts tried. Staff codes are the schedule, so they win. */
-export const AGG_PRINT_SHARE = 0.15;
+/** Card #328: the print widths (inches) of the fixed-width columns. globals.css and the grid
+ *  use the same numbers (a test pins them), so the spare-room sum below matches the page. */
+export const PRINT_COL_IN = { date: 0.42, dateSingle: 0.72, day: 0.36, dayLong: 0.62, ded: 0.48, ppLabel: 0.34 } as const;
 
-/** Card #327: an aggregate column's print width (CSS): fits its longest text (aggPrintWidthCh),
- *  but past its title never more than an equal part of AGG_PRINT_SHARE of the printable width
- *  among `count` aggregate columns. The title always fits on one line (card #323). The cap is
- *  in inches from the Settings paper and margin, divided by the shrink factor (the zoom in
- *  printPageStyle scales inches too). Never a percentage: Chrome drops a min() holding a % for
- *  a fixed-layout table cell, and the column loses its fit. */
-export function aggPrintWidthCss(label: string, lists: readonly (readonly string[])[], count: number, layout: PrintLayout): string {
-  const k = Number.isInteger(count) && count > 0 ? count : 1;
+/** Card #328: the inches the fixed-width columns take: the date block, the pay-period label
+ *  strip (when on) and each dedicated shift column. */
+export function printReservedIn(layout: Pick<PrintLayout, "splitDateDay" | "dayColumnFormat" | "payPeriodLabels">, dedicatedCount: number): number {
+  const ded = Number.isInteger(dedicatedCount) && dedicatedCount > 0 ? dedicatedCount : 0;
+  const date = layout.splitDateDay ? PRINT_COL_IN.date + (layout.dayColumnFormat === "Dddd" ? PRINT_COL_IN.dayLong : PRINT_COL_IN.day) : PRINT_COL_IN.dateSingle;
+  return date + (layout.payPeriodLabels ? PRINT_COL_IN.ppLabel : 0) + ded * PRINT_COL_IN.ded;
+}
+
+/** Card #328: the longest text (characters) any equal-share column prints: staff initials,
+ *  their shift codes and request letters, count titles and numbers. In a fixed table those
+ *  columns share the rest of the page equally, so one need covers them all. */
+export function autoColNeedCh(texts: Iterable<string>): number {
+  let n = 1;
+  for (const t of texts) if (t.length > n) n = t.length;
+  return n;
+}
+
+/** Card #328: what an equal-share column needs besides its text: the cell's side padding and
+ *  its share of the collapsed borders (trial: 1px padding each side + 1.6px border), rounded up. */
+export const AUTO_COL_PAD_PX = 5;
+/** Card #328: before the browser has measured the staff text (first paint, or no DOM), each
+ *  character counts as this many `ch`: the widest measured in the bundled narrow print font
+ *  ("WWW" bold, 1.8ch a letter), so the fallback never squeezes staff codes. */
+export const AUTO_COL_FALLBACK_CH = 1.8;
+
+/** Card #328: the widest of `texts` in pixels as `measure` (the browser, in the Settings print
+ *  font and size, bold) reports it; null when nothing could be measured. */
+export function autoColNeedPx(texts: Iterable<string>, measure: (text: string) => number): number | null {
+  let max = 0, any = false;
+  for (const t of texts) {
+    if (!t) continue;
+    const w = measure(t);
+    if (!Number.isFinite(w) || w < 0) return null;
+    any = true;
+    if (w > max) max = w;
+  }
+  return any ? Math.ceil(max) : null;
+}
+
+/** autoNeedPx: the measured widest staff/count text (null = not measured yet: autoNeedCh ×
+ *  AUTO_COL_FALLBACK_CH is used instead). */
+export type AggRoom = { reservedIn: number; autoCount: number; autoNeedPx: number | null; autoNeedCh: number; titlesCh: readonly number[] };
+
+const finite = (n: number, min = 0) => (Number.isFinite(n) && n > min ? n : min);
+
+/** Card #327 + #328: an aggregate column's print width (CSS): fits its longest text
+ *  (aggPrintWidthCh), but never past its title plus an equal part of the spare room. The spare
+ *  room is the printable width (divided by the shrink factor: the zoom in printPageStyle scales
+ *  inches too) less the fixed columns, less what the equal-share staff/count columns need, less
+ *  EVERY aggregate title (Codex #1562: a long title on one column must not take another's staff
+ *  room). The staff need is measured by the browser in the print font (autoColNeedPx).
+ *  When nothing is spare the title alone (it always fits on one line, card #323).
+ *  Never a percentage: Chrome drops a min() holding a % for a fixed-layout table cell. */
+export function aggPrintWidthCss(label: string, lists: readonly (readonly string[])[], room: AggRoom, layout: PrintLayout): string {
   const page = printPage(layout);
   const { scale } = printFit({ ...layout, paper: isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER, marginHundredths: page.marginIn * 100 });
-  const capIn = (AGG_PRINT_SHARE * (page.wIn - 2 * page.marginIn)) / scale / k;
   const titleCh = aggPrintWidthCh(label, []);
-  return `min(calc(${aggPrintWidthCh(label, lists)}ch + 12px), max(calc(${titleCh}ch + 12px), ${+capIn.toFixed(4)}in))`;
+  const titles = room.titlesCh.length > 0 ? room.titlesCh.map((t) => finite(t)) : [titleCh];
+  const k = titles.length;
+  const sumCh = titles.reduce((s, t) => s + t, 0);
+  const w = +((page.wIn - 2 * page.marginIn) / scale - finite(room.reservedIn)).toFixed(4);
+  const autoCount = Number.isInteger(room.autoCount) && room.autoCount > 0 ? room.autoCount : 0;
+  const needCh = Number.isFinite(room.autoNeedCh) && room.autoNeedCh > 1 ? room.autoNeedCh : 1;
+  const need = room.autoNeedPx != null && Number.isFinite(room.autoNeedPx) && room.autoNeedPx > 0
+    ? `${Math.ceil(room.autoNeedPx) + AUTO_COL_PAD_PX}px`
+    : `(${+(needCh * AUTO_COL_FALLBACK_CH).toFixed(4)}ch + ${AUTO_COL_PAD_PX}px)`;
+  const spare = `max(0px, calc((${w}in - ${autoCount} * ${need} - ${sumCh}ch - ${k * 12}px) / ${k}))`;
+  return `min(calc(${aggPrintWidthCh(label, lists)}ch + 12px), calc(${titleCh}ch + 12px + ${spare}))`;
 }

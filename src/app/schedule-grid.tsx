@@ -22,7 +22,7 @@ import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey,
 import { unsavedPrintWarning } from "@/lib/print-stamp";
 import { autoVersionComment, yearMonths, type AutoVersionMode } from "@/lib/auto-version";
 import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMeta } from "@/lib/auto-version-flow";
-import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, aggPrintWidthCss, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
+import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, aggPrintWidthCss, aggPrintWidthCh, autoColNeedCh, autoColNeedPx, printReservedIn, PRINT_COL_IN, type AggRoom, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
@@ -356,7 +356,7 @@ function printBlockStyle(b: PrintBlock): React.CSSProperties {
 
 /** Width of the print-only PP# strip right of the grid (card #301); the footer line stops
  *  short of it by the same amount (card #310). */
-const PP_LABEL_W = (on: boolean) => (on ? "0.34in" : "0px");
+const PP_LABEL_W = (on: boolean) => (on ? `${PRINT_COL_IN.ppLabel}in` : "0px");
 
 /** On-screen widths of the split DATE / DAY columns (px). */
 const DATE_COL_W = 48; // cards #305/#306: date + day = 88px, as the old single column
@@ -1482,6 +1482,63 @@ export function ScheduleGrid({
       }),
     [printColumnRules, printAggregateColumns, visibleStaff, dates, assignmentMap, firstOfMonth, lastOfMonth, shiftTypes],
   );
+
+  // Card #328: what the aggregate columns may take in print is what the other columns do not
+  // need: the fixed columns (date block, labels, dedicated) and the equal-share staff + count
+  // columns, each as wide as the longest text any of them prints this month (rule-hidden staff
+  // and out-of-month days do not print, so they do not count).
+  const printAutoTexts = useMemo(() => {
+    const texts = new Set<string>();
+    const printed = visibleStaff.filter((p) => !printHiddenIds.has(p.id));
+    const inMonth = dates.filter((d) => d >= firstOfMonth && d <= lastOfMonth);
+    for (const p of printed) {
+      texts.add(p.initials);
+      for (const date of inMonth) {
+        const key = `${p.id}:${date}`;
+        const a = liveMode ? (liveDisplayMap.get(key) ?? null) : assignmentMap.get(key);
+        if (a) { texts.add(a.code); continue; } // a request on an assigned cell is a corner marker over it
+        const reqs = showRequests ? requestsByCell.get(key) : undefined;
+        const sum = reqs ? summarizeCellRequests(reqs, (id) => shiftTypeMap.get(id)?.code ?? id) : null;
+        if (sum) texts.add(sum.label);
+      }
+    }
+    countColumns.forEach((col, i) => {
+      texts.add(col.label || "#");
+      for (const date of inMonth) texts.add(String(columnCounts[i]?.[date] ?? ""));
+    });
+    return { texts: [...texts], autoCount: printed.length + countColumns.length };
+  }, [visibleStaff, printHiddenIds, dates, firstOfMonth, lastOfMonth, liveMode, liveDisplayMap, assignmentMap, showRequests, requestsByCell, shiftTypeMap, countColumns, columnCounts]);
+  // The browser measures that text in the Settings print font and size (bold, as the headers and
+  // bold codes print), again once fonts finish loading (the print font loads on first use). Until
+  // then the need falls back to a generous width per character (AUTO_COL_FALLBACK_CH).
+  const printRootRef = useRef<HTMLDivElement | null>(null);
+  const [printAutoNeedPx, setPrintAutoNeedPx] = useState<number | null>(null);
+  useEffect(() => {
+    const root = printRootRef.current;
+    if (!root) return;
+    let live = true;
+    const measure = () => {
+      if (!live) return;
+      const span = document.createElement("span");
+      span.style.cssText = "position:absolute;left:-10000px;top:0;visibility:hidden;white-space:nowrap;font-family:var(--print-font);font-size:var(--print-font-size);font-weight:700;letter-spacing:normal";
+      root.appendChild(span);
+      const px = autoColNeedPx(printAutoTexts.texts, (t) => { span.textContent = t; return span.getBoundingClientRect().width; });
+      span.remove();
+      setPrintAutoNeedPx(px);
+    };
+    measure();
+    const fonts = typeof document !== "undefined" ? document.fonts : undefined;
+    void fonts?.ready.then(measure);
+    fonts?.addEventListener?.("loadingdone", measure);
+    return () => { live = false; fonts?.removeEventListener?.("loadingdone", measure); };
+  }, [printAutoTexts, printLayout.fontFamily, printLayout.fontSize]);
+  const printAggRoom = useMemo<AggRoom>(() => ({
+    reservedIn: printReservedIn(printLayout, dedicatedColumns.length),
+    autoCount: printAutoTexts.autoCount,
+    autoNeedPx: printAutoNeedPx,
+    autoNeedCh: autoColNeedCh(printAutoTexts.texts),
+    titlesCh: printAggColumns.map((c) => aggPrintWidthCh(c.label, [])),
+  }), [printLayout, dedicatedColumns, printAutoTexts, printAutoNeedPx, printAggColumns]);
 
   // Card #300: every special column (print-only aggregate, dedicated shift, count) in the
   // admin-set order. Each entry points at its column by index in its own group list, so
@@ -3981,6 +4038,7 @@ export function ScheduleGrid({
 
   return (
     <div
+      ref={printRootRef}
       data-print-root
       className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}
       style={{ "--print-font": printFontStack(printLayout.fontFamily), "--print-font-size": `${printLayout.fontSize}pt`, "--print-row-h": `${printRowHeightIn(printLayout)}in` } as React.CSSProperties}
@@ -4336,7 +4394,7 @@ export function ScheduleGrid({
                     data-day-col
                     data-date-block-end
                     className="sticky z-20 bg-slate-800 pl-1 pr-2 py-2 text-left text-xs font-medium text-slate-400 border-b border-r border-slate-700"
-                    style={{ left: DATE_COL_W, width: dayColW(printLayout.dayColumnFormat), minWidth: dayColW(printLayout.dayColumnFormat), "--day-col-w": printLayout.dayColumnFormat === "Dddd" ? "0.62in" : "0.36in" } as React.CSSProperties}
+                    style={{ left: DATE_COL_W, width: dayColW(printLayout.dayColumnFormat), minWidth: dayColW(printLayout.dayColumnFormat), "--day-col-w": `${printLayout.dayColumnFormat === "Dddd" ? PRINT_COL_IN.dayLong : PRINT_COL_IN.day}in` } as React.CSSProperties}
                   >
                     Day
                   </th>
@@ -4390,7 +4448,7 @@ export function ScheduleGrid({
                 <th
                   key={`agg-h-${ci}`}
                   data-other-col
-                  style={{ "--agg-col-w": aggPrintWidthCss(c.label, Object.values(c.initialsByDate), printAggColumns.length, printLayout) } as React.CSSProperties}
+                  style={{ "--agg-col-w": aggPrintWidthCss(c.label, Object.values(c.initialsByDate), printAggRoom, printLayout) } as React.CSSProperties}
                   className="hidden px-1 py-1 text-center text-xs font-medium border-b border-l border-slate-700"
                 >
                   {c.label}

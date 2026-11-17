@@ -28,6 +28,6 @@ describe("card #310: printout polish", () => {
     const footer = grid.slice(grid.indexOf("<div data-print-footer"), grid.indexOf("/>", grid.indexOf("<div data-print-footer")));
     expect(footer).toContain('"--pp-label-w": PP_LABEL_W(printLayout.payPeriodLabels)');
     expect(grid).toContain('"--pp-label-w": PP_LABEL_W(printLayout.payPeriodLabels) }');
-    expect(grid).toMatch(/const PP_LABEL_W = \(on: boolean\) => \(on \? "0\.34in" : "0px"\);/);
+    expect(grid).toMatch(/const PP_LABEL_W = \(on: boolean\) => \(on \? `\$\{PRINT_COL_IN\.ppLabel\}in` : "0px"\);/); // card #328: from the shared constant (0.34in)
   });
 });
