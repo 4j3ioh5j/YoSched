@@ -44,6 +44,20 @@ export function parseAlertKey(input: unknown): string | null {
   return trimmed;
 }
 
+/** The mute key of one day's staffing alert (the Alerts list and the # tooltip share it). */
+export function staffingAlertKey(date: string, message: string): string {
+  return `staffing|${date}|${message}`;
+}
+
+/**
+ * Card #342: the hover text of a day's number in a # (count) column: that day's staffing
+ * alerts, one per line, muted ones marked. Null when the day has none.
+ */
+export function countCellTip(date: string, warnings: readonly Warning[] | undefined, mutedKeys: ReadonlySet<string>): string | null {
+  if (!warnings || warnings.length === 0) return null;
+  return warnings.map((w) => (mutedKeys.has(staffingAlertKey(date, w.message)) ? `${w.message} (muted)` : w.message)).join("\n");
+}
+
 /**
  * Build the day-level staffing alerts (coverage warnings).
  *
@@ -66,7 +80,7 @@ export function buildAlerts(
       for (const w of dw) {
         items.push({
           category: "staffing",
-          key: `staffing|${date}|${w.message}`,
+          key: staffingAlertKey(date, w.message),
           date,
           message: w.message,
           type: w.type === "shift-count" ? "error" : "warn",

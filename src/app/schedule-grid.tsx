@@ -10,7 +10,7 @@ import { ShiftPicker } from "./shift-picker";
 import { checkCellWarnings, checkDayStaffing, checkStaffPPHours, type Warning } from "@/lib/constraints";
 import { splitGroupWarnings, type HolidayGroup } from "@/lib/holiday-rules";
 import { staffPpTarget, ppDiffCell } from "@/lib/fte";
-import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, ALERT_CATEGORIES, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
+import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections, groupAlertsByDate, countCellTip, ALERT_CATEGORIES, type PPHoursEntry, type RequestAlertEntry } from "@/lib/alerts";
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForScopeWithExplicit, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
@@ -4850,10 +4850,16 @@ export function ScheduleGrid({
                       </td>
                     );
                   }
-                    const counts = columnCounts[sc.col.i]; const ci = sc.col.i; return (
+                    const counts = columnCounts[sc.col.i]; const ci = sc.col.i;
+                    // Card #342: hovering the number shows the day's alerts (what turns it red).
+                    const tip = countCellTip(date, dw, mutedKeys); return (
                     <td
                       key={`cnt-${ci}`}
+                      data-count-tip={tip ? "" : undefined}
+                      onMouseEnter={tip ? (e) => showTip(setTooltip, tip, e) : undefined}
+                      onMouseLeave={tip ? () => setTooltip(null) : undefined}
                       className={[
+                        tip ? "cursor-help" : "",
                         "px-2 py-1 text-center text-xs font-mono border-l border-slate-700",
                         isNewPP ? "border-t-2 border-t-indigo-500" : "",
                         dw && dw.length > 0 ? "text-red-400" : "text-slate-400",

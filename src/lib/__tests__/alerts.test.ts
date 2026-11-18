@@ -228,3 +228,21 @@ describe("parseAlertKey", () => {
     expect(parseAlertKey("a".repeat(MAX_ALERT_KEY_LENGTH + 1))).toBeNull();
   });
 });
+
+// Card #342: hovering a day's number in a # (count) column shows that day's alerts.
+import { countCellTip } from "../alerts";
+describe("card #342: countCellTip", () => {
+  const w = (message: string) => ({ message, type: "shift-count" }) as Warning;
+  it("nothing to show without warnings", () => {
+    expect(countCellTip("2026-11-09", undefined, new Set())).toBeNull();
+    expect(countCellTip("2026-11-09", [], new Set())).toBeNull();
+  });
+  it("one line per warning, in order", () => {
+    expect(countCellTip("2026-11-09", [w("OR: 3 of 4"), w("CALL: 0 of 1")], new Set())).toBe("OR: 3 of 4\nCALL: 0 of 1");
+  });
+  it("a muted alert is marked, with the same key the Alerts list mutes by", () => {
+    const date = "2026-11-09";
+    const [alert] = buildAlerts([date], new Map([[date, [w("OR: 3 of 4")]]]), date, date);
+    expect(countCellTip(date, [w("OR: 3 of 4"), w("CALL: 0 of 1")], new Set([alert.key]))).toBe("OR: 3 of 4 (muted)\nCALL: 0 of 1");
+  });
+});
