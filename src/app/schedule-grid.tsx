@@ -24,6 +24,7 @@ import { autoVersionComment, yearMonths, type AutoVersionMode } from "@/lib/auto
 import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMeta } from "@/lib/auto-version-flow";
 import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, aggPrintWidthCss, aggPrintWidthCh, autoColNeedCh, printNeedPx, printReservedIn, PRINT_COL_IN, type AggRoom, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
+import { pruneHiddenFocus } from "@/lib/grid-hidden-focus";
 import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
@@ -572,6 +573,17 @@ export function ScheduleGrid({
       return next;
     });
   }, []);
+  // Card #343: show on screen only the columns the print / PDF / Excel output shows (one
+  // print column model: rule-hidden staff left out, print-only aggregate columns shown).
+  // A display choice only, remembered per browser; defaults to off.
+  // Starts off on the server and the first client render (no hydration mismatch), then the
+  // saved choice is restored before paint, like the viewed month.
+  const [printColumnsOnly, setPrintColumnsOnly] = useState(false);
+  useLayoutEffect(() => {
+    // A one-time restore from storage after hydration (the documented exception to this rule).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    try { if (localStorage.getItem("yosched:printColumnsOnly") === "true") setPrintColumnsOnly(true); } catch { /* private mode */ }
+  }, []);
   // Which requests the RQ overlay draws: "all" (any non-terminal + denied), or one
   // status in isolation. Lets the scheduler see, e.g., only what's still unfulfilled,
   // or audit what was denied, without losing the others. Persisted per browser.
@@ -993,7 +1005,7 @@ export function ScheduleGrid({
   const dedDownCell = useRef<{ shiftTypeId: string; date: string } | null>(null);
   const dedBeyondSlop = useRef(false);
   // Kept current each render so the once-registered mouseup listener finalizes with
-  // the latest visibleStaff/dates instead of a stale first-render closure.
+  // the latest gridStaff/dates instead of a stale first-render closure.
   const computeRectRef = useRef<typeof computeRectSelection | null>(null);
 
   // Undo/redo stacks — each entry is a group of changes applied together
@@ -1483,6 +1495,35 @@ export function ScheduleGrid({
     [printColumnRules, printAggregateColumns, visibleStaff, dates, assignmentMap, firstOfMonth, lastOfMonth, shiftTypes],
   );
 
+  // Card #343: the staff whose columns the grid shows. In the "printed columns only" view the
+  // rule-hidden staff are left out entirely, so arrows, ranges, copy and paste only reach
+  // columns you can see. The print model, alerts and hours still use every visible staff.
+  const gridStaff = useMemo(
+    () => (printColumnsOnly ? visibleStaff.filter((p) => !printHiddenIds.has(p.id)) : visibleStaff),
+    [printColumnsOnly, visibleStaff, printHiddenIds],
+  );
+  // Card #343: whenever the shown staff change (an edit hides a column in this view, or the
+  // view is switched), drop any focus, selection, anchor or open picker on a column that is
+  // no longer shown, so no shortcut, Delete or paste can write to a hidden person. Adjusted
+  // during render (React's "state from changed input" pattern), so no event ever sees a stale
+  // target between the change and the next commit.
+  const [prevGridStaff, setPrevGridStaff] = useState(gridStaff);
+  if (prevGridStaff !== gridStaff) {
+    setPrevGridStaff(gridStaff);
+    const prune = pruneHiddenFocus(new Set(gridStaff.map((p) => p.id)), {
+      activeCol,
+      selection,
+      anchorStaffId: selectionAnchor?.staffId ?? null,
+      pickerStaffId: picker?.staffId ?? null,
+    });
+    if (prune) {
+      if (prune.clearActiveCol) setActiveCol(null);
+      if (prune.selection) setSelection(prune.selection);
+      if (prune.clearAnchor) setSelectionAnchor(null);
+      if (prune.closePicker) setPicker(null);
+    }
+  }
+
   // Card #328: what the aggregate columns may take in print is what the other columns do not
   // need: the fixed columns (date block, labels, dedicated) and the equal-share staff + count
   // columns, each as wide as the longest text any of them prints this month (rule-hidden staff
@@ -1586,6 +1627,15 @@ export function ScheduleGrid({
     setDedSelection(null);
     dedAnchorRef.current = null;
   }
+
+  // Card #343: the column set changes, so drop column focus + selection first (as month
+  // change and Show-all do), then remember the choice.
+  const togglePrintColumnsOnly = () => {
+    const next = !printColumnsOnly;
+    clearColFocus();
+    setPrintColumnsOnly(next);
+    try { localStorage.setItem("yosched:printColumnsOnly", String(next)); } catch { /* private mode / quota */ }
+  };
 
   function prevMonth() {
     clearColFocus();
@@ -1710,8 +1760,8 @@ export function ScheduleGrid({
   function computeRectSelection(anchor: { staffId: string; date: string }, target: { staffId: string; date: string }): Set<string> {
     const aDateIdx = dates.indexOf(anchor.date);
     const tDateIdx = dates.indexOf(target.date);
-    const aProvIdx = visibleStaff.findIndex((p) => p.id === anchor.staffId);
-    const tProvIdx = visibleStaff.findIndex((p) => p.id === target.staffId);
+    const aProvIdx = gridStaff.findIndex((p) => p.id === anchor.staffId);
+    const tProvIdx = gridStaff.findIndex((p) => p.id === target.staffId);
     if (aDateIdx === -1 || tDateIdx === -1 || aProvIdx === -1 || tProvIdx === -1) return new Set();
     const dStart = Math.min(aDateIdx, tDateIdx);
     const dEnd = Math.max(aDateIdx, tDateIdx);
@@ -1720,7 +1770,7 @@ export function ScheduleGrid({
     const sel = new Set<string>();
     for (let di = dStart; di <= dEnd; di++) {
       for (let pi = pStart; pi <= pEnd; pi++) {
-        const k = `${visibleStaff[pi].id}:${dates[di]}`;
+        const k = `${gridStaff[pi].id}:${dates[di]}`;
         if (!assignmentMap.get(k)?.isLocked) sel.add(k);
       }
     }
@@ -2434,10 +2484,10 @@ export function ScheduleGrid({
         e.preventDefault();
         const dateIdx = dates.indexOf(activeRow);
         if (dateIdx === -1) return;
-        const nStaff = visibleStaff.length;
+        const nStaff = gridStaff.length;
         const totalCols = nStaff + dedicatedColumns.length;
         const colIdx = activeCol
-          ? visibleStaff.findIndex((p) => p.id === activeCol)
+          ? gridStaff.findIndex((p) => p.id === activeCol)
           : nStaff + dedicatedColumns.findIndex((st) => st.id === activeDedCol);
         if (colIdx < 0) return;
         let newDateIdx = dateIdx;
@@ -2450,7 +2500,7 @@ export function ScheduleGrid({
         setActiveRow(newDate);
         if (newColIdx < nStaff) {
           // Landing on a staff column: clear any dedicated selection/anchor.
-          const newProv = visibleStaff[newColIdx];
+          const newProv = gridStaff[newColIdx];
           setActiveCol(newProv.id);
           setActiveDedCol(null);
           setDedSelection(null);
@@ -2493,7 +2543,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [picker, canEdit, activeRow, activeCol, activeDedCol, assignmentMap, dates, visibleStaff, dedicatedColumns, dedicatedColumnInitialsData, staff, shiftTypeMap, hotkeyMap, selection, showMonthPicker, requestMode, toggleShowRequests, modalOpen]);
+  }, [picker, canEdit, activeRow, activeCol, activeDedCol, assignmentMap, dates, gridStaff, dedicatedColumns, dedicatedColumnInitialsData, staff, shiftTypeMap, hotkeyMap, selection, showMonthPicker, requestMode, toggleShowRequests, modalOpen]);
 
   // Copy the selected cells (or the active cell) to the clipboard as TSV so they paste
   // into Excel/Sheets matching the grid (dates rows, staff cols), values only. Read-only
@@ -2546,7 +2596,7 @@ export function ScheduleGrid({
 
       const tsv = selectionToTsv(keys, {
         dateOrder: dates,
-        staffOrder: visibleStaff.map((p) => p.id),
+        staffOrder: gridStaff.map((p) => p.id),
         codeAt: (staffId, date) => assignmentMap.get(`${staffId}:${date}`)?.code,
       });
       if (tsv == null) return;
@@ -2555,7 +2605,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("copy", onCopy);
     return () => document.removeEventListener("copy", onCopy);
-  }, [selection, activeRow, activeCol, activeDedCol, assignmentMap, dates, visibleStaff, showMonthPicker, modalOpen, picker, dedSelection, shiftTypeMap, staff]);
+  }, [selection, activeRow, activeCol, activeDedCol, assignmentMap, dates, gridStaff, showMonthPicker, modalOpen, picker, dedSelection, shiftTypeMap, staff]);
 
   // Paste a clipboard block (from Excel/Sheets or our own copy) positionally from the
   // active cell, filling down and right. Same guards as keydown/copy. Gated to assignment
@@ -2710,12 +2760,12 @@ export function ScheduleGrid({
       if (pasteBusyRef.current) return; // ignore a paste while one is committing
 
       const dateIndex = dates.indexOf(activeRow);
-      const staffIndex = visibleStaff.findIndex((p) => p.id === activeCol);
+      const staffIndex = gridStaff.findIndex((p) => p.id === activeCol);
       if (dateIndex < 0 || staffIndex < 0) return;
 
       const resolution = resolvePaste(block, { dateIndex, staffIndex }, {
         dateOrder: dates,
-        staffOrder: visibleStaff.map((p) => p.id),
+        staffOrder: gridStaff.map((p) => p.id),
         codeToId,
         isLocked: (staffId, date) => !!assignmentMap.get(`${staffId}:${date}`)?.isLocked,
       });
@@ -2797,7 +2847,7 @@ export function ScheduleGrid({
     }
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-  }, [canEdit, requestMode, activeRow, activeCol, activeDedCol, dates, visibleStaff, staff, assignmentMap, codeToId, shiftTypeMap, dedSelection, showMonthPicker, modalOpen, picker]);
+  }, [canEdit, requestMode, activeRow, activeCol, activeDedCol, dates, gridStaff, staff, assignmentMap, codeToId, shiftTypeMap, dedSelection, showMonthPicker, modalOpen, picker]);
 
   // Auto-dismiss the paste summary toast.
   useEffect(() => {
@@ -4058,6 +4108,7 @@ export function ScheduleGrid({
       ref={printRootRef}
       data-print-count-need={printCountNeedPx ?? undefined}
       data-print-root
+      data-print-columns-view={printColumnsOnly ? "" : undefined}
       className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}
       style={{ "--print-font": printFontStack(printLayout.fontFamily), "--print-font-size": `${printLayout.fontSize}pt`, "--print-row-h": `${printRowHeightIn(printLayout)}in` } as React.CSSProperties}
     >
@@ -4279,6 +4330,16 @@ export function ScheduleGrid({
               {liveLoading ? "Loading…" : "Auto-generate"}
             </button>
           )}
+          {/* Card #343: show only the columns the print / PDF / Excel output shows. */}
+          <button
+            onClick={togglePrintColumnsOnly}
+            aria-pressed={printColumnsOnly}
+            data-print-hide
+            title={printColumnsOnly ? "Showing only the columns that print (print, PDF, Excel). Click to show every column." : "Show only the columns that print (print, PDF, Excel)"}
+            className={["px-3 py-1 text-sm rounded transition-colors", printColumnsOnly ? "bg-sky-700 hover:bg-sky-600 text-sky-100" : "bg-slate-700 hover:bg-slate-600 text-slate-400"].join(" ")}
+          >
+            Print columns
+          </button>
           {/* Alerts — color reflects severity; opens the alerts modal. */}
           {/* Enabled whenever ANY alert exists (even if all are muted), so muted
               rows stay reachable to unmute. Active count/severity ignore muted. */}
@@ -4422,7 +4483,7 @@ export function ScheduleGrid({
                   Date
                 </th>
               )}
-              {visibleStaff.map((p) => {
+              {gridStaff.map((p) => {
                 const isActiveCol = activeCol === p.id;
                 const fe = fairnessData?.[p.id];
                 const fColor = fe ? fairnessColor(fe.deviation.overall) : undefined;
@@ -4520,7 +4581,7 @@ export function ScheduleGrid({
                       <span className="text-indigo-400">PP {payPeriodLabel(pp.startDate, periodLengthOf(pp)).number}</span>
                       <span className="text-slate-500 ml-1">+/–</span>
                     </td>
-                    {visibleStaff.map((p) => {
+                    {gridStaff.map((p) => {
                       const hours = provHours?.get(p.id) ?? 0;
                       // Card #71: no target (a type without an FTE % and no fixed hours) → "–", no colour.
                       // Otherwise green on target, red under, amber over (ppDiffCell).
@@ -4630,7 +4691,7 @@ export function ScheduleGrid({
                       </td>
                     );
                   })()}
-                  {visibleStaff.map((p) => {
+                  {gridStaff.map((p) => {
                     const cellKey = `${p.id}:${date}`;
                     // In Live mode the cell shows the in-browser re-solve, not the
                     // saved assignment; isRipple flags cells the engine changed.

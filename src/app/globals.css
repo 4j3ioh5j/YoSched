@@ -53,6 +53,17 @@ input[type="checkbox"]:disabled {
   cursor: default;
 }
 
+/* Card #343: the "Print columns" view shows on screen the print-only aggregate columns
+   (Tailwind-hidden otherwise). Rule-hidden staff columns are left out by the grid itself. */
+@media screen {
+  [data-print-columns-view] [data-other-col] {
+    display: table-cell !important;
+  }
+  [data-print-columns-view] thead th[data-other-col] {
+    white-space: nowrap;
+  }
+}
+
 @media print {
   /* Card #323: the paper and the margin come from Settings: the grid adds a print-only
      <style> (printPageStyle) after this sheet, which sets @page size and the body padding.
