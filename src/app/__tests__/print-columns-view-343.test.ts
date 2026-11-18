@@ -78,3 +78,29 @@ describe("printed columns only view: summary columns fit their text (card #344)"
     expect(screen).toMatch(/\[data-print-columns-view\] \[data-other-col\] \{\s*display: table-cell !important;\s*width: 1%;\s*white-space: nowrap;/);
   });
 });
+
+describe("even grid lines on every row and column (card #345)", () => {
+  it("staff cells on day rows and pay-period rows use the shared staff lines", () => {
+    expect(grid.match(/staffCellLines\(p\.id === lastStaffId, specialColumns\.length > 0\)/g)?.length).toBe(2);
+  });
+
+  it("every OTHER, dedicated and count cell (header, day row, pay-period row) uses the shared extra lines", () => {
+    // 3 header cells + 3 day-row cells + 3 pay-period cells.
+    expect(grid.match(/extraCellLines\(\)/g)?.length).toBe(9);
+    // No extra-column cell keeps its own one-sided border.
+    expect(grid).not.toMatch(/border-l border-slate-600/);
+    expect(grid).not.toMatch(/break-words border-l border-slate-700/);
+    expect(grid).not.toMatch(/font-mono border-l border-slate-700/);
+  });
+
+  it("pay-period rows draw the same faint verticals as day rows", () => {
+    expect(grid).not.toMatch(/border-slate-600\/50/);
+  });
+});
+
+describe("extra columns share the pay-period shading (card #345)", () => {
+  it("OTHER, dedicated and count cells take the same alternate pay-period shade as staff cells", () => {
+    // staff + OTHER + dedicated + count.
+    expect(grid.match(/!ppEven \? "bg-slate-800\/20" : ""/g)?.length).toBe(4);
+  });
+});

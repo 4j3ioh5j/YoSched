@@ -25,6 +25,7 @@ import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMet
 import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, aggPrintWidthCss, aggPrintWidthCh, autoColNeedCh, printNeedPx, printReservedIn, PRINT_COL_IN, type AggRoom, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { pruneHiddenFocus } from "@/lib/grid-hidden-focus";
+import { staffCellLines, extraCellLines, PP_ROW_LINES } from "@/lib/grid-lines";
 import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
@@ -1502,6 +1503,8 @@ export function ScheduleGrid({
     () => (printColumnsOnly ? visibleStaff.filter((p) => !printHiddenIds.has(p.id)) : visibleStaff),
     [printColumnsOnly, visibleStaff, printHiddenIds],
   );
+  // Card #345: the last shown staff column draws the divider before the extra columns.
+  const lastStaffId = gridStaff.length > 0 ? gridStaff[gridStaff.length - 1].id : null;
   // Card #343: whenever the shown staff change (an edit hides a column in this view, or the
   // view is switched), drop any focus, selection, anchor or open picker on a column that is
   // no longer shown, so no shortcut, Delete or paste can write to a hidden person. Adjusted
@@ -4528,7 +4531,7 @@ export function ScheduleGrid({
                   key={`agg-h-${ci}`}
                   data-other-col
                   style={{ "--agg-col-w": aggPrintWidthCss(c.label, Object.values(c.initialsByDate), printAggRoom, printLayout) } as React.CSSProperties}
-                  className="hidden px-1 py-1 text-center text-xs font-medium border-b border-l border-slate-700"
+                  className={`hidden px-1 py-1 text-center text-xs font-medium ${extraCellLines()} border-b-slate-700`}
                 >
                   {c.label}
                 </th>
@@ -4538,14 +4541,14 @@ export function ScheduleGrid({
                   key={`ded-h-${st.id}`}
                   title={st.name}
                   data-print-ded=""
-                  className="px-1 py-1 text-center text-xs font-medium border-b border-l border-slate-700 w-[44px] min-w-[44px]"
+                  className={`px-1 py-1 text-center text-xs font-medium ${extraCellLines()} border-b-slate-700 w-[44px] min-w-[44px]`}
                   style={{ color: st.color }}
                 >
                   {st.code}
                 </th>
               ); }
                 const col = countColumns[sc.col.i]; const ci = sc.col.i; return (
-                <th key={`cnt-h-${ci}`} className="px-2 py-2 text-center text-xs font-medium text-slate-400 border-b border-l border-slate-700 w-[32px] min-w-[32px]">
+                <th key={`cnt-h-${ci}`} className={`px-2 py-2 text-center text-xs font-medium text-slate-400 ${extraCellLines()} border-b-slate-700 w-[32px] min-w-[32px]`}>
                   {col.label || "#"}
                 </th>
               );
@@ -4575,7 +4578,7 @@ export function ScheduleGrid({
                   <tr key={`pp-${pp.startDate}`} data-print-hide className="bg-slate-800/80">
                     <td
                       colSpan={dateCols}
-                      className="sticky left-0 z-[5] px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider border-r border-slate-600 whitespace-nowrap border-y border-y-indigo-500/60"
+                      className="sticky left-0 z-[5] px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider border-r border-slate-700 whitespace-nowrap border-y border-y-indigo-500/60"
                       style={{ background: "#1a2340" }}
                     >
                       <span className="text-indigo-400">PP {payPeriodLabel(pp.startDate, periodLengthOf(pp)).number}</span>
@@ -4591,7 +4594,7 @@ export function ScheduleGrid({
                         <td
                           key={p.id}
                           data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
-                          className="px-0 py-1 text-center border-slate-600/50 border border-y-indigo-500/60"
+                          className={`px-0 py-1 text-center ${staffCellLines(p.id === lastStaffId, specialColumns.length > 0)} ${PP_ROW_LINES}`}
                           onMouseEnter={(e) => showTip(setTooltip, `${p.initials}: ${cell.tip}`, e)}
                           onMouseLeave={() => setTooltip(null)}
                         >
@@ -4605,11 +4608,11 @@ export function ScheduleGrid({
                         day rows in print. */}
                     {specialColumns.map((sc) =>
                       sc.kind === "agg" ? (
-                        <td key={`pp-${sc.key}`} data-other-col className="hidden border-slate-600/50 border border-y-indigo-500/60" />
+                        <td key={`pp-${sc.key}`} data-other-col className={`hidden ${extraCellLines()} ${PP_ROW_LINES}`} />
                       ) : sc.kind === "ded" ? (
-                        <td key={`pp-${sc.key}`} className="border-l border-slate-600 border-y border-y-indigo-500/60" />
+                        <td key={`pp-${sc.key}`} className={`${extraCellLines()} ${PP_ROW_LINES}`} />
                       ) : (
-                        <td key={`pp-${sc.key}`} className="px-2 py-1 text-center text-[10px] font-mono border-l border-slate-600 text-indigo-400/60 border-y border-y-indigo-500/60" />
+                        <td key={`pp-${sc.key}`} className={`px-2 py-1 text-center text-[10px] font-mono text-indigo-400/60 ${extraCellLines()} ${PP_ROW_LINES}`} />
                       ),
                     )}
                     <td data-pp-label-col aria-hidden className="hidden" />
@@ -4740,7 +4743,7 @@ export function ScheduleGrid({
                         data-print-bg={printBg ? "" : undefined}
                         data-print-rule-hide={printHiddenIds.has(p.id) ? "" : undefined}
                         className={[
-                          `px-0.5 py-0.5 text-center border-slate-700/30 border relative ${canEdit ? "cursor-pointer" : "cursor-default"}`,
+                          `px-0.5 py-0.5 text-center ${staffCellLines(p.id === lastStaffId, specialColumns.length > 0)} relative ${canEdit ? "cursor-pointer" : "cursor-default"}`,
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
                           !ppEven ? "bg-slate-800/20" : "",
                           reqBox,
@@ -4837,8 +4840,9 @@ export function ScheduleGrid({
                       key={`agg-b-${ci}`}
                       data-other-col
                       className={[
-                        "hidden px-0.5 py-0.5 text-center text-[10px] font-semibold leading-tight break-words border-l border-slate-700",
+                        `hidden px-0.5 py-0.5 text-center text-[10px] font-semibold leading-tight break-words ${extraCellLines()}`,
                         isNewPP ? "border-t-2 border-t-indigo-500" : "",
+                        !ppEven ? "bg-slate-800/20" : "",
                       ].join(" ")}
                     >
                       {(c.initialsByDate[date] ?? []).join(", ")}
@@ -4862,8 +4866,9 @@ export function ScheduleGrid({
                           // faint full border (with a stronger left edge marking the section),
                           // select-none to stop native text-selection bleed, pointer cursor,
                           // and the same emerald-range / blue-active highlight rings.
-                          "px-0.5 py-0.5 text-center text-[11px] font-mono font-semibold leading-tight break-words border border-slate-700/30 border-l-slate-700 relative select-none",
+                          `px-0.5 py-0.5 text-center text-[11px] font-mono font-semibold leading-tight break-words ${extraCellLines()} relative select-none`,
                           isNewPP ? "border-t-2 border-t-indigo-500" : "",
+                          !ppEven ? "bg-slate-800/20" : "",
                           !isEditing ? (canEdit ? "cursor-pointer" : "cursor-default") : "",
                           !isEditing && !isDedActive && !isDedSelected ? "hover:bg-slate-700/30" : "",
                           isDedSelected ? "ring-2 ring-inset ring-emerald-400 bg-emerald-900/20" : "",
@@ -4921,8 +4926,9 @@ export function ScheduleGrid({
                       onMouseLeave={tip ? () => setTooltip(null) : undefined}
                       className={[
                         tip ? "cursor-help" : "",
-                        "px-2 py-1 text-center text-xs font-mono border-l border-slate-700",
+                        `px-2 py-1 text-center text-xs font-mono ${extraCellLines()}`,
                         isNewPP ? "border-t-2 border-t-indigo-500" : "",
+                        !ppEven ? "bg-slate-800/20" : "",
                         dw && dw.length > 0 ? "text-red-400" : "text-slate-400",
                       ].join(" ")}
                     >
