@@ -2,7 +2,7 @@ import { computeFairness, type FairnessSummary, type EquityFactor } from "./fair
 import { evaluateAvailability, getBaseWorkDays, type AvailabilityRule, type PayPeriodRange } from "./availability";
 import { type FollowRuleRow, buildFollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
 import { buildDayCapLookup } from "./day-cap";
-import { evaluateShiftEligibility, getWindowBounds, countInWindow, checkMinimumTargetMet, isAtRollingMaximum, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
+import { evaluateShiftEligibility, getWindowBounds, checkMinimumTargetMet, isAtRollingMaximum, type ShiftEligibilityRule, type ShiftMinTarget } from "./shift-eligibility";
 import { foldRequestsForDate, detectRequestConflicts, coversDate, parseOffStrategyOrder, LEAVE_STRATEGY_PREFIX, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode, type RequestConflictPolicy } from "./schedule-requests";
 import { matchesWhen, standingToWhen, ruleToWhen } from "./recurrence";
 import { type ShiftShareBasis } from "./shift-share";
@@ -10,7 +10,7 @@ import { type HolidayPolicy, resolveHolidayShift } from "./holiday-policy";
 import { buildHolidayGroups, type HolidayRuleSpec, type HolidayGroup, type HolidayGroupSlot } from "./holiday-rules";
 import { couldWorkOn, excessLeaveDays, type LeavePolicy } from "./leave-policy";
 import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
-import { tallyBalances, sharesOf, spreadPenalty, spreadChange, addDays, type BalanceTally } from "./shift-balance";
+import { tallyBalances, sharesOf, spreadPenalty, spreadChange, addDays, payPeriodsSpanning, type BalanceTally } from "./shift-balance";
 import { gapBreaks, gapList, gapListShrank, gapTrialBeats, type GapTrialOutcome } from "./shift-gap";
 import { readTuning, isWeekendDate, weekendSecondDow, type SchedulerTuning } from "./scheduler-tuning";
 import { RETIRED_SPACING_KEY } from "./autogen-factor-order";
@@ -677,6 +677,9 @@ export type AutoScheduleInput = {
   balanceRequests?: ScheduleRequestData[];
   balancePayPeriods?: PayPeriodRange[];
   spreadContext?: ScheduleAssignment[];
+  // Card #339: read-only cells after the run, as far as any count target's window reaches, for
+  // the people and shifts that have one (a CALL hand-entered in June counts when building February).
+  targetContext?: ScheduleAssignment[];
   // Card #210: holiday rules (settings data) — each dated holiday of a rule's type makes a group
   // of (date, shift) days that go to ONE person. holidayRuleContext: read-only cells just after
   // the run (a hand-entered day of a group that reaches past the end); never written.
@@ -714,6 +717,7 @@ function autoScheduleCore({
   balanceRequests,
   balancePayPeriods,
   spreadContext,
+  targetContext,
   holidayRules,
   holidayRuleContext,
 }: AutoScheduleInput): AutoScheduleResult {
@@ -1090,6 +1094,57 @@ function autoScheduleCore({
     if (!m) outsideCells.set(a.staffId, (m = new Map()));
     m.set(a.date, a.shiftTypeId);
   }
+  // Card #339: count targets read the person's cells outside the run too (history and the cells
+  // after it), so "2 CALL per 12 months" sees a June CALL while February is built. The grid
+  // always wins its own dates; outside cells are fixed (never placed, removed or swapped).
+  const outsideTargetDates = new Map<string, string[]>();
+  for (const p of staff) {
+    for (const t of p.shiftMinimumTargets ?? []) {
+      const k = `${p.id}|${t.shiftTypeId}`;
+      if (outsideTargetDates.has(k)) continue;
+      const ds: string[] = [];
+      for (const [d, s] of outsideCells.get(p.id) ?? []) if (s === t.shiftTypeId) ds.push(d);
+      for (const a of targetContext ?? []) if (a.staffId === p.id && a.shiftTypeId === t.shiftTypeId && !outsideCells.get(p.id)?.has(a.date)) ds.push(a.date);
+      outsideTargetDates.set(k, ds);
+    }
+  }
+  /** The person's counting dates of this shift: grid cells (not non-counting followers) plus outside cells. */
+  function countingDates(staffId: string, st: { id: string; code: string }): string[] {
+    const out: string[] = [];
+    for (const [d, v] of grid.ofStaff(staffId)) if (v.code === st.code && !v.noCount) out.push(d);
+    for (const d of outsideTargetDates.get(`${staffId}|${st.id}`) ?? []) if (!grid.cellAt(staffId, d)) out.push(d);
+    return out;
+  }
+  /** How many counting dates of this shift the person has in [start, end]. */
+  function countingIn(staffId: string, st: { id: string; code: string }, start: string, end: string): number {
+    let n = 0;
+    for (const d of countingDates(staffId, st)) if (d >= start && d <= end) n++;
+    return n;
+  }
+  // Card #339 (Codex #1591): pay-period windows index only dates inside the list they get, so
+  // count targets use the stored list extended over every outside cell (plus one block either
+  // side), anchored at the stored first period so the fixed blocks don't move.
+  const { periods: targetPPs, anchor: targetAnchor } = ((): { periods: PayPeriodRange[]; anchor: number } => {
+    const stored: PayPeriodRange[] = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
+    const ppTargets = staff.flatMap((p) => (p.shiftMinimumTargets ?? []).filter((t) => t.window === "pay_period"));
+    if (stored.length === 0 || ppTargets.length === 0) return { periods: stored, anchor: 0 };
+    const last = stored[stored.length - 1];
+    const len = Math.round((Date.parse(last.endDate + "T12:00:00Z") - Date.parse(last.startDate + "T12:00:00Z")) / 86400000) + 1;
+    const n = Math.max(...ppTargets.map((t) => Math.max(1, Math.floor(t.windowCount ?? 1))));
+    let from = stored[0].startDate, to = last.endDate;
+    for (const ds of outsideTargetDates.values()) for (const d of ds) { if (d < from) from = d; if (d > to) to = d; }
+    const { periods } = payPeriodsSpanning(stored, addDays(from, -n * len), addDays(to, n * len), len);
+    const anchor = periods.findIndex((pp) => pp.startDate === stored[0].startDate);
+    return { periods, anchor: Math.max(0, anchor) };
+  })();
+  /** A count target's fixed (MIN) block containing `date`, over the extended pay periods. */
+  function targetBounds(t: ShiftMinTarget, date: string): { start: string; end: string } | null {
+    return getWindowBounds(t, date, targetPPs, targetAnchor);
+  }
+  /** A count target's rolling MAX check over the extended pay periods. */
+  function targetAtMax(t: ShiftMinTarget, date: string, others: string[]): boolean {
+    return isAtRollingMaximum(t, date, others, targetPPs);
+  }
   /** The person's shift on any date: the grid's cell, else a history / forward-context cell. */
   function cellShiftAt(staffId: string, date: string): string | undefined {
     const g = grid.cellAt(staffId, date);
@@ -1461,18 +1516,10 @@ function autoScheduleCore({
 
     let maxDeficit = 0;
     for (const target of targets) {
-      const bounds = getWindowBounds(
-        target, date,
-        payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
-      );
+      const bounds = targetBounds(target, date); // card #339
       if (!bounds) continue;
 
-      const assigned: string[] = [];
-      for (const [d, v] of grid.ofStaff(staff.id)) {
-        if (v.code === st.code && !v.noCount) {
-          if (d >= bounds.start && d <= bounds.end) assigned.push(d);
-        }
-      }
+      const assigned = countingDates(staff.id, st).filter((d) => d >= bounds.start && d <= bounds.end); // card #339
       const { met, needed, current } = checkMinimumTargetMet(target, assigned);
       if (!met) maxDeficit = Math.max(maxDeficit, needed - current);
     }
@@ -1508,16 +1555,10 @@ function autoScheduleCore({
 
     // The candidate `date` is not yet in the grid, so these are the existing
     // counting placements only — isAtRollingMaximum adds the candidate implicitly.
-    const assignedDates: string[] = [];
-    for (const [d, v] of grid.ofStaff(staff.id)) {
-      if (v.code === st.code && !v.noCount) {
-        assignedDates.push(d);
-      }
-    }
+    const assignedDates = countingDates(staff.id, st); // card #339: outside the run too
 
-    const ppRanges = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
     for (const target of targets) {
-      if (isAtRollingMaximum(target, date, assignedDates, ppRanges)) return true;
+      if (targetAtMax(target, date, assignedDates)) return true; // card #339
     }
     return false;
   }
@@ -3079,7 +3120,6 @@ function autoScheduleCore({
         function jointSpreadSwaps(pp: (typeof payPeriods)[number]): void {
           const LIM = jointSpreadLimitsForTest ?? { swaps: 200, checks: 50000 };
           const ppDates = dates.filter((d) => d >= pp.startDate && d <= pp.endDate);
-          const ppRangesAll: PayPeriodRange[] = payPeriods.map((x) => ({ startDate: x.startDate, endDate: x.endDate }));
           // Only this step's own unlocked cells of the shift, on writable days.
           const movable = (): { p: ScheduleStaff; d: string }[] => {
             const out: { p: ScheduleStaff; d: string }[] = [];
@@ -3113,13 +3153,14 @@ function autoScheduleCore({
             const out: { start: string; end: string; min: number }[] = [];
             for (const t of p.shiftMinimumTargets ?? []) {
               if (t.shiftTypeId !== st.id || (t.strength ?? "rule") !== "rule" || !(t.minCount > 0)) continue;
-              for (const d of days) { const b = getWindowBounds(t, d, ppRangesAll); if (b) out.push({ ...b, min: t.minCount }); }
+              for (const d of days) { const b = targetBounds(t, d); if (b) out.push({ ...b, min: t.minCount }); } // card #339
             }
             return out;
           };
           const countIn = (id: string, w: { start: string; end: string }): number => {
             let n = 0;
             for (let x = w.start; x <= w.end; x = nextDate(x)) { const c = grid.get(`${id}:${x}`); if (c && c.code === st.code && !c.noCount) n++; }
+            for (const x of outsideTargetDates.get(`${id}|${st.id}`) ?? []) if (x >= w.start && x <= w.end && !grid.cellAt(id, x)) n++; // card #339
             return n;
           };
           const condOwners = staff.filter((p) => p.isActive && p.availabilityRules.some((r) => r.conditionStaffId && r.conditionType));
@@ -3323,8 +3364,6 @@ function autoScheduleCore({
 
   for (const staff of activeStaff) {
     if (!staff.shiftMinimumTargets || staff.shiftMinimumTargets.length === 0) continue;
-    const ppRanges = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
-
     for (const target of staff.shiftMinimumTargets) {
       if (target.minCount <= 0) continue;
       if (target.window === "days") continue; // rolling windows have overlapping bounds — post-schedule warning only
@@ -3333,22 +3372,13 @@ function autoScheduleCore({
 
       const checkedWindows = new Set<string>();
       for (const date of dates) {
-        const bounds = getWindowBounds(target, date, ppRanges);
+        const bounds = targetBounds(target, date); // card #339
         if (!bounds) continue;
         const windowKey = `${bounds.start}:${bounds.end}`;
         if (checkedWindows.has(windowKey)) continue;
         checkedWindows.add(windowKey);
 
-        function countInWindow(): number {
-          let n = 0;
-          for (const [k, v] of grid.entries()) {
-            if (k.startsWith(staff.id + ":") && v.code === st!.code && !v.noCount) {
-              const d = k.split(":")[1];
-              if (d >= bounds!.start && d <= bounds!.end) n++;
-            }
-          }
-          return n;
-        }
+        const countInWindow = (): number => countingIn(staff.id, st!, bounds!.start, bounds!.end); // card #339
 
         const deficit = target.minCount - countInWindow();
         if (deficit <= 0) continue;
@@ -3876,20 +3906,14 @@ function autoScheduleCore({
 
   // Would removing one `lostSt` from `staff` (at `date`) drop them below a HARD
   // minimum target for that shift? (Soft preferences never block a hours fix.)
-  function swapBreaksHardMin(staff: ScheduleStaff, lostSt: ScheduleShiftType, date: string, ppRangesAll: PayPeriodRange[]): boolean {
+  function swapBreaksHardMin(staff: ScheduleStaff, lostSt: ScheduleShiftType, date: string): boolean {
     const targets = (staff.shiftMinimumTargets ?? []).filter(
       (t) => t.shiftTypeId === lostSt.id && (t.strength ?? "rule") === "rule" && t.minCount > 0,
     );
     for (const t of targets) {
-      const bounds = getWindowBounds(t, date, ppRangesAll);
+      const bounds = targetBounds(t, date); // card #339
       if (!bounds) continue;
-      let count = 0;
-      for (const [k, v] of grid.entries()) {
-        if (k.startsWith(staff.id + ":") && v.code === lostSt.code && !v.noCount) {
-          const d = k.split(":")[1];
-          if (d >= bounds.start && d <= bounds.end) count++;
-        }
-      }
+      const count = countingIn(staff.id, lostSt, bounds.start, bounds.end); // card #339
       if (count - 1 < t.minCount) return true;
     }
     return false;
@@ -3950,8 +3974,8 @@ function autoScheduleCore({
               if (best && gain < best.gain) continue;
               if (!canHoldForSwap(A.staff, B.st, date, ppRangesAll)) continue;
               if (!canHoldForSwap(B.staff, A.st, date, ppRangesAll)) continue;
-              if (swapBreaksHardMin(A.staff, A.st, date, ppRangesAll)) continue;
-              if (swapBreaksHardMin(B.staff, B.st, date, ppRangesAll)) continue;
+              if (swapBreaksHardMin(A.staff, A.st, date)) continue;
+              if (swapBreaksHardMin(B.staff, B.st, date)) continue;
               // Card #260: the whole resulting state — A losing its ORL can split a stretch too.
               const gapFx = gapEffect([[A.id, date, B.st.id], [B.id, date, A.st.id]]);
               if (gapFx.hardNew) continue;
@@ -4325,7 +4349,7 @@ function autoScheduleCore({
         const ca = cellOf(A, d), cb = cellOf(B, d);
         if (!ca || !cb || !isSwappableCell(ca, d) || !isSwappableCell(cb, d) || ca.shiftTypeId === cb.shiftTypeId) return false;
         const aSt = stById.get(ca.shiftTypeId)!, bSt = stById.get(cb.shiftTypeId)!;
-        if (swapBreaksHardMin(A, aSt, d, ppRangesAll) || swapBreaksHardMin(B, bSt, d, ppRangesAll)) return false;
+        if (swapBreaksHardMin(A, aSt, d) || swapBreaksHardMin(B, bSt, d)) return false;
         // Legality of each side is judged with the other side's cell still in place.
         if (!canHoldForSwap(A, bSt, d, ppRangesAll) || !canHoldForSwap(B, aSt, d, ppRangesAll)) return false;
         repairSet(A.id, d, bSt, "repair", `${bSt.code} (hour-balance repair)`);
@@ -4347,7 +4371,7 @@ function autoScheduleCore({
         !holidaySet.has(d) && !softAvoids(B, d) && isAvailable(B, d, fill) && canHoldForSwap(B, fill, d, ppRangesAll);
       function move(d: string, A: ScheduleStaff, B: ScheduleStaff): boolean {
         if (!isFillCell(A, d) || !isOpen(B, d)) return false;
-        if (swapBreaksHardMin(A, fill, d, ppRangesAll)) return false;
+        if (swapBreaksHardMin(A, fill, d)) return false;
         repairSet(A.id, d, null, "", ""); // free the slot first: the day's count is unchanged by the move
         changed.push({ p: A, d });
         if (!canReceiveFill(B, d)) return false; // attempt() rolls back
@@ -4358,7 +4382,7 @@ function autoScheduleCore({
       function drop(d: string, A: ScheduleStaff): boolean {
         if (!isFillCell(A, d)) return false;
         if (countCoverage(fill.code, d) - 1 < getRequiredCount(fill, d)) return false;
-        if (swapBreaksHardMin(A, fill, d, ppRangesAll)) return false;
+        if (swapBreaksHardMin(A, fill, d)) return false;
         repairSet(A.id, d, null, "", "");
         changed.push({ p: A, d });
         return true;
@@ -4563,13 +4587,9 @@ function autoScheduleCore({
         if (!w.own) return false;
         for (const t of A.shiftMinimumTargets ?? []) {
           if (t.shiftTypeId !== W.id || t.minCount <= 0) continue;
-          const b = getWindowBounds(t, d, ppRangesAll);
+          const b = targetBounds(t, d); // card #339
           if (!b) continue;
-          let n = 0;
-          for (const [x, v] of grid.ofStaff(A.id)) {
-            if (v.code !== W.code || v.noCount) continue;
-            if (x >= b.start && x <= b.end) n++;
-          }
+          const n = countingIn(A.id, W, b.start, b.end); // card #339
           if (n <= t.minCount) return true;
         }
         return false;
@@ -4579,12 +4599,8 @@ function autoScheduleCore({
       function rollingCountOk(A: ScheduleStaff, W: ScheduleShiftType, d: string): boolean {
         const targets = (A.shiftMinimumTargets ?? []).filter((t) => t.shiftTypeId === W.id && t.maxCount != null);
         if (targets.length === 0) return true;
-        const others: string[] = [];
-        for (const [x, v] of grid.ofStaff(A.id)) {
-          if (v.code !== W.code || v.noCount) continue;
-          if (x !== d) others.push(x);
-        }
-        return targets.every((t) => !isAtRollingMaximum(t, d, others, ppRangesAll));
+        const others = countingDates(A.id, W).filter((x) => x !== d); // card #339: outside cells count too
+        return targets.every((t) => !targetAtMax(t, d, others));
       }
       const softAvoidsW = (A: ScheduleStaff, d: string, W: ScheduleShiftType): boolean => {
         if (requestList.length === 0) return false;
@@ -4603,7 +4619,7 @@ function autoScheduleCore({
         const c = cellOf(A, d);
         if (c) {
           if (!isSwappableCell(c, d) || c.shiftTypeId === W.id) return false;
-          if (swapBreaksHardMin(A, stById.get(c.shiftTypeId)!, d, ppRangesAll)) return false;
+          if (swapBreaksHardMin(A, stById.get(c.shiftTypeId)!, d)) return false;
         } else if (!isAvailable(A, d, W)) return false;
         if (!canHoldForSwap(A, W, d, ppRangesAll)) return false;
         repairSet(A.id, d, W, "repair", reshapeReason(A, W, d, w));
@@ -5529,23 +5545,16 @@ function autoScheduleCore({
     for (const target of staff.shiftMinimumTargets) {
       const st = stById.get(target.shiftTypeId);
       if (!st) continue;
-      const ppRanges = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
       const checkedWindows = new Set<string>();
 
       for (const date of dates) {
-        const bounds = getWindowBounds(target, date, ppRanges);
+        const bounds = targetBounds(target, date); // card #339
         if (!bounds) continue;
         const windowKey = `${bounds.start}:${bounds.end}`;
         if (checkedWindows.has(windowKey)) continue;
         checkedWindows.add(windowKey);
 
-        const assigned: string[] = [];
-        for (const [k, v] of grid.entries()) {
-          if (k.startsWith(staff.id + ":") && v.code === st.code && !v.noCount) {
-            const d = k.split(":")[1];
-            if (d >= bounds.start && d <= bounds.end) assigned.push(d);
-          }
-        }
+        const assigned = countingDates(staff.id, st).filter((d) => d >= bounds.start && d <= bounds.end); // card #339
         const { met, current, needed } = checkMinimumTargetMet(target, assigned);
         // Soft (preference) targets are advisory-only — bias without warnings.
         if (!met && targetIsHard(target)) {
@@ -5562,14 +5571,11 @@ function autoScheduleCore({
       // more than maxCount counting the OTHER placements.
       // Only HARD max caps are audited — a soft max is a penalty, not a violation.
       if (target.maxCount != null && targetIsHard(target)) {
-        const placed: string[] = [];
-        for (const [k, v] of grid.entries()) {
-          if (k.startsWith(staff.id + ":") && v.code === st.code && !v.noCount) {
-            placed.push(k.split(":")[1]);
-          }
-        }
+        // Card #339: outside cells count, but only the run's own dates are listed as over.
+        const placed = countingDates(staff.id, st);
         const overCap = placed
-          .filter((d) => isAtRollingMaximum(target, d, placed.filter((x) => x !== d), ppRanges))
+          .filter((d) => grid.cellAt(staff.id, d) !== undefined)
+          .filter((d) => targetAtMax(target, d, placed.filter((x) => x !== d)))
           .sort();
         if (overCap.length > 0) {
           const windowDesc =

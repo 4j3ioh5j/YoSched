@@ -162,6 +162,9 @@ export function getWindowBounds(
   target: ShiftMinTarget,
   dateStr: string,
   payPeriods: PayPeriodRange[],
+  // Card #339: the index in `payPeriods` that pay-period blocks are anchored at. 0 = PP[0]; a
+  // list extended backwards passes the index of the original first period so blocks don't move.
+  anchor = 0,
 ): { start: string; end: string } | null {
   // "per N windows" multiplier (week/pay_period/month only). Tiles into fixed,
   // non-overlapping blocks of n anchored at a stable epoch, so n=1 reduces
@@ -173,8 +176,8 @@ export function getWindowBounds(
       // Anchored at PP[0] (the same epoch ppIndexForDate / every_n use).
       const idx = payPeriods.findIndex((pp) => dateStr >= pp.startDate && dateStr <= pp.endDate);
       if (idx < 0) return null;
-      const blockStart = Math.floor(idx / n) * n;
-      const blockEnd = Math.min(blockStart + n - 1, payPeriods.length - 1);
+      const blockStart = Math.max(0, anchor + Math.floor((idx - anchor) / n) * n);
+      const blockEnd = Math.min(anchor + Math.floor((idx - anchor) / n) * n + n - 1, payPeriods.length - 1);
       return { start: payPeriods[blockStart].startDate, end: payPeriods[blockEnd].endDate };
     }
     case "week": {

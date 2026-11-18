@@ -141,6 +141,29 @@ export function payPeriodsCovering(
 }
 
 /**
+ * Card #339: pay-period ranges spanning [from, to]: the stored list extended backwards (as
+ * payPeriodsCovering) and forwards in steps of `lengthDays` from its latest period. `anchor` is
+ * the index of the stored first period in the result, so fixed blocks keep their alignment.
+ */
+export function payPeriodsSpanning(
+  stored: readonly { startDate: string; endDate: string }[],
+  from: string,
+  to: string,
+  lengthDays: number,
+): { periods: { startDate: string; endDate: string }[]; anchor: number } {
+  const periods = payPeriodsCovering(stored, from, lengthDays);
+  if (periods.length === 0 || !(lengthDays > 0)) return { periods, anchor: 0 };
+  const anchor = periods.length - stored.length;
+  let end = periods[periods.length - 1].endDate;
+  while (end < to) {
+    const start = addDays(end, 1);
+    end = addDays(start, lengthDays - 1);
+    periods.push({ startDate: start, endDate: end });
+  }
+  return { periods, anchor };
+}
+
+/**
  * How much more bunched one person's marked shifts get when the days in `after` change to
  * marked (true) or unmarked (false): the whole proposed state against the current one. Every
  * pair touching a changed day lies within `radius` of it; pairs away from them cancel.

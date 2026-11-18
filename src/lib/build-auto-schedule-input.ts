@@ -288,6 +288,19 @@ export async function buildAutoScheduleInput(
     perFte: d.perFte,
   }));
 
+  // Card #339: the cells after the run that any count target's window can reach (a June CALL
+  // counts while February is built), for the shifts that have a target. Read-only context.
+  const targetShiftIds = [...new Set([...shiftMinimumTargets.filter(hasRow).map((t) => t.shiftTypeId), ...deptTargets.map((t) => t.shiftTypeId)])];
+  const reach = targetReachDays([...shiftMinimumTargets.filter(hasRow), ...deptTargets], schedulingPrefsRow?.payPeriodLengthDays ?? 14);
+  const targetContextRows = targetShiftIds.length > 0 && reach > 0
+    ? await db.assignment.findMany({
+        where: {
+          shiftTypeId: { in: targetShiftIds },
+          date: { gt: new Date(effectiveEnd + "T00:00:00Z"), lte: addDaysUtc(effectiveEnd, reach) },
+        },
+      })
+    : [];
+
   return {
     dates,
     staff: staff.map((p) => ({
@@ -551,6 +564,14 @@ export async function buildAutoScheduleInput(
           ).filter((pp) => pp.endDate >= balanceFrom! && pp.startDate <= effectiveEnd),
         }
       : {}),
+    targetContext: targetContextRows.map((a) => ({
+      staffId: a.staffId,
+      date: isoDay(a.date),
+      shiftTypeId: a.shiftTypeId,
+      code: shiftCodeMap.get(a.shiftTypeId) ?? "?",
+      isLocked: a.isLocked,
+      source: a.source,
+    })),
     ...(spreadOn
       ? {
           spreadContext: spreadContextRows.map((a) => ({
@@ -564,4 +585,30 @@ export async function buildAutoScheduleInput(
         }
       : {}),
   };
+}
+
+/** Card #339: how many days past the run's end a count target can reach — its rolling cap spans N
+ *  windows after the run's last day, and its fixed block ends no later than that. */
+export function targetReachDays(
+  targets: { window: string; windowCount?: number | null; windowDays?: number | null }[],
+  payPeriodLengthDays: number,
+): number {
+  let reach = 0;
+  for (const t of targets) {
+    const n = Math.max(1, Math.floor(t.windowCount ?? 1));
+    const days =
+      t.window === "days" ? Math.max(0, Math.floor(t.windowDays ?? 0))
+      : t.window === "week" ? 7 * n
+      : t.window === "month" ? 31 * n
+      : t.window === "pay_period" ? Math.max(1, payPeriodLengthDays) * n
+      : 0;
+    reach = Math.max(reach, days);
+  }
+  return reach;
+}
+
+function addDaysUtc(iso: string, days: number): Date {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d;
 }
