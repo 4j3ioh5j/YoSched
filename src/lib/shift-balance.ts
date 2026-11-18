@@ -164,6 +164,31 @@ export function payPeriodsSpanning(
 }
 
 /**
+ * Card #339/#340: the pay periods count targets are judged over. Pay-period windows index only
+ * dates inside the list they get, so the stored list is extended over every outside date (plus
+ * one block of the longest pay-period target either side), and `anchor` is the stored first
+ * period's index so the fixed blocks don't move. With no pay-period target, the stored list.
+ * Used by the engine and the request-approval check alike.
+ */
+export function targetPayPeriods(
+  stored: readonly { startDate: string; endDate: string }[],
+  targets: readonly { window: string; windowCount?: number | null }[],
+  outsideDates: Iterable<string>,
+): { periods: { startDate: string; endDate: string }[]; anchor: number } {
+  const base = stored.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
+  const ppTargets = targets.filter((t) => t.window === "pay_period");
+  if (base.length === 0 || ppTargets.length === 0) return { periods: base, anchor: 0 };
+  const last = base[base.length - 1];
+  const len = Math.round((Date.parse(last.endDate + "T12:00:00Z") - Date.parse(last.startDate + "T12:00:00Z")) / 86400000) + 1;
+  const n = Math.max(...ppTargets.map((t) => Math.max(1, Math.floor(t.windowCount ?? 1))));
+  let from = base[0].startDate, to = last.endDate;
+  for (const d of outsideDates) { if (d < from) from = d; if (d > to) to = d; }
+  const { periods } = payPeriodsSpanning(base, addDays(from, -n * len), addDays(to, n * len), len);
+  const anchor = periods.findIndex((pp) => pp.startDate === base[0].startDate);
+  return { periods, anchor: Math.max(0, anchor) };
+}
+
+/**
  * How much more bunched one person's marked shifts get when the days in `after` change to
  * marked (true) or unmarked (false): the whole proposed state against the current one. Every
  * pair touching a changed day lies within `radius` of it; pairs away from them cancel.

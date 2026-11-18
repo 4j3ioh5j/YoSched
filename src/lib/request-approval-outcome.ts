@@ -33,6 +33,7 @@ import { dayCapViolations } from "./max-per-day";
 import { buildFollowRuleMap, isShiftAllowedAfter } from "./follow-rules";
 import { evaluateAvailability, type PayPeriodRange } from "./availability";
 import { getWindowBounds, checkMinimumTargetMet, isAtRollingMaximum } from "./shift-eligibility";
+import { targetPayPeriods } from "./shift-balance";
 import {
   assignmentSatisfiesRequestOnDate,
   coversDate,
@@ -189,6 +190,13 @@ function buildApprovalVerifier(
     knownDates.add(c.date);
   }
   const base = new Map<string, Cell>([...contextMap, ...baseline]);
+  // Card #340: count targets judge pay-period windows over the stored list extended across the
+  // fixed context (anchored at the stored first period), the same as the engine (card #339).
+  const { periods: targetPPs, anchor: targetAnchor } = targetPayPeriods(
+    ppRanges,
+    input.staff.flatMap((s) => s.shiftMinimumTargets ?? []),
+    knownDates,
+  );
 
   const isNW = (staffId: string, date: string): boolean => {
     const k = keyOf(staffId, date);
@@ -315,7 +323,7 @@ function buildApprovalVerifier(
         const hb = heldIn(base);
         const hw = heldIn(W);
         if (t.maxCount != null) {
-          const over = (held: string[]) => new Set(held.filter((d) => isAtRollingMaximum(t, d, held.filter((x) => x !== d), ppRanges)));
+          const over = (held: string[]) => new Set(held.filter((d) => isAtRollingMaximum(t, d, held.filter((x) => x !== d), targetPPs)));
           const ob = over(hb);
           for (const d of over(hw)) {
             if (!ob.has(d)) return `${staff.initials} would be over their ${codeOf(t.shiftTypeId)} maximum on ${dayLabel(d)}`;
@@ -324,7 +332,7 @@ function buildApprovalVerifier(
         if (t.minCount > 0) {
           const windows = new Map<string, { start: string; end: string }>();
           for (const d of input.dates) {
-            const b = getWindowBounds(t, d, ppRanges);
+            const b = getWindowBounds(t, d, targetPPs, targetAnchor);
             if (b) windows.set(`${b.start}|${b.end}`, b);
           }
           for (const b of windows.values()) {

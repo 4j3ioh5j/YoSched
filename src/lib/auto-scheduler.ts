@@ -10,7 +10,7 @@ import { type HolidayPolicy, resolveHolidayShift } from "./holiday-policy";
 import { buildHolidayGroups, type HolidayRuleSpec, type HolidayGroup, type HolidayGroupSlot } from "./holiday-rules";
 import { couldWorkOn, excessLeaveDays, type LeavePolicy } from "./leave-policy";
 import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
-import { tallyBalances, sharesOf, spreadPenalty, spreadChange, addDays, payPeriodsSpanning, type BalanceTally } from "./shift-balance";
+import { tallyBalances, sharesOf, spreadPenalty, spreadChange, addDays, targetPayPeriods, type BalanceTally } from "./shift-balance";
 import { gapBreaks, gapList, gapListShrank, gapTrialBeats, type GapTrialOutcome } from "./shift-gap";
 import { readTuning, isWeekendDate, weekendSecondDow, type SchedulerTuning } from "./scheduler-tuning";
 import { RETIRED_SPACING_KEY } from "./autogen-factor-order";
@@ -1124,19 +1124,11 @@ function autoScheduleCore({
   // Card #339 (Codex #1591): pay-period windows index only dates inside the list they get, so
   // count targets use the stored list extended over every outside cell (plus one block either
   // side), anchored at the stored first period so the fixed blocks don't move.
-  const { periods: targetPPs, anchor: targetAnchor } = ((): { periods: PayPeriodRange[]; anchor: number } => {
-    const stored: PayPeriodRange[] = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
-    const ppTargets = staff.flatMap((p) => (p.shiftMinimumTargets ?? []).filter((t) => t.window === "pay_period"));
-    if (stored.length === 0 || ppTargets.length === 0) return { periods: stored, anchor: 0 };
-    const last = stored[stored.length - 1];
-    const len = Math.round((Date.parse(last.endDate + "T12:00:00Z") - Date.parse(last.startDate + "T12:00:00Z")) / 86400000) + 1;
-    const n = Math.max(...ppTargets.map((t) => Math.max(1, Math.floor(t.windowCount ?? 1))));
-    let from = stored[0].startDate, to = last.endDate;
-    for (const ds of outsideTargetDates.values()) for (const d of ds) { if (d < from) from = d; if (d > to) to = d; }
-    const { periods } = payPeriodsSpanning(stored, addDays(from, -n * len), addDays(to, n * len), len);
-    const anchor = periods.findIndex((pp) => pp.startDate === stored[0].startDate);
-    return { periods, anchor: Math.max(0, anchor) };
-  })();
+  const { periods: targetPPs, anchor: targetAnchor } = targetPayPeriods(
+    payPeriods,
+    staff.flatMap((p) => p.shiftMinimumTargets ?? []),
+    [...outsideTargetDates.values()].flat(),
+  );
   /** A count target's fixed (MIN) block containing `date`, over the extended pay periods. */
   function targetBounds(t: ShiftMinTarget, date: string): { start: string; end: string } | null {
     return getWindowBounds(t, date, targetPPs, targetAnchor);
