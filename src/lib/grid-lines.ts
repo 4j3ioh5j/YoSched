@@ -8,7 +8,8 @@
 // on the right of the last staff cell and on both sides of each extra column makes both
 // cells agree, so the divider is the same on every row. Print CSS sets its own borders
 // with !important, so none of this reaches the printout.
-export const CELL_LINES = "border border-slate-700/30";
+// Card #346: solid, not 30% alpha, so a row's weekend or holiday tint cannot show through.
+export const CELL_LINES = "border border-[color-mix(in_srgb,var(--color-slate-700)_30%,var(--background))]";
 export const EXTRA_COL_LINES = "border-x-slate-700";
 export const LAST_STAFF_LINE = "border-r-slate-700";
 export const PP_ROW_LINES = "border-y-indigo-500/60";

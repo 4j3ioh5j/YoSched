@@ -3,7 +3,7 @@ import { CELL_LINES, staffCellLines, extraCellLines } from "../grid-lines";
 
 describe("grid lines (card #345)", () => {
   it("every cell draws the same faint grid on all four sides", () => {
-    expect(CELL_LINES).toBe("border border-slate-700/30");
+    expect(CELL_LINES).toBe("border border-[color-mix(in_srgb,var(--color-slate-700)_30%,var(--background))]");
     expect(staffCellLines(false, true)).toBe(CELL_LINES);
     expect(extraCellLines().startsWith(CELL_LINES)).toBe(true);
   });
