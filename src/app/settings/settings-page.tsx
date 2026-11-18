@@ -3858,7 +3858,7 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
     }
   }
   const LEAVE_LABELS: Record<LeavePolicy, { label: string; hint: string }> = {
-    "up-to-target": { label: "Up to the hours target", hint: "Leave only on days the person would have worked, and never past their pay-period target; other requested leave days become X (still honoured — they are off)" },
+    "up-to-target": { label: "Up to the hours target", hint: "Leave only on days the person would have worked, and never past their pay-period target; other requested leave days become X (still honored — they are off)" },
     always: { label: "Every requested day", hint: "Leave on every requested day, even a normal day off or past the pay-period target" },
   };
 

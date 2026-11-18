@@ -87,7 +87,7 @@ async function handlePUT(req: NextRequest) {
   for (const [k, v] of [["printWeekendColor", printWeekendColor], ["printHolidayColor", printHolidayColor], ["screenHolidayColor", screenHolidayColor]] as const) {
     if (v === undefined) continue;
     if (v !== null && !isShadeColor(v)) {
-      return NextResponse.json({ error: `${k} must be a #RRGGBB colour or null` }, { status: 400 });
+      return NextResponse.json({ error: `${k} must be a #RRGGBB color or null` }, { status: 400 });
     }
     shadeData[k] = v;
   }

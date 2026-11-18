@@ -597,7 +597,7 @@ function ShiftHoursOverrideEditor({
 function eligibilityRuleHint(type: string, strength: string): string {
   const prefer = strength === "preference";
   if (type === "ineligible") return prefer ? "Avoided on these days, still allowed when needed." : "Never on these days.";
-  return prefer ? "Favoured on these days; other days stay allowed." : "Only on these days.";
+  return prefer ? "Favored on these days; other days stay allowed." : "Only on these days.";
 }
 
 function ShiftEligibilityEditor({
@@ -1554,7 +1554,7 @@ export function StaffPage({ canEdit, canEditUsers, logins: initialLogins, staff:
                 </FieldRow>
               )}
               {typeOf(ep)?.allowsFixedHours && (
-                <FieldRow label="Fixed hours per pay period" description="Unchecked: no hours target, no PP colours or hours alerts">
+                <FieldRow label="Fixed hours per pay period" description="Unchecked: no hours target, no PP colors or hours alerts">
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"

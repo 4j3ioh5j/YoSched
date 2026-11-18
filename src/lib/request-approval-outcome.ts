@@ -350,7 +350,7 @@ function buildApprovalVerifier(
       const cellOn = (G: Map<string, Cell>, d: string) => G.get(keyOf(R.staffId, d))?.shiftTypeId ?? null;
       if (R.id === reqId) {
         for (const d of days) {
-          if (!assignmentSatisfiesRequestOnDate(R, cellOn(W, d), isOff)) return `the request would not be honoured on ${dayLabel(d)}`;
+          if (!assignmentSatisfiesRequestOnDate(R, cellOn(W, d), isOff)) return `the request would not be honored on ${dayLabel(d)}`;
         }
         continue;
       }
