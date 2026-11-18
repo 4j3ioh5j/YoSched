@@ -3381,12 +3381,24 @@ function autoScheduleCore({
         // per-staff minimum must never be satisfied by scheduling into a closed
         // day. If the holiday was the only legal day, the hard-target warning
         // below fires instead of silently placing the shift.
-        const candidateDates = windowDates.filter((d) =>
-          !holidaySet.has(d) && !isAssigned(staff.id, d) && isAvailable(staff, d, st)
-        );
-        if (candidateDates.length === 0) {
+        // Card #347: a weekend-paired shift (CALL) is placed here only as a whole weekend — the
+        // weekend's first day and the next, both free and in the run. Holidays (single ones like
+        // Thanksgiving, and the Friday/Monday bridge of a 3-day weekend) are covered by the
+        // staffing pass, never by a target, and a plain weekday never gets it. Other shifts: one day.
+        const cellFree = (d: string) => !holidaySet.has(d) && !isAssigned(staff.id, d);
+        const candidateUnits: string[][] = st.weekendPaired
+          ? windowDates
+              .filter((d) => getDow(d) === weekendStart && dateSet.has(nextDate(d)) && nextDate(d) <= bounds.end)
+              .map((d) => [d, nextDate(d)])
+              .filter((u) => u.every((d) => cellFree(d) && isAvailable(staff, d, st, { gapGroup: u })))
+          : windowDates.filter((d) => cellFree(d) && isAvailable(staff, d, st)).map((d) => [d]);
+        // Card #347: with no whole weekend free, a paired shift's target waits for a later month
+        // of its window (the weekend pass already ranks people with an unmet Hard minimum first);
+        // it warns only when the window ends inside this run (the audit below does too).
+        const windowContinues = st.weekendPaired && bounds.end > dates[dates.length - 1];
+        if (candidateUnits.length === 0) {
           // Soft (preference) targets bias but never warn — only hard minimums do.
-          if (targetIsHard(target)) {
+          if (targetIsHard(target) && !windowContinues) {
             warnings.push(`${staff.initials}: no available days for ${st.code} min target in ${target.window} (${bounds.start}..${bounds.end})`);
           }
           continue;
@@ -3394,43 +3406,63 @@ function autoScheduleCore({
 
         // Card #177/#187: each pick takes the day that makes the fewest soft-avoided pairs
         // (date order otherwise), re-scored after every placement so the second ORC sees the first.
-        const remaining = [...candidateDates];
+        const remaining = [...candidateUnits];
         // Card #178: then, for a marked shift, the day with fewer marked shifts close by.
-        const nextCandidate = (): string => {
+        // A weekend is scored over both of its days.
+        const nextCandidate = (): string[] => {
           let best = 0;
           // Card #188: then the person's Prefer days (and away from soft-ineligible ones).
           if (avoidSet.size > 0 || st.spreadOverMonth || preferRuleKeys.has(`${staff.id}:${st.id}`)) {
             // Card #203: a tuple, so a large spread penalty can never outweigh a Prefer day.
             let bestKey: number[] | null = null;
-            remaining.forEach((d, i) => {
-              const key = [avoidedPairs(staff.id, d, st.id), -eligPreference(staff, st.id, d), st.spreadOverMonth ? spreadLoad(staff.id, d) : 0];
+            remaining.forEach((u, i) => {
+              const sum = (f: (d: string) => number) => u.reduce((s, d) => s + f(d), 0);
+              const key = [sum((d) => avoidedPairs(staff.id, d, st.id)), -sum((d) => eligPreference(staff, st.id, d)), st.spreadOverMonth ? sum((d) => spreadLoad(staff.id, d)) : 0];
               if (!bestKey || cmpTuple(key, bestKey) < 0) { bestKey = key; best = i; }
             });
           }
           return remaining.splice(best, 1)[0];
         };
+        // Card #347: whether the person could take every day of the unit, each day judged with the
+        // unit's earlier days on the grid (the Sunday's maximum sees the Saturday), so a weekend is
+        // placed whole or not at all. The grid is restored before returning.
+        const unitFits = (unit: string[]): boolean => {
+          const added: string[] = [];
+          let ok = !hardGapBlocks(staff.id, st, unit); // card #260: the unit is gap-checked as one block
+          for (const d of unit) {
+            if (!ok) break;
+            // Card #347: a cell taken by an earlier pick of this loop (or the pass) since the units were listed.
+            if (isAssigned(staff.id, d)) { ok = false; break; }
+            // Rolling max is date-dependent: a unit too close to an earlier placement is capped,
+            // but a LATER one in this block may be fine — so skip it and keep trying (respace).
+            if (isAtMaximum(staff, st, d)) { ok = false; break; }
+            // Soft (preference) targets respect pay-period hour protection — a
+            // preference biases the mix but must never push a staffer past their
+            // hours. Hard minimums intentionally override the cap (hasUnmetMinimum).
+            // Even a hard minimum stops at a Prohibited (or higher-ranked) over-target.
+            const minBlock = ppHoursBlock(staff.id, d, st);
+            // Over-target Allowed never blocks a preference either.
+            if (!targetIsHard(target) && minBlock !== null && !(minBlock === "over" && overHoursPolicy === "allowed")) { ok = false; break; }
+            if (minBlock === "over" && !hardMinBeatsOverHours) { ok = false; break; }
+            if (unit.length > 1) {
+              grid.set(`${staff.id}:${d}`, { shiftTypeId: st.id, code: st.code, locked: false, noCount: false, step: "min-target" });
+              added.push(d);
+            }
+          }
+          for (const d of added) grid.delete(`${staff.id}:${d}`);
+          return ok;
+        };
         while (remaining.length > 0) {
-          const candidate = nextCandidate();
+          const unit = nextCandidate();
           if (countInWindow() >= target.minCount) break;
-          // Rolling max is date-dependent: a candidate too close to an earlier
-          // placement is capped, but a LATER one in this block may be fine — so
-          // skip it and keep trying (respace) rather than abandoning the minimum.
-          if (isAtMaximum(staff, st, candidate)) continue;
-          // Card #260: the candidates were checked before this loop wrote any of them.
-          if (hardGapBlocks(staff.id, st, [candidate])) continue;
-          // Soft (preference) targets respect pay-period hour protection — a
-          // preference biases the mix but must never push a staffer past their
-          // hours. Hard minimums intentionally override the cap (hasUnmetMinimum).
-          // Even a hard minimum stops at a Prohibited (or higher-ranked) over-target.
-          const minBlock = ppHoursBlock(staff.id, candidate, st);
-          // Over-target Allowed never blocks a preference either.
-          if (!targetIsHard(target) && minBlock !== null && !(minBlock === "over" && overHoursPolicy === "allowed")) continue;
-          if (minBlock === "over" && !hardMinBeatsOverHours) continue;
-          assign(
-            staff.id, candidate, st,
-            `${st.code} (min target: ${target.minCount}/${target.window === "pay_period" ? "PP" : target.window})`,
-            "min-target", 0.75
-          );
+          if (!unitFits(unit)) continue;
+          for (const d of unit) {
+            assign(
+              staff.id, d, st,
+              `${st.code} (min target: ${target.minCount}/${target.window === "pay_period" ? "PP" : target.window})`,
+              "min-target", 0.75
+            );
+          }
         }
       }
     }
@@ -5548,8 +5580,11 @@ function autoScheduleCore({
 
         const assigned = countingDates(staff.id, st).filter((d) => d >= bounds.start && d <= bounds.end); // card #339
         const { met, current, needed } = checkMinimumTargetMet(target, assigned);
+        // Card #347: a weekend-paired shift's window that runs on past this schedule can still be
+        // met by a weekend in a later month, so it is reported only once its window ends in a run.
+        const windowContinues = st.weekendPaired && bounds.end > dates[dates.length - 1];
         // Soft (preference) targets are advisory-only — bias without warnings.
-        if (!met && targetIsHard(target)) {
+        if (!met && targetIsHard(target) && !windowContinues) {
           warnings.push(`${staff.initials}: only ${current}/${needed} ${st.code} in ${target.window} (${bounds.start}..${bounds.end})`);
           qHardLimits += needed - current; // hardLimits: hard per-staff minimum shortfall
         }
