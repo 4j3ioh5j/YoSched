@@ -374,6 +374,11 @@ input[type="checkbox"]:disabled {
      Cell backgrounds are set separately by the rules above, so this only affects text. */
   tbody td, tbody td * {
     color: #000 !important;
+    /* Card #338: no on-screen ring prints (request boxes, selection, the locked-code ring:
+       all box-shadows), nor the rejected cell's outline. Request letters and markers carry
+       data-print-hide. */
+    box-shadow: none !important;
+    outline: none !important;
   }
 
   /* Scrollable container: no scroll, and span the FULL page width. On screen the

@@ -1496,10 +1496,7 @@ export function ScheduleGrid({
       for (const date of inMonth) {
         const key = `${p.id}:${date}`;
         const a = liveMode ? (liveDisplayMap.get(key) ?? null) : assignmentMap.get(key);
-        if (a) { texts.add(a.code); continue; } // a request on an assigned cell is a corner marker over it
-        const reqs = showRequests ? requestsByCell.get(key) : undefined;
-        const sum = reqs ? summarizeCellRequests(reqs, (id) => shiftTypeMap.get(id)?.code ?? id) : null;
-        if (sum) texts.add(sum.label);
+        if (a) texts.add(a.code); // card #338: requests never print, so they need no width
       }
     }
     // Card #330: count cells print in the monospace font, so their text is measured in it too.
@@ -1509,7 +1506,7 @@ export function ScheduleGrid({
       for (const date of inMonth) countTexts.add(String(columnCounts[i]?.[date] ?? ""));
     });
     return { texts: [...texts, ...countTexts], staffTexts: [...texts], countTexts: [...countTexts], autoCount: printed.length + countColumns.length };
-  }, [visibleStaff, printHiddenIds, dates, firstOfMonth, lastOfMonth, liveMode, liveDisplayMap, assignmentMap, showRequests, requestsByCell, shiftTypeMap, countColumns, columnCounts]);
+  }, [visibleStaff, printHiddenIds, dates, firstOfMonth, lastOfMonth, liveMode, liveDisplayMap, assignmentMap, countColumns, columnCounts]);
   // The browser measures that text in the Settings print font and size (bold, as the headers and
   // bold codes print), again once fonts finish loading (the print font loads on first use). Until
   // then the need falls back to a generous width per character (AUTO_COL_FALLBACK_CH).
@@ -4745,7 +4742,9 @@ export function ScheduleGrid({
                           <div className="text-[11px] text-slate-600">...</div>
                         ) : reqSummary ? (
                           // Empty cell with request(s): show the letters in category color.
+                          // Card #338: requests never print.
                           <div
+                            data-print-hide
                             className={`text-[10px] font-bold leading-tight ${reqTextCls} ${reqDim}`}
                             onMouseEnter={(e) => showTip(setTooltip, cellTooltip(p.initials, date, null, reqsForTip), e)}
                             onMouseLeave={() => setTooltip(null)}
@@ -4757,7 +4756,10 @@ export function ScheduleGrid({
                         {reqSummary && a && (
                           // Assigned cell with request(s): bare corner marker (no pill) carries the tooltip.
                           // label is letters for a single request, the count for multiple.
+                          // Card #338: never printed (in print the cell is position: static, so
+                          // every marker would pile up in the page's top-left corner).
                           <span
+                            data-print-hide
                             className={`absolute top-0 left-0 px-0.5 text-[8px] font-bold leading-none ${reqTextCls} ${reqDim}`}
                             onMouseEnter={(e) => showTip(setTooltip, cellTooltip(p.initials, date, a, reqsForTip), e)}
                             onMouseLeave={() => setTooltip(null)}
@@ -5530,7 +5532,10 @@ export function ScheduleGrid({
       )}
 
       {tooltip && (
+        // Card #338: a hover tooltip open at print time never prints.
         <div
+          data-print-hide
+          data-grid-tooltip
           ref={(el) => {
             if (!el) return;
             const w = el.offsetWidth;
