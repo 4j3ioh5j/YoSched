@@ -56,11 +56,14 @@ input[type="checkbox"]:disabled {
 /* Card #343: the "Print columns" view shows on screen the print-only aggregate columns
    (Tailwind-hidden otherwise). Rule-hidden staff columns are left out by the grid itself. */
 @media screen {
+  /* Card #344: as wide as their text needs (1% + nowrap = shrink to fit), so the spare
+     width goes to the staff columns instead. */
   [data-print-columns-view] [data-other-col] {
     display: table-cell !important;
-  }
-  [data-print-columns-view] thead th[data-other-col] {
+    width: 1%;
     white-space: nowrap;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
   }
 }
 

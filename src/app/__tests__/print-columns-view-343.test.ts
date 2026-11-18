@@ -71,3 +71,10 @@ describe("printed columns only view: hidden focus and hydration (card #343 r1)",
     expect(grid.slice(grid.lastIndexOf("useLayoutEffect(", i), i)).toMatch(/useLayoutEffect\(\(\) => \{/);
   });
 });
+
+describe("printed columns only view: summary columns fit their text (card #344)", () => {
+  it("the aggregate columns shrink to their contents on screen, so the staff columns take the spare width", () => {
+    const screen = css.slice(css.indexOf("@media screen"), css.indexOf("@media print"));
+    expect(screen).toMatch(/\[data-print-columns-view\] \[data-other-col\] \{\s*display: table-cell !important;\s*width: 1%;\s*white-space: nowrap;/);
+  });
+});
