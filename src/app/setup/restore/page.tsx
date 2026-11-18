@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { KeyFilePicker } from "@/app/settings/key-file-picker";
+import { KeyFilePicker, BackupFilePicker } from "@/app/settings/key-file-picker";
 
 // Card #314: first-run restore on an empty install. Needs the one-time setup code that
 // YoSched wrote on the server; the person doing the reinstall passes it on.
@@ -50,7 +50,9 @@ export default function FirstRunRestorePage() {
         ) : (
           <form onSubmit={submit} className="space-y-3 text-sm">
             <p className="text-slate-400">This YoSched has no data yet. Choose a backup file, enter its passphrase and the setup code from the server.</p>
-            <input type="file" accept=".yosched-backup" onChange={(e) => setFile(e.target.files?.[0] ?? null)} disabled={busy} />
+            <div className="space-y-1 text-slate-400">Backup file:
+              <BackupFilePicker file={file} onChange={setFile} disabled={busy} />
+            </div>
             <div className="space-y-1 text-slate-400">Key file (only for an automatic backup):
               <KeyFilePicker file={keyFile} onChange={setKeyFile} disabled={busy} />
             </div>

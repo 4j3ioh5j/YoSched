@@ -5,7 +5,7 @@ import { formatClock, wallClock } from "@/lib/time-zone";
 import { useEffect, useRef, useState } from "react";
 import { CONFIRM_WORD } from "@/lib/backup/reminder";
 import { AutoBackupSection } from "./auto-backup-section";
-import { KeyFilePicker } from "./key-file-picker";
+import { KeyFilePicker, BackupFilePicker } from "./key-file-picker";
 import { backupKindOf, restoreGuide, HEAD_BYTES, type BackupKind } from "./restore-kind";
 
 // Card #314: Settings › Backup and Restore. Shown only to logins holding
@@ -173,10 +173,10 @@ export function BackupPanel({ onError }: { onError: (e: string | undefined) => v
       <div className="border-t border-slate-700 pt-4 space-y-2">
         <h4 className="font-medium text-slate-200">Restore from a backup</h4>
         <p className="text-xs text-slate-500">Works for both kinds: a manual backup you downloaded, or an automatic one copied from the server&apos;s backup folder. This replaces ALL of YoSched&apos;s data and settings, including logins, with the file&apos;s contents. What is here now is saved on the server first.</p>
-        <label className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           Backup file:
-          <input type="file" accept=".yosched-backup" onChange={(e) => pickBackup(e.target.files?.[0] ?? null)} disabled={busy !== null} />
-        </label>
+          <BackupFilePicker file={file} onChange={pickBackup} disabled={busy !== null} />
+        </div>
         <p className={`text-xs ${kind?.kind === "unknown" ? "text-amber-400" : "text-slate-400"}`}>{file && !kind ? "Reading the file…" : guide.text}</p>
         {guide.askPass && (
           <div className="flex flex-wrap gap-2 items-center">
