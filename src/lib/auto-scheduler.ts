@@ -4498,6 +4498,16 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
         if (dateSet.has(next) && isFrozen(next)) return false;
         if (swapBreaksHardMin(A, fill, d) || swapBreaksHardMin(B, S, d)) return false;
         if (!canHoldForSwap(A, S, d, ppRangesAll) || !canHoldForSwap(B, fill, d, ppRangesAll)) return false;
+        const workFollower = !spec.follower.isOffShift && !spec.follower.isLeave;
+        if (dateSet.has(next)) {
+          // Codex #1627 r1: B's follower is cleared, so it must not take B below a hard minimum for
+          // the follower shift (only a follower that counts toward targets is in that count) …
+          const bn0 = cellOf(B, next);
+          if (bn0 && bn0.step === "follower" && bn0.shiftTypeId === spec.follower.id && !bn0.noCount && swapBreaksHardMin(B, spec.follower, next)) return false;
+          // … and A's WORK follower is a shift A takes on: never on a day A's request blocks it,
+          // nor past A's hard maximum for it.
+          if (workFollower && (requestBlocksWork(A.id, next, spec.follower) || isAtMaximum(A, spec.follower, next))) return false;
+        }
         repairSet(A.id, d, S, "repair", `${S.code} (hour-balance repair)`);
         repairSet(B.id, d, fill, "repair", `${fill.code} (hour-balance repair)`);
         changed.push({ p: A, d }, { p: B, d });
@@ -4514,8 +4524,7 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
           changed.push({ p: A, d: next });
           return true;
         }
-        const isWorkFollower = !spec.follower.isOffShift && !spec.follower.isLeave;
-        return why === "" || (!isWorkFollower && isOpen(A, next)); // an off follower on a day already off
+        return why === "" || (!workFollower && isOpen(A, next)); // an off follower on a day already off
       }
       /** Card #349: every each_day follower source held by `p` in this pay period is followed by
        *  its follower, or placeFollowerAfter would skip it silently (an off follower on a day

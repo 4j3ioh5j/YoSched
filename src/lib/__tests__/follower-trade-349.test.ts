@@ -98,4 +98,45 @@ describe("the follower-source trade never touches what it must not (card #349)",
     const r = autoSchedule(inp);
     expect(r.suggestions.filter((s) => s.staffId === "cl" && s.code === "ORC")).toEqual([]);
   });
+  // Codex #1627 r1: with a WORK follower (ORC→ADM), CL (now available Wednesdays, but held off
+  // OR/ORC there by a hard "not this shift" request) takes BC's Tuesday ORC and its ADM. The
+  // donor's cleared ADM counts toward BC's hard minimum, so the trade must not take it.
+  const admShape = (kind: "NEGATE_SHIFT" | "OFF") => {
+    const ADM = shift("st-adm", "ADM", { autoSchedulable: true });
+    const inp = build({
+      shiftTypes: [OR, OFF, ORC, HOL, ADM],
+      requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-adm", scope: "each_day", countsTowardTargets: true }],
+      scheduleRequests: [W1[2], W2[2]].map((d, i) => ({
+        id: "q" + i, staffId: "cl", startDate: d, endDate: d, kind,
+        shiftTypeIds: kind === "NEGATE_SHIFT" ? ["st-or", "st-orc"] : [], leaveShiftTypeId: null,
+        strength: "hard" as const, status: "approved" as const, autoApproved: false,
+      })),
+    });
+    inp.staff[0].availabilityRules = avail([1, 2, 3]);
+    for (const p of inp.staff) p.eligibleShiftTypeIds = [...p.eligibleShiftTypeIds, "st-adm"];
+    return inp;
+  };
+  const rowsOf = (inp: AutoScheduleInput, r: ReturnType<typeof autoSchedule>) => JSON.stringify(Object.fromEntries(inp.staff.map((p) => [p.initials, r.suggestions.filter((s) => s.staffId === p.id).sort((a, b) => a.date.localeCompare(b.date)).map((s) => `${s.date.slice(5)}=${s.code}`).join(" ")])));
+  it("the trade never takes the donor below a hard minimum for the follower shift", () => {
+    const inp = admShape("NEGATE_SHIFT");
+    for (const p of inp.staff) if (p.id !== "cl") p.shiftMinimumTargets = [{ shiftTypeId: "st-adm", minCount: 2, maxCount: null, window: "pay_period", windowDays: null, strength: "rule" }];
+    const r = autoSchedule(inp);
+    for (const p of inp.staff.filter((x) => x.id !== "cl")) {
+      expect(r.suggestions.filter((s) => s.staffId === p.id && s.code === "ADM").length, `${p.initials} ${rowsOf(inp, r)}`).toBeGreaterThanOrEqual(2);
+    }
+  });
+  it("with no minimum the trade still runs (the guard is not a blanket refusal)", () => {
+    const inp = admShape("NEGATE_SHIFT");
+    const r = autoSchedule(inp);
+    expect(r.suggestions.find((s) => s.staffId === "cl" && s.code === "ORC")?.step, rowsOf(inp, r)).toBe("repair");
+    expect(hoursOf(inp, r, "cl"), rowsOf(inp, r)).toBe(40);
+  });
+  it("the trade never lands a work follower on a day the taker asked off (hard request)", () => {
+    const inp = admShape("OFF");
+    const r = autoSchedule(inp);
+    for (const d of [W1[2], W2[2]]) {
+      const c = r.suggestions.find((s) => s.staffId === "cl" && s.date === d);
+      expect(c?.code ?? "X", `${d} ${rowsOf(inp, r)}`).toBe("X");
+    }
+  });
 });
