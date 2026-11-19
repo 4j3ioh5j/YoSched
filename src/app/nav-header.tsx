@@ -6,12 +6,14 @@ import { signOut, useSession } from "next-auth/react";
 import { BackupDuePill } from "./backup-due-pill";
 import { BASE_PATH } from "@/lib/base-path";
 
-const NAV_ITEMS: { label: string; href: string; requiredPermission: string | null }[] = [
+// A list in requiredPermission means every one of them (card #367: Ask ships the schedule, so it needs both).
+const NAV_ITEMS: { label: string; href: string; requiredPermission: string | string[] | null }[] = [
   { label: "Schedule", href: "/", requiredPermission: null },
   { label: "My Requests", href: "/my-requests", requiredPermission: "requests:self" },
   { label: "Requests", href: "/requests", requiredPermission: "requests:view" },
   { label: "Staff", href: "/staff", requiredPermission: "staff:view" },
   { label: "Statistics", href: "/equity", requiredPermission: "statistics:view" },
+  { label: "Ask", href: "/ask", requiredPermission: ["statistics:view", "schedule:view"] },
   { label: "Settings", href: "/settings", requiredPermission: "settings:view" },
   { label: "Users", href: "/users", requiredPermission: "users:view" },
 ];
@@ -36,7 +38,7 @@ export function NavHeader() {
         <span className="text-white">Yo</span><span style={{ color: "#63b3ed" }}>Sched</span>
       </Link>
       <nav className="flex items-center gap-1">
-        {NAV_ITEMS.filter((item) => !item.requiredPermission || permissions.includes(item.requiredPermission)).map((item) => {
+        {NAV_ITEMS.filter((item) => !item.requiredPermission || [item.requiredPermission].flat().every((p) => permissions.includes(p))).map((item) => {
           const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
             <Link

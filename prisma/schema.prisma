@@ -29,6 +29,7 @@ model User {
   staff Staff? @relation(fields: [staffId], references: [id], onDelete: SetNull)
 
   savedGraphViews SavedGraphView[]
+  savedQuestions  SavedQuestion[]
   autoGenPriorityProfiles AutoGenPriorityProfile[]
 
   @@map("users")
@@ -49,6 +50,25 @@ model SavedGraphView {
   @@index([ownerId])
   @@index([isShared])
   @@map("saved_graph_views")
+}
+
+// Card #367: a question on the "Ask" page, saved by name. spec is an AskSpec (src/lib/ask/spec.ts),
+// checked on the server before every write. Same sharing rules as SavedGraphView.
+model SavedQuestion {
+  id        String   @id @default(cuid())
+  name      String
+  spec      Json
+  ownerId   String? // User id of creator; null = department-owned (owner deleted)
+  isShared  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner User? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId])
+  @@index([isShared])
+  @@map("saved_questions")
 }
 
 model Group {

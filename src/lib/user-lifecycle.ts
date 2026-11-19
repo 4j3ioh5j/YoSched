@@ -79,7 +79,7 @@ export async function assertUsersAdminSurvives(change: UsersAdminChange): Promis
 // Neither branch can shrink the active-administrator set: detach changes no isActive or
 // group, and a shell can never be active (activation requires email + password).
 
-type TxClient = Pick<typeof prisma, "user" | "savedGraphView">;
+type TxClient = Pick<typeof prisma, "user" | "savedGraphView" | "savedQuestion">;
 
 /** Remove the link between a staff member and its login (Rules 2 + 4). Pass the caller's
  *  transaction client so the staff mutation and the login cleanup commit together.
@@ -110,6 +110,7 @@ async function applyDetach(
   const action = detachAction(login);
   if (action === "delete") {
     await db.savedGraphView.deleteMany({ where: { ownerId: login!.id, isShared: false } });
+    await db.savedQuestion.deleteMany({ where: { ownerId: login!.id, isShared: false } });
     await db.user.delete({ where: { id: login!.id } });
   } else if (action === "detach") {
     await db.user.update({ where: { id: login!.id }, data: { staffId: null } });

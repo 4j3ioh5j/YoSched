@@ -238,6 +238,7 @@ async function handleDELETE(req: NextRequest) {
   // which keeps their SHARED views as department-owned (ownerId = null) but would leave
   // private views (isShared = false) invisible to everyone — dead rows. Remove them.
   await prisma.savedGraphView.deleteMany({ where: { ownerId: id, isShared: false } });
+  await prisma.savedQuestion.deleteMany({ where: { ownerId: id, isShared: false } }); // card #367: same rule
 
   await prisma.user.delete({ where: { id } });
   return NextResponse.json({ ok: true });
