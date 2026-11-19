@@ -4508,7 +4508,8 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
           // nor past A's hard maximum for it.
           // Card #351: a follower A already holds adds nothing, so only a new one meets the max.
           const hasIt = cellOf(A, next)?.shiftTypeId === spec.follower.id;
-          if (workFollower && !hasIt && (requestBlocksWork(A.id, next, spec.follower) || isAtMaximum(A, spec.follower, next))) return false;
+          // Card #352: a follower that doesn't count toward targets never meets a maximum.
+          if (workFollower && !hasIt && (requestBlocksWork(A.id, next, spec.follower) || (spec.countsTowardTargets && isAtMaximum(A, spec.follower, next)))) return false;
         }
         repairSet(A.id, d, S, "repair", `${S.code} (hour-balance repair)`);
         repairSet(B.id, d, fill, "repair", `${fill.code} (hour-balance repair)`);

@@ -150,5 +150,14 @@ describe("the follower-source trade never touches what it must not (card #349)",
     expect(r.suggestions.find((s) => s.staffId === "cl" && s.date === W1[1])?.code, rowsOf(inp, r)).toBe("ORC");
     expect(r.suggestions.filter((s) => s.staffId === "cl" && s.code === "ADM" && s.date !== W1[2]), rowsOf(inp, r)).toEqual([]);
   });
+  // Card #352 (Codex #1631 follow-up): a follower that does not count toward targets never meets
+  // the taker's maximum for it (the max counts only counting cells), so a max of 0 must not block.
+  it("a non-counting follower is not held to the taker's maximum", () => {
+    const inp = admShape("NEGATE_SHIFT");
+    inp.requiredFollowers = [{ sourceShiftId: "st-orc", followerShiftId: "st-adm", scope: "each_day", countsTowardTargets: false }];
+    inp.staff[0].shiftMinimumTargets = [{ shiftTypeId: "st-adm", minCount: 0, maxCount: 0, window: "pay_period", windowDays: null, strength: "rule" }];
+    const r = autoSchedule(inp);
+    expect(r.suggestions.find((s) => s.staffId === "cl" && s.code === "ORC")?.step, rowsOf(inp, r)).toBe("repair");
+  });
 });
 
