@@ -345,7 +345,7 @@ function requests(spec: Extract<AskSpec, { kind: "requests" }>, data: AskData): 
     for (const r of list) c.set(r.status, (c.get(r.status) ?? 0) + 1);
     const order = [...STATUS_ORDER, ...[...c.keys()].filter((k) => !STATUS_ORDER.includes(k)).sort()];
     const rows = order.filter((k) => c.has(k)).map((k) => ({ status: capital(k), count: c.get(k)! }));
-    return { columns: [{ key: "status", label: "Status", type: "text" }, n("count", "Requests")], rows, summary, note };
+    return { columns: [{ key: "status", label: "Status", type: "text" }, n("count", "Requests")], rows, summary, note: "Requests are picked by the date they were received, and counted by their status now." };
   }
   const tally = (key: (r: AskRequest) => string) => {
     const counts = new Map<string, Record<string, number>>();

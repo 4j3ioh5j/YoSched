@@ -357,6 +357,9 @@ describe("requests", () => {
       { status: "Fulfilled", count: 1 },
       { status: "Declined", count: 1 },
     ]);
+    // Card #371: by status, Approved and Fulfilled are separate rows, so the note must not merge them.
+    expect(a.note).not.toMatch(/approved or fulfilled/i);
+    expect(a.note).toMatch(/received/i);
   });
 
   it("refuses an unknown request kind", () => {
