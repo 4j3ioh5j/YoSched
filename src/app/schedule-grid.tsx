@@ -1614,6 +1614,10 @@ export function ScheduleGrid({
     ),
     [printAggColumns, dedicatedColumns, countColumns, specialColumnOrder],
   );
+  // Card #358: the staff and count columns take the spare page width in the print columns
+  // view. With none shown, the table must not stretch, or the spare width lands on the
+  // additional and shift columns and they show wider than set.
+  const viewHasFlexCol = gridStaff.length > 0 || specialColumns.some((sc) => sc.kind === "count");
 
   // Card #357: the user-defined columns (additional + shift columns) print at the Settings width
   // choice. Each one's title and in-month day texts are measured in the print font (bold, the
@@ -4220,6 +4224,7 @@ export function ScheduleGrid({
       data-print-root
       data-print-columns-view={printColumnsOnly ? "" : undefined}
       data-ud-width-mode={printColumnsOnly ? printLayout.udWidth.mode : undefined}
+      data-view-no-flex={printColumnsOnly && !viewHasFlexCol ? "" : undefined}
       className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}
       style={{ "--print-font": printFontStack(printLayout.fontFamily), "--print-font-size": `${printLayout.fontSize}pt`, "--print-row-h": `${printRowHeightIn(printLayout)}in`, "--ud-eq-w": udEqPx != null ? `${udEqPx}px` : undefined } as React.CSSProperties}
     >

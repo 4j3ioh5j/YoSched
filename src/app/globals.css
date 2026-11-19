@@ -132,6 +132,17 @@ input[type="checkbox"]:disabled {
   [data-print-columns-view]:not([data-ud-width-mode="bestFit"]) thead th:not([data-ud-col]):not([data-date-col]):not([data-day-col]) {
     width: auto;
   }
+  /* Card #358: with no staff or count column shown, nothing takes the spare width, so the
+     table sizes to its columns instead of the page (the set widths hold). */
+  [data-print-columns-view][data-view-no-flex] table {
+    width: auto;
+  }
+  /* A 1% column makes a table that sizes to its columns as wide as the page again, so the
+     shrink-to-fit columns (best fit, totals) go to auto here; set widths keep their own. */
+  [data-print-columns-view][data-view-no-flex] [data-other-col]:not([data-ud-col]),
+  [data-print-columns-view][data-view-no-flex] [data-ud-col][data-ud-size="fit"] {
+    width: auto;
+  }
 }
 
 @media print {
