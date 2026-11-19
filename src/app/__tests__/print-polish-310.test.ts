@@ -16,9 +16,13 @@ const rule = (sel: string) => {
 };
 
 describe("card #310: printout polish", () => {
-  it("no row outline prints: today's ring and the flash ring are box-shadows on the row", () => {
-    expect(grid).toMatch(/isToday \? "ring-1 ring-inset/); // the cause, still on screen
+  it("no row outline prints: the flash ring is a box-shadow on the row; today's lines are screen-only", () => {
+    expect(grid).toMatch(/flashDate === date \? "ring-2 ring-inset/); // the cause, still on screen
     expect(rule("tbody tr")).toMatch(/box-shadow: none !important;/);
+    // Card #354: today's lines are cell overlays inside @media screen, so they never print.
+    const print = css.slice(css.indexOf("@media print"));
+    expect(print).not.toMatch(/data-today/);
+    expect(css.slice(css.indexOf("@media screen"), css.indexOf("@media print"))).toMatch(/tbody tr\[data-today\] > td::after/);
   });
 
   it("the footer line's box ends at the grid's right edge, not at the PP# strip's", () => {

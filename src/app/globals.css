@@ -56,6 +56,27 @@ input[type="checkbox"]:disabled {
 /* Card #343: the "Print columns" view shows on screen the print-only aggregate columns
    (Tailwind-hidden otherwise). Rule-hidden staff columns are left out by the grid itself. */
 @media screen {
+  /* Card #354: the lines above and below today's row. A ring on the <tr> showed only its top
+     line in Chrome/Edge (the next row's cells paint over the bottom of a row's shadow), so
+     each cell draws them itself. Sticky date cells are already positioned and stay sticky. */
+  tbody tr[data-today] > td:not(.sticky) {
+    position: relative;
+  }
+  tbody tr[data-today] > td::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-top: 1px solid rgb(59 130 246 / 0.5);
+    border-bottom: 1px solid rgb(59 130 246 / 0.5);
+  }
+  tbody tr[data-today] > td:first-child::after {
+    border-left: 1px solid rgb(59 130 246 / 0.5);
+  }
+  /* The row ends with a hidden print-only cell, so the right line goes on the last shown one. */
+  tbody tr[data-today] > td:nth-last-child(1 of :not([data-pp-label-col]))::after {
+    border-right: 1px solid rgb(59 130 246 / 0.5);
+  }
   /* Card #344: as wide as their text needs (1% + nowrap = shrink to fit), so the spare
      width goes to the staff columns instead. */
   [data-print-columns-view] [data-other-col] {

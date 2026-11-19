@@ -4652,6 +4652,7 @@ export function ScheduleGrid({
                   data-outside-month={isOutsideMonth || undefined}
                   data-month-last={date === lastOfMonth || undefined}
                   data-pp-start={isNewPP || undefined}
+                  data-today={isToday || undefined}
                   data-print-shade={printShade ? "" : undefined}
                   style={{
                     ...(printShade ? { "--row-print-bg": printShade } : null),
@@ -4660,7 +4661,7 @@ export function ScheduleGrid({
                   className={[
                     isOutsideMonth ? "opacity-40" : "",
                     isWeekend && !isOutsideMonth && !holidayTint ? "bg-slate-800/50" : "",
-                    isToday ? "ring-1 ring-inset ring-blue-500/50" : "",
+                    // Card #354: today's lines are drawn in its cells (globals.css, data-today).
                     flashDate === date ? "ring-2 ring-inset ring-amber-400 bg-amber-500/20" : "",
                     "transition-colors",
                   ].join(" ")}
