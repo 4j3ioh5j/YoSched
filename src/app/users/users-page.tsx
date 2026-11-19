@@ -3,6 +3,7 @@
 import { useTimeZone } from "@/app/time-zone-provider";
 import { formatDateTimeZoned } from "@/lib/time-zone";
 import { RequireTotpSwitch } from "./require-totp-switch";
+import { DecimalField } from "@/components/decimal-field";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useEscape } from "@/lib/use-escape";
 import { formatDate, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
@@ -489,12 +490,14 @@ export function UsersPage({
         <RequireTotpSwitch canEdit={canEditSettings} />
         <div className="mb-4 px-3 py-2.5 bg-slate-800/40 border border-slate-700/50 rounded flex items-center gap-2 text-xs text-slate-500">
           <span>2FA trusted devices are remembered for</span>
-          <input
-            type="number"
+          <DecimalField
+            integer
+            required
             min={1}
             max={365}
+            aria-label="Days a trusted device is remembered"
             value={trustDays}
-            onChange={(e) => setTrustDays(Math.max(1, Math.min(365, parseInt(e.target.value) || 1)))}
+            onValueChange={(v) => v != null && setTrustDays(v)}
             disabled={!canEditSettings}
             className="w-14 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono text-slate-200 text-center focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
           />

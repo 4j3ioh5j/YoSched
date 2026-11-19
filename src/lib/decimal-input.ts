@@ -73,3 +73,16 @@ export function draftAfterExternal(draft: string, prev: number | null, next: num
   if (p.ok && p.value === next) return draft;
   return formatDecimal(next);
 }
+
+/**
+ * Card #361: how many characters a number box needs for the widest value it allows:
+ * the digits of the largest bound (four with no upper bound), the decimals, a minus sign.
+ */
+export function decimalFieldChars(opts: DecimalOpts = {}): number {
+  const digits = (n: number) => String(Math.floor(Math.abs(n))).length;
+  const neg = !!opts.allowNegative && (opts.min == null || opts.min < 0);
+  let whole = opts.max == null ? 4 : digits(opts.max);
+  if (neg && opts.min != null) whole = Math.max(whole, digits(opts.min));
+  const frac = opts.integer || !opts.decimals ? 0 : opts.decimals + 1;
+  return whole + frac + (neg ? 1 : 0);
+}

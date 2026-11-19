@@ -5,7 +5,7 @@
 // decimal keypad: type="number" drops "." and ".4" mid-typing and varies by browser.
 
 import { useState, type InputHTMLAttributes } from "react";
-import { draftAfterExternal, formatDecimal, parseDecimalInput, type DecimalOpts } from "@/lib/decimal-input";
+import { decimalFieldChars, draftAfterExternal, formatDecimal, parseDecimalInput, type DecimalOpts } from "@/lib/decimal-input";
 
 type Props = Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type" | "min" | "max" | "step"> &
   DecimalOpts & {
@@ -15,7 +15,7 @@ type Props = Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | 
     minDecimals?: number;
   };
 
-export function DecimalField({ value, onValueChange, min, max, decimals, integer, allowNegative, required, minDecimals, onBlur, className, ...rest }: Props) {
+export function DecimalField({ value, onValueChange, min, max, decimals, integer, allowNegative, required, minDecimals, onBlur, className, style, ...rest }: Props) {
   const opts: DecimalOpts = { min, max, decimals, integer, allowNegative, required };
   const [draft, setDraft] = useState(() => formatDecimal(value, { minDecimals }));
   const [shown, setShown] = useState(value);
@@ -41,6 +41,8 @@ export function DecimalField({ value, onValueChange, min, max, decimals, integer
       aria-invalid={error ? true : undefined}
       title={error ?? rest.title}
       className={`${className ?? ""}${error ? " !border-red-500" : ""}`}
+      // Card #361: never narrower than the widest allowed value (plus the box's padding).
+      style={{ minWidth: `calc(${decimalFieldChars(opts)}ch + 1.25rem)`, ...style }}
       onChange={(e) => {
         const raw = e.target.value;
         setDraft(raw);

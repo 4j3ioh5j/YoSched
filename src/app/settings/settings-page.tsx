@@ -1541,7 +1541,7 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.autoSchedulable} onChange={(e) => updateField(editingShift.id, "autoSchedulable", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
               </FieldRow>
               <FieldRow label="Scheduling order" description="When auto-scheduling, which shifts get assigned first. Lower numbers go first. Leave blank if this shift should not be auto-scheduled.">
-                <input disabled={!canEdit} type="number" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.schedulePriority ?? ""} placeholder="None" onChange={(e) => updateField(editingShift.id, "schedulePriority", e.target.value ? parseInt(e.target.value) : null)} />
+                <DecimalField disabled={!canEdit} integer allowNegative min={-999} max={999} aria-label="Scheduling order" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.schedulePriority ?? null} placeholder="None" onValueChange={(v) => updateField(editingShift.id, "schedulePriority", v)} />
               </FieldRow>
               <FieldRow label="Pair the two weekend days" description={`Assign the same person to both ${WEEKDAY_NAMES[tuning.weekendStartDow]} and ${WEEKDAY_NAMES[weekendSecondDow(tuning.weekendStartDow)]} when filling this shift on weekends`}>
                 <input disabled={!canEdit} type="checkbox" checked={editingShift.weekendPaired} onChange={(e) => updateField(editingShift.id, "weekendPaired", e.target.checked)} className="rounded border-slate-600 w-4 h-4 disabled:opacity-50" />
@@ -1554,7 +1554,7 @@ function ShiftTypesSection({ shifts, onShiftsChange: setShifts, pushUndo, initia
               </FieldRow>
               <FieldRow label="Minimum days between two" description="For one person, two of this shift are at least this many days apart (7 = the same weekday the next week). Days in a row count as one stretch, measured from its last day. Includes last month's and next month's. Prefer: the scheduler chooses people and days that keep the gap, and warns when it can't. Hard: never closer — a day stays short instead, with a warning. Two in the same pay period can't be further apart than the pay period allows. Blank = off.">
                 <div className="flex items-center gap-2">
-                  <input disabled={!canEdit} type="number" min={2} max={60} className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.minGapDays ?? ""} placeholder="Off" onChange={(e) => updateField(editingShift.id, "minGapDays", e.target.value ? parseInt(e.target.value) : null)} />
+                  <DecimalField disabled={!canEdit} integer min={2} max={60} aria-label="Minimum days between two" className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-center disabled:opacity-50" value={editingShift.minGapDays ?? null} placeholder="Off" onValueChange={(v) => updateField(editingShift.id, "minGapDays", v)} />
                   <select disabled={!canEdit || editingShift.minGapDays == null} value={editingShift.minGapStrength === "rule" ? "rule" : "preference"} onChange={(e) => updateField(editingShift.id, "minGapStrength", e.target.value)} className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm disabled:opacity-50" title="Hard or Prefer">
                     <option value="preference">Prefer</option>
                     <option value="rule">Hard</option>
@@ -1929,38 +1929,43 @@ function StaffingSection({
                   {columns.map((id) => (
                     <Fragment key={`${id}:${day}`}>
                       <td className="py-1.5 pl-2 pr-1 text-center">
-                        <input
-                          type="number"
+                        <DecimalField
+                          integer
+                          required
                           min={0}
+                          max={999}
                           disabled={!canEdit}
                           aria-label={`${codeOf(id)} ${DAY_LABELS[day]} minimum`}
                           className="w-12 bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-sm text-center font-mono disabled:opacity-50"
                           value={grid[`${id}:${day}`] ?? 0}
-                          onChange={(e) => updateCell(id, day, parseInt(e.target.value) || 0)}
+                          onValueChange={(v) => updateCell(id, day, v ?? 0)}
                         />
                       </td>
                       <td className="py-1.5 px-1 text-center">
-                        <input
-                          type="number"
+                        <DecimalField
+                          integer
+                          required
                           min={0}
+                          max={999}
                           disabled={!canEdit}
                           aria-label={`${codeOf(id)} ${DAY_LABELS[day]} preferred`}
                           className="w-12 bg-slate-700/60 border border-slate-600/70 rounded px-1.5 py-1 text-sm text-center font-mono text-slate-300 disabled:opacity-50"
                           value={prefGrid[`${id}:${day}`] ?? 0}
-                          onChange={(e) => updatePrefCell(id, day, parseInt(e.target.value) || 0)}
+                          onValueChange={(v) => updatePrefCell(id, day, v ?? 0)}
                         />
                       </td>
                       <td className="py-1.5 pl-1 pr-2 text-center">
-                        <input
-                          type="number"
+                        <DecimalField
+                          integer
                           min={0}
+                          max={999}
                           disabled={!canEdit}
                           aria-label={`${codeOf(id)} ${DAY_LABELS[day]} maximum`}
                           placeholder="–"
                           title="Blank = no limit"
                           className="w-12 bg-slate-700/60 border border-slate-600/70 rounded px-1.5 py-1 text-sm text-center font-mono text-slate-300 placeholder:text-slate-500 disabled:opacity-50"
-                          value={maxGrid[`${id}:${day}`] ?? ""}
-                          onChange={(e) => updateMaxCell(id, day, e.target.value)}
+                          value={maxGrid[`${id}:${day}`] ?? null}
+                          onValueChange={(v) => updateMaxCell(id, day, v == null ? "" : String(v))}
                         />
                       </td>
                     </Fragment>
@@ -2151,14 +2156,16 @@ function PayPeriodsSection({ initial, initialAnchor, initialLengthDays, pushUndo
         <div>
           <label className="text-xs text-slate-400 block mb-1">Period Length (days)</label>
           <div className="flex gap-2">
-            <input
-              type="number"
+            <DecimalField
+              integer
+              required
               min={7}
               max={56}
+              aria-label="Period length in days"
               disabled={!canEdit}
               className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm disabled:opacity-50"
               value={lengthDays}
-              onChange={(e) => setLengthDays(parseInt(e.target.value) || 14)}
+              onValueChange={(v) => v != null && setLengthDays(v)}
             />
             {canEdit && (
               <button
@@ -2682,15 +2689,17 @@ function HolidayRulesSection({ initial, reloadKey, types, holidays, shiftTypes, 
               {r.days.map((d, i) => (
                 <div key={i} className="flex items-center gap-2 pl-2">
                   <span className="text-xs text-slate-400 w-10">Day</span>
-                  <input
+                  <DecimalField
                     aria-label="Days from the holiday"
-                    type="number"
+                    integer
+                    required
+                    allowNegative
                     min={RULE_OFFSET_MIN}
                     max={RULE_OFFSET_MAX}
                     disabled={!canEdit}
                     className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-0.5 text-sm text-center disabled:opacity-50"
                     value={d.offset}
-                    onChange={(e) => update(r.key, (x) => ({ ...x, days: x.days.map((y, j) => (j === i ? { ...y, offset: parseInt(e.target.value, 10) || 0 } : y)) }))}
+                    onValueChange={(v) => v != null && update(r.key, (x) => ({ ...x, days: x.days.map((y, j) => (j === i ? { ...y, offset: v } : y)) }))}
                   />
                   <select
                     aria-label="Shift"
@@ -4021,14 +4030,16 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
               {leapStatus === "error" && <span className="ml-2 text-rose-400">Failed</span>}
             </div>
           </div>
-          <input
-            type="number"
+          <DecimalField
+            integer
+            required
             min={0}
             max={999}
+            aria-label="Most people on leave per day"
             value={prefs.maxLeavePerDay}
             disabled={!canEdit}
-            onChange={(e) => setPrefs((p) => ({ ...p, maxLeavePerDay: Math.max(0, Math.min(999, parseInt(e.target.value) || 0)) }))}
-            onBlur={(e) => canEdit && saveMaxLeave(Math.max(0, Math.min(999, parseInt(e.target.value) || 0)))}
+            onValueChange={(v) => v != null && setPrefs((p) => ({ ...p, maxLeavePerDay: v }))}
+            onBlur={() => canEdit && saveMaxLeave(prefs.maxLeavePerDay)}
             className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 text-center focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
           />
         </div>
@@ -4174,10 +4185,9 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
                 <label htmlFor="holiday-usual-pct" className="text-xs text-slate-300">Part-timers: usually works that weekday at</label>
                 <input
                   id="holiday-usual-pct"
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
                   disabled={!canEdit}
                   value={usualPctDraft ?? String(prefs.holidayUsualWeekdayPct)}
                   onChange={(e) => setUsualPctDraft(e.target.value)}
@@ -4319,10 +4329,9 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
           <label className="flex items-center gap-2 mt-3 text-sm text-slate-300">
             Archive a month&apos;s requests
             <input
-              type="number"
-              min={0}
-              max={ARCHIVE_DAYS_MAX}
-              step={1}
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
               value={archiveDaysText}
               disabled={!canEdit}
               onChange={(e) => setArchiveDaysText(e.target.value)}
@@ -4586,7 +4595,7 @@ function EmailSettingsSection() {
             </label>
             <label className="text-sm">
               <span className="block text-xs text-slate-400 mb-1">Port</span>
-              <input className={input} disabled={!canEdit} type="number" value={cfg.port} onChange={(e) => setCfg((c) => ({ ...c, port: parseInt(e.target.value) || 0 }))} />
+              <DecimalField className={input} disabled={!canEdit} integer required min={1} max={65535} aria-label="Port" value={cfg.port || null} onValueChange={(v) => v != null && setCfg((c) => ({ ...c, port: v }))} />
             </label>
           </div>
           <label className="flex items-center gap-2 text-sm text-slate-300">
@@ -6145,15 +6154,15 @@ function PrintBlockEditor({ label, value, onChange, disabled }: { label: string;
       />
       <label className="flex items-center gap-1 text-xs text-slate-400">
         Size
-        <input
-          type="number"
+        <DecimalField
+          integer
+          required
           aria-label={`${label} size`}
           min={6}
           max={32}
-          step={1}
           value={value.size}
           disabled={disabled}
-          onChange={(e) => onChange({ ...value, size: e.target.valueAsNumber })}
+          onValueChange={(v) => v != null && onChange({ ...value, size: v })}
           className={`${INPUT} w-16`}
         />
         pt
@@ -6260,15 +6269,15 @@ function PrintFontSection({ initial }: { initial: PrintLayout }) {
           </datalist>
         </FieldRow>
         <FieldRow label="Size" description="Points, 6 to 14 (the header and footer have their own sizes).">
-          <input
-            type="number"
+          <DecimalField
+            integer
+            required
             aria-label="Font size"
             min={6}
             max={14}
-            step={1}
             value={draft.fontSize}
             disabled={!canEdit || busy}
-            onChange={(e) => setDraft({ ...draft, fontSize: e.target.valueAsNumber })}
+            onValueChange={(v) => v != null && setDraft({ ...draft, fontSize: v })}
             className={`${INPUT} w-20`}
           />
         </FieldRow>

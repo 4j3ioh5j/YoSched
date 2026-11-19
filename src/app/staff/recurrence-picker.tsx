@@ -1,6 +1,7 @@
 "use client";
 
 import { type WhenPattern, describeWhen, normalizeAnyDay } from "@/lib/recurrence";
+import { DecimalField } from "@/components/decimal-field";
 
 // Sentence-builder for the unified WHEN axis (which occurrences a rule lands on).
 // Owns the weekday set + the occurrence qualifier; the parent owns persistence
@@ -188,13 +189,14 @@ export function RecurrencePicker({
         {isCycle && (
           <>
             <span className="text-slate-500">repeat every</span>
-            <input
-              type="number"
+            <DecimalField
+              integer
+              required
               min={1}
               max={12}
               value={cycleN}
-              onChange={(e) => {
-                const n = Math.max(1, parseInt(e.target.value) || 1);
+              onValueChange={(v) => {
+                const n = Math.max(1, v ?? 1);
                 emit({ ...value, cycleN: n, cycleOffset: Math.min(value.cycleOffset ?? 0, n - 1) });
               }}
               className="w-12 bg-slate-700 border border-slate-600 rounded px-1 py-1 text-xs text-center text-slate-200"

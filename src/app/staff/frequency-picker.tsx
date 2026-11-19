@@ -7,6 +7,7 @@ import {
   type FrequencyMode,
   type ShiftMinTarget,
 } from "@/lib/shift-eligibility";
+import { DecimalField } from "@/components/decimal-field";
 
 // Sentence-builder for the HOW-OFTEN axis (per-staff shift count targets). The
 // stored shape stays {minCount, maxCount, window, windowCount/windowDays} so the
@@ -161,35 +162,37 @@ export function FrequencyPicker({
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
-        <input
-          type="number"
+        <DecimalField
+          integer
           min={mode === "atMost" ? 0 : 1}
           max={99}
-          value={has ? primary : ""}
+          value={has ? primary : null}
           placeholder="0"
-          onChange={(e) => changePrimary(parseInt(e.target.value) || 0)}
+          onValueChange={(v) => changePrimary(v ?? 0)}
           className={numCls}
         />
         {isBetween && (
           <>
             <span className="text-slate-400">and</span>
-            <input
-              type="number"
+            <DecimalField
+              integer
+              required
               min={Math.max(1, t.minCount ?? 0)}
               max={99}
               value={upper}
-              onChange={(e) => changeUpper(parseInt(e.target.value) || 0)}
+              onValueChange={(v) => changeUpper(v ?? 0)}
               className={numCls}
             />
           </>
         )}
         <span className="text-slate-400">per</span>
-        <input
-          type="number"
+        <DecimalField
+          integer
+          required
           min={1}
           max={isDays ? 365 : 12}
           value={isDays ? t.windowDays ?? 7 : t.windowCount ?? 1}
-          onChange={(e) => changeWindowAmount(parseInt(e.target.value) || 1)}
+          onValueChange={(v) => changeWindowAmount(v ?? 1)}
           disabled={!has}
           title={isDays ? "Rolling window length in days" : "Number of fixed, non-overlapping windows per bucket"}
           className={numCls}
