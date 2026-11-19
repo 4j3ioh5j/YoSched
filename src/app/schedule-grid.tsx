@@ -24,7 +24,7 @@ import { unsavedPrintWarning } from "@/lib/print-stamp";
 import { autoVersionComment, yearMonths, type AutoVersionMode } from "@/lib/auto-version";
 import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMeta } from "@/lib/auto-version-flow";
 import { buildUdWidthSnapshot, saveUdWidthSnapshot } from "@/lib/ud-width-snapshot";
-import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, autoColNeedCh, printNeedPx, printReservedIn, printUdWidthsIn, PRINT_COL_IN, type UdPrintCol, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
+import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, autoColNeedCh, printNeedPx, printReservedIn, printUdWidthsIn, udScreenSizing, udScreenEqualPx, PRINT_COL_IN, type UdPrintCol, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { pruneHiddenFocus } from "@/lib/grid-hidden-focus";
 import { staffCellLines, extraCellLines, PP_ROW_LINES, DATE_CELL_LINES } from "@/lib/grid-lines";
@@ -1683,8 +1683,41 @@ export function ScheduleGrid({
   // Card #359: Settings › Column Widths shows these, once the browser has measured the text.
   useEffect(() => {
     if (!udMeasured) return;
-    saveUdWidthSnapshot(buildUdWidthSnapshot(firstOfMonth.slice(0, 7), udPrint.widths, udPrint.bestFitIn));
+    saveUdWidthSnapshot(buildUdWidthSnapshot(firstOfMonth.slice(0, 7), udPrint.widths, udPrint.bestFitIn, udPrint.titleIn));
   }, [udMeasured, udPrint, firstOfMonth]);
+  // Card #364: one width for all / match largest share one screen width in the print columns
+  // view: each header's (and day cell's) screen text measured inside its own cell (its font),
+  // plus the cell's padding and borders. Never per column, so they stay equal.
+  const [udEqPx, setUdEqPx] = useState<number | null>(null);
+  const udEqMode = printColumnsOnly ? printLayout.udWidth.mode : null;
+  useLayoutEffect(() => {
+    const root = printRootRef.current;
+    if (!root || (udEqMode !== "uniform" && udEqMode !== "matchLargest")) { setUdEqPx(null); return; }
+    let live = true;
+    const measure = () => {
+      if (!live) return;
+      const need = (cell: HTMLElement) => {
+        const probe = document.createElement("span");
+        probe.style.cssText = "position:absolute;left:-10000px;top:0;visibility:hidden;white-space:nowrap;";
+        probe.textContent = cell.textContent ?? "";
+        cell.append(probe);
+        const text = probe.getBoundingClientRect().width;
+        probe.remove();
+        const cs = getComputedStyle(cell);
+        const side = ["paddingLeft", "paddingRight", "borderLeftWidth", "borderRightWidth"] as const;
+        return text > 0 ? text + side.reduce((a, k) => a + (parseFloat(cs[k]) || 0), 0) : 0;
+      };
+      const heads = [...root.querySelectorAll<HTMLElement>("thead th[data-ud-col]")].map(need);
+      const cells = udEqMode === "matchLargest" ? [...root.querySelectorAll<HTMLElement>("tbody td[data-ud-col]")].map(need) : [];
+      const px = udScreenEqualPx(printLayout.udWidth, heads, cells);
+      setUdEqPx((old) => (old === px ? old : px));
+    };
+    measure();
+    const fonts = typeof document !== "undefined" ? document.fonts : undefined;
+    void fonts?.ready.then(measure);
+    fonts?.addEventListener?.("loadingdone", measure);
+    return () => { live = false; fonts?.removeEventListener?.("loadingdone", measure); };
+  }, [udEqMode, printLayout.udWidth, udPrintTexts]);
   const udColStyle = (key: string) => {
     const w = udPrint.widths.get(key);
     return w != null && Number.isFinite(w) ? ({ "--ud-col-w": `${+w.toFixed(4)}in` } as React.CSSProperties) : undefined;
@@ -4188,7 +4221,7 @@ export function ScheduleGrid({
       data-print-columns-view={printColumnsOnly ? "" : undefined}
       data-ud-width-mode={printColumnsOnly ? printLayout.udWidth.mode : undefined}
       className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}
-      style={{ "--print-font": printFontStack(printLayout.fontFamily), "--print-font-size": `${printLayout.fontSize}pt`, "--print-row-h": `${printRowHeightIn(printLayout)}in` } as React.CSSProperties}
+      style={{ "--print-font": printFontStack(printLayout.fontFamily), "--print-font-size": `${printLayout.fontSize}pt`, "--print-row-h": `${printRowHeightIn(printLayout)}in`, "--ud-eq-w": udEqPx != null ? `${udEqPx}px` : undefined } as React.CSSProperties}
     >
       {/* Request mode indicator — "/" toggles; letters create requests, not
           assignments (Shift=avoid, Alt=soft). */}
@@ -4606,6 +4639,7 @@ export function ScheduleGrid({
                   key={`agg-h-${ci}`}
                   data-other-col
                   data-ud-col=""
+                  data-ud-size={udScreenSizing(printLayout.udWidth, sc.key)}
                   style={udColStyle(sc.key)}
                   className={`hidden px-1 py-1 text-center text-xs font-medium ${extraCellLines()} border-b-slate-700`}
                 >
@@ -4618,6 +4652,7 @@ export function ScheduleGrid({
                   title={st.name}
                   data-print-ded=""
                   data-ud-col=""
+                  data-ud-size={udScreenSizing(printLayout.udWidth, sc.key)}
                   className={`px-1 py-1 text-center text-xs font-medium ${extraCellLines()} border-b-slate-700 w-[44px] min-w-[44px]`}
                   style={{ color: st.color, ...udColStyle(sc.key) }}
                 >
@@ -4918,6 +4953,7 @@ export function ScheduleGrid({
                       key={`agg-b-${ci}`}
                       data-other-col
                       data-ud-col=""
+                      data-ud-size={udScreenSizing(printLayout.udWidth, sc.key)}
                       style={udColStyle(sc.key)}
                       className={[
                         `hidden px-0.5 py-0.5 text-center text-[10px] font-semibold leading-tight break-words ${extraCellLines()}`,
@@ -4941,6 +4977,7 @@ export function ScheduleGrid({
                         data-cell={`ded-${st.id}:${date}`}
                         data-print-ded=""
                         data-ud-col=""
+                        data-ud-size={udScreenSizing(printLayout.udWidth, sc.key)}
                         data-print-bg={st.printBackgroundColor && inits.length ? "" : undefined}
                         className={[
                           // Mirror the staff cell so dedicated cells look/feel identical:

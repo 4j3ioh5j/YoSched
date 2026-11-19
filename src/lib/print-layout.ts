@@ -193,6 +193,48 @@ export function validateUdWidthPatch(b: Record<string, unknown>): { ok: true } |
   return { ok: true };
 }
 
+/** Card #364: how a user-defined column sizes in the on-screen print columns view, whose text
+ *  is larger than the printout's: "fit" = as wide as its screen text (best fit), "atLeast" =
+ *  the printout's width or wider if its text needs it (match largest), "fixed" = a width the
+ *  user set (one width for all, or Custom), whose day text clips. A header never clips, so a
+ *  column is never narrower than its title. */
+export function udScreenSizing(s: UdWidthSettings, key: string): "fit" | "atLeast" | "fixed" {
+  if (s.mode === "uniform") return "fixed";
+  if (s.mode === "matchLargest") return "atLeast";
+  if (s.mode === "perColumn" && validUdHundredths(s.perColumn[key])) return "fixed";
+  return "fit";
+}
+
+/** Card #364: a set width (hundredths of an inch) is narrower than the column's title (inches,
+ *  as the printout measures it, rounded up to the hundredth Settings shows). Unknown: false. */
+export function udNarrowerThanTitle(hundredths: number | null | undefined, titleIn: number | null | undefined): boolean {
+  if (hundredths == null || !Number.isFinite(hundredths) || titleIn == null || !Number.isFinite(titleIn) || titleIn <= 0) return false;
+  return hundredths < Math.ceil(Math.round(titleIn * 1e6) / 1e4);
+}
+
+/** Card #364: the one screen width (CSS px, rounded up) the equal-width modes share, from the
+ *  screen widths of the headers and day cells (text + padding + borders): one width for all =
+ *  the widest header, match largest = the widest header or day text. Other modes, or nothing
+ *  measured: null. A header widens every column together, never one alone. */
+export function udScreenEqualPx(s: UdWidthSettings, headPx: readonly number[], cellPx: readonly number[]): number | null {
+  if (s.mode !== "uniform" && s.mode !== "matchLargest") return null;
+  const all = s.mode === "uniform" ? headPx : [...headPx, ...cellPx];
+  const ok = all.filter((v) => Number.isFinite(v) && v > 0);
+  return ok.length ? Math.ceil(Math.max(...ok)) : null;
+}
+
+/** Card #364: the width (inches) a set width narrower than the title prints at: one width for
+ *  all floors every column at the widest title; a Custom width at its own title. */
+export function udTitleFloorIn(mode: UdWidthSettings["mode"], key: string, cols: Readonly<Record<string, { titleIn?: number }>>): number | null {
+  const ok = (v: number | undefined): v is number => v != null && Number.isFinite(v) && v > 0;
+  if (mode === "uniform") {
+    const t = Object.values(cols).map((c) => c.titleIn).filter(ok);
+    return t.length ? Math.max(...t) : null;
+  }
+  const own = cols[key]?.titleIn;
+  return ok(own) ? own : null;
+}
+
 export type UdColumnFit = { key: string; fitIn: number; titleIn: number };
 const posFinite = (n: number) => Number.isFinite(n) && n > 0;
 /** A column's best fit, never junk: its fit, else its title, else the narrowest custom width. */
@@ -487,7 +529,7 @@ export type UdPrintRoom = { reservedIn: number; autoCount: number; autoNeedPx: n
 /** Card #357: the browser printout's width (inches) for each user-defined column, from the
  *  Settings choice, fitted into the room the fixed columns and the equal-share staff and count
  *  columns leave on the page (divided by the shrink factor: the print zoom scales inches too). */
-export function printUdWidthsIn(layout: PrintLayout, cols: readonly UdPrintCol[], room: UdPrintRoom): { widths: Map<string, number>; needIn: number; bestFitIn: Map<string, number> } {
+export function printUdWidthsIn(layout: PrintLayout, cols: readonly UdPrintCol[], room: UdPrintRoom): { widths: Map<string, number>; needIn: number; bestFitIn: Map<string, number>; titleIn: Map<string, number> } {
   const page = printPage(layout);
   const { scale } = printFit({ ...layout, paper: isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER, marginHundredths: page.marginIn * 100 });
   const fontPt = Number.isFinite(layout.fontSize) && layout.fontSize > 0 ? layout.fontSize : DEFAULT_PRINT_FONT_SIZE;
@@ -509,6 +551,7 @@ export function printUdWidthsIn(layout: PrintLayout, cols: readonly UdPrintCol[]
   // needIn: the whole row's width at full size; printPageStyle shrinks the printout when the
   // titles alone do not fit (printWidthScale).
   // bestFitIn (card #359): each column's own best fit, shown in Settings to help choose a width.
-  return { widths, needIn: fixedIn + [...widths.values()].reduce((a, b) => a + b, 0), bestFitIn: new Map(fits.map((f) => [f.key, f.fitIn])) };
+  // titleIn (card #364): each title's width, so Settings can warn about a set width under it.
+  return { widths, needIn: fixedIn + [...widths.values()].reduce((a, b) => a + b, 0), bestFitIn: new Map(fits.map((f) => [f.key, f.fitIn])), titleIn: new Map(fits.map((f) => [f.key, f.titleIn])) };
 }
 

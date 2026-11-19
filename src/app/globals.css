@@ -96,21 +96,35 @@ input[type="checkbox"]:disabled {
     padding-right: 0.5rem;
   }
   /* Card #357: the user-defined columns (additional + shift columns) follow the Settings width
-     choice here too. Best fit (the default): as wide as their text. The other choices: the
-     printout's width (--ud-col-w, set inline per column), never narrower than the text. */
+     choice here too. Card #364: the screen text is larger than the printout's, so the inch
+     widths measured for print do not fit it. Each column says how it sizes (data-ud-size):
+     best fit ("fit") is as wide as its screen text; match largest ("atLeast") is the
+     printout's width or wider; a width the user set ("fixed") keeps it and clips day text.
+     A header never clips, so no column is narrower than its title. */
   [data-print-columns-view] [data-ud-col] {
     width: 1%;
     min-width: 0;
     white-space: nowrap;
   }
-  [data-print-columns-view]:not([data-ud-width-mode="bestFit"]) [data-ud-col] {
+  [data-print-columns-view] [data-ud-col]:not([data-ud-size="fit"]) {
     width: var(--ud-col-w, 1%);
     min-width: var(--ud-col-w, 0);
-    /* Long text would widen the column (auto table layout); clip it at the width, as the
-       printout does, so equal columns stay equal. */
+  }
+  [data-print-columns-view] tbody td[data-ud-col][data-ud-size="fixed"] {
     max-width: var(--ud-col-w, none);
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* Card #364: one width for all and match largest stay equal on screen: every column takes
+     one shared width (--ud-eq-w, measured on screen: the widest header, or for match largest
+     the widest header or day text), never less than the printout's. */
+  [data-print-columns-view][data-ud-width-mode="uniform"] [data-ud-col],
+  [data-print-columns-view][data-ud-width-mode="matchLargest"] [data-ud-col] {
+    width: max(var(--ud-col-w, 0px), var(--ud-eq-w, 0px));
+    min-width: max(var(--ud-col-w, 0px), var(--ud-eq-w, 0px));
+  }
+  [data-print-columns-view][data-ud-width-mode="uniform"] tbody td[data-ud-col] {
+    max-width: max(var(--ud-col-w, 0px), var(--ud-eq-w, 0px));
   }
   /* Spare table width must not land on the set-width columns: with every column at a fixed
      width the browser spreads it over all of them. The staff and count columns go to auto

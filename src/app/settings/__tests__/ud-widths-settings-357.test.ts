@@ -41,7 +41,7 @@ describe("Column Widths section", () => {
 describe("Column Widths shows each column's width (card #359)", () => {
   const grid = readFileSync(path.join(path.resolve(__dirname, "../.."), "schedule-grid.tsx"), "utf8");
   it("the schedule page records the measured widths once the text is measured", () => {
-    expect(grid).toMatch(/if \(!udMeasured\) return;\s*saveUdWidthSnapshot\(buildUdWidthSnapshot\(firstOfMonth\.slice\(0, 7\), udPrint\.widths, udPrint\.bestFitIn\)\)/);
+    expect(grid).toMatch(/if \(!udMeasured\) return;\s*saveUdWidthSnapshot\(buildUdWidthSnapshot\(firstOfMonth\.slice\(0, 7\), udPrint\.widths, udPrint\.bestFitIn, udPrint\.titleIn\)\)/);
   });
   it("Settings reads them after mount (never in useState init) and on another tab's change", () => {
     expect(body).toContain("useState<UdWidthSnapshot | null>(null)");
@@ -91,5 +91,30 @@ describe("per-column choice: Best fit or Custom on each column (card #360)", () 
     expect(body).not.toContain('placeholder="best fit"');
     const choices = ui.slice(ui.indexOf("const UD_MODE_CHOICES"), ui.indexOf("];", ui.indexOf("const UD_MODE_CHOICES")));
     expect(choices).toContain("Choose per column (best fit or a set width)");
+  });
+});
+
+// Card #364: a width the user sets that is narrower than a column's title is flagged.
+import { udSetWidthHundredths } from "../settings-page";
+describe("warning when a set width is narrower than the title (card #364)", () => {
+  it("the width that applies to a column: one width for all, its Custom width, else none", () => {
+    expect(udSetWidthHundredths({ mode: "uniform", uniform: "0.40", per: {} }, "agg:o")).toBe(40);
+    expect(udSetWidthHundredths({ mode: "perColumn", uniform: "0.50", per: { "agg:o": "0.35" } }, "agg:o")).toBe(35);
+    expect(udSetWidthHundredths({ mode: "perColumn", uniform: "0.50", per: {} }, "agg:o")).toBeNull();
+    expect(udSetWidthHundredths({ mode: "perColumn", uniform: "0.50", per: { "agg:o": "abc" } }, "agg:o")).toBeNull();
+    expect(udSetWidthHundredths({ mode: "bestFit", uniform: "0.30", per: { "agg:o": "0.30" } }, "agg:o")).toBeNull();
+    expect(udSetWidthHundredths({ mode: "matchLargest", uniform: "0.30", per: {} }, "agg:o")).toBeNull();
+  });
+  it("each column row shows the warning with the title's width, from the measured title", () => {
+    expect(body).toMatch(/udNarrowerThanTitle\(udSetWidthHundredths\(shown, c\.key\), now\?\.titleIn\)/);
+    expect(body).toContain("data-ud-title-warning");
+    expect(body).toMatch(/narrower than its title/);
+  });
+});
+
+describe("one width for all warns with the width every column prints at (card #364 r1)", () => {
+  it("the warning names the floor that applies: the widest title for one width, its own for Custom", () => {
+    expect(body).toMatch(/udTitleFloorIn\(shown\.mode, c\.key, widthsNow\?\.cols \?\? \{\}\)/);
+    expect(body).toMatch(/Every column prints at \{titleWarn\.at\} in so all titles fit\./);
   });
 });

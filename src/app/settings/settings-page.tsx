@@ -56,6 +56,8 @@ import {
   printFit,
   DEFAULT_UD_WIDTH,
   UD_WIDTH_MIN,
+  udNarrowerThanTitle,
+  udTitleFloorIn,
   UD_WIDTH_MAX,
   type UdWidthMode,
   type UdWidthSettings,
@@ -5327,6 +5329,14 @@ export function udSetColumnChoice(per: Record<string, string>, key: string, choi
 }
 
 /** What Save would store, or the problem to show when an entry is not a valid width. */
+/** Card #364: the width (hundredths) the user set for a column in the draft — one width for
+ *  all, or its Custom width — or null (best fit, match largest, or text that is not a width). */
+export function udSetWidthHundredths(shown: UdDraft, key: string): number | null {
+  if (shown.mode === "uniform") return udInchesToHundredths(shown.uniform);
+  if (shown.mode === "perColumn" && shown.per[key] !== undefined) return udInchesToHundredths(shown.per[key]);
+  return null;
+}
+
 export function udParseDraft(
   shown: UdDraft,
   saved: UdWidthSettings,
@@ -5453,6 +5463,12 @@ function UdColumnWidthSection({
               const now = widthsNow?.cols[c.key];
               const bestFit = now ? udHundredthsToInches(Math.max(UD_WIDTH_MIN, Math.min(UD_WIDTH_MAX, Math.ceil(now.bestFitIn * 100)))) : null;
               const choice = udColumnChoice(shown.per, c.key);
+              // Card #364: a set width under the title prints at the title's width instead (one
+              // width for all: every column at the widest title).
+              const inches = (v: number) => udHundredthsToInches(Math.ceil(Math.round(v * 1e6) / 1e4));
+              const floorIn = udTitleFloorIn(shown.mode, c.key, widthsNow?.cols ?? {});
+              const titleWarn = udNarrowerThanTitle(udSetWidthHundredths(shown, c.key), now?.titleIn) && now?.titleIn != null && floorIn != null
+                ? { own: inches(now.titleIn), at: inches(Math.max(floorIn, now.titleIn)), all: shown.mode === "uniform" } : null;
               return (
                 <li key={c.key} className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
                   <span className="flex-1 min-w-[10rem]">{c.label}</span>
@@ -5472,6 +5488,12 @@ function UdColumnWidthSection({
                         </>
                       )}
                     </>
+                  )}
+                  {titleWarn && (
+                    <span data-ud-title-warning="" className="basis-full text-xs text-amber-400">
+                      This width is narrower than its title, which needs {titleWarn.own} in.{" "}
+                      {titleWarn.all ? <>Every column prints at {titleWarn.at} in so all titles fit.</> : <>It prints at {titleWarn.at} in so the title fits.</>}
+                    </span>
                   )}
                 </li>
               );
