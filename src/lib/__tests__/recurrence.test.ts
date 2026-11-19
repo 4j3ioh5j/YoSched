@@ -356,8 +356,8 @@ describe("describeWhen — natural language", () => {
     expect(describeWhen({ daysOfWeek: [2], kind: "ordinalMonth", ords: [1, 3] })).toBe("1st & 3rd Tuesday of each month");
     expect(describeWhen({ daysOfWeek: [4], kind: "ordinalMonth", ords: [-1] })).toBe("last Thursday of each month");
     expect(describeWhen({ daysOfWeek: [2], kind: "ordinalPayPeriod", ords: [1] })).toBe("1st Tuesday of each pay period");
-    expect(describeWhen({ daysOfWeek: [2], kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0 })).toBe("Every other week: Tuesday");
-    expect(describeWhen({ daysOfWeek: [2], kind: "cycle", cycleUnit: "payPeriod", cycleN: 2, cycleOffset: 1 })).toBe("Every other pay period (offset 1): Tuesday");
+    expect(describeWhen({ daysOfWeek: [2], kind: "cycle", cycleUnit: "week", cycleN: 2, cycleOffset: 0 })).toBe("Every other pay-period week: Tuesday");
+    expect(describeWhen({ daysOfWeek: [2], kind: "cycle", cycleUnit: "payPeriod", cycleN: 2, cycleOffset: 1 })).toBe("Every other pay period (slot 2): Tuesday");
   });
 
   it("falls back gracefully when ordinals/weekdays are unset", () => {

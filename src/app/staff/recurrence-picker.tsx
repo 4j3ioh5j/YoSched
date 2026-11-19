@@ -35,7 +35,7 @@ const KIND_OPTIONS: { value: KindOption; label: string }[] = [
   { value: "pp_week_2", label: "Pay-period week 2 only" },
   { value: "ordinalMonth", label: "Specific weeks of the month…" },
   { value: "ordinalPayPeriod", label: "Specific weeks of the pay period…" },
-  { value: "cycle_week", label: "Every N weeks…" },
+  { value: "cycle_week", label: "Every N pay-period weeks…" },
   { value: "cycle_pp", label: "Every N pay periods…" },
 ];
 
@@ -201,7 +201,7 @@ export function RecurrencePicker({
               }}
               className="w-12 bg-slate-700 border border-slate-600 rounded px-1 py-1 text-xs text-center text-slate-200"
             />
-            <span className="text-slate-500">{value.cycleUnit === "payPeriod" ? "pay periods, slot" : "weeks, slot"}</span>
+            <span className="text-slate-500">{value.cycleUnit === "payPeriod" ? "pay periods, slot" : "pay-period weeks, slot"}</span>
             <select
               className="bg-slate-700 border border-slate-600 rounded px-1.5 py-1 text-xs text-slate-200"
               value={value.cycleOffset ?? 0}
@@ -214,6 +214,12 @@ export function RecurrencePicker({
           </>
         )}
       </div>
+      {/* Card #365: the weeks counted are the pay periods' weeks, not calendar weeks. */}
+      {isCycle && value.cycleUnit !== "payPeriod" && (
+        <p data-cycle-week-note="" className="pl-1 text-xs text-slate-500">
+          Weeks follow the pay periods: slot 1 is week 1 of a pay period, slot 2 its week 2, slot 3 the next pay period&apos;s week 1, and so on.
+        </p>
+      )}
 
       {/* Ordinal chips */}
       {isOrdinal && (

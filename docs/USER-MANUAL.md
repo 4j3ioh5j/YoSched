@@ -555,7 +555,10 @@ occurrences* a rule covers:
    - **Pay-period week 1 / week 2** — only the first or second week of the pay period.
    - **Specific weeks of the month** — 1st / 2nd / 3rd / 4th / 5th / Last (multi-select).
    - **Specific weeks of the pay period** — the same ordinals within the pay period.
-   - **Every N weeks** — a cycle length and slot (e.g., "every other Monday").
+   - **Every N pay-period weeks** — a cycle length and slot (e.g., "every other Monday").
+     The weeks follow the pay periods, not the calendar: slot 1 is week 1 of a pay period,
+     slot 2 its week 2, slot 3 the next pay period's week 1, and so on. Every 4 pay-period
+     weeks, slot 2, is the second week of every other pay period.
    - **Every N pay periods** — the same, indexed by pay periods.
 
 A live plain-English sentence (e.g., *"1st and 3rd Fridays of the month"*) confirms

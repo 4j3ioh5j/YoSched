@@ -349,10 +349,12 @@ export function describeWhen(w: WhenPattern): string {
     }
     case "cycle": {
       const n = Math.max(1, Math.floor(w.cycleN ?? 1));
-      const unit = w.cycleUnit === "payPeriod" ? "pay period" : "week";
+      // Card #365: weeks are the pay periods' weeks (week 1 and 2 of each, numbered on), and
+      // the offset reads as the slot the picker shows (offset + 1).
+      const unit = w.cycleUnit === "payPeriod" ? "pay period" : "pay-period week";
       const cadence = n === 1 ? "Every" : n === 2 ? "Every other" : `Every ${ordinalLabel(n)}`;
       const off = w.cycleOffset ?? 0;
-      const offNote = n > 1 && off > 0 ? ` (offset ${off})` : "";
+      const offNote = n > 1 && off > 0 ? ` (slot ${off + 1})` : "";
       return `${cadence} ${unit}${offNote}: ${days}`;
     }
     default:
