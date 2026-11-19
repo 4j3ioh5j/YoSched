@@ -189,6 +189,7 @@ describe("printLayoutFrom (prefs row → the grid's print layout)", () => {
       payPeriodLabels: true,
       paper: "letter",
       marginHundredths: 25,
+      udWidth: { mode: "bestFit", uniformHundredths: 50, perColumn: {} },
     });
   });
 
@@ -218,6 +219,7 @@ describe("printLayoutFrom (prefs row → the grid's print layout)", () => {
       payPeriodLabels: false,
       paper: "a4",
       marginHundredths: 50,
+      udWidth: { mode: "bestFit", uniformHundredths: 50, perColumn: {} },
     });
   });
 

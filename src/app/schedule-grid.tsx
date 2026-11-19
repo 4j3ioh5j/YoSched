@@ -23,7 +23,7 @@ import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey,
 import { unsavedPrintWarning } from "@/lib/print-stamp";
 import { autoVersionComment, yearMonths, type AutoVersionMode } from "@/lib/auto-version";
 import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMeta } from "@/lib/auto-version-flow";
-import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, aggPrintWidthCss, aggPrintWidthCh, autoColNeedCh, printNeedPx, printReservedIn, PRINT_COL_IN, type AggRoom, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
+import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, autoColNeedCh, printNeedPx, printReservedIn, printUdWidthsIn, PRINT_COL_IN, type UdPrintCol, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { pruneHiddenFocus } from "@/lib/grid-hidden-focus";
 import { staffCellLines, extraCellLines, PP_ROW_LINES, DATE_CELL_LINES } from "@/lib/grid-lines";
@@ -1598,13 +1598,6 @@ export function ScheduleGrid({
     fonts?.addEventListener?.("loadingdone", measure);
     return () => { live = false; fonts?.removeEventListener?.("loadingdone", measure); };
   }, [printAutoTexts, printLayout.fontFamily, printLayout.fontSize]);
-  const printAggRoom = useMemo<AggRoom>(() => ({
-    reservedIn: printReservedIn(printLayout, dedicatedColumns.length),
-    autoCount: printAutoTexts.autoCount,
-    autoNeedPx: printAutoNeedPx,
-    autoNeedCh: autoColNeedCh(printAutoTexts.texts),
-    titlesCh: printAggColumns.map((c) => aggPrintWidthCh(c.label, [])),
-  }), [printLayout, dedicatedColumns, printAutoTexts, printAutoNeedPx, printAggColumns]);
 
   // Card #300: every special column (print-only aggregate, dedicated shift, count) in the
   // admin-set order. Each entry points at its column by index in its own group list, so
@@ -1620,6 +1613,76 @@ export function ScheduleGrid({
     ),
     [printAggColumns, dedicatedColumns, countColumns, specialColumnOrder],
   );
+
+  // Card #357: the user-defined columns (additional + shift columns) print at the Settings width
+  // choice. Each one's title and in-month day texts are measured in the print font (bold, the
+  // widest weight they print in; shift cells also in the monospace font), then fitted to the page.
+  const udPrintTexts = useMemo(() => {
+    const inMonth = dates.filter((d) => d >= firstOfMonth && d <= lastOfMonth);
+    return specialColumns.flatMap((sc) => {
+      if (sc.kind === "agg") {
+        const c = printAggColumns[sc.col.i];
+        return [{ key: sc.key, title: c.label, texts: inMonth.map((d) => (c.initialsByDate[d] ?? []).join(", ")).filter(Boolean) }];
+      }
+      if (sc.kind === "ded") {
+        const st = dedicatedColumns[sc.col.i];
+        return [{ key: sc.key, title: st.code, texts: inMonth.map((d) => (dedicatedColumnInitialsData[sc.col.i]?.[d] ?? []).join(", ")).filter(Boolean) }];
+      }
+      return [];
+    });
+  }, [specialColumns, printAggColumns, dedicatedColumns, dedicatedColumnInitialsData, dates, firstOfMonth, lastOfMonth]);
+  const [udMeasured, setUdMeasured] = useState<{ key: string; fitPx: number | null; titlePx: number | null }[] | null>(null);
+  useEffect(() => {
+    const root = printRootRef.current;
+    if (!root) return;
+    let live = true;
+    const measure = () => {
+      if (!live) return;
+      const probe = "position:absolute;left:-10000px;top:0;visibility:hidden;white-space:nowrap;font-size:var(--print-font-size);font-weight:700;letter-spacing:normal;";
+      const span = document.createElement("span");
+      const mono = document.createElement("span");
+      const ruler = document.createElement("div");
+      span.style.cssText = probe + "font-family:var(--print-font)";
+      mono.className = "font-mono";
+      mono.style.cssText = probe;
+      ruler.style.cssText = "position:absolute;left:-10000px;top:0;visibility:hidden;width:100px;height:0";
+      root.append(span, mono, ruler);
+      const width = (el: HTMLElement) => (t: string) => { el.textContent = t; return el.getBoundingClientRect().width; };
+      const zoom = ruler.getBoundingClientRect().width / 100;
+      const out = udPrintTexts.map((u) => {
+        const isDed = u.key.startsWith("ded:");
+        const groups = (texts: string[]) => [{ texts, measure: width(span) }, ...(isDed ? [{ texts, measure: width(mono) }] : [])];
+        return { key: u.key, titlePx: printNeedPx(groups([u.title]), zoom), fitPx: printNeedPx(groups([u.title, ...u.texts]), zoom) };
+      });
+      span.remove(); mono.remove(); ruler.remove();
+      setUdMeasured(out);
+    };
+    measure();
+    const fonts = typeof document !== "undefined" ? document.fonts : undefined;
+    void fonts?.ready.then(measure);
+    fonts?.addEventListener?.("loadingdone", measure);
+    return () => { live = false; fonts?.removeEventListener?.("loadingdone", measure); };
+  }, [udPrintTexts, printLayout.fontFamily, printLayout.fontSize]);
+  const udPrint = useMemo(() => {
+    const measured = new Map((udMeasured ?? []).map((m) => [m.key, m]));
+    const cols: UdPrintCol[] = udPrintTexts.map((u) => ({
+      key: u.key,
+      titlePx: measured.get(u.key)?.titlePx ?? null,
+      fitPx: measured.get(u.key)?.fitPx ?? null,
+      titleCh: u.title.length,
+      fitCh: Math.max(u.title.length, ...u.texts.map((t) => t.length)),
+    }));
+    return printUdWidthsIn(printLayout, cols, {
+      reservedIn: printReservedIn(printLayout, 0),
+      autoCount: printAutoTexts.autoCount,
+      autoNeedPx: printAutoNeedPx,
+      autoNeedCh: autoColNeedCh(printAutoTexts.texts),
+    });
+  }, [udMeasured, udPrintTexts, printLayout, printAutoTexts, printAutoNeedPx]);
+  const udColStyle = (key: string) => {
+    const w = udPrint.widths.get(key);
+    return w != null && Number.isFinite(w) ? ({ "--ud-col-w": `${+w.toFixed(4)}in` } as React.CSSProperties) : undefined;
+  };
 
   // Drop column focus + selection when the visible column set may change (month
   // change / Show-all toggle), so focus and selection rectangles never point at
@@ -4117,6 +4180,7 @@ export function ScheduleGrid({
       data-print-count-need={printCountNeedPx ?? undefined}
       data-print-root
       data-print-columns-view={printColumnsOnly ? "" : undefined}
+      data-ud-width-mode={printColumnsOnly ? printLayout.udWidth.mode : undefined}
       className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}
       style={{ "--print-font": printFontStack(printLayout.fontFamily), "--print-font-size": `${printLayout.fontSize}pt`, "--print-row-h": `${printRowHeightIn(printLayout)}in` } as React.CSSProperties}
     >
@@ -4132,7 +4196,7 @@ export function ScheduleGrid({
       )}
       {/* Card #323: the page (paper, margin, and a shrink when the text needs it) from Settings.
           Built only from a known paper name and numbers (printPageStyle). */}
-      <style media="print">{printPageStyle(printLayout)}</style>
+      <style media="print">{printPageStyle(printLayout, udPrint.needIn)}</style>
       {/* Print-only title: the Settings header template (card #301), filled in by the
           print stamp above. */}
       <div data-print-title ref={printTitleRef} className="hidden" style={printBlockStyle(printLayout.header)} />
@@ -4535,7 +4599,8 @@ export function ScheduleGrid({
                 <th
                   key={`agg-h-${ci}`}
                   data-other-col
-                  style={{ "--agg-col-w": aggPrintWidthCss(c.label, Object.values(c.initialsByDate), printAggRoom, printLayout) } as React.CSSProperties}
+                  data-ud-col=""
+                  style={udColStyle(sc.key)}
                   className={`hidden px-1 py-1 text-center text-xs font-medium ${extraCellLines()} border-b-slate-700`}
                 >
                   {c.label}
@@ -4546,8 +4611,9 @@ export function ScheduleGrid({
                   key={`ded-h-${st.id}`}
                   title={st.name}
                   data-print-ded=""
+                  data-ud-col=""
                   className={`px-1 py-1 text-center text-xs font-medium ${extraCellLines()} border-b-slate-700 w-[44px] min-w-[44px]`}
-                  style={{ color: st.color }}
+                  style={{ color: st.color, ...udColStyle(sc.key) }}
                 >
                   {st.code}
                 </th>
@@ -4845,6 +4911,8 @@ export function ScheduleGrid({
                     <td
                       key={`agg-b-${ci}`}
                       data-other-col
+                      data-ud-col=""
+                      style={udColStyle(sc.key)}
                       className={[
                         `hidden px-0.5 py-0.5 text-center text-[10px] font-semibold leading-tight break-words ${extraCellLines()}`,
                         isNewPP ? "border-t-2 border-t-indigo-500" : "",
@@ -4866,6 +4934,7 @@ export function ScheduleGrid({
                         key={`ded-${st.id}`}
                         data-cell={`ded-${st.id}:${date}`}
                         data-print-ded=""
+                        data-ud-col=""
                         data-print-bg={st.printBackgroundColor && inits.length ? "" : undefined}
                         className={[
                           // Mirror the staff cell so dedicated cells look/feel identical:
@@ -4882,6 +4951,7 @@ export function ScheduleGrid({
                         ].join(" ")}
                         style={{
                           color: st.color,
+                          ...udColStyle(sc.key),
                           ...(isDedActive ? { backgroundColor: "rgba(29,78,216,0.45)" } : null),
                           ...(st.printBackgroundColor && inits.length ? { "--print-bg": st.printBackgroundColor } : null),
                         } as React.CSSProperties}

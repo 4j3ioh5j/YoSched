@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { validateSpecialColumnOrder } from "@/lib/special-columns";
-import { validatePrintBlock, validatePrintFontFamily, validatePrintFontSize, isDateColumnFormat, isDayColumnFormat, type PrintBlock, isPrintPaper, validatePrintMargin } from "@/lib/print-layout";
+import { validatePrintBlock, validatePrintFontFamily, validatePrintFontSize, isDateColumnFormat, isDayColumnFormat, type PrintBlock, isPrintPaper, validatePrintMargin, validateUdWidthPatch } from "@/lib/print-layout";
 import { isValidDateFormat } from "@/lib/date-format";
 import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES, isApprovalConflictPolicy, APPROVAL_CONFLICT_POLICIES, validateOffStrategyOrder } from "@/lib/schedule-requests";
 import { isLiveScope, LIVE_SCOPES } from "@/lib/live-scope";
@@ -35,7 +35,7 @@ async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, holidayUsualWeekdayPct, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, printPaperSize, printMarginHundredthsIn, exportFileName, autoVersionMode, requestArchiveDays, archiveLeaveMetBy } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, holidayUsualWeekdayPct, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, printPaperSize, printMarginHundredthsIn, printUdWidthMode, printUdWidthHundredths, printUdColumnWidths, exportFileName, autoVersionMode, requestArchiveDays, archiveLeaveMetBy } = body;
   // Card #203: "Count shifts from" — a YYYY-MM-DD date, or null to clear. Strictly validated.
   const balanceFromValid = shiftBalanceFrom === null || (typeof shiftBalanceFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(shiftBalanceFrom) && !Number.isNaN(Date.parse(shiftBalanceFrom + "T00:00:00Z")) && new Date(shiftBalanceFrom + "T00:00:00Z").toISOString().startsWith(shiftBalanceFrom));
   if (shiftBalanceFrom !== undefined && !balanceFromValid) {
@@ -153,6 +153,9 @@ async function handlePUT(req: NextRequest) {
   if (printMarginHundredthsIn !== undefined && !validatePrintMargin(printMarginHundredthsIn)) {
     return NextResponse.json({ error: "printMarginHundredthsIn must be a whole number from 25 to 100" }, { status: 400 });
   }
+  // Card #357: the user-defined column width choice; strict on write.
+  const udCheck = validateUdWidthPatch({ printUdWidthMode, printUdWidthHundredths, printUdColumnWidths });
+  if (!udCheck.ok) return NextResponse.json({ error: udCheck.error }, { status: 400 });
   if (dayColumnFormat !== undefined && !isDayColumnFormat(dayColumnFormat)) {
     return NextResponse.json({ error: "dayColumnFormat is not a known format" }, { status: 400 });
   }
@@ -184,6 +187,9 @@ async function handlePUT(req: NextRequest) {
     ...(printPayPeriodLabels !== undefined && { printPayPeriodLabels: printPayPeriodLabels as boolean }),
     ...(printPaperSize !== undefined && { printPaperSize: printPaperSize as string }),
     ...(printMarginHundredthsIn !== undefined && { printMarginHundredthsIn: printMarginHundredthsIn as number }),
+    ...(printUdWidthMode !== undefined && { printUdWidthMode: printUdWidthMode as string }),
+    ...(printUdWidthHundredths !== undefined && { printUdWidthHundredths: printUdWidthHundredths as number }),
+    ...(printUdColumnWidths !== undefined && { printUdColumnWidths: printUdColumnWidths as Prisma.InputJsonValue }),
   };
 
   // Card #300: order of the special schedule columns — strict on write, null resets to the

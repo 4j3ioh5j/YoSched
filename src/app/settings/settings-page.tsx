@@ -3,7 +3,7 @@
 import { ARCHIVE_LEAVE_RULES, ARCHIVE_DAYS_MAX, dateInZone, isValidArchiveDays, type ArchiveLeaveRule } from "@/lib/request-lines";
 import { useTimeZone, TIME_ZONE_EVENT } from "@/app/time-zone-provider";
 import { formatClock, wallClock, zoneChoices } from "@/lib/time-zone";
-import { orderSpecialColumns } from "@/lib/special-columns";
+import { orderSpecialColumns, specialColumnKey } from "@/lib/special-columns";
 import { followAvoidsChanged, type FollowAvoidData } from "@/lib/follow-avoids";
 import { saveErrorMessage } from "@/lib/stale-client";
 import { activationAlreadyCommitted, type CommittedActivation } from "@/lib/activation-retry";
@@ -53,6 +53,11 @@ import {
   PAPER_IN,
   validatePrintMargin,
   printFit,
+  DEFAULT_UD_WIDTH,
+  UD_WIDTH_MIN,
+  UD_WIDTH_MAX,
+  type UdWidthMode,
+  type UdWidthSettings,
   type PrintAlign,
   type PrintBlock,
   type PrintLayout,
@@ -5274,6 +5279,154 @@ function SpecialColumnOrderSection({
   );
 }
 
+// ─── Column Widths Section (card #357) ──────────────────────────────────────
+
+const UD_MODE_CHOICES: { mode: UdWidthMode; label: string; help: string }[] = [
+  { mode: "bestFit", label: "Best fit for each column", help: "Each column is as wide as its title and the longest day's text. (Default)" },
+  { mode: "matchLargest", label: "All match the widest best fit", help: "Every column takes the width of the widest one's best fit." },
+  { mode: "uniform", label: "One custom width for all", help: "Every column takes the width you set." },
+  { mode: "perColumn", label: "Custom width per column", help: "Set a width for each column; a blank one uses best fit." },
+];
+
+/** Inches text ("0.75") → hundredths (75) when it is a valid width, else null. */
+export function udInchesToHundredths(text: string): number | null {
+  const t = text.trim();
+  if (!/^\d*(\.\d{0,2})?$/.test(t) || t === "" || t === ".") return null;
+  const h = Math.round(Number(t) * 100);
+  return Number.isInteger(h) && h >= UD_WIDTH_MIN && h <= UD_WIDTH_MAX ? h : null;
+}
+const udHundredthsToInches = (h: number) => (h / 100).toFixed(2);
+
+type UdDraft = { mode: UdWidthMode; uniform: string; per: Record<string, string> };
+const udDraftFrom = (s: UdWidthSettings): UdDraft => ({
+  mode: s.mode,
+  uniform: udHundredthsToInches(s.uniformHundredths),
+  per: Object.fromEntries(Object.entries(s.perColumn).map(([k, v]) => [k, udHundredthsToInches(v)])),
+});
+
+function UdColumnWidthSection({
+  initial,
+  aggColumns,
+  dedicatedShifts,
+}: {
+  initial: UdWidthSettings;
+  aggColumns: { id: string; label: string }[];
+  dedicatedShifts: { id: string; code: string }[];
+}) {
+  const canEdit = useCanEdit();
+  const [saved, setSaved] = useState<UdWidthSettings>(initial);
+  const [draft, setDraft] = useState<UdDraft | null>(null); // null = showing the saved choice
+  const shown = draft ?? udDraftFrom(saved);
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState("");
+  const saving = status === "saving";
+  const columns = [
+    ...aggColumns.map((c) => ({ key: specialColumnKey("agg", c.id), label: `${c.label || "(untitled)"} · additional column` })),
+    ...dedicatedShifts.map((st) => ({ key: specialColumnKey("ded", st.id), label: `${st.code} · shift column` })),
+  ];
+  const edit = (patch: Partial<UdDraft>) => setDraft({ ...shown, ...patch });
+
+  // What Save would store; null with a message when an entry is not a valid width.
+  const parsed = ((): { value: UdWidthSettings } | { problem: string } => {
+    const uniform = shown.mode === "uniform" ? udInchesToHundredths(shown.uniform) : (udInchesToHundredths(shown.uniform) ?? saved.uniformHundredths);
+    if (uniform == null) return { problem: `Enter a width from ${udHundredthsToInches(UD_WIDTH_MIN)} to ${udHundredthsToInches(UD_WIDTH_MAX)} inches.` };
+    // Entries for columns not on this page (none today) are kept as they were.
+    const perColumn: Record<string, number> = {};
+    for (const [k, v] of Object.entries(saved.perColumn)) if (!columns.some((c) => c.key === k)) perColumn[k] = v;
+    for (const c of columns) {
+      const t = (shown.per[c.key] ?? "").trim();
+      if (t === "") continue;
+      const h = udInchesToHundredths(t);
+      if (h == null) {
+        if (shown.mode === "perColumn") return { problem: `${c.label}: enter a width from ${udHundredthsToInches(UD_WIDTH_MIN)} to ${udHundredthsToInches(UD_WIDTH_MAX)} inches, or leave it blank for best fit.` };
+        const old = saved.perColumn[c.key];
+        if (old != null) perColumn[c.key] = old;
+        continue;
+      }
+      perColumn[c.key] = h;
+    }
+    return { value: { mode: shown.mode, uniformHundredths: uniform, perColumn } };
+  })();
+  const same = (a: UdWidthSettings, b: UdWidthSettings) =>
+    a.mode === b.mode && a.uniformHundredths === b.uniformHundredths
+    && JSON.stringify(Object.entries(a.perColumn).sort()) === JSON.stringify(Object.entries(b.perColumn).sort());
+  const dirty = draft !== null && (!("value" in parsed) || !same(parsed.value, saved));
+  const isDefault = same(saved, DEFAULT_UD_WIDTH);
+
+  async function put(value: UdWidthSettings) {
+    setStatus("saving");
+    setError("");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ printUdWidthMode: value.mode, printUdWidthHundredths: value.uniformHundredths, printUdColumnWidths: value.perColumn }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setSaved({ ...value, perColumn: { ...value.perColumn } });
+      setDraft(null);
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save");
+      setStatus("error");
+    }
+  }
+
+  const input = "w-20 px-2 py-1 text-xs bg-slate-900 border border-slate-600 rounded text-slate-200 disabled:opacity-50";
+  return (
+    <CollapsibleSection
+      id="ud-column-widths"
+      title="Column Widths"
+      description="How wide the Additional Columns and the shift columns print: on the printed schedule, the year PDF and spreadsheet, and the schedule's print columns view. A column is never narrower than its title; when the columns do not fit the page, they narrow together (widest first) and the printout shrinks if it must."
+      status={status}
+      error={error}
+    >
+      <div className="space-y-2" role="radiogroup" aria-label="Column width">
+        {UD_MODE_CHOICES.map((c) => (
+          <label key={c.mode} className="flex items-start gap-2 text-sm text-slate-300">
+            <input type="radio" name="ud-width-mode" className="mt-1" checked={shown.mode === c.mode} disabled={!canEdit || saving} onChange={() => edit({ mode: c.mode })} />
+            <span>
+              {c.label}
+              <span className="block text-xs text-slate-500">{c.help}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      {shown.mode === "uniform" && (
+        <label className="mt-3 flex items-center gap-2 text-sm text-slate-300">
+          Width
+          <input type="text" inputMode="decimal" aria-label="Width for all columns, in inches" className={input} value={shown.uniform} disabled={!canEdit || saving} onChange={(e) => edit({ uniform: e.target.value })} />
+          inches ({udHundredthsToInches(UD_WIDTH_MIN)}–{udHundredthsToInches(UD_WIDTH_MAX)})
+        </label>
+      )}
+      {shown.mode === "perColumn" && (
+        columns.length === 0 ? (
+          <p className="mt-3 text-xs text-slate-500">No additional or shift columns are set up.</p>
+        ) : (
+          <ul className="mt-3 space-y-1">
+            {columns.map((c) => (
+              <li key={c.key} className="flex items-center gap-2 text-sm text-slate-300">
+                <span className="flex-1">{c.label}</span>
+                <input type="text" inputMode="decimal" aria-label={`${c.label} width, in inches`} placeholder="best fit" className={input} value={shown.per[c.key] ?? ""} disabled={!canEdit || saving} onChange={(e) => edit({ per: { ...shown.per, [c.key]: e.target.value } })} />
+                <span className="text-xs text-slate-500">in</span>
+              </li>
+            ))}
+          </ul>
+        )
+      )}
+      {draft !== null && "problem" in parsed && <p className="mt-2 text-xs text-amber-400">{parsed.problem}</p>}
+      {canEdit && (
+        <div className="mt-3 flex gap-2">
+          <button type="button" disabled={!dirty || saving || !("value" in parsed)} onClick={() => "value" in parsed && put(parsed.value)} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded text-white">Save</button>
+          <button type="button" disabled={saving || draft === null} onClick={() => setDraft(null)} className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-300">Cancel</button>
+          <button type="button" disabled={isDefault || saving} onClick={() => put({ ...DEFAULT_UD_WIDTH, perColumn: {} })} className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-40 rounded text-slate-300">Reset to default</button>
+        </div>
+      )}
+    </CollapsibleSection>
+  );
+}
+
 // ─── Count Columns Section ──────────────────────────────────────────────────
 
 function CountColumnsSection({ initial, shiftTypes, onSaved }: { initial: { id: string; label: string; shiftTypeIds: string[] }[]; shiftTypes: ShiftType[]; onSaved?: (saved: { id: string; label: string }[]) => void }) {
@@ -6989,6 +7142,11 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
             aggColumns={savedAggColumns}
             dedicatedShifts={shiftTypes.filter((st) => st.dedicatedColumn).map((st) => ({ id: st.id, code: st.code }))}
             countColumns={savedCountColumns}
+          />
+          <UdColumnWidthSection
+            initial={schedulingPrefs.printLayout.udWidth}
+            aggColumns={savedAggColumns}
+            dedicatedShifts={shiftTypes.filter((st) => st.dedicatedColumn).map((st) => ({ id: st.id, code: st.code }))}
           />
           <DayShadingSection initial={schedulingPrefs} />
           <PrintHeaderFooterSection initial={schedulingPrefs.printLayout} />

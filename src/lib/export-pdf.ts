@@ -6,7 +6,7 @@
 // fallback the printout uses.
 
 import type { PrintedMonth } from "./print-month-model";
-import { PAPER_IN, DEFAULT_PRINT_PAPER, isPrintPaper, printPage, type PrintLayout } from "./print-layout";
+import { PAPER_IN, DEFAULT_PRINT_PAPER, isPrintPaper, printPage, udWidthsIn, DEFAULT_UD_WIDTH, type PrintLayout } from "./print-layout";
 
 /** Card #323: the landscape page in points, with the Settings paper and margin (the same ones
  *  the printout uses). */
@@ -23,6 +23,14 @@ const MAX_MONTH_DAYS = 31;
 
 /** Width of a line of text in points: a safe upper estimate for a narrow font. */
 const textW = (s: string, size: number) => s.length * size * 0.52;
+
+/** Card #357: a custom width can be narrower than a cell's text; that one cell's text shrinks to
+ *  fit rather than spill into its neighbor. */
+export function pdfCellFontSize(text: string, colW: number, size: number): number {
+  const w = textW(text, size);
+  const room = colW - CELL_PAD;
+  return w > room && w > 0 && room > 0 ? size * room / w : size;
+}
 
 export type PdfMonthLayout = {
   fontSize: number;
@@ -59,16 +67,34 @@ export function pdfMonthLayout(m: PrintedMonth): PdfMonthLayout {
     heads.map((_, i) => Math.max(size * 2.2, ...texts.map((row) => textW(row[i] ?? "", size))) + CELL_PAD);
   const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
 
-  // Shrink for width (column widths scale with the font) and for height, never grow.
+  // Card #357: the user-defined columns (additional and shift columns) take the Settings width
+  // choice, fitted with the shared page-fit rule into the room the other columns leave; they are
+  // never stretched. The other columns stretch into what is left, as before.
+  const lead = m.splitDateDay ? 2 : 1;
+  const isUd = heads.map((_, i) => i >= lead && (m.columns[i - lead]?.kind === "agg" || m.columns[i - lead]?.kind === "ded"));
+  const udSettings = L.udWidth ?? DEFAULT_UD_WIDTH;
+  const widthsAt = (size: number) => {
+    const nat = natural(size);
+    const udCols = heads.flatMap((h, i) => (isUd[i] ? [{ key: m.columns[i - lead].key ?? `#${i}`, fitIn: nat[i] / 72, titleIn: (textW(h, size) + CELL_PAD) / 72, i }] : []));
+    const otherNat = sum(nat.filter((_, i) => !isUd[i]));
+    const ud = udWidthsIn(udSettings, udCols, (availW - otherNat) / 72);
+    const udW = new Map(udCols.map((c) => [c.i, ud.get(c.key)! * 72]));
+    return { nat, otherNat, udW, total: otherNat + sum([...udW.values()]) };
+  };
+
+  // Shrink for height, then for width (titles and natural widths scale with the font; when the
+  // titles alone — or one width's widest title times the columns — do not fit, the font shrinks
+  // until they do), never grow.
   let fontSize = Math.min(L.fontSize, rowH / 1.15);
-  const w0 = sum(natural(fontSize));
+  const w0 = widthsAt(fontSize).total;
   if (w0 > availW) fontSize *= availW / w0;
   // Integer CELL_PAD keeps a little overflow after the proportional shrink; settle it.
-  for (let k = 0; k < 20 && sum(natural(fontSize)) > availW; k++) fontSize *= 0.97;
+  for (let k = 0; k < 60 && widthsAt(fontSize).total > availW; k++) fontSize *= 0.97;
 
-  const nat = natural(fontSize);
-  const stretch = Math.min(MAX_STRETCH, availW / sum(nat));
-  const colW = nat.map((w) => w * Math.max(1, stretch));
+  const { nat, otherNat, udW } = widthsAt(fontSize);
+  const udSum = sum([...udW.values()]);
+  const stretch = otherNat > 0 ? Math.min(MAX_STRETCH, (availW - udSum) / otherNat) : 1;
+  const colW = nat.map((w, i) => udW.get(i) ?? w * Math.max(1, stretch));
   const tableW = sum(colW);
   const tableLeft = PAGE.margin + Math.max(0, (availW - tableW) / 2);
   return { fontSize, titleTop, tableTop, tableLeft, rowH, colW, labelW, footerTop, footerSize };
@@ -122,7 +148,7 @@ export async function exportYearPdf(
         }
         if (t) {
           doc.setFont(FONT, bolds[i] ? "bold" : "normal");
-          doc.setFontSize(lay.fontSize);
+          doc.setFontSize(pdfCellFontSize(t, colW[i], lay.fontSize));
           doc.text(t, xs[i] + colW[i] / 2, y + rowH / 2, { align: "center", baseline: "middle" });
         }
       });

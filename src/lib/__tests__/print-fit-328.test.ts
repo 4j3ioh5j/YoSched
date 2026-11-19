@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
-  aggPrintWidthCss, autoColNeedCh, autoColNeedPx, printReservedIn, PRINT_COL_IN, AUTO_COL_FALLBACK_CH, AUTO_COL_PAD_PX,
+  autoColNeedCh, autoColNeedPx, printReservedIn, PRINT_COL_IN, AUTO_COL_FALLBACK_CH, AUTO_COL_PAD_PX,
   DEFAULT_PRINT_LAYOUT, printFit, printPage, type PrintLayout,
 } from "../print-layout";
 import * as lib from "../print-layout";
@@ -19,13 +19,6 @@ const letter1: PrintLayout = { ...DEFAULT_PRINT_LAYOUT, paper: "letter", marginH
 const a4big: PrintLayout = { ...DEFAULT_PRINT_LAYOUT, paper: "a4", marginHundredths: 100, fontSize: 14, header: { ...DEFAULT_PRINT_LAYOUT.header, size: 32 }, footer: { ...DEFAULT_PRINT_LAYOUT.footer, size: 32 } };
 
 /** The room term the CSS must carry, rebuilt independently. */
-function spare(layout: PrintLayout, reservedIn: number, autoCount: number, needPx: number, titles: number[]) {
-  const page = printPage(layout);
-  const { scale } = printFit(layout);
-  const w = +((page.wIn - 2 * page.marginIn) / scale - reservedIn).toFixed(4);
-  const sumCh = titles.reduce((s, t) => s + t, 0);
-  return `max(0px, calc((${w}in - ${autoCount} * ${needPx + AUTO_COL_PAD_PX}px - ${sumCh}ch - ${titles.length * 12}px) / ${titles.length}))`;
-}
 
 describe("no fixed share any more", () => {
   it("AGG_PRINT_SHARE is gone", () => {
@@ -53,7 +46,9 @@ describe("printReservedIn: the fixed-width columns, from the same constants the 
     expect(print).toMatch(new RegExp(`\\[data-date-col\\] \\{\\s*width: ${PRINT_COL_IN.date}in !important;`));
     expect(print).toMatch(new RegExp(`\\[data-day-col\\] \\{\\s*width: var\\(--day-col-w, ${PRINT_COL_IN.day}in\\) !important;`));
     expect(print).toMatch(new RegExp(`\\[data-date-col\\]\\[data-date-block-end\\] \\{\\s*width: ${PRINT_COL_IN.dateSingle}in !important;`));
-    expect(print).toMatch(new RegExp(`th\\[data-print-ded\\], td\\[data-print-ded\\] \\{\\s*width: ${PRINT_COL_IN.ded}in !important;`));
+    // card #357: shift columns take the user-defined column width, no fixed 0.48in
+    expect(print).not.toMatch(/data-print-ded\][^{]*\{[^}]*width:/);
+    expect(print).toMatch(/th\[data-ud-col\], td\[data-ud-col\] \{\s*width: var\(--ud-col-w, auto\) !important;/);
     expect(print).toMatch(new RegExp(`width: var\\(--pp-label-w, ${PRINT_COL_IN.ppLabel}in\\) !important;`));
     expect(grid).toMatch(/"--day-col-w": `\$\{printLayout\.dayColumnFormat === "Dddd" \? PRINT_COL_IN\.dayLong : PRINT_COL_IN\.day\}in`/);
     expect(grid).toMatch(/const PP_LABEL_W = \(on: boolean\) => \(on \? `\$\{PRINT_COL_IN\.ppLabel\}in` : "0px"\);/);
@@ -78,47 +73,10 @@ describe("autoColNeedPx: the widest text as the browser measures it", () => {
   });
 });
 
-describe("aggPrintWidthCss from the spare room", () => {
-  it("fits its longest text, never past its title plus an equal part of what the staff columns and all titles leave", () => {
-    const room = { reservedIn: 0.78, autoCount: 23, autoNeedPx: 28, autoNeedCh: 4, titlesCh: [3] };
-    const out = aggPrintWidthCss("OFF", [["AB", "CD"]], room, letter1);
-    expect(out).not.toMatch(/%/);
-    expect(out).toBe(`min(calc(6ch + 12px), calc(3ch + 12px + ${spare(letter1, 0.78, 23, 28, [3])}))`);
-  });
-  it("more staff columns, or longer staff text, leave less spare room", () => {
-    const few = aggPrintWidthCss("FB", [], { reservedIn: 0.78, autoCount: 5, autoNeedPx: 21, autoNeedCh: 3, titlesCh: [3] }, letter1);
-    const many = aggPrintWidthCss("FB", [], { reservedIn: 0.78, autoCount: 30, autoNeedPx: 21, autoNeedCh: 3, titlesCh: [3] }, letter1);
-    const wide = aggPrintWidthCss("FB", [], { reservedIn: 0.78, autoCount: 5, autoNeedPx: 42, autoNeedCh: 6, titlesCh: [3] }, letter1);
-    expect(few).toContain(`- 5 * ${21 + AUTO_COL_PAD_PX}px`);
-    expect(many).toContain(`- 30 * ${21 + AUTO_COL_PAD_PX}px`);
-    expect(wide).toContain(`- 5 * ${6 * 7 + AUTO_COL_PAD_PX}px`);
-  });
-  it("every aggregate title is paid for before the spare is shared (a long title elsewhere shrinks this column's extra, not the staff room)", () => {
-    const room = { reservedIn: 0.78, autoCount: 23, autoNeedPx: 28, autoNeedCh: 4, titlesCh: [3, 16] };
-    const out = aggPrintWidthCss("FB", [["AB", "CD", "EF"]], room, letter1);
-    expect(out).toBe(`min(calc(10ch + 12px), calc(3ch + 12px + ${spare(letter1, 0.78, 23, 28, [3, 16])}))`);
-    expect(out).toContain("- 19ch - 24px) / 2)");
-  });
-  it("no spare room → the title alone (it always fits on one line, card #323)", () => {
-    const out = aggPrintWidthCss("ORIENTATION LIST", [["AB", "CD", "EF", "GH", "IJ", "KL", "MN"]], { reservedIn: 0.78, autoCount: 200, autoNeedPx: 56, autoNeedCh: 8, titlesCh: [16] }, letter1);
-    expect(out).toMatch(/^min\(calc\(26ch \+ 12px\), calc\(16ch \+ 12px \+ max\(0px, /);
-  });
-  it("the page width grows by the shrink factor (zoom), the fixed columns do not", () => {
-    expect(printFit(a4big).scale).toBeLessThan(1);
-    const room = { reservedIn: 1.2, autoCount: 10, autoNeedPx: 21, autoNeedCh: 3, titlesCh: [3, 3] };
-    expect(aggPrintWidthCss("FB", [], room, a4big)).toBe(`min(calc(3ch + 12px), calc(3ch + 12px + ${spare(a4big, 1.2, 10, 21, [3, 3])}))`);
-  });
-  it("before the browser has measured, each character counts as the widest measured letter", () => {
-    const out = aggPrintWidthCss("FB", [], { reservedIn: 0.78, autoCount: 20, autoNeedPx: null, autoNeedCh: 4, titlesCh: [3] }, letter1);
-    expect(out).toContain(`- 20 * (${4 * AUTO_COL_FALLBACK_CH}ch + ${AUTO_COL_PAD_PX}px)`);
-    expect(AUTO_COL_FALLBACK_CH).toBeGreaterThanOrEqual(1.8); // trial: bold "WWW" in the bundled narrow font
-  });
-  it("bad numbers do not break the CSS", () => {
-    const out = aggPrintWidthCss("FB", [], { reservedIn: NaN, autoCount: -1, autoNeedPx: NaN, autoNeedCh: Infinity, titlesCh: [] }, letter1);
-    expect(out).not.toMatch(/NaN|Infinity|-1 \*|\/ 0\)/);
-  });
+describe("the grid measures in the print font (card #328, widths from card #357)", () => {
   it("the grid passes the room from print-visible columns", () => {
-    expect(grid).toMatch(/"--agg-col-w": aggPrintWidthCss\(c\.label, Object\.values\(c\.initialsByDate\), printAggRoom, printLayout\)/);
+    expect(grid).toContain("printUdWidthsIn(printLayout, cols, {");
+    expect(grid).toContain("autoNeedPx: printAutoNeedPx,");
     expect(grid).toMatch(/printHiddenIds\.has\(p\.id\)/);
     expect(grid).toContain("ref={printRootRef}");
     expect(grid).toContain("{ texts: printAutoTexts.texts, measure: width(span) }");

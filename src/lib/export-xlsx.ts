@@ -4,7 +4,7 @@
 // so the schedule page bundle does not carry it.
 
 import type { Borders, Border, Cell, Worksheet } from "exceljs";
-import type { DateColumnFormat } from "./print-layout";
+import { udRequestedIn, DEFAULT_UD_WIDTH, type DateColumnFormat } from "./print-layout";
 import type { PrintedMonth } from "./print-month-model";
 
 const DATE_NUM_FMT: Record<DateColumnFormat, string> = {
@@ -28,6 +28,26 @@ function colLetter(n: number): string {
   return s;
 }
 
+const XLSX_MIN_W = 4.71;
+const charsFor = (s: string) => s.length * 1.1 + 1.5;
+// Excel column width (characters of the default font) ↔ inches at 96 px/in: px = chars·7 + 5.
+const inFromChars = (w: number) => (w * 7 + 5) / 96;
+const charsFromIn = (inch: number) => (inch * 96 - 5) / 7;
+
+/** Card #357: the Excel width of each printed column. Staff columns stay narrow; count columns
+ *  fit their label; the user-defined columns (additional and shift columns) take the Settings
+ *  width choice, best fit measuring the label and every day's text. A sheet scrolls, so there is
+ *  no page fit here. */
+export function xlsxColumnWidths(m: PrintedMonth): number[] {
+  const longest = (i: number) => Math.max(0, ...m.rows.map((r) => r.cells[i]?.text.length ?? 0));
+  const udCols = m.columns.flatMap((c, i) => (c.kind === "agg" || c.kind === "ded"
+    ? [{ i, key: c.key ?? `#${i}`, fitIn: inFromChars(Math.max(XLSX_MIN_W, charsFor(c.label), longest(i) * 1.1 + 1.5)), titleIn: inFromChars(Math.max(XLSX_MIN_W, charsFor(c.label))) }]
+    : []));
+  const ud = udRequestedIn(m.layout.udWidth ?? DEFAULT_UD_WIDTH, udCols);
+  const byIdx = new Map(udCols.map((c) => [c.i, charsFromIn(ud.get(c.key)!)]));
+  return m.columns.map((c, i) => byIdx.get(i) ?? (c.kind === "staff" ? XLSX_MIN_W : Math.max(XLSX_MIN_W, charsFor(c.label))));
+}
+
 function writeMonth(ws: Worksheet, m: PrintedMonth) {
   const L = m.layout;
   const font = { name: L.fontFamily, size: L.fontSize };
@@ -42,8 +62,8 @@ function writeMonth(ws: Worksheet, m: PrintedMonth) {
   // Widths in Excel character units, close to the reference workbook.
   ws.getColumn(1).width = m.splitDateDay ? 5.29 : 9.5;
   if (m.splitDateDay) ws.getColumn(2).width = L.dayColumnFormat === "Dddd" ? 9 : 4.71;
-  m.columns.forEach((c, i) => {
-    ws.getColumn(dateCols + 1 + i).width = c.kind === "staff" ? 4.71 : Math.max(4.71, c.label.length * 1.1 + 1.5, ...(c.kind === "agg" ? [8.71] : []));
+  xlsxColumnWidths(m).forEach((w, i) => {
+    ws.getColumn(dateCols + 1 + i).width = w;
   });
   ws.getColumn(labelCol).width = 4.29;
 

@@ -140,6 +140,119 @@ export function ppLabelText(n: number): string {
   return `PP#${pad2(n)}`;
 }
 
+/** Card #357: how wide the user-defined columns print (additional columns such as OTHER and
+ *  shift columns such as CARD/ICU/OR): each at its best fit (the default), all at the widest
+ *  best fit, one custom width for all, or a custom width per column (a column without one:
+ *  best fit). Widths are in hundredths of an inch; per-column entries are keyed like the
+ *  Column Order ("agg:<id>", "ded:<id>"), and a key naming no current column is ignored. */
+export const UD_WIDTH_MODES = ["bestFit", "matchLargest", "uniform", "perColumn"] as const;
+export type UdWidthMode = (typeof UD_WIDTH_MODES)[number];
+export type UdWidthSettings = { mode: UdWidthMode; uniformHundredths: number; perColumn: Record<string, number> };
+export const UD_WIDTH_MIN = 20;
+export const UD_WIDTH_MAX = 200;
+export const UD_WIDTH_MAX_ENTRIES = 500;
+export const DEFAULT_UD_WIDTH: UdWidthSettings = Object.freeze({ mode: "bestFit", uniformHundredths: 50, perColumn: Object.freeze({}) as Record<string, number> }) as UdWidthSettings;
+const UD_KEY_RE = /^(agg|ded):[A-Za-z0-9_-]{1,64}$/;
+
+export function isUdWidthMode(v: unknown): v is UdWidthMode {
+  return typeof v === "string" && (UD_WIDTH_MODES as readonly string[]).includes(v);
+}
+export function validUdHundredths(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= UD_WIDTH_MIN && v <= UD_WIDTH_MAX;
+}
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** The stored settings → the choice; each bad field (or per-column entry) → its default. */
+export function parseUdWidth(mode: unknown, hundredths: unknown, perColumn: unknown): UdWidthSettings {
+  const map: Record<string, number> = {};
+  if (isPlainObject(perColumn)) {
+    for (const [k, v] of Object.entries(perColumn).slice(0, UD_WIDTH_MAX_ENTRIES)) if (UD_KEY_RE.test(k) && validUdHundredths(v)) map[k] = v;
+  }
+  return {
+    mode: isUdWidthMode(mode) ? mode : DEFAULT_UD_WIDTH.mode,
+    uniformHundredths: validUdHundredths(hundredths) ? hundredths : DEFAULT_UD_WIDTH.uniformHundredths,
+    perColumn: map,
+  };
+}
+
+/** Strict check of a Settings save: undefined fields are not being saved. */
+export function validateUdWidthPatch(b: Record<string, unknown>): { ok: true } | { ok: false; error: string } {
+  if (b.printUdWidthMode !== undefined && !isUdWidthMode(b.printUdWidthMode)) return { ok: false, error: `printUdWidthMode must be one of ${UD_WIDTH_MODES.join(", ")}` };
+  if (b.printUdWidthHundredths !== undefined && !validUdHundredths(b.printUdWidthHundredths)) return { ok: false, error: `printUdWidthHundredths must be a whole number from ${UD_WIDTH_MIN} to ${UD_WIDTH_MAX}` };
+  const m = b.printUdColumnWidths;
+  if (m !== undefined) {
+    if (!isPlainObject(m)) return { ok: false, error: "printUdColumnWidths must be an object of column widths" };
+    const entries = Object.entries(m);
+    if (entries.length > UD_WIDTH_MAX_ENTRIES) return { ok: false, error: `printUdColumnWidths has more than ${UD_WIDTH_MAX_ENTRIES} entries` };
+    for (const [k, v] of entries) {
+      if (!UD_KEY_RE.test(k)) return { ok: false, error: "printUdColumnWidths keys must look like agg:<id> or ded:<id>" };
+      if (!validUdHundredths(v)) return { ok: false, error: `printUdColumnWidths widths must be whole numbers from ${UD_WIDTH_MIN} to ${UD_WIDTH_MAX}` };
+    }
+  }
+  return { ok: true };
+}
+
+export type UdColumnFit = { key: string; fitIn: number; titleIn: number };
+const posFinite = (n: number) => Number.isFinite(n) && n > 0;
+/** A column's best fit, never junk: its fit, else its title, else the narrowest custom width. */
+const safeFit = (c: UdColumnFit) => posFinite(c.fitIn) ? c.fitIn : posFinite(c.titleIn) ? c.titleIn : UD_WIDTH_MIN / 100;
+const safeTitle = (c: UdColumnFit) => posFinite(c.titleIn) ? c.titleIn : 0;
+
+/** Card #357: the width (inches) each user-defined column asks for under the Settings choice,
+ *  never narrower than its title (a header prints on one line, card #323). */
+export function udRequestedIn(s: UdWidthSettings, cols: readonly UdColumnFit[]): Map<string, number> {
+  const out = new Map<string, number>();
+  const largest = cols.reduce((m, c) => Math.max(m, safeFit(c)), 0);
+  // One width / match largest: one group with one floor (the widest title), so they stay equal.
+  const equal = s.mode === "uniform" || s.mode === "matchLargest";
+  const maxTitle = cols.reduce((m, c) => Math.max(m, safeTitle(c)), 0);
+  for (const c of cols) {
+    const custom = s.perColumn[c.key];
+    const w = s.mode === "matchLargest" ? largest
+      : s.mode === "uniform" ? s.uniformHundredths / 100
+      : s.mode === "perColumn" && validUdHundredths(custom) ? custom / 100
+      : safeFit(c);
+    out.set(c.key, Math.max(w, equal ? maxTitle : safeTitle(c)));
+  }
+  return out;
+}
+
+/** Card #357: the requested widths fitted to `roomIn`, what the page leaves the user-defined
+ *  columns. When they do not fit, every column narrows together: the room beyond the titles is
+ *  shared in proportion to what each asks beyond its title, and no column goes below its title
+ *  (a header prints on one line, card #323). A junk room keeps the requested widths. */
+export function udWidthsIn(s: UdWidthSettings, cols: readonly UdColumnFit[], roomIn: number): Map<string, number> {
+  // Fit the requested widths into roomIn with one shared cap (water-fill): every column is
+  // min(requested, cap), never below its title, and the cap is the widest that fills the room
+  // exactly. Columns asking the same width stay equal (one width / match largest), the widest
+  // narrow first, and the total never exceeds the room unless the titles alone do — then each
+  // column keeps its title (the header stays on one line) and the page's own fit (browser
+  // scale-to-fit, PDF font shrink) absorbs the rest.
+  const req = udRequestedIn(s, cols);
+  if (cols.length === 0) return req; // nothing to fit (a month with no user-defined columns)
+  const total = [...req.values()].reduce((a, b) => a + b, 0);
+  if (!Number.isFinite(roomIn) || total <= roomIn) return req;
+  if (s.mode === "uniform" || s.mode === "matchLargest") {
+    // One group: the same width for all, never below the widest title.
+    const maxTitle = cols.reduce((m, c) => Math.max(m, safeTitle(c)), 0);
+    const each = Math.max(maxTitle, Math.min(req.get(cols[0].key)!, roomIn / cols.length));
+    return new Map(cols.map((c) => [c.key, each]));
+  }
+  const titles = cols.map((c) => safeTitle(c));
+  const want = cols.map((c) => req.get(c.key)!);
+  const widthAt = (cap: number) => cols.map((_, i) => Math.max(titles[i], Math.min(want[i], cap)));
+  const sumAt = (cap: number) => widthAt(cap).reduce((a, b) => a + b, 0);
+  let lo = 0;
+  let hi = Math.max(0, ...want);
+  if (sumAt(lo) >= roomIn) hi = lo;
+  else for (let k = 0; k < 60; k++) { const mid = (lo + hi) / 2; if (sumAt(mid) > roomIn) hi = mid; else lo = mid; }
+  const w = widthAt(sumAt(hi) > roomIn ? lo : hi);
+  const out = new Map<string, number>();
+  cols.forEach((c, i) => out.set(c.key, w[i]));
+  return out;
+}
+
 export type PrintLayout = {
   header: PrintBlock;
   footer: PrintBlock;
@@ -151,6 +264,7 @@ export type PrintLayout = {
   payPeriodLabels: boolean;
   paper: PrintPaper;
   marginHundredths: number;
+  udWidth: UdWidthSettings;
 };
 
 export const DEFAULT_PRINT_FONT_FAMILY = "Aptos Narrow";
@@ -167,6 +281,7 @@ export const DEFAULT_PRINT_LAYOUT: PrintLayout = {
   payPeriodLabels: true,
   paper: "letter",
   marginHundredths: 25,
+  udWidth: DEFAULT_UD_WIDTH,
 };
 
 type PrintLayoutPrefs = {
@@ -180,12 +295,15 @@ type PrintLayoutPrefs = {
   printPayPeriodLabels?: unknown;
   printPaperSize?: unknown;
   printMarginHundredthsIn?: unknown;
+  printUdWidthMode?: unknown;
+  printUdWidthHundredths?: unknown;
+  printUdColumnWidths?: unknown;
 };
 
 /** The SchedulingPreferences row (or null) → the print layout; each bad field → its default. */
 export function printLayoutFrom(p: PrintLayoutPrefs | null | undefined): PrintLayout {
   const d = DEFAULT_PRINT_LAYOUT;
-  if (!p) return { ...d, header: { ...d.header }, footer: { ...d.footer } };
+  if (!p) return { ...d, header: { ...d.header }, footer: { ...d.footer }, udWidth: parseUdWidth(undefined, undefined, undefined) };
   return {
     header: resolvePrintBlock(p.printHeader, "header"),
     footer: resolvePrintBlock(p.printFooter, "footer"),
@@ -197,6 +315,7 @@ export function printLayoutFrom(p: PrintLayoutPrefs | null | undefined): PrintLa
     payPeriodLabels: typeof p.printPayPeriodLabels === "boolean" ? p.printPayPeriodLabels : d.payPeriodLabels,
     paper: isPrintPaper(p.printPaperSize) ? p.printPaperSize : d.paper,
     marginHundredths: validatePrintMargin(p.printMarginHundredthsIn) ? p.printMarginHundredthsIn : d.marginHundredths,
+    udWidth: parseUdWidth(p.printUdWidthMode, p.printUdWidthHundredths, p.printUdColumnWidths),
   };
 }
 
@@ -264,13 +383,25 @@ export function printRowHeightIn(layout: Pick<PrintLayout, "header" | "footer" |
   return printFit(layout).rowIn;
 }
 
+/** Card #357: the printout's shrink factor with the width taken into account too: when the
+ *  columns need more than the printable width (at the height shrink), everything shrinks
+ *  further so the row still fits across the page. A junk or absent need keeps the height one. */
+export function printWidthScale(printableWIn: number, heightScale: number, widthNeedIn?: number): number {
+  if (widthNeedIn == null || !Number.isFinite(widthNeedIn) || widthNeedIn <= 0) return heightScale;
+  if (widthNeedIn * heightScale <= printableWIn + 1e-9) return heightScale;
+  // Rounded down so the row always fits; never zero (a zoom of 0 would hide the printout).
+  const f = Math.floor((printableWIn / widthNeedIn) * 1000) / 1000;
+  return f > 0 ? f : printableWIn / widthNeedIn;
+}
+
 /** The print-only CSS for the page: built only from a known paper name and numbers, never from
  *  stored text. Zero page margin keeps the browser's own header and footer off (card #173); the
  *  margin is the body's padding instead. */
-export function printPageStyle(layout: PrintLayout): string {
+export function printPageStyle(layout: PrintLayout, widthNeedIn?: number): string {
   const page = printPage(layout);
   const css = PAPER_IN[isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER].css;
-  const { scale } = printFit({ ...layout, paper: isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER, marginHundredths: page.marginIn * 100 });
+  const fit = printFit({ ...layout, paper: isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER, marginHundredths: page.marginIn * 100 });
+  const scale = printWidthScale(page.wIn - 2 * page.marginIn, fit.scale, widthNeedIn);
   return `@page{size:${css} landscape;margin:0}body{padding:${page.marginIn}in !important}` + (scale < 1 ? `[data-print-root]{zoom:${scale}}` : "");
 }
 
@@ -340,33 +471,43 @@ export function printNeedPx(groups: readonly { texts: Iterable<string>; measure:
   return need;
 }
 
-/** autoNeedPx: the measured widest staff/count text (null = not measured yet: autoNeedCh ×
- *  AUTO_COL_FALLBACK_CH is used instead). */
-export type AggRoom = { reservedIn: number; autoCount: number; autoNeedPx: number | null; autoNeedCh: number; titlesCh: readonly number[] };
 
 const finite = (n: number, min = 0) => (Number.isFinite(n) && n > min ? n : min);
 
-/** Card #327 + #328: an aggregate column's print width (CSS): fits its longest text
- *  (aggPrintWidthCh), but never past its title plus an equal part of the spare room. The spare
- *  room is the printable width (divided by the shrink factor: the zoom in printPageStyle scales
- *  inches too) less the fixed columns, less what the equal-share staff/count columns need, less
- *  EVERY aggregate title (Codex #1562: a long title on one column must not take another's staff
- *  room). The staff need is measured by the browser in the print font (autoColNeedPx).
- *  When nothing is spare the title alone (it always fits on one line, card #323).
- *  Never a percentage: Chrome drops a min() holding a % for a fixed-layout table cell. */
-export function aggPrintWidthCss(label: string, lists: readonly (readonly string[])[], room: AggRoom, layout: PrintLayout): string {
+
+/** Card #357: what a user-defined print cell needs besides its text (side padding + borders),
+ *  the same 12px the additional columns always had. */
+export const UD_CELL_PAD_PX = 12;
+/** Card #357: one user-defined column of the browser printout. fitPx / titlePx are the widest
+ *  day text and the title as the browser measured them in the print font (null = not measured
+ *  yet: fitCh / titleCh characters at AUTO_COL_FALLBACK_CH × half the font size are used). */
+export type UdPrintCol = { key: string; fitPx: number | null; titlePx: number | null; fitCh: number; titleCh: number };
+export type UdPrintRoom = { reservedIn: number; autoCount: number; autoNeedPx: number | null; autoNeedCh: number };
+
+/** Card #357: the browser printout's width (inches) for each user-defined column, from the
+ *  Settings choice, fitted into the room the fixed columns and the equal-share staff and count
+ *  columns leave on the page (divided by the shrink factor: the print zoom scales inches too). */
+export function printUdWidthsIn(layout: PrintLayout, cols: readonly UdPrintCol[], room: UdPrintRoom): { widths: Map<string, number>; needIn: number } {
   const page = printPage(layout);
   const { scale } = printFit({ ...layout, paper: isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER, marginHundredths: page.marginIn * 100 });
-  const titleCh = aggPrintWidthCh(label, []);
-  const titles = room.titlesCh.length > 0 ? room.titlesCh.map((t) => finite(t)) : [titleCh];
-  const k = titles.length;
-  const sumCh = titles.reduce((s, t) => s + t, 0);
-  const w = +((page.wIn - 2 * page.marginIn) / scale - finite(room.reservedIn)).toFixed(4);
+  const fontPt = Number.isFinite(layout.fontSize) && layout.fontSize > 0 ? layout.fontSize : DEFAULT_PRINT_FONT_SIZE;
+  const chIn = (ch: number) => (finite(ch) * AUTO_COL_FALLBACK_CH * fontPt * 0.5) / 72;
+  const inOf = (px: number | null, ch: number) =>
+    (px != null && Number.isFinite(px) && px >= 0 ? px / 96 : chIn(ch)) + UD_CELL_PAD_PX / 96;
+  const fits: UdColumnFit[] = cols.map((c) => {
+    const titleIn = inOf(c.titlePx, c.titleCh);
+    return { key: c.key, titleIn, fitIn: Math.max(titleIn, inOf(c.fitPx, c.fitCh)) };
+  });
   const autoCount = Number.isInteger(room.autoCount) && room.autoCount > 0 ? room.autoCount : 0;
   const needCh = Number.isFinite(room.autoNeedCh) && room.autoNeedCh > 1 ? room.autoNeedCh : 1;
-  const need = room.autoNeedPx != null && Number.isFinite(room.autoNeedPx) && room.autoNeedPx > 0
-    ? `${Math.ceil(room.autoNeedPx) + AUTO_COL_PAD_PX}px`
-    : `(${+(needCh * AUTO_COL_FALLBACK_CH).toFixed(4)}ch + ${AUTO_COL_PAD_PX}px)`;
-  const spare = `max(0px, calc((${w}in - ${autoCount} * ${need} - ${sumCh}ch - ${k * 12}px) / ${k}))`;
-  return `min(calc(${aggPrintWidthCh(label, lists)}ch + 12px), calc(${titleCh}ch + 12px + ${spare}))`;
+  const needIn = room.autoNeedPx != null && Number.isFinite(room.autoNeedPx) && room.autoNeedPx > 0
+    ? (Math.ceil(room.autoNeedPx) + AUTO_COL_PAD_PX) / 96
+    : chIn(needCh) + AUTO_COL_PAD_PX / 96;
+  const fixedIn = finite(room.reservedIn) + autoCount * needIn;
+  const roomIn = (page.wIn - 2 * page.marginIn) / scale - fixedIn;
+  const widths = udWidthsIn(layout.udWidth ?? DEFAULT_UD_WIDTH, fits, Math.max(0, roomIn));
+  // needIn: the whole row's width at full size; printPageStyle shrinks the printout when the
+  // titles alone do not fit (printWidthScale).
+  return { widths, needIn: fixedIn + [...widths.values()].reduce((a, b) => a + b, 0) };
 }
+

@@ -99,7 +99,9 @@ export type ExportScheduleInput = {
   versions: readonly { year: number; month: number; versionNumber: number }[];
 };
 
-export type PrintedColumn = { kind: "staff" | "agg" | "ded" | "count"; label: string };
+/** Card #357: `key` is the Column Order key ("agg:<id>", "ded:<id>", "count:<id>") of a special
+ *  column, so its Settings width can be looked up; staff columns have none. */
+export type PrintedColumn = { kind: "staff" | "agg" | "ded" | "count"; label: string; key?: string };
 export type PrintedCell = { text: string; bg: string | null; bold: boolean };
 export type PrintedRow = {
   iso: string;
@@ -174,10 +176,10 @@ export function buildPrintedMonth(input: ExportScheduleInput, year: number, mont
     ...printedStaff.map((p) => ({ kind: "staff" as const, label: p.initials })),
     ...specials.map((sc): PrintedColumn =>
       sc.kind === "agg"
-        ? { kind: "agg", label: aggColumns[sc.col.i].label }
+        ? { kind: "agg", label: aggColumns[sc.col.i].label, key: sc.key }
         : sc.kind === "ded"
-          ? { kind: "ded", label: dedicated[sc.col.i].code }
-          : { kind: "count", label: input.countColumns[sc.col.i].label || "#" },
+          ? { kind: "ded", label: dedicated[sc.col.i].code, key: sc.key }
+          : { kind: "count", label: input.countColumns[sc.col.i].label || "#", key: sc.key },
     ),
   ];
 

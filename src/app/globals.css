@@ -95,6 +95,29 @@ input[type="checkbox"]:disabled {
     padding-left: 0.5rem;
     padding-right: 0.5rem;
   }
+  /* Card #357: the user-defined columns (additional + shift columns) follow the Settings width
+     choice here too. Best fit (the default): as wide as their text. The other choices: the
+     printout's width (--ud-col-w, set inline per column), never narrower than the text. */
+  [data-print-columns-view] [data-ud-col] {
+    width: 1%;
+    min-width: 0;
+    white-space: nowrap;
+  }
+  [data-print-columns-view]:not([data-ud-width-mode="bestFit"]) [data-ud-col] {
+    width: var(--ud-col-w, 1%);
+    min-width: var(--ud-col-w, 0);
+    /* Long text would widen the column (auto table layout); clip it at the width, as the
+       printout does, so equal columns stay equal. */
+    max-width: var(--ud-col-w, none);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Spare table width must not land on the set-width columns: with every column at a fixed
+     width the browser spreads it over all of them. The staff and count columns go to auto
+     (still at least their min-width), so they take the spare width instead. */
+  [data-print-columns-view]:not([data-ud-width-mode="bestFit"]) thead th:not([data-ud-col]):not([data-date-col]):not([data-day-col]) {
+    width: auto;
+  }
 }
 
 @media print {
@@ -225,13 +248,24 @@ input[type="checkbox"]:disabled {
     width: 0.72in !important;
   }
 
+  /* Card #357: user-defined columns (additional + shift columns) take the width the Settings
+     choice gives them (best fit by default), set inline per column as --ud-col-w on the header
+     AND every body cell. One line per cell: a custom width narrower than a day's text clips it
+     rather than growing the row. */
+  th[data-ud-col], td[data-ud-col] {
+    width: var(--ud-col-w, auto) !important;
+    white-space: nowrap !important;
+  }
+  tbody td[data-ud-col] {
+    overflow: hidden !important;
+    text-overflow: clip !important;
+  }
   /* Dedicated shift columns (ICU/CARD/…) carry a multi-letter CODE as their header,
-     so the equal-share width + ellipsis truncated them ("CARD" → "CA…"). Give them a
-     fixed width that fits the code and let the text show in full. The attribute
+     so the equal-share width + ellipsis truncated them ("CARD" → "CA…"). Their width
+     comes from the user-defined column rule above (card #357); the header shows in full. The attribute
      selector outranks the generic `thead th`/`tbody td` rules above, so this width and
      the no-truncate overrides win; staff/count columns still split the remaining width. */
   th[data-print-ded], td[data-print-ded] {
-    width: 0.48in !important;
     overflow: visible !important;
     text-overflow: clip !important;
     white-space: nowrap !important;
@@ -339,12 +373,12 @@ input[type="checkbox"]:disabled {
   }
   /* Aggregate column TITLES are user-named and can be any length. Show the full title
      on ONE line and let the COLUMN grow WIDER to fit it (rather than wrapping/taller):
-     --agg-col-w (set inline per column from the title length) overrides the generic
+     --ud-col-w (card #357: set inline per column from the Settings width choice) overrides the generic
      width:auto, and nowrap keeps it single-line. The attribute selector outranks the
      generic `thead th` width rule. Header cells only — body initials keep their compact
      break-words behavior within the resulting column width. */
   thead th[data-other-col] {
-    width: var(--agg-col-w, auto) !important;
+    width: var(--ud-col-w, auto) !important;
     white-space: nowrap !important;
     overflow: visible !important;
     text-overflow: clip !important;

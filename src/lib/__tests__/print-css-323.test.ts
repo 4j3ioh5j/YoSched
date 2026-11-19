@@ -11,13 +11,15 @@ const print = css.slice(css.indexOf("@media print"));
 
 describe("print page from Settings", () => {
   it("the grid renders the print-only page style built by printPageStyle", () => {
-    expect(grid).toMatch(/<style media="print">\{printPageStyle\(printLayout\)\}<\/style>/);
+    expect(grid).toMatch(/<style media="print">\{printPageStyle\(printLayout, udPrint\.needIn\)\}<\/style>/); // card #357: width-aware shrink
   });
   it("cells print on one line at a fixed line height", () => {
     expect(print).toMatch(/thead th, tbody td \{[^}]*white-space: nowrap !important;[^}]*line-height: 1\.2 !important;/);
   });
   it("aggregate cells no longer wrap in print, and their column fits the longest text of the month", () => {
-    expect(grid).toMatch(/"--agg-col-w": aggPrintWidthCss\(c\.label, Object\.values\(c\.initialsByDate\)/);
+    // card #357: the width comes from the Settings choice, on the header and every body cell
+    expect(grid.match(/data-ud-col=""/g)?.length).toBe(4);
+    expect(grid).toContain("style={udColStyle(sc.key)}");
   });
 });
 
