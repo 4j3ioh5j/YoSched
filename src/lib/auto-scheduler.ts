@@ -4191,7 +4191,7 @@ function autoScheduleCore({
   // Card #266 (speed): the compound repair's lazy before-snapshot records a cell's
   // surroundings just before its first write in an attempt (see snapshotBefore).
   let beforeRepairWrite: ((staffId: string, date: string) => void) | null = null;
-  function repairSet(staffId: string, date: string, st: ScheduleShiftType | null, step: string, reason: string): void {
+  function repairSet(staffId: string, date: string, st: ScheduleShiftType | null, step: string, reason: string, noCount = false): void {
     beforeRepairWrite?.(staffId, date);
     const key = `${staffId}:${date}`;
     const prevCell = grid.get(key);
@@ -4204,7 +4204,7 @@ function autoScheduleCore({
       else journal.push({ kind: "grid", key, prev });
       return;
     }
-    grid.set(key, { shiftTypeId: st.id, code: st.code, locked: false, noCount: false, step });
+    grid.set(key, { shiftTypeId: st.id, code: st.code, locked: false, noCount, step });
     byStep[step] = (byStep[step] ?? 0) + 1;
     if (idx >= 0) {
       const sug = suggestions[idx];
@@ -4420,6 +4420,60 @@ function autoScheduleCore({
         changed.push({ p: A, d });
         return true;
       }
+      // Card #349: A (holding the fill on d) takes B's shift S on d — a shift that owes an
+      // each_day required follower (ORC→X) — and B takes A's fill. The follower moves with S:
+      // B's engine-placed follower on d+1 is cleared and A's is placed by the same rule
+      // placeFollowerAfter uses. isSwappableCell refuses follower sources everywhere else.
+      function tradeSource(d: string, A: ScheduleStaff, B: ScheduleStaff): boolean {
+        const ca = cellOf(A, d), cb = cellOf(B, d);
+        if (!ca || !cb || !isFillCell(A, d) || holidaySet.has(d)) return false;
+        const spec = followerBySource.get(cb.shiftTypeId);
+        if (spec?.scope !== "each_day") return false;
+        if (cb.locked || cb.noCount || cb.source === "manual" || !cb.step || NON_SWAPPABLE_STEPS.has(cb.step) || cellInGroup(cb, d) || cellInGroup(ca, d)) return false;
+        const S = stById.get(cb.shiftTypeId);
+        if (!S || S.isLeave || S.isOffShift || !S.autoSchedulable || !S.countsTowardFte) return false;
+        const next = nextDate(d);
+        if (dateSet.has(next) && isFrozen(next)) return false;
+        if (swapBreaksHardMin(A, fill, d) || swapBreaksHardMin(B, S, d)) return false;
+        if (!canHoldForSwap(A, S, d, ppRangesAll) || !canHoldForSwap(B, fill, d, ppRangesAll)) return false;
+        repairSet(A.id, d, S, "repair", `${S.code} (hour-balance repair)`);
+        repairSet(B.id, d, fill, "repair", `${fill.code} (hour-balance repair)`);
+        changed.push({ p: A, d }, { p: B, d });
+        if (!dateSet.has(next)) return true; // the follower would land outside the window
+        const bn = cellOf(B, next);
+        if (bn && bn.step === "follower" && bn.shiftTypeId === spec.follower.id && !bn.locked && bn.source !== "manual") {
+          repairSet(B.id, next, null, "", "");
+          changed.push({ p: B, d: next });
+        }
+        if (cellOf(A, next)?.shiftTypeId === spec.follower.id) return true; // already there (typed by hand)
+        const why = followerBlock(A.id, d, S);
+        if (why === null) {
+          repairSet(A.id, next, spec.follower, "follower", `Required follower after ${S.code}`, !spec.countsTowardTargets);
+          changed.push({ p: A, d: next });
+          return true;
+        }
+        const isWorkFollower = !spec.follower.isOffShift && !spec.follower.isLeave;
+        return why === "" || (!isWorkFollower && isOpen(A, next)); // an off follower on a day already off
+      }
+      /** Card #349: every each_day follower source held by `p` in this pay period is followed by
+       *  its follower, or placeFollowerAfter would skip it silently (an off follower on a day
+       *  the person is off anyway, or past the window). */
+      function followersOk(p: ScheduleStaff): boolean {
+        for (const d of ppDates) {
+          const c = cellOf(p, d);
+          const spec = c ? followerBySource.get(c.shiftTypeId) : undefined;
+          if (!c || spec?.scope !== "each_day") continue;
+          const next = nextDate(d);
+          if (!dateSet.has(next) || isFrozen(next)) continue;
+          if (cellOf(p, next)?.shiftTypeId === spec.follower.id) continue;
+          const isWorkFollower = !spec.follower.isOffShift && !spec.follower.isLeave;
+          if (isWorkFollower || !isOpen(p, next)) return false;
+          const why = followerBlock(p.id, d, stById.get(c.shiftTypeId)!);
+          if (why === null) return false; // it would land, so it must be there
+        }
+        return true;
+      }
+
       // Card #177: change in soft-avoided pairs if these cells took these shifts (null = cleared,
       // which ends as X). A tiebreak only: hours gain/score always decides first.
       type Change = [ScheduleStaff, string, string | null];
@@ -4557,6 +4611,28 @@ function autoScheduleCore({
             if (isOpen(A, d) && devNow.get(A.id)! < 0) {
               const g = gainOf([[A, fillH(A, d)]]);
               if (g > 0) cands.push({ gain: g, avoid: avoidDelta([[A, d, fill.id]]), ...evenSpread([[A, d, fill.id]]), size: 1, tag: `+${A.id}${d}`, steps: [() => add(d, A)] });
+            }
+          }
+          // Card #349: follower-source trades — A gives its fill on d for B's S (e.g. ORC, which
+          // owes X the next day); optionally B then adds a fill day to win back the hours.
+          for (const A of off) for (const d of ppDates) {
+            if (!isFillCell(A, d)) continue;
+            for (const B of people) {
+              if (B.id === A.id) continue;
+              const cb = cellOf(B, d);
+              if (!cb || followerBySource.get(cb.shiftTypeId)?.scope !== "each_day") continue;
+              const S = stById.get(cb.shiftTypeId)!;
+              const base: [ScheduleStaff, number][] = [[A, hrsOf(A, S, d) - fillH(A, d)], [B, fillH(B, d) - hrsOf(B, S, d)]];
+              const ch: Change[] = [[A, d, S.id], [B, d, fill.id]];
+              const g1 = gainOf(base);
+              if (g1 > 0) cands.push({ gain: g1, avoid: avoidDelta(ch), ...evenSpread(ch), size: 2, tag: `t${A.id}${B.id}${d}`, steps: [() => tradeSource(d, A, B), () => followersOk(A) && followersOk(B)] });
+              const freed = nextDate(d);
+              for (const e of ppDates) {
+                if (e === d || !(isOpen(B, e) || (e === freed && cellOf(B, e)?.step === "follower"))) continue;
+                const g2 = gainOf([...base, [B, fillH(B, e)]]);
+                const ch2: Change[] = [...ch, [B, e, fill.id]];
+                if (g2 > 0) cands.push({ gain: g2, avoid: avoidDelta(ch2), ...evenSpread(ch2), size: 3, tag: `T${A.id}${B.id}${d}${e}`, steps: [() => tradeSource(d, A, B), () => add(e, B), () => followersOk(A) && followersOk(B)] });
+              }
             }
           }
           // Two-hop MOVE: A (over) → G on e1, G → B (under) on e2; G's own hours move by
