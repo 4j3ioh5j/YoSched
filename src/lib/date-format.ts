@@ -66,6 +66,13 @@ export function formatDate(date: Date, format: DateFormatKey): string {
   }
 }
 
+const WEEKDAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** The full day of the week, then the date in the chosen format: "Thursday, November 19, 2026". */
+export function formatDateWithWeekday(date: Date, format: DateFormatKey): string {
+  return `${WEEKDAY_NAMES_FULL[date.getDay()]}, ${formatDate(date, format)}`;
+}
+
 export function formatDateCompact(date: Date, format: DateFormatKey): string {
   const m = date.getMonth() + 1;
   const d = date.getDate();

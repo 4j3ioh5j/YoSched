@@ -19,7 +19,7 @@ import { LIVE_SCOPES, LIVE_SCOPE_LABELS, DEFAULT_LIVE_SCOPE, type LiveScope } fr
 import { rowPrintShade, screenHolidayTint, DEFAULT_DAY_SHADING, type DayShading } from "@/lib/day-shading";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { liveBundleProblem } from "@/lib/live-bundle";
-import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
+import { formatDate, formatDateCompact, formatDateWithWeekday, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { unsavedPrintWarning } from "@/lib/print-stamp";
 import { autoVersionComment, yearMonths, type AutoVersionMode } from "@/lib/auto-version";
 import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMeta } from "@/lib/auto-version-flow";
@@ -1258,7 +1258,7 @@ export function ScheduleGrid({
   }, [shiftTypeMap, dateFormat]);
 
   // ONE tooltip for every grid cell, parallel construction in all modes:
-  //   <initials> · <date>
+  //   <initials> · <weekday>, <date>   (card #362)
   //   Assignment: <code | None>[ (locked)]
   //   Source: <…>                 (only when assigned)
   //   Requests:                   (only when present)
@@ -1266,7 +1266,7 @@ export function ScheduleGrid({
   const cellTooltip = useCallback(
     (initials: string, date: string, a: AssignmentData | null | undefined, reqs: GridRequest[] | null | undefined): string => {
       const lines: string[] = [
-        `${initials} · ${formatDate(parseDate(date), dateFormat)}`,
+        `${initials} · ${formatDateWithWeekday(parseDate(date), dateFormat)}`,
         `Assignment: ${a ? a.code : "None"}${a?.isLocked ? " (locked)" : ""}`,
       ];
       if (a) lines.push(sourceLine(a));
