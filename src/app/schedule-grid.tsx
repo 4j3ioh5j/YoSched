@@ -1,6 +1,7 @@
 "use client";
 
 import { useTimeZone } from "@/app/time-zone-provider";
+import { useZonedToday } from "@/app/use-zoned-today";
 import { formatClock, zonedCalendarDate } from "@/lib/time-zone";
 import { columnHoverText } from "@/lib/column-hover";
 import { isWeekendDow } from "@/lib/scheduler-tuning";
@@ -513,9 +514,13 @@ export function ScheduleGrid({
   scheduleRequests = [],
   mutedAlertKeys = [],
 }: Props) {
-  const { zone } = useTimeZone(); // card #320
+  const { zone, loaded: zoneLoaded } = useTimeZone(); // card #320
   const dateFormat = (dateFormatProp || DEFAULT_DATE_FORMAT) as DateFormatKey;
   const today = new Date();
+  // Card #348: the Settings time zone's today (null until loaded in the browser); todayDate is
+  // its local-midnight Date for the helpers that read local fields.
+  const todayStr = useZonedToday(zone, zoneLoaded);
+  const todayDate = todayStr ? parseDate(todayStr) : today;
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   // Remember the viewed month across in-app navigation: returning to the schedule from
@@ -1048,7 +1053,7 @@ export function ScheduleGrid({
   const firstOfMonth = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-01`;
   const lastOfMonth = toDateStr(new Date(viewYear, viewMonth + 1, 0));
 
-  const pastMonth = isPastMonth(viewYear, viewMonth, today);
+  const pastMonth = isPastMonth(viewYear, viewMonth, todayDate);
 
   const offShiftTypeIds = useMemo(
     () => new Set(shiftTypes.filter((st) => st.isOffShift).map((st) => st.id)),
@@ -1662,8 +1667,8 @@ export function ScheduleGrid({
 
   function goToday() {
     clearColFocus();
-    setViewYear(today.getFullYear());
-    setViewMonth(today.getMonth());
+    setViewYear(todayDate.getFullYear());
+    setViewMonth(todayDate.getMonth());
   }
 
   // Any path that moves focus into a STAFF column must drop dedicated active/selection
@@ -4625,7 +4630,7 @@ export function ScheduleGrid({
               const isWeekend = isWeekendDow(label.dow, weekendStartDow); // card #215
               const isHoliday = holidaySet.has(date);
               const isOutsideMonth = date < firstOfMonth || date > lastOfMonth;
-              const isToday = date === toDateStr(today);
+              const isToday = todayStr !== null && date === todayStr;
 
               const currentPP = findPayPeriod(date, sortedPPs);
               const { isNewPP } = item;
@@ -5373,8 +5378,8 @@ export function ScheduleGrid({
       {/* Versions panel */}
       {showExport && !liveMode && (
         <ExportYearDialog
-          yearChoices={exportYearChoices([...localAssignments.map((a) => a.date), ...payPeriods.map((pp) => pp.startDate)], today.getFullYear())}
-          defaultYear={today.getFullYear()}
+          yearChoices={exportYearChoices([...localAssignments.map((a) => a.date), ...payPeriods.map((pp) => pp.startDate)], todayDate.getFullYear())}
+          defaultYear={todayDate.getFullYear()}
           fileNameTemplate={exportFileName}
           // The SAVED schedule (never a Live sandbox), copied at the Export click.
           // Card #312: the input AND the months' hashes are frozen together at the click,

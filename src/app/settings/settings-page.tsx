@@ -1,6 +1,6 @@
 "use client";
 
-import { ARCHIVE_LEAVE_RULES, ARCHIVE_DAYS_MAX, isValidArchiveDays, type ArchiveLeaveRule } from "@/lib/request-lines";
+import { ARCHIVE_LEAVE_RULES, ARCHIVE_DAYS_MAX, dateInZone, isValidArchiveDays, type ArchiveLeaveRule } from "@/lib/request-lines";
 import { useTimeZone, TIME_ZONE_EVENT } from "@/app/time-zone-provider";
 import { formatClock, wallClock, zoneChoices } from "@/lib/time-zone";
 import { orderSpecialColumns } from "@/lib/special-columns";
@@ -2577,6 +2577,7 @@ function HolidayRulesSection({ initial, reloadKey, types, holidays, shiftTypes, 
   initial: { version: string; rules: HolidayRuleSpec[] }; reloadKey: number; types: HolidayTypeData[];
   holidays: Holiday[]; shiftTypes: ShiftType[]; dateFormat: DateFormatKey;
 }) {
+  const { zone } = useTimeZone();
   const canEdit = useCanEdit();
   const [saved, setSaved] = useState(initial);
   const [drafts, setDrafts] = useState<RuleDraft[]>(() => toDrafts(initial.rules));
@@ -2600,7 +2601,7 @@ function HolidayRulesSection({ initial, reloadKey, types, holidays, shiftTypes, 
 
   const workShifts = shiftTypes.filter((s) => !s.isOffShift && !s.isLeave);
   const codeOf = (id: string) => shiftTypes.find((s) => s.id === id)?.code ?? "?";
-  const today = new Date().toISOString().slice(0, 10);
+  const today = dateInZone(new Date(), zone); // card #348: the Settings time zone, not UTC
   const preview = (r: RuleDraft): string | null => {
     const next = holidays.filter((h) => h.holidayTypeId === r.holidayTypeId && h.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
     if (!next || r.days.length === 0) return null;
