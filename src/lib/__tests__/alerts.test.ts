@@ -246,3 +246,15 @@ describe("card #342: countCellTip", () => {
     expect(countCellTip(date, [w("OR: 3 of 4"), w("CALL: 0 of 1")], new Set([alert.key]))).toBe("OR: 3 of 4 (muted)\nCALL: 0 of 1");
   });
 });
+
+// Card #363: the # column tip opens with the day of the week and the date.
+describe("card #363: countCellTip heading", () => {
+  const w = (message: string) => ({ message, type: "shift-count" }) as Warning;
+  it("puts the heading line above the alerts", () => {
+    expect(countCellTip("2026-11-19", [w("OR: 3 of 4"), w("CALL: 0 of 1")], new Set(), "Thursday, November 19, 2026"))
+      .toBe("Thursday, November 19, 2026\nOR: 3 of 4\nCALL: 0 of 1");
+  });
+  it("still shows nothing when the day has no alerts", () => {
+    expect(countCellTip("2026-11-19", [], new Set(), "Thursday, November 19, 2026")).toBeNull();
+  });
+});

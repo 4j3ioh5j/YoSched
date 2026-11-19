@@ -11,7 +11,8 @@ describe("count column hover (card #342)", () => {
     const i = grid.indexOf("key={`cnt-${ci}`}");
     expect(i).toBeGreaterThan(-1);
     const before = grid.slice(grid.lastIndexOf("const counts = columnCounts[sc.col.i]", i), i);
-    expect(before).toMatch(/const tip = countCellTip\(date, dw, mutedKeys\)/);
+    // Card #363: the tip opens with the day of the week and the date, in the Settings format.
+    expect(before).toMatch(/const tip = countCellTip\(date, dw, mutedKeys, formatDateWithWeekday\(parseDate\(date\), dateFormat\)\)/);
     const cell = grid.slice(i, grid.indexOf("</td>", i));
     expect(cell).toMatch(/onMouseEnter=\{tip \? \(e\) => showTip\(setTooltip, tip, e\) : undefined\}/);
     expect(cell).toMatch(/onMouseLeave=\{tip \? \(\) => setTooltip\(null\) : undefined\}/);

@@ -53,9 +53,12 @@ export function staffingAlertKey(date: string, message: string): string {
  * Card #342: the hover text of a day's number in a # (count) column: that day's staffing
  * alerts, one per line, muted ones marked. Null when the day has none.
  */
-export function countCellTip(date: string, warnings: readonly Warning[] | undefined, mutedKeys: ReadonlySet<string>): string | null {
+export function countCellTip(date: string, warnings: readonly Warning[] | undefined, mutedKeys: ReadonlySet<string>, heading?: string): string | null {
   if (!warnings || warnings.length === 0) return null;
-  return warnings.map((w) => (mutedKeys.has(staffingAlertKey(date, w.message)) ? `${w.message} (muted)` : w.message)).join("\n");
+  const lines = warnings.map((w) => (mutedKeys.has(staffingAlertKey(date, w.message)) ? `${w.message} (muted)` : w.message));
+  // Card #363: an optional first line naming the day (the grid passes weekday + date).
+  if (heading) lines.unshift(heading);
+  return lines.join("\n");
 }
 
 /**

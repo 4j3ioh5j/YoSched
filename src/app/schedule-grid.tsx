@@ -5000,7 +5000,7 @@ export function ScheduleGrid({
                   }
                     const counts = columnCounts[sc.col.i]; const ci = sc.col.i;
                     // Card #342: hovering the number shows the day's alerts (what turns it red).
-                    const tip = countCellTip(date, dw, mutedKeys); return (
+                    const tip = countCellTip(date, dw, mutedKeys, formatDateWithWeekday(parseDate(date), dateFormat)); return (
                     <td
                       key={`cnt-${ci}`}
                       data-count-tip={tip ? "" : undefined}
