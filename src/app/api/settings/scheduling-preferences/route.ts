@@ -10,7 +10,7 @@ import { isValidDateFormat } from "@/lib/date-format";
 import { isPendingRequestMode, PENDING_REQUEST_MODES, isRequestConflictPolicy, REQUEST_CONFLICT_POLICIES, isApprovalConflictPolicy, APPROVAL_CONFLICT_POLICIES, validateOffStrategyOrder } from "@/lib/schedule-requests";
 import { isLiveScope, LIVE_SCOPES } from "@/lib/live-scope";
 import { isShiftShareBasis, SHIFT_SHARE_BASES } from "@/lib/shift-share";
-import { isHolidayPolicy, HOLIDAY_POLICIES, isHolidayCreditShift } from "@/lib/holiday-policy";
+import { isHolidayPolicy, HOLIDAY_POLICIES, isHolidayCreditShift, isHolidayUsualWeekdayPct } from "@/lib/holiday-policy";
 import { isShadeColor } from "@/lib/day-shading";
 import { validateStaffOrderCriteria } from "@/lib/staff-order";
 import { exportFileNameError } from "@/lib/export-filename";
@@ -35,7 +35,7 @@ async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, printPaperSize, printMarginHundredthsIn, exportFileName, autoVersionMode, requestArchiveDays, archiveLeaveMetBy } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, holidayUsualWeekdayPct, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, printPaperSize, printMarginHundredthsIn, exportFileName, autoVersionMode, requestArchiveDays, archiveLeaveMetBy } = body;
   // Card #203: "Count shifts from" — a YYYY-MM-DD date, or null to clear. Strictly validated.
   const balanceFromValid = shiftBalanceFrom === null || (typeof shiftBalanceFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(shiftBalanceFrom) && !Number.isNaN(Date.parse(shiftBalanceFrom + "T00:00:00Z")) && new Date(shiftBalanceFrom + "T00:00:00Z").toISOString().startsWith(shiftBalanceFrom));
   if (shiftBalanceFrom !== undefined && !balanceFromValid) {
@@ -66,6 +66,9 @@ async function handlePUT(req: NextRequest) {
   }
   if (shiftShareBasis !== undefined && !isShiftShareBasis(shiftShareBasis)) {
     return NextResponse.json({ error: `shiftShareBasis must be one of ${SHIFT_SHARE_BASES.join(", ")}` }, { status: 400 });
+  }
+  if (holidayUsualWeekdayPct !== undefined && !isHolidayUsualWeekdayPct(holidayUsualWeekdayPct)) {
+    return NextResponse.json({ error: "holidayUsualWeekdayPct must be a whole number from 0 to 100" }, { status: 400 });
   }
   if (holidayPolicy !== undefined && !isHolidayPolicy(holidayPolicy)) {
     return NextResponse.json({ error: `holidayPolicy must be one of ${HOLIDAY_POLICIES.join(", ")}` }, { status: 400 });
@@ -228,6 +231,7 @@ async function handlePUT(req: NextRequest) {
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
       ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
       ...(isHolidayPolicy(holidayPolicy) && { holidayPolicy }),
+      ...(isHolidayUsualWeekdayPct(holidayUsualWeekdayPct) && { holidayUsualWeekdayPct }),
       ...(isLeavePolicy(leaveHoursPolicy) && { leaveHoursPolicy }),
       ...balanceFromData,
       ...holidayShiftData,
@@ -257,6 +261,7 @@ async function handlePUT(req: NextRequest) {
       ...(isLiveScope(defaultLiveScope) && { defaultLiveScope }),
       ...(isShiftShareBasis(shiftShareBasis) && { shiftShareBasis }),
       ...(isHolidayPolicy(holidayPolicy) && { holidayPolicy }),
+      ...(isHolidayUsualWeekdayPct(holidayUsualWeekdayPct) && { holidayUsualWeekdayPct }),
       ...(isLeavePolicy(leaveHoursPolicy) && { leaveHoursPolicy }),
       ...balanceFromData,
       ...holidayShiftData,

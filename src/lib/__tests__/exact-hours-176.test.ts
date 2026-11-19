@@ -70,7 +70,7 @@ describe("a day preference gives way to the hours target, holiday included (card
     holidays: [{ date: W2[0] }],
     staffingRequirements: [...req("st-orc", "ORC", 1)],
     requiredFollowers: [{ sourceShiftId: "st-orc", followerShiftId: "st-off", scope: "each_day", countsTowardTargets: true }],
-  }, holidayPolicy ? { holidayPolicy } : {});
+  }, { holidayUsualWeekdayPct: 0, ...(holidayPolicy ? { holidayPolicy } : {}) }); // card #349: the pre-#349 holiday rule
 
   it("KZ lands on 32, not 40: the second Tuesday ORC goes to someone else", () => {
     const inp = build();

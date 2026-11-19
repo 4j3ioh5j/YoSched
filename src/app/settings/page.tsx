@@ -14,7 +14,7 @@ import { coerceConditions } from "@/lib/print-column-visibility";
 import { liveCriteria } from "@/lib/print-criteria";
 import { parseLiveScope } from "@/lib/live-scope";
 import { parseShiftShareBasis } from "@/lib/shift-share";
-import { parseHolidayPolicy } from "@/lib/holiday-policy";
+import { parseHolidayPolicy, DEFAULT_HOLIDAY_USUAL_WEEKDAY_PCT } from "@/lib/holiday-policy";
 import { dayShadingFrom } from "@/lib/day-shading";
 import { printLayoutFrom } from "@/lib/print-layout";
 import { parseLeavePolicy } from "@/lib/leave-policy";
@@ -89,6 +89,7 @@ export default async function Settings() {
     defaultLiveScope: parseLiveScope(schedulingPrefsRow?.defaultLiveScope),
     shiftShareBasis: parseShiftShareBasis(schedulingPrefsRow?.shiftShareBasis),
     holidayPolicy: parseHolidayPolicy(schedulingPrefsRow?.holidayPolicy),
+    holidayUsualWeekdayPct: schedulingPrefsRow?.holidayUsualWeekdayPct ?? DEFAULT_HOLIDAY_USUAL_WEEKDAY_PCT, // card #349
     holidayShiftId: schedulingPrefsRow?.holidayShiftId ?? null,
     ...dayShadingFrom(schedulingPrefsRow), // card #209: explicit null stays off
     printLayout: printLayoutFrom(schedulingPrefsRow), // card #301

@@ -6,7 +6,7 @@ import { evaluateShiftEligibility, getWindowBounds, checkMinimumTargetMet, isAtR
 import { foldRequestsForDate, detectRequestConflicts, coversDate, parseOffStrategyOrder, LEAVE_STRATEGY_PREFIX, type ScheduleRequestData, type FoldedRequests, type PendingRequestMode, type RequestConflictPolicy } from "./schedule-requests";
 import { matchesWhen, standingToWhen, ruleToWhen } from "./recurrence";
 import { type ShiftShareBasis } from "./shift-share";
-import { type HolidayPolicy, resolveHolidayShift } from "./holiday-policy";
+import { type HolidayPolicy, resolveHolidayShift, DEFAULT_HOLIDAY_USUAL_WEEKDAY_PCT } from "./holiday-policy";
 import { buildHolidayGroups, type HolidayRuleSpec, type HolidayGroup, type HolidayGroupSlot } from "./holiday-rules";
 import { couldWorkOn, excessLeaveDays, type LeavePolicy } from "./leave-policy";
 import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
@@ -205,6 +205,7 @@ type SchedulingPreferences = {
   requestConflictPolicy?: RequestConflictPolicy; // forced-request contention resolution; default "reconcile"
   shiftShareBasis?: ShiftShareBasis; // split of a scheduled shift's slots across eligible staff: "fte" (default) | "head"
   holidayPolicy?: HolidayPolicy; // who is owed HOL on a holiday: "entitlement" (default) | "fill" (legacy) | "none"
+  holidayUsualWeekdayPct?: number; // card #349: a part-timer is owed HOL on a weekday they worked at least this % of the last 26 weeks (0 = everyone available, the old rule; default 60)
   holidayShiftId?: string | null; // card #207: the shift credited on a holiday, by id (null/undefined = none chosen)
   leaveHoursPolicy?: LeavePolicy; // card #175: leave only on days they'd work, up to the PP target ("up-to-target", default) | "always"
   shiftBalanceFrom?: string | null; // card #203: first day counted by "Keep counts even across months" (null = this run only)
@@ -687,7 +688,8 @@ export type AutoScheduleInput = {
   holidayRuleContext?: ScheduleAssignment[];
 };
 
-function autoScheduleCore({
+function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
+  const {
   dates,
   staff,
   shiftTypes,
@@ -720,7 +722,7 @@ function autoScheduleCore({
   targetContext,
   holidayRules,
   holidayRuleContext,
-}: AutoScheduleInput): AutoScheduleResult {
+} = input;
   // Card #215: the tuning numbers and the weekend, from Settings.
   const tuning = readTuning(schedulingPreferences);
   const weekendStart = tuning.weekendStartDow;
@@ -939,7 +941,67 @@ function autoScheduleCore({
     if (!holidaySet.has(date) || isFrozen(date)) return false;
     if (targetFor(staff, pp) <= 0) return false;
     if (isAssigned(staff.id, date)) return false;
-    return evaluateAvailability(staff.availabilityRules, date, payPeriods, (pid, d) => isWorking(pid, d)).available;
+    if (!evaluateAvailability(staff.availabilityRules, date, payPeriods, (pid, d) => isWorking(pid, d)).available) return false;
+    return wouldHaveWorked(staff, date);
+  }
+  // Card #349 (decision #74): HOL is owed only to someone who would have worked the holiday:
+  // (1) full-time staff; (2) a part-timer who usually works that weekday — at least the
+  // Settings share of the same weekday over the last 26 weeks, leave counting as worked, from
+  // at least 4 saved days; (3) otherwise only if a plan with the holiday as an ordinary day
+  // (the shadow run) puts them on a work shift that day. A share of 0 is the old rule.
+  const usualPct = Math.max(0, Math.min(100, schedulingPreferences.holidayUsualWeekdayPct ?? DEFAULT_HOLIDAY_USUAL_WEEKDAY_PCT));
+  const savedByStaff = new Map<string, Map<string, string>>();
+  for (const a of [...historicalAssignments, ...existingAssignments]) {
+    if (!savedByStaff.has(a.staffId)) savedByStaff.set(a.staffId, new Map());
+    savedByStaff.get(a.staffId)!.set(a.date, a.shiftTypeId);
+  }
+  const allHolidayDates = new Set(holidays.map((h) => h.date));
+  function usualWeekdayShare(staffId: string, date: string): number | null {
+    const mine = savedByStaff.get(staffId);
+    if (!mine) return null;
+    let worked = 0, n = 0;
+    const d = new Date(date + "T12:00:00Z");
+    for (let w = 1; w <= 26; w++) {
+      d.setUTCDate(d.getUTCDate() - 7);
+      const day = d.toISOString().slice(0, 10);
+      if (allHolidayDates.has(day)) continue;
+      const stId = mine.get(day);
+      if (stId === undefined) continue;
+      const st = stById.get(stId);
+      if (!st) continue;
+      n++;
+      if (!st.isOffShift) worked++;
+    }
+    return n >= 4 ? (100 * worked) / n : null;
+  }
+  let shadowWorking: Set<string> | null = null;
+  function shadowWorks(staffId: string, date: string): boolean {
+    if (shadowWorking === null) {
+      shadowWorking = new Set();
+      const runHolidays = new Set(dates.filter((d) => holidaySet.has(d)));
+      const sh = autoScheduleCore({
+        ...input,
+        seed: undefined,
+        holidays: holidays.filter((h) => !runHolidays.has(h.date)),
+        schedulingPreferences: { ...schedulingPreferences, holidayPolicy: "none" },
+      });
+      for (const x of sh.suggestions) {
+        if (!runHolidays.has(x.date)) continue;
+        const st = stById.get(x.shiftTypeId);
+        if (st && !st.isOffShift && !st.isLeave) shadowWorking.add(`${x.staffId}:${x.date}`);
+      }
+      for (const a of existingAssignments) { // a saved work cell that day is working it too
+        const st = stById.get(a.shiftTypeId);
+        if (runHolidays.has(a.date) && st && !st.isOffShift && !st.isLeave) shadowWorking.add(`${a.staffId}:${a.date}`);
+      }
+    }
+    return shadowWorking.has(`${staffId}:${date}`);
+  }
+  function wouldHaveWorked(staff: ScheduleStaff, date: string): boolean {
+    if (usualPct <= 0 || staff.ftePercentage >= 1) return true;
+    const share = usualWeekdayShare(staff.id, date);
+    if (share !== null && share >= usualPct) return true;
+    return shadowWorks(staff.id, date);
   }
   /** HOL hours `staff` will be granted in `pp` by STEP 2.75 (0 once it has run), not
    *  counting the dates being projected — working the holiday itself means no HOL there. */

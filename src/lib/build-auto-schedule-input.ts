@@ -17,7 +17,7 @@ import { parsePendingRequestMode, parseRequestConflictPolicy, parseOffStrategyOr
 import { effectiveTargetsForStaff, type DepartmentShiftTarget } from "@/lib/department-targets";
 import { parseHoursPolicy } from "@/lib/autogen-hours-policy";
 import { parseShiftShareBasis } from "@/lib/shift-share";
-import { parseHolidayPolicy } from "@/lib/holiday-policy";
+import { parseHolidayPolicy, DEFAULT_HOLIDAY_USUAL_WEEKDAY_PCT } from "@/lib/holiday-policy";
 import { parseLeavePolicy } from "@/lib/leave-policy";
 import { deriveEquityFactorCodes } from "@/lib/equity-factors";
 import { payPeriodsCovering } from "@/lib/shift-balance";
@@ -496,6 +496,7 @@ export async function buildAutoScheduleInput(
       requestConflictPolicy: parseRequestConflictPolicy(schedulingPrefsRow?.requestConflictPolicy),
       shiftShareBasis: parseShiftShareBasis(schedulingPrefsRow?.shiftShareBasis),
       holidayPolicy: parseHolidayPolicy(schedulingPrefsRow?.holidayPolicy),
+      holidayUsualWeekdayPct: schedulingPrefsRow?.holidayUsualWeekdayPct ?? DEFAULT_HOLIDAY_USUAL_WEEKDAY_PCT, // card #349
       holidayShiftId: schedulingPrefsRow?.holidayShiftId ?? null, // card #207: by id, never by code
       leaveHoursPolicy: parseLeavePolicy(schedulingPrefsRow?.leaveHoursPolicy),
       shiftBalanceFrom: balanceFrom,

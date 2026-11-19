@@ -20,7 +20,7 @@ import { PRINT_COLUMN_RULES_SAVE_URL, PRINT_AGGREGATE_COLUMNS_SAVE_URL, buildCon
 import { effectiveCriteria, isInertLine } from "@/lib/print-aggregate-columns";
 import { buildCriteriaSave } from "@/lib/print-criteria";
 import { SHIFT_SHARE_BASES, type ShiftShareBasis } from "@/lib/shift-share";
-import { HOLIDAY_POLICIES, type HolidayPolicy, isHolidayCreditShift } from "@/lib/holiday-policy";
+import { HOLIDAY_POLICIES, type HolidayPolicy, isHolidayCreditShift, isHolidayUsualWeekdayPct } from "@/lib/holiday-policy";
 import { holidayRulesVersion } from "@/lib/holiday-rules-db";
 import { buildHolidayGroups, RULE_OFFSET_MIN, RULE_OFFSET_MAX, RULE_NAME_MAX, type HolidayRuleSpec } from "@/lib/holiday-rules";
 import { createLatestWriter, type LatestWriter } from "@/lib/latest-writer";
@@ -152,6 +152,7 @@ type SchedulingPrefs = {
   defaultLiveScope: LiveScope;
   shiftShareBasis: ShiftShareBasis;
   holidayPolicy: HolidayPolicy;
+  holidayUsualWeekdayPct: number; // card #349
   holidayShiftId: string | null; // card #207: shift credited on a holiday, by id
   printWeekendColor: string | null; // card #209: null = no weekend shading in print
   printHolidayColor: string | null; // card #209: null = no holiday shading in print
@@ -3816,6 +3817,31 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
     }
   }
 
+  // Card #349: the usual-weekday share (%) for holiday pay.
+  const [usualPctStatus, setUsualPctStatus] = useState<SaveStatus>("idle");
+  const [usualPctDraft, setUsualPctDraft] = useState<string | null>(null);
+  async function saveUsualPct(raw: string) {
+    setUsualPctDraft(null);
+    const value = Number(raw);
+    if (!isHolidayUsualWeekdayPct(value) || value === prefs.holidayUsualWeekdayPct) return;
+    const prev = prefs.holidayUsualWeekdayPct;
+    setPrefs((p) => ({ ...p, holidayUsualWeekdayPct: value }));
+    setUsualPctStatus("saving");
+    try {
+      const res = await fetch("/api/settings/scheduling-preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ holidayUsualWeekdayPct: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setUsualPctStatus("saved");
+      setTimeout(() => setUsualPctStatus("idle"), 2000);
+    } catch {
+      setPrefs((p) => ({ ...p, holidayUsualWeekdayPct: prev }));
+      setUsualPctStatus("error");
+    }
+  }
+
   // Card #207: which shift is credited on a holiday (by id).
   const [holidayShiftStatus, setHolidayShiftStatus] = useState<SaveStatus>("idle");
   async function saveHolidayShift(value: string | null) {
@@ -4135,6 +4161,33 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
               </button>
             ))}
           </div>
+          {prefs.holidayPolicy === "entitlement" && (
+            <div className="mt-3">
+              <div className="flex items-center gap-2">
+                <label htmlFor="holiday-usual-pct" className="text-xs text-slate-300">Part-timers: usually works that weekday at</label>
+                <input
+                  id="holiday-usual-pct"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  disabled={!canEdit}
+                  value={usualPctDraft ?? String(prefs.holidayUsualWeekdayPct)}
+                  onChange={(e) => setUsualPctDraft(e.target.value)}
+                  onBlur={(e) => canEdit && saveUsualPct(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                  className="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-slate-200 disabled:opacity-60"
+                />
+                <span className="text-xs text-slate-300">% of weeks</span>
+                {usualPctStatus === "saving" && <span className="text-xs text-slate-500">Saving…</span>}
+                {usualPctStatus === "saved" && <span className="text-xs text-emerald-400">Saved</span>}
+                {usualPctStatus === "error" && <span className="text-xs text-rose-400">Failed</span>}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-1">
+                Full-time staff always get the holiday. A part-timer gets it if they worked that weekday in at least this share of the last 26 weeks (leave counts as worked). Otherwise they get it only if the schedule, planned as if the holiday were an ordinary day, would have them working it; if not, the day is off and they work their hours on other days. 0 gives the holiday to every part-timer available that day.
+              </div>
+            </div>
+          )}
           <div className="mt-3 flex items-center gap-2">
             <label htmlFor="holiday-shift" className="text-xs text-slate-300">Shift credited on holidays</label>
             <select

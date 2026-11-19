@@ -426,6 +426,7 @@ model SchedulingPreferences {
   printWeekendColor       String?  // card #209 (no default since #301: off, matches the PDF): weekend row shade on the PRINTED schedule (null = none)
   printHolidayColor       String?  // card #209 (no default since #301): holiday row shade on the PRINTED schedule (null = none); wins over weekend
   screenHolidayColor      String?  @default("#4A3410") // card #209: holiday row tint on the on-screen grid (null = none)
+  holidayUsualWeekdayPct  Int      @default(60) // card #349: a part-timer is owed HOL on a weekday they worked >= this % of the last 26 weeks (leave counts); else only if an ordinary-day plan works them. 0 = every available staffer (old rule)
   holidayPolicy           String   @default("entitlement") // who is owed HOL on a holiday: "entitlement" (scheduled-workday rule, counts toward PP target) | "fill" (legacy hours-fill only) | "none" — see src/lib/holiday-policy.ts
   leaveHoursPolicy        String   @default("up-to-target") // card #175: requested leave charged "up-to-target" (only days they'd work, never past the PP target; the rest become X) | "always" — see src/lib/leave-policy.ts
   // Card #215: scheduler tuning numbers (src/lib/scheduler-tuning.ts holds the limits; defaults = the values the engine always used)

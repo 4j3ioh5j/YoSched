@@ -3003,7 +3003,7 @@ describe("holiday entitlement policy", () => {
   const cellsOn = (r: AutoScheduleResult, staffId: string, date: string) =>
     r.suggestions.filter((s) => s.staffId === staffId && s.date === date);
   const prefs = (holidayPolicy: "entitlement" | "fill" | "none", extra: Record<string, unknown> = {}) =>
-    ({ ...defaultPrefs, holidayPolicy, ...extra });
+    ({ ...defaultPrefs, holidayPolicy, holidayUsualWeekdayPct: 0, ...extra }) // card #349: these test the grant itself under the pre-#349 rule (every available staffer);
 
   function req(
     o: Partial<ScheduleRequestData> & { staffId: string; startDate: string; endDate: string; kind: ScheduleRequestData["kind"] },

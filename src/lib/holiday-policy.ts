@@ -46,3 +46,12 @@ export function resolveHolidayShift<T extends { id: string; countsTowardFte: boo
   return shiftTypes.find((st) => st.id === holidayShiftId && isHolidayCreditShift(st)) ?? null;
 }
 
+
+// Card #349 (decision #74): the share (%) of the same weekday over the last 26 weeks a
+// part-timer must have worked (leave counts) to be owed HOL on a holiday without the
+// ordinary-day check. 0 = every available staffer is owed HOL (the rule before card #349).
+export const DEFAULT_HOLIDAY_USUAL_WEEKDAY_PCT = 60;
+/** STRICT check for a user write: a whole number 0–100. */
+export function isHolidayUsualWeekdayPct(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 100;
+}
