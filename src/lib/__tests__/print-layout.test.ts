@@ -87,11 +87,11 @@ describe("renderPrintTemplate", () => {
   it("fills every word", () => {
     expect(renderPrintTemplate("{MONTH} {YEAR} MD SCHEDULE", ctx)).toBe("JANUARY 2026 MD SCHEDULE");
     expect(renderPrintTemplate("{Month} {MON}", ctx)).toBe("January JAN");
-    expect(renderPrintTemplate("{DATE} {TIME} VER: {VERSION}", ctx)).toBe("01/26/2026 09:36 UTC VER: 09");
+    expect(renderPrintTemplate("{DATE} {TIME} VER: {VERSION}", ctx)).toBe("01/26/2026 09:36 VER: 09");
   });
 
   it("uses the 24-hour clock", () => {
-    expect(renderPrintTemplate("{TIME}", { ...ctx, printedAt: new Date(Date.UTC(2026, 0, 26, 21, 5)) })).toBe("21:05 UTC");
+    expect(renderPrintTemplate("{TIME}", { ...ctx, printedAt: new Date(Date.UTC(2026, 0, 26, 21, 5)) })).toBe("21:05"); // card #368: no zone label
   });
 
   it("follows the date format setting", () => {
@@ -114,7 +114,7 @@ describe("renderPrintTemplate", () => {
 
 describe("footerLine", () => {
   it("always ends with ' - YoSched'", () => {
-    expect(footerLine("{DATE} {TIME} VER: {VERSION}", ctx)).toBe("01/26/2026 09:36 UTC VER: 09 - YoSched");
+    expect(footerLine("{DATE} {TIME} VER: {VERSION}", ctx)).toBe("01/26/2026 09:36 VER: 09 - YoSched");
     expect(footerLine("", ctx)).toBe("- YoSched");
     expect(footerLine("   ", ctx)).toBe("- YoSched");
   });

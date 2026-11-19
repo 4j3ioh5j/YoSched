@@ -93,7 +93,7 @@ describe("exportYearXlsx (card #299)", () => {
   it("footer row under the table ends with - YoSched", async () => {
     const ws = (await workbook()).getWorksheet("JAN 2026")!;
     const f = ws.getCell("A34");
-    expect(f.value).toBe("11/16/2026 20:05 UTC VER: 09 - YoSched");
+    expect(f.value).toBe("11/16/2026 20:05 VER: 09 - YoSched");
     expect(f.font.size).toBe(8);
     expect(f.alignment?.horizontal).toBe("right");
     expect(ws.getCell("F34").isMerged).toBe(true);

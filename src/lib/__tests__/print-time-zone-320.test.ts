@@ -10,8 +10,8 @@ describe("print template in the zone", () => {
   it("{DATE} and {TIME} come from the same zoned instant, {TIME} carries the label", () => {
     process.env.TZ = "Asia/Tokyo"; // the printing computer's own zone must not matter
     const ctx = { year: 2026, month: 0, printedAt: at, dateFormat: "YYYY-MM-DD" as const, version: 3, zone: LA };
-    expect(renderPrintTemplate("{DATE} {TIME}", ctx)).toBe("2026-01-14 23:59 PST");
-    expect(renderPrintTemplate("{DATE} {TIME}", { ...ctx, zone: "UTC" })).toBe("2026-01-15 07:59 UTC");
+    expect(renderPrintTemplate("{DATE} {TIME}", ctx)).toBe("2026-01-14 23:59"); // card #368: no zone label
+    expect(renderPrintTemplate("{DATE} {TIME}", { ...ctx, zone: "UTC" })).toBe("2026-01-15 07:59");
     process.env.TZ = "UTC";
   });
 });

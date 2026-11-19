@@ -2,7 +2,7 @@
 // Everything here is pure, so the printout and the year export (card #299) share it.
 // The values are Settings (SchedulingPreferences); these are only the defaults.
 
-import { formatClock, zonedCalendarDate } from "./time-zone";
+import { wallClock, zonedCalendarDate } from "./time-zone";
 import { formatDate, type DateFormatKey } from "./date-format";
 
 export type PrintAlign = "left" | "center" | "right";
@@ -51,14 +51,20 @@ export type PrintTemplateContext = {
   dateFormat: DateFormatKey;
   /** The month's saved schedule version, or null when it has none. */
   version: number | null;
-  /** Card #320: the Settings time zone; {DATE} and {TIME} are in it, and {TIME} carries its label. */
+  /** Card #320: the Settings time zone; {DATE} and {TIME} are in it. Card #368: {TIME} prints no zone label. */
   zone: string;
 };
 
 const pad2 = (n: number) => (n < 10 ? "0" + n : String(n));
 
+/** "17:00": the 24-hour wall clock in `zone`, without the zone label (card #368). */
+function clock24(date: Date, zone: string): string {
+  const w = wallClock(date, zone);
+  return `${pad2(w.hour)}:${pad2(w.minute)}`;
+}
+
 /** Fill-in words: {MONTH} JANUARY, {Month} January, {MON} JAN, {YEAR}, {DATE} (date format
- *  setting), {TIME} (24-hour), {VERSION} (saved version, two digits; "—" when none).
+ *  setting), {TIME} (24-hour, no time zone: card #368), {VERSION} (saved version, two digits; "—" when none).
  *  Anything else is left exactly as typed. Plain text: callers render it as text. */
 export function renderPrintTemplate(text: string, ctx: PrintTemplateContext): string {
   const name = MONTHS[ctx.month] ?? "";
@@ -68,7 +74,7 @@ export function renderPrintTemplate(text: string, ctx: PrintTemplateContext): st
     MON: name.slice(0, 3).toUpperCase(),
     YEAR: String(ctx.year),
     DATE: formatDate(zonedCalendarDate(ctx.printedAt, ctx.zone), ctx.dateFormat),
-    TIME: formatClock(ctx.printedAt, ctx.zone),
+    TIME: clock24(ctx.printedAt, ctx.zone),
     VERSION: ctx.version === null ? "—" : pad2(ctx.version),
   };
   return text.replace(/\{([A-Za-z]+)\}/g, (m, w: string) => (Object.prototype.hasOwnProperty.call(words, w) ? words[w] : m));

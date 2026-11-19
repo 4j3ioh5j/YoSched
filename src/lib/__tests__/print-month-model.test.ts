@@ -136,8 +136,8 @@ describe("buildPrintedMonth (card #299)", () => {
   it("title and footer come from the templates with that month's version, or a dash", () => {
     const m = buildPrintedMonth(input(), 2026, 0, NOW);
     expect(m.title).toBe("JANUARY 2026 SCHEDULE");
-    expect(m.footer).toBe("11/16/2026 20:05 UTC VER: 09 - YoSched");
-    expect(buildPrintedMonth(input(), 2026, 1, NOW).footer).toBe("11/16/2026 20:05 UTC VER: — - YoSched");
+    expect(m.footer).toBe("11/16/2026 20:05 VER: 09 - YoSched");
+    expect(buildPrintedMonth(input(), 2026, 1, NOW).footer).toBe("11/16/2026 20:05 VER: — - YoSched");
   });
 
   it("one combined date column when the split is off", () => {
