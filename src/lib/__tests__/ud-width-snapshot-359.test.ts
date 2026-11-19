@@ -45,6 +45,18 @@ describe("width snapshot", () => {
     expect(() => saveUdWidthSnapshot(snap, bad)).not.toThrow();
     expect(loadUdWidthSnapshot(bad)).toBeNull();
   });
+  it("a browser that denies the storage getter itself never breaks the page", () => {
+    const desc = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const win = {};
+    Object.defineProperty(win, "localStorage", { get() { throw new Error("SecurityError"); } });
+    Object.defineProperty(globalThis, "window", { value: win, configurable: true, writable: true });
+    try {
+      expect(() => saveUdWidthSnapshot(snap)).not.toThrow();
+      expect(loadUdWidthSnapshot()).toBeNull();
+    } finally {
+      if (desc) Object.defineProperty(globalThis, "window", desc); else delete (globalThis as { window?: unknown }).window;
+    }
+  });
   it("one key, shared by the schedule page and Settings", () => {
     expect(UD_WIDTH_SNAPSHOT_KEY).toBe("yosched:udWidthSnapshot");
   });

@@ -40,10 +40,11 @@ export function parseUdWidthSnapshot(raw: string | null): UdWidthSnapshot | null
 
 const browserStore = (): Store | null => (typeof window !== "undefined" ? window.localStorage : null);
 
-export function saveUdWidthSnapshot(s: UdWidthSnapshot, store: Store | null = browserStore()): void {
-  try { store?.setItem(UD_WIDTH_SNAPSHOT_KEY, JSON.stringify(s)); } catch { /* private mode / quota: Settings just shows no widths */ }
+// The store is looked up inside the try: some browsers throw on the localStorage getter itself.
+export function saveUdWidthSnapshot(s: UdWidthSnapshot, store?: Store | null): void {
+  try { (store === undefined ? browserStore() : store)?.setItem(UD_WIDTH_SNAPSHOT_KEY, JSON.stringify(s)); } catch { /* private mode / quota: Settings just shows no widths */ }
 }
 
-export function loadUdWidthSnapshot(store: Store | null = browserStore()): UdWidthSnapshot | null {
-  try { return parseUdWidthSnapshot(store?.getItem(UD_WIDTH_SNAPSHOT_KEY) ?? null); } catch { return null; }
+export function loadUdWidthSnapshot(store?: Store | null): UdWidthSnapshot | null {
+  try { return parseUdWidthSnapshot((store === undefined ? browserStore() : store)?.getItem(UD_WIDTH_SNAPSHOT_KEY) ?? null); } catch { return null; }
 }
