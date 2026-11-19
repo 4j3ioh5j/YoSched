@@ -26,7 +26,7 @@ import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMet
 import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, aggPrintWidthCss, aggPrintWidthCh, autoColNeedCh, printNeedPx, printReservedIn, PRINT_COL_IN, type AggRoom, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { pruneHiddenFocus } from "@/lib/grid-hidden-focus";
-import { staffCellLines, extraCellLines, PP_ROW_LINES } from "@/lib/grid-lines";
+import { staffCellLines, extraCellLines, PP_ROW_LINES, DATE_CELL_LINES } from "@/lib/grid-lines";
 import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
@@ -4677,7 +4677,7 @@ export function ScheduleGrid({
                     };
                     const cellBase = { background: cellBg } as React.CSSProperties;
                     const hoverStyle = (outline: React.CSSProperties) => (!isActiveRow && hoverRow === date ? outline : null);
-                    const base = "sticky z-[5] py-1 text-xs font-mono whitespace-nowrap cursor-pointer hover:brightness-125";
+                    const base = `sticky z-[5] py-1 text-xs font-mono whitespace-nowrap cursor-pointer hover:brightness-125 ${DATE_CELL_LINES}`;
                     const ppTop = isNewPP ? "border-t-2 border-t-indigo-500" : "";
                     const dayClass = isActiveRow ? "text-blue-200 font-bold" : isWeekend ? "text-slate-500" : "text-slate-300";
                     const dateClass = isActiveRow ? "text-blue-200" : isOutsideMonth ? "text-slate-600" : "text-slate-400";

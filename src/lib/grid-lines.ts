@@ -10,6 +10,10 @@
 // with !important, so none of this reaches the printout.
 // Card #346: solid, not 30% alpha, so a row's weekend or holiday tint cannot show through.
 export const CELL_LINES = "border border-[color-mix(in_srgb,var(--color-slate-700)_30%,var(--background))]";
+// Card #356: the date and day cells get the same faint line at their top and bottom (not at
+// their sides: the two read as one block). Without it their box started half a line away from
+// the other cells', so their shading and today's lines sat off from the rest of the row.
+export const DATE_CELL_LINES = "border-y border-y-[color-mix(in_srgb,var(--color-slate-700)_30%,var(--background))]";
 export const EXTRA_COL_LINES = "border-x-slate-700";
 export const LAST_STAFF_LINE = "border-r-slate-700";
 export const PP_ROW_LINES = "border-y-indigo-500/60";
