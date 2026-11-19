@@ -5286,7 +5286,7 @@ const UD_MODE_CHOICES: { mode: UdWidthMode; label: string; help: string }[] = [
   { mode: "bestFit", label: "Best fit for each column", help: "Each column is as wide as its title and the longest day's text. (Default)" },
   { mode: "matchLargest", label: "All match the widest best fit", help: "Every column takes the width of the widest one's best fit." },
   { mode: "uniform", label: "One custom width for all", help: "Every column takes the width you set." },
-  { mode: "perColumn", label: "Custom width per column", help: "Set a width for each column; a blank one uses best fit." },
+  { mode: "perColumn", label: "Choose per column (best fit or a set width)", help: "Each column uses best fit or a width you set, in any mix." },
 ];
 
 /** Inches text ("0.75") → hundredths (75) when it is a valid width, else null. */
@@ -5304,6 +5304,45 @@ const udDraftFrom = (s: UdWidthSettings): UdDraft => ({
   uniform: udHundredthsToInches(s.uniformHundredths),
   per: Object.fromEntries(Object.entries(s.perColumn).map(([k, v]) => [k, udHundredthsToInches(v)])),
 });
+
+/** Card #360: a column with a width entry is Custom; one without is Best fit. */
+export function udColumnChoice(per: Record<string, string>, key: string): "bestFit" | "custom" {
+  return per[key] === undefined ? "bestFit" : "custom";
+}
+/** Best fit removes the column's width; Custom keeps what was typed, else pre-fills `prefill`. */
+export function udSetColumnChoice(per: Record<string, string>, key: string, choice: "bestFit" | "custom", prefill: string): Record<string, string> {
+  const next = { ...per };
+  if (choice === "bestFit") delete next[key];
+  else next[key] = per[key] ?? prefill;
+  return next;
+}
+
+/** What Save would store, or the problem to show when an entry is not a valid width. */
+export function udParseDraft(
+  shown: UdDraft,
+  saved: UdWidthSettings,
+  columns: { key: string; label: string }[],
+): { value: UdWidthSettings } | { problem: string } {
+  const range = `${udHundredthsToInches(UD_WIDTH_MIN)} to ${udHundredthsToInches(UD_WIDTH_MAX)} inches`;
+  const uniform = shown.mode === "uniform" ? udInchesToHundredths(shown.uniform) : (udInchesToHundredths(shown.uniform) ?? saved.uniformHundredths);
+  if (uniform == null) return { problem: `Enter a width from ${range}.` };
+  // Entries for columns not on this page (none today) are kept as they were.
+  const perColumn: Record<string, number> = {};
+  for (const [k, v] of Object.entries(saved.perColumn)) if (!columns.some((c) => c.key === k)) perColumn[k] = v;
+  for (const c of columns) {
+    const t = shown.per[c.key];
+    if (t === undefined) continue; // Best fit: no width stored
+    const h = udInchesToHundredths(t);
+    if (h == null) {
+      if (shown.mode === "perColumn") return { problem: `${c.label}: enter a width from ${range}, or choose Best fit.` };
+      const old = saved.perColumn[c.key];
+      if (old != null) perColumn[c.key] = old;
+      continue;
+    }
+    perColumn[c.key] = h;
+  }
+  return { value: { mode: shown.mode, uniformHundredths: uniform, perColumn } };
+}
 
 function UdColumnWidthSection({
   initial,
@@ -5337,27 +5376,7 @@ function UdColumnWidthSection({
   }, []);
   const nowMonth = widthsNow ? new Date(`${widthsNow.month}-01T12:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "";
 
-  // What Save would store; null with a message when an entry is not a valid width.
-  const parsed = ((): { value: UdWidthSettings } | { problem: string } => {
-    const uniform = shown.mode === "uniform" ? udInchesToHundredths(shown.uniform) : (udInchesToHundredths(shown.uniform) ?? saved.uniformHundredths);
-    if (uniform == null) return { problem: `Enter a width from ${udHundredthsToInches(UD_WIDTH_MIN)} to ${udHundredthsToInches(UD_WIDTH_MAX)} inches.` };
-    // Entries for columns not on this page (none today) are kept as they were.
-    const perColumn: Record<string, number> = {};
-    for (const [k, v] of Object.entries(saved.perColumn)) if (!columns.some((c) => c.key === k)) perColumn[k] = v;
-    for (const c of columns) {
-      const t = (shown.per[c.key] ?? "").trim();
-      if (t === "") continue;
-      const h = udInchesToHundredths(t);
-      if (h == null) {
-        if (shown.mode === "perColumn") return { problem: `${c.label}: enter a width from ${udHundredthsToInches(UD_WIDTH_MIN)} to ${udHundredthsToInches(UD_WIDTH_MAX)} inches, or leave it blank for best fit.` };
-        const old = saved.perColumn[c.key];
-        if (old != null) perColumn[c.key] = old;
-        continue;
-      }
-      perColumn[c.key] = h;
-    }
-    return { value: { mode: shown.mode, uniformHundredths: uniform, perColumn } };
-  })();
+  const parsed = udParseDraft(shown, saved, columns);
   const same = (a: UdWidthSettings, b: UdWidthSettings) =>
     a.mode === b.mode && a.uniformHundredths === b.uniformHundredths
     && JSON.stringify(Object.entries(a.perColumn).sort()) === JSON.stringify(Object.entries(b.perColumn).sort());
@@ -5424,19 +5443,25 @@ function UdColumnWidthSection({
             {columns.map((c) => {
               const now = widthsNow?.cols[c.key];
               const bestFit = now ? udHundredthsToInches(Math.max(UD_WIDTH_MIN, Math.min(UD_WIDTH_MAX, Math.ceil(now.bestFitIn * 100)))) : null;
+              const choice = udColumnChoice(shown.per, c.key);
               return (
                 <li key={c.key} className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
                   <span className="flex-1 min-w-[10rem]">{c.label}</span>
                   <span data-ud-width-now="" className="text-xs text-slate-400 tabular-nums w-24">{now ? `now ${now.printIn.toFixed(2)} in` : "now —"}</span>
-                  {shown.mode === "perColumn" && bestFit && canEdit ? (
-                    <button type="button" data-ud-best-fit="" title="Use the best fit as this column's width" disabled={saving} onClick={() => edit({ per: { ...shown.per, [c.key]: bestFit } })} className="text-xs text-blue-400 hover:text-blue-300 underline tabular-nums w-28 text-left disabled:opacity-50">best fit {bestFit} in</button>
-                  ) : (
-                    <span data-ud-best-fit="" className="text-xs text-slate-500 tabular-nums w-28">{bestFit ? `best fit ${bestFit} in` : ""}</span>
-                  )}
+                  <span data-ud-best-fit="" className="text-xs text-slate-500 tabular-nums w-28">{bestFit ? `best fit ${bestFit} in` : ""}</span>
                   {shown.mode === "perColumn" && (
                     <>
-                      <input type="text" inputMode="decimal" aria-label={`${c.label} width, in inches`} placeholder="best fit" className={input} value={shown.per[c.key] ?? ""} disabled={!canEdit || saving} onChange={(e) => edit({ per: { ...shown.per, [c.key]: e.target.value } })} />
-                      <span className="text-xs text-slate-500">in</span>
+                      <select data-ud-col-choice="" aria-label={`${c.label} width choice`} className="px-2 py-1 text-xs bg-slate-900 border border-slate-600 rounded text-slate-200 disabled:opacity-50" value={choice} disabled={!canEdit || saving}
+                        onChange={(e) => edit({ per: udSetColumnChoice(shown.per, c.key, e.target.value === "custom" ? "custom" : "bestFit", saved.perColumn[c.key] != null ? udHundredthsToInches(saved.perColumn[c.key]) : (bestFit ?? "")) })}>
+                        <option value="bestFit">Best fit</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                      {choice === "custom" && (
+                        <>
+                          <input type="text" inputMode="decimal" aria-label={`${c.label} width, in inches`} className={input} value={shown.per[c.key] ?? ""} disabled={!canEdit || saving} onChange={(e) => edit({ per: { ...shown.per, [c.key]: e.target.value } })} />
+                          <span className="text-xs text-slate-500">in</span>
+                        </>
+                      )}
                     </>
                   )}
                 </li>

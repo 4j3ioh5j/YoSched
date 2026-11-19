@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { udInchesToHundredths } from "../settings-page";
+import { udInchesToHundredths, udColumnChoice, udSetColumnChoice, udParseDraft } from "../settings-page";
 
 // Card #357: Settings › Printed Schedule › Column Widths.
 const ui = readFileSync(path.join(path.resolve(__dirname, ".."), "settings-page.tsx"), "utf8");
@@ -52,5 +52,44 @@ describe("Column Widths shows each column's width (card #359)", () => {
     expect(body).toContain("data-ud-best-fit");
     // the column list is not gated on the per-column choice
     expect(body).not.toMatch(/shown\.mode === "perColumn" && \(\s*columns\.length === 0/);
+  });
+});
+
+// Card #360: in the per-column choice, each column picks Best fit or a set width.
+describe("per-column choice: Best fit or Custom on each column (card #360)", () => {
+  const saved = { mode: "perColumn" as const, uniformHundredths: 50, perColumn: { "ded:icu": 40 } };
+  const cols = [{ key: "agg:other", label: "OTHER" }, { key: "ded:icu", label: "ICU" }, { key: "ded:card", label: "CARD" }];
+  it("a column with no width is Best fit; choosing Custom pre-fills, Best fit removes the width", () => {
+    let per: Record<string, string> = { "ded:icu": "0.40" };
+    expect(udColumnChoice(per, "agg:other")).toBe("bestFit");
+    expect(udColumnChoice(per, "ded:icu")).toBe("custom");
+    per = udSetColumnChoice(per, "agg:other", "custom", "0.62");
+    expect(per["agg:other"]).toBe("0.62");
+    expect(udColumnChoice(per, "agg:other")).toBe("custom");
+    // choosing Custom again keeps what was typed
+    expect(udSetColumnChoice({ "ded:icu": "0.55" }, "ded:icu", "custom", "0.30")["ded:icu"]).toBe("0.55");
+    per = udSetColumnChoice(per, "ded:icu", "bestFit", "");
+    expect("ded:icu" in per).toBe(false);
+  });
+  it("any mix saves: Best fit columns store no width, Custom ones store theirs", () => {
+    const r = udParseDraft({ mode: "perColumn", uniform: "0.50", per: { "ded:card": "0.75" } }, saved, cols);
+    expect(r).toEqual({ value: { mode: "perColumn", uniformHundredths: 50, perColumn: { "ded:card": 75 } } });
+  });
+  it("Custom with an empty or bad width cannot be saved", () => {
+    for (const bad of ["", "  ", "3", "abc"]) {
+      const r = udParseDraft({ mode: "perColumn", uniform: "0.50", per: { "agg:other": bad } }, saved, cols);
+      expect("problem" in r && r.problem).toMatch(/^OTHER: enter a width .* or choose Best fit\.$/);
+    }
+  });
+  it("another choice keeps the saved per-column widths for later", () => {
+    const r = udParseDraft({ mode: "uniform", uniform: "0.60", per: { "ded:icu": "" } }, saved, cols);
+    expect(r).toEqual({ value: { mode: "uniform", uniformHundredths: 60, perColumn: { "ded:icu": 40 } } });
+  });
+  it("each row has a Best fit / Custom control; the box shows only for Custom", () => {
+    expect(body).toContain("data-ud-col-choice");
+    expect(body).toMatch(/choice === "custom" && \(/);
+    expect(body).not.toContain('placeholder="best fit"');
+    const choices = ui.slice(ui.indexOf("const UD_MODE_CHOICES"), ui.indexOf("];", ui.indexOf("const UD_MODE_CHOICES")));
+    expect(choices).toContain("Choose per column (best fit or a set width)");
   });
 });
