@@ -4,6 +4,7 @@ import { ARCHIVE_LEAVE_RULES, ARCHIVE_DAYS_MAX, dateInZone, isValidArchiveDays, 
 import { useTimeZone, TIME_ZONE_EVENT } from "@/app/time-zone-provider";
 import { formatClock, wallClock, zoneChoices } from "@/lib/time-zone";
 import { orderSpecialColumns, specialColumnKey } from "@/lib/special-columns";
+import { loadUdWidthSnapshot, UD_WIDTH_SNAPSHOT_KEY, type UdWidthSnapshot } from "@/lib/ud-width-snapshot";
 import { followAvoidsChanged, type FollowAvoidData } from "@/lib/follow-avoids";
 import { saveErrorMessage } from "@/lib/stale-client";
 import { activationAlreadyCommitted, type CommittedActivation } from "@/lib/activation-retry";
@@ -5325,6 +5326,16 @@ function UdColumnWidthSection({
     ...dedicatedShifts.map((st) => ({ key: specialColumnKey("ded", st.id), label: `${st.code} · shift column` })),
   ];
   const edit = (patch: Partial<UdDraft>) => setDraft({ ...shown, ...patch });
+  // Card #359: each column's width as the schedule page last measured it (this browser).
+  // Read after mount, never in useState init (server render has no storage).
+  const [widthsNow, setWidthsNow] = useState<UdWidthSnapshot | null>(null);
+  useEffect(() => {
+    setWidthsNow(loadUdWidthSnapshot());
+    const onStorage = (e: StorageEvent) => { if (e.key === UD_WIDTH_SNAPSHOT_KEY) setWidthsNow(loadUdWidthSnapshot()); };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  const nowMonth = widthsNow ? new Date(`${widthsNow.month}-01T12:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "";
 
   // What Save would store; null with a message when an entry is not a valid width.
   const parsed = ((): { value: UdWidthSettings } | { problem: string } => {
@@ -5400,20 +5411,39 @@ function UdColumnWidthSection({
           inches ({udHundredthsToInches(UD_WIDTH_MIN)}–{udHundredthsToInches(UD_WIDTH_MAX)})
         </label>
       )}
-      {shown.mode === "perColumn" && (
-        columns.length === 0 ? (
-          <p className="mt-3 text-xs text-slate-500">No additional or shift columns are set up.</p>
-        ) : (
-          <ul className="mt-3 space-y-1">
-            {columns.map((c) => (
-              <li key={c.key} className="flex items-center gap-2 text-sm text-slate-300">
-                <span className="flex-1">{c.label}</span>
-                <input type="text" inputMode="decimal" aria-label={`${c.label} width, in inches`} placeholder="best fit" className={input} value={shown.per[c.key] ?? ""} disabled={!canEdit || saving} onChange={(e) => edit({ per: { ...shown.per, [c.key]: e.target.value } })} />
-                <span className="text-xs text-slate-500">in</span>
-              </li>
-            ))}
+      {columns.length === 0 ? (
+        <p className="mt-3 text-xs text-slate-500">No additional or shift columns are set up.</p>
+      ) : (
+        <div className="mt-3">
+          <p className="text-xs text-slate-500">
+            {widthsNow
+              ? `Widths as the printout of ${nowMonth} uses them (best fit: the width its text needs). Saving a change updates them the next time the schedule is opened.`
+              : "Open the schedule once in this browser to see each column's width here."}
+          </p>
+          <ul className="mt-2 space-y-1">
+            {columns.map((c) => {
+              const now = widthsNow?.cols[c.key];
+              const bestFit = now ? udHundredthsToInches(Math.max(UD_WIDTH_MIN, Math.min(UD_WIDTH_MAX, Math.ceil(now.bestFitIn * 100)))) : null;
+              return (
+                <li key={c.key} className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
+                  <span className="flex-1 min-w-[10rem]">{c.label}</span>
+                  <span data-ud-width-now="" className="text-xs text-slate-400 tabular-nums w-24">{now ? `now ${now.printIn.toFixed(2)} in` : "now —"}</span>
+                  {shown.mode === "perColumn" && bestFit && canEdit ? (
+                    <button type="button" data-ud-best-fit="" title="Use the best fit as this column's width" disabled={saving} onClick={() => edit({ per: { ...shown.per, [c.key]: bestFit } })} className="text-xs text-blue-400 hover:text-blue-300 underline tabular-nums w-28 text-left disabled:opacity-50">best fit {bestFit} in</button>
+                  ) : (
+                    <span data-ud-best-fit="" className="text-xs text-slate-500 tabular-nums w-28">{bestFit ? `best fit ${bestFit} in` : ""}</span>
+                  )}
+                  {shown.mode === "perColumn" && (
+                    <>
+                      <input type="text" inputMode="decimal" aria-label={`${c.label} width, in inches`} placeholder="best fit" className={input} value={shown.per[c.key] ?? ""} disabled={!canEdit || saving} onChange={(e) => edit({ per: { ...shown.per, [c.key]: e.target.value } })} />
+                      <span className="text-xs text-slate-500">in</span>
+                    </>
+                  )}
+                </li>
+              );
+            })}
           </ul>
-        )
+        </div>
       )}
       {draft !== null && "problem" in parsed && <p className="mt-2 text-xs text-amber-400">{parsed.problem}</p>}
       {canEdit && (

@@ -23,6 +23,7 @@ import { formatDate, formatDateCompact, calendarMonthBounds, type DateFormatKey,
 import { unsavedPrintWarning } from "@/lib/print-stamp";
 import { autoVersionComment, yearMonths, type AutoVersionMode } from "@/lib/auto-version";
 import { exclusive, postEnsure, prepareYearExport, runPrintFlow, type VersionMeta } from "@/lib/auto-version-flow";
+import { buildUdWidthSnapshot, saveUdWidthSnapshot } from "@/lib/ud-width-snapshot";
 import { DEFAULT_PRINT_LAYOUT, renderPrintTemplate, footerLine, printFontStack, printRowHeightIn, printPageStyle, autoColNeedCh, printNeedPx, printReservedIn, printUdWidthsIn, PRINT_COL_IN, type UdPrintCol, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintBlock, type PrintTemplateContext } from "@/lib/print-layout";
 import { isPastMonth, visibleStaffForMonth } from "@/lib/schedule-visibility";
 import { pruneHiddenFocus } from "@/lib/grid-hidden-focus";
@@ -1679,6 +1680,11 @@ export function ScheduleGrid({
       autoNeedCh: autoColNeedCh(printAutoTexts.texts),
     });
   }, [udMeasured, udPrintTexts, printLayout, printAutoTexts, printAutoNeedPx]);
+  // Card #359: Settings › Column Widths shows these, once the browser has measured the text.
+  useEffect(() => {
+    if (!udMeasured) return;
+    saveUdWidthSnapshot(buildUdWidthSnapshot(firstOfMonth.slice(0, 7), udPrint.widths, udPrint.bestFitIn));
+  }, [udMeasured, udPrint, firstOfMonth]);
   const udColStyle = (key: string) => {
     const w = udPrint.widths.get(key);
     return w != null && Number.isFinite(w) ? ({ "--ud-col-w": `${+w.toFixed(4)}in` } as React.CSSProperties) : undefined;

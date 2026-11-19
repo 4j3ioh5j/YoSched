@@ -487,7 +487,7 @@ export type UdPrintRoom = { reservedIn: number; autoCount: number; autoNeedPx: n
 /** Card #357: the browser printout's width (inches) for each user-defined column, from the
  *  Settings choice, fitted into the room the fixed columns and the equal-share staff and count
  *  columns leave on the page (divided by the shrink factor: the print zoom scales inches too). */
-export function printUdWidthsIn(layout: PrintLayout, cols: readonly UdPrintCol[], room: UdPrintRoom): { widths: Map<string, number>; needIn: number } {
+export function printUdWidthsIn(layout: PrintLayout, cols: readonly UdPrintCol[], room: UdPrintRoom): { widths: Map<string, number>; needIn: number; bestFitIn: Map<string, number> } {
   const page = printPage(layout);
   const { scale } = printFit({ ...layout, paper: isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER, marginHundredths: page.marginIn * 100 });
   const fontPt = Number.isFinite(layout.fontSize) && layout.fontSize > 0 ? layout.fontSize : DEFAULT_PRINT_FONT_SIZE;
@@ -508,6 +508,7 @@ export function printUdWidthsIn(layout: PrintLayout, cols: readonly UdPrintCol[]
   const widths = udWidthsIn(layout.udWidth ?? DEFAULT_UD_WIDTH, fits, Math.max(0, roomIn));
   // needIn: the whole row's width at full size; printPageStyle shrinks the printout when the
   // titles alone do not fit (printWidthScale).
-  return { widths, needIn: fixedIn + [...widths.values()].reduce((a, b) => a + b, 0) };
+  // bestFitIn (card #359): each column's own best fit, shown in Settings to help choose a width.
+  return { widths, needIn: fixedIn + [...widths.values()].reduce((a, b) => a + b, 0), bestFitIn: new Map(fits.map((f) => [f.key, f.fitIn])) };
 }
 

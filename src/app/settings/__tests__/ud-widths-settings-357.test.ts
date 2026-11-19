@@ -36,3 +36,21 @@ describe("Column Widths section", () => {
     for (const bad of ["0.19", "2.01", "0.333", "abc", "", ".", "-1", "1e1"]) expect(udInchesToHundredths(bad)).toBeNull();
   });
 });
+
+// Card #359: each column's current width is shown on the Column Widths section, in every choice.
+describe("Column Widths shows each column's width (card #359)", () => {
+  const grid = readFileSync(path.join(path.resolve(__dirname, "../.."), "schedule-grid.tsx"), "utf8");
+  it("the schedule page records the measured widths once the text is measured", () => {
+    expect(grid).toMatch(/if \(!udMeasured\) return;\s*saveUdWidthSnapshot\(buildUdWidthSnapshot\(firstOfMonth\.slice\(0, 7\), udPrint\.widths, udPrint\.bestFitIn\)\)/);
+  });
+  it("Settings reads them after mount (never in useState init) and on another tab's change", () => {
+    expect(body).toContain("useState<UdWidthSnapshot | null>(null)");
+    expect(body).toMatch(/useEffect\(\(\) => \{[\s\S]*?setWidthsNow\(loadUdWidthSnapshot\(\)\)[\s\S]*?addEventListener\("storage"/);
+  });
+  it("every column row shows its width now and its best fit, outside the per-column choice too", () => {
+    expect(body).toContain("data-ud-width-now");
+    expect(body).toContain("data-ud-best-fit");
+    // the column list is not gated on the per-column choice
+    expect(body).not.toMatch(/shown\.mode === "perColumn" && \(\s*columns\.length === 0/);
+  });
+});
