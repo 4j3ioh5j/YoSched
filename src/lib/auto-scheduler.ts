@@ -1047,6 +1047,9 @@ function autoScheduleCore({
     // request's own placement — held like the leave it replaces, never refilled
     // (not by a fill step, a follower, nor STEP 4's day-off pass).
     if (cell.step === LEAVE_OFF_STEP) return false;
+    // Card #350: an X placed as a required follower (the day owed after an ORC) is owed, not
+    // free. Filling it broke the follower rule and left two suggestions for one person and day.
+    if (cell.step === "follower") return false;
     return !!offShift && cell.shiftTypeId === offShift.id && !cell.locked && cell.source !== "manual";
   }
 
