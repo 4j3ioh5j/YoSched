@@ -554,3 +554,10 @@ input[type="checkbox"]:disabled {
 .animate-slide-in {
   animation: slide-in 0.2s ease-out;
 }
+
+/* Card #366: the control the Settings search jumped to glows for a moment. */
+[data-search-flash] {
+  outline: 2px solid #38bdf8;
+  outline-offset: 4px;
+  border-radius: 6px;
+}

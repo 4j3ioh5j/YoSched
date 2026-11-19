@@ -73,6 +73,7 @@ import { FrequencyPicker } from "../staff/frequency-picker";
 import { deptPickerTarget, deptTargetPutBody, DEPT_DEFAULT_STRENGTH, type DeptTargetRow, type DeptPickerTarget } from "./dept-target-row";
 import { DecimalField } from "@/components/decimal-field";
 import { DEFAULT_STAFF_ORDER, orderStaff, STAFF_ORDER_DEFAULT_DIR, type StaffOrderCriterion, type StaffOrderDir, type StaffOrderKey } from "@/lib/staff-order";
+import { SettingsSearch } from "./settings-search";
 
 const CanEditContext = createContext(true);
 function useCanEdit() { return useContext(CanEditContext); }
@@ -444,6 +445,7 @@ function StatusBadge({ status, error }: { status: SaveStatus; error?: string }) 
 type CollapseCtx = {
   isCollapsed: (id: string) => boolean;
   toggle: (id: string) => void;
+  open: (id: string) => void;
   setAll: (collapsed: boolean) => void;
   register: (id: string) => () => void;
 };
@@ -499,14 +501,22 @@ function CollapseProvider({ children }: { children: React.ReactNode }) {
     commit(next);
   }, [store, commit]);
 
+  // Card #366: the search box opens a collapsed section; an open one stays open.
+  const open = useCallback((id: string) => {
+    if (!store.snap.has(id)) return;
+    const next = new Set(store.snap);
+    next.delete(id);
+    commit(next);
+  }, [store, commit]);
+
   const setAll = useCallback((collapse: boolean) => {
     commit(collapse ? new Set(idsRef.current) : new Set<string>());
   }, [commit]);
 
   const value = useMemo<CollapseCtx>(() => ({
     isCollapsed: (id: string) => collapsed.has(id),
-    toggle, setAll, register,
-  }), [collapsed, toggle, setAll, register]);
+    toggle, open, setAll, register,
+  }), [collapsed, toggle, open, setAll, register]);
 
   return <CollapseContext.Provider value={value}>{children}</CollapseContext.Provider>;
 }
@@ -523,9 +533,15 @@ function CollapseToolbar() {
   );
 }
 
+function SettingsSearchBox() {
+  const ctx = useContext(CollapseContext);
+  const openSection = useCallback((id: string) => ctx?.open(id), [ctx]);
+  return <SettingsSearch openSection={openSection} />;
+}
+
 function SectionGroup({ label }: { label: string }) {
   return (
-    <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 pt-4 pb-1 px-1 border-b border-slate-700/40">
+    <h2 data-settings-group={label} className="text-xs font-semibold uppercase tracking-wider text-slate-500 pt-4 pb-1 px-1 border-b border-slate-700/40">
       {label}
     </h2>
   );
@@ -544,7 +560,7 @@ function CollapsibleSection({ id, title, description, status, error, children }:
   const open = ctx ? !ctx.isCollapsed(id) : true;
 
   return (
-    <div className="bg-slate-800/50 border border-slate-700 rounded-lg">
+    <div className="bg-slate-800/50 border border-slate-700 rounded-lg scroll-mt-24" data-settings-section={id} data-section-title={title} data-section-desc={description}>
       <button
         type="button"
         onClick={() => ctx?.toggle(id)}
@@ -562,7 +578,7 @@ function CollapsibleSection({ id, title, description, status, error, children }:
         </span>
         <StatusBadge status={status} error={error} />
       </button>
-      <div className={open ? "px-6 pb-6" : "hidden"}>
+      <div data-settings-body className={open ? "px-6 pb-6" : "hidden"}>
         {children}
       </div>
     </div>
@@ -616,7 +632,7 @@ const EMPTY_ABOUT: About = { version: null, build: null, releaseDate: null, copy
 
 function FieldRow({ label, description, children }: { label: string; description: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-start gap-4 py-3 border-b border-slate-700/50 last:border-0">
+    <div data-search-label={label} data-search-desc={description} className="flex items-start gap-4 py-3 border-b border-slate-700/50 last:border-0">
       <div className="w-48 shrink-0 pt-0.5">
         <div className="text-sm text-slate-200">{label}</div>
         <div className="text-xs text-slate-500 mt-0.5">{description}</div>
@@ -7187,6 +7203,7 @@ export function SettingsPage({ shiftTypes: initialShiftTypes, staffingReqs, payP
       <div className="max-w-5xl mx-auto px-6 py-8">
         <div className="sticky top-0 z-10 -mx-6 px-6 py-3 mb-6 bg-slate-900/85 backdrop-blur border-b border-slate-700/50 flex items-center justify-between gap-3">
           <h1 className="text-xl font-semibold text-slate-100">Settings</h1>
+          <SettingsSearchBox />
           <CollapseToolbar />
         </div>
         {!canEdit && (
