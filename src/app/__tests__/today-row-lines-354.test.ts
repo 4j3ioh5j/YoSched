@@ -28,4 +28,20 @@ describe("today's row lines are drawn in its cells (card #354)", () => {
     // The overlay needs a positioned cell, but the sticky date cells must stay sticky.
     expect(screen).toMatch(/tbody tr\[data-today\] > td:not\(\.sticky\)\s*\{\s*position:\s*relative;?\s*\}/);
   });
+
+  // Card #355: print-only total columns (data-other-col) are hidden on screen unless the
+  // "Print columns" view is on, and may come last. The right line goes on the last SHOWN cell.
+  it("the right line skips hidden total columns, except in the Print columns view", () => {
+    const screen = css.slice(css.indexOf("@media screen"), css.indexOf("@media print"));
+    const normal = "tbody tr[data-today] > td:nth-last-child(1 of :not([data-pp-label-col]):not([data-other-col]))::after";
+    const reset = "[data-print-columns-view] " + normal;
+    const view = "[data-print-columns-view] tbody tr[data-today] > td:not([data-pp-label-col]):nth-last-child(1 of :not([data-pp-label-col]))::after";
+    const body = (sel: string) => { const i = screen.indexOf(sel + " {"); return i < 0 ? null : screen.slice(i, screen.indexOf("}", i)); };
+    expect(body(normal)).toMatch(/border-right: 1px solid/);
+    expect(body(reset)).toMatch(/border-right: 0/);
+    expect(body(view)).toMatch(/border-right: 1px solid/);
+    // The view rule comes after the reset, so it wins when both pick the same cell.
+    expect(screen.indexOf(view + " {")).toBeGreaterThan(screen.indexOf(reset + " {"));
+    expect(screen).not.toContain("td:nth-last-child(1 of :not([data-pp-label-col]))::after {");
+  });
 });

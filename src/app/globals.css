@@ -73,8 +73,17 @@ input[type="checkbox"]:disabled {
   tbody tr[data-today] > td:first-child::after {
     border-left: 1px solid rgb(59 130 246 / 0.5);
   }
-  /* The row ends with a hidden print-only cell, so the right line goes on the last shown one. */
-  tbody tr[data-today] > td:nth-last-child(1 of :not([data-pp-label-col]))::after {
+  /* The right line goes on the last SHOWN cell: the row ends with a hidden print-only PP
+     label cell, and (card #355) the print-only total columns (data-other-col) are hidden too
+     unless the "Print columns" view is on. The view rule comes after its reset so it wins
+     when both pick the same cell. */
+  tbody tr[data-today] > td:nth-last-child(1 of :not([data-pp-label-col]):not([data-other-col]))::after {
+    border-right: 1px solid rgb(59 130 246 / 0.5);
+  }
+  [data-print-columns-view] tbody tr[data-today] > td:nth-last-child(1 of :not([data-pp-label-col]):not([data-other-col]))::after {
+    border-right: 0;
+  }
+  [data-print-columns-view] tbody tr[data-today] > td:not([data-pp-label-col]):nth-last-child(1 of :not([data-pp-label-col]))::after {
     border-right: 1px solid rgb(59 130 246 / 0.5);
   }
   /* Card #344: as wide as their text needs (1% + nowrap = shrink to fit), so the spare
