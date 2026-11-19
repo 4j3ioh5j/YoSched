@@ -139,4 +139,16 @@ describe("the follower-source trade never touches what it must not (card #349)",
       expect(c?.code ?? "X", `${d} ${rowsOf(inp, r)}`).toBe("X");
     }
   });
+  // Card #351 (Codex #1629 follow-up): CL already holds the follower (ADM typed by hand on Wed)
+  // at a hard max of 1, and is 8 h short. The trade adds no ADM, so the max must not refuse it.
+  it("a follower the taker already holds does not count against their maximum", () => {
+    const inp = admShape("NEGATE_SHIFT");
+    inp.existingAssignments = [{ staffId: "cl", date: W1[2], shiftTypeId: "st-adm", code: "ADM", isLocked: false, source: "manual" }];
+    inp.staff[0].ftePercentage = 0.6; // 48 h: OR, OR, ADM, HOL, OR is 40, so CL needs the ORC
+    inp.staff[0].shiftMinimumTargets = [{ shiftTypeId: "st-adm", minCount: 0, maxCount: 1, window: "pay_period", windowDays: null, strength: "rule" }];
+    const r = autoSchedule(inp);
+    expect(r.suggestions.find((s) => s.staffId === "cl" && s.date === W1[1])?.code, rowsOf(inp, r)).toBe("ORC");
+    expect(r.suggestions.filter((s) => s.staffId === "cl" && s.code === "ADM" && s.date !== W1[2]), rowsOf(inp, r)).toEqual([]);
+  });
 });
+

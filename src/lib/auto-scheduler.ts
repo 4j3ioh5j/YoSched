@@ -4506,7 +4506,9 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
           if (bn0 && bn0.step === "follower" && bn0.shiftTypeId === spec.follower.id && !bn0.noCount && swapBreaksHardMin(B, spec.follower, next)) return false;
           // … and A's WORK follower is a shift A takes on: never on a day A's request blocks it,
           // nor past A's hard maximum for it.
-          if (workFollower && (requestBlocksWork(A.id, next, spec.follower) || isAtMaximum(A, spec.follower, next))) return false;
+          // Card #351: a follower A already holds adds nothing, so only a new one meets the max.
+          const hasIt = cellOf(A, next)?.shiftTypeId === spec.follower.id;
+          if (workFollower && !hasIt && (requestBlocksWork(A.id, next, spec.follower) || isAtMaximum(A, spec.follower, next))) return false;
         }
         repairSet(A.id, d, S, "repair", `${S.code} (hour-balance repair)`);
         repairSet(B.id, d, fill, "repair", `${fill.code} (hour-balance repair)`);
