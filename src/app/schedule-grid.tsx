@@ -1089,6 +1089,25 @@ export function ScheduleGrid({
     [staff, localAssignments, firstOfMonth, printLast, pastMonth, showAllStaff, offShiftTypeIds],
   );
 
+  // Card #465: the staff who belong to the month itself (without the printed extra day). The
+  // month's hours and request alerts use this list, so someone who works only the extra day
+  // gets a column but no alert for this month.
+  const monthStaff = useMemo(
+    () =>
+      printExtra
+        ? visibleStaffForMonth(
+            staff,
+            localAssignments,
+            firstOfMonth,
+            lastOfMonth,
+            pastMonth,
+            showAllStaff,
+            offShiftTypeIds,
+          )
+        : visibleStaff,
+    [printExtra, visibleStaff, staff, localAssignments, firstOfMonth, lastOfMonth, pastMonth, showAllStaff, offShiftTypeIds],
+  );
+
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -4197,7 +4216,7 @@ export function ScheduleGrid({
     [dates, dayWarnings, firstOfMonth, lastOfMonth],
   );
 
-  // Pay-period-hours divergence alerts. Built from the SAME ppHours / visibleStaff
+  // Pay-period-hours divergence alerts. Built from the SAME ppHours / month staff
   // set the PP Totals row uses, so the modal and grid can never disagree. Each
   // staff member's divergence anchors to the pay period's end date (so a PP
   // crossing a month boundary surfaces exactly once — see buildPPHoursAlerts).
@@ -4205,7 +4224,7 @@ export function ScheduleGrid({
     const entries: PPHoursEntry[] = [];
     for (const pp of sortedPPs) {
       const provHours = ppHours.get(pp.startDate);
-      for (const p of visibleStaff) {
+      for (const p of monthStaff) {
         const hours = provHours?.get(p.id) ?? 0;
         const warning = checkStaffPPHours({ staff: p, pp, currentHours: hours });
         if (!warning) continue;
@@ -4220,14 +4239,14 @@ export function ScheduleGrid({
       }
     }
     return buildPPHoursAlerts(entries, firstOfMonth, lastOfMonth);
-  }, [sortedPPs, ppHours, visibleStaff, firstOfMonth, lastOfMonth]);
+  }, [sortedPPs, ppHours, monthStaff, firstOfMonth, lastOfMonth]);
 
   // Pending-request alerts: each still-unfulfilled (status "pending") request for a
   // visible staff member whose range touches the viewed month, surfaced as an
   // actionable to-do. Anchored/keyed in buildRequestAlerts; the message (initials +
   // description + date range) is formatted here where shift codes / dateFormat live.
   const requestAlerts = useMemo(() => {
-    const visIds = new Set(visibleStaff.map((p) => p.id));
+    const visIds = new Set(monthStaff.map((p) => p.id));
     const entries: RequestAlertEntry[] = [];
     for (const r of localRequests) {
       if (r.status !== "pending" || !visIds.has(r.staffId)) continue;
@@ -4240,7 +4259,7 @@ export function ScheduleGrid({
       entries.push({ id: r.id, startDate: r.startDate, endDate: r.endDate, message: `${initials}: ${desc} (${range})` });
     }
     return buildRequestAlerts(entries, firstOfMonth, lastOfMonth);
-  }, [localRequests, visibleStaff, staffInitialsMap, shiftTypeMap, dateFormat, firstOfMonth, lastOfMonth]);
+  }, [localRequests, monthStaff, staffInitialsMap, shiftTypeMap, dateFormat, firstOfMonth, lastOfMonth]);
 
   // The Alerts modal's sections (pending requests, then pay-period hours, then daily staffing).
   const alertSections = useMemo(
