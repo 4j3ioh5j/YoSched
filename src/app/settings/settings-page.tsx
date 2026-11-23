@@ -14,7 +14,7 @@ import { useEscape } from "@/lib/use-escape";
 import type { About } from "@/lib/about";
 import { DATE_FORMAT_OPTIONS, DEFAULT_DATE_FORMAT, formatDate, type DateFormatKey } from "@/lib/date-format";
 import { PENDING_REQUEST_MODES, type PendingRequestMode, REQUEST_CONFLICT_POLICIES, type RequestConflictPolicy, APPROVAL_CONFLICT_POLICIES, type ApprovalConflictPolicy } from "@/lib/schedule-requests";
-import { LIVE_SCOPES, LIVE_SCOPE_LABELS, type LiveScope } from "@/lib/live-scope";
+import { LIVE_SCOPES, LIVE_SCOPE_LABELS, LIVE_SCOPE_HINTS, type LiveScope } from "@/lib/live-scope";
 import { EQUITY_FACTORS_SAVE_URL, buildEquityFactorsSave, equitySaveErrorMessage } from "@/lib/equity-factors";
 import { COUNT_COLUMNS_SAVE_URL, buildCountColumnsSave, countColumnsSaveErrorMessage } from "@/lib/count-columns";
 import { PRINT_COLUMN_RULES_SAVE_URL, PRINT_AGGREGATE_COLUMNS_SAVE_URL, buildConditionsSave, printSaveErrorMessage } from "@/lib/print-conditions";
@@ -3998,13 +3998,6 @@ function SchedulingPrefsSection({ initial, shiftTypes }: { initial: SchedulingPr
       setScopeStatus("error");
     }
   }
-  const LIVE_SCOPE_HINTS: Record<LiveScope, string> = {
-    limited: "Fewest changes; hours may drift",
-    day: "Re-solve the edited day(s)",
-    pp: "Rebalance the whole pay period",
-    range: "Re-solve the whole range",
-  };
-
   return (
     <CollapsibleSection
       id="scheduling-preferences"

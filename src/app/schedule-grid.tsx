@@ -15,7 +15,7 @@ import { buildAlerts, buildPPHoursAlerts, buildRequestAlerts, buildAlertSections
 import { fairnessColor, fairnessLabel } from "@/lib/fairness";
 import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForScopeWithExplicit, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
-import { LIVE_SCOPES, LIVE_SCOPE_LABELS, DEFAULT_LIVE_SCOPE, type LiveScope } from "@/lib/live-scope";
+import { LIVE_SCOPES, LIVE_SCOPE_LABELS, LIVE_SCOPE_HINTS, DEFAULT_LIVE_SCOPE, type LiveScope } from "@/lib/live-scope";
 import { rowPrintShade, screenHolidayTint, DEFAULT_DAY_SHADING, type DayShading } from "@/lib/day-shading";
 import { type AutoScheduleInput } from "@/lib/auto-scheduler";
 import { liveBundleProblem } from "@/lib/live-bundle";
@@ -4571,12 +4571,13 @@ export function ScheduleGrid({
               {/* Ripple scope: how wide the engine may re-solve to compensate.
                   "Limited" = minimal churn (no PP-hours rebalance); the others free
                   everything in scope and rebalance hours (#248). */}
-              <div className="flex items-center gap-1 text-xs" title="How much of the schedule the engine may change to compensate for an edit. Limited = fewest changes (hours may drift). Pay period = rebalances hours across the period.">
-                <span className="text-violet-300/60">Scope of live changes:</span>
+              <div className="flex items-center gap-1 text-xs">
+                <span className="text-violet-300/60" title="How much of the schedule the engine may change to make room for your edit. Hand-placed and locked cells never move.">Scope of live changes:</span>
                 {LIVE_SCOPES.map((val) => (
                   <button
                     key={val}
                     onClick={() => changeLiveScope(val)}
+                    title={LIVE_SCOPE_HINTS[val]}
                     className={`px-1.5 py-0.5 rounded transition-colors ${liveScope === val ? "bg-violet-600 text-white" : "bg-slate-700/60 text-slate-300 hover:bg-slate-600"}`}
                   >
                     {LIVE_SCOPE_LABELS[val]}

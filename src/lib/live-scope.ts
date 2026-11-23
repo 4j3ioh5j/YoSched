@@ -24,3 +24,12 @@ export const LIVE_SCOPE_LABELS: Record<LiveScope, string> = {
   pp: "Pay period",
   range: "Whole range",
 };
+
+// One short sentence per scope (card #461): the tooltip on each Auto-generate banner button
+// and the hint under each choice in Settings. Hand-placed and locked cells never move in any scope.
+export const LIVE_SCOPE_HINTS: Record<LiveScope, string> = {
+  limited: "Fewest changes: other cells move only if coverage needs it; hours may drift.",
+  day: "Re-solves only the day(s) you edited.",
+  pp: "Re-solves the pay period(s) you edited and rebalances hours.",
+  range: "Re-solves the whole schedule being generated: the most changes.",
+};
