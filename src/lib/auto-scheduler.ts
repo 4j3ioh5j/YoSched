@@ -13,7 +13,7 @@ import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
 import { tallyBalances, sharesOf, spreadPenalty, spreadChange, addDays, targetPayPeriods, type BalanceTally } from "./shift-balance";
 import { gapBreaks, gapList, gapListShrank, gapTrialBeats, type GapTrialOutcome } from "./shift-gap";
 import { readTuning, isWeekendDate, weekendSecondDow, type SchedulerTuning } from "./scheduler-tuning";
-import { RETIRED_SPACING_KEY } from "./autogen-factor-order";
+import { RETIRED_SPACING_KEY, PENDING_DAY_BALANCE_KEY } from "./autogen-factor-order";
 import { isoDow, isoNext, isoPrev, isoNoonMs } from "./date-memo";
 
 export type ScheduleStaff = {
@@ -338,10 +338,13 @@ export const DEFAULT_FACTOR_ORDER = [
 // Card #293: the retired "spacing" factor (cards #266–#289) is the one key dropped first: a DB
 // not yet migrated, an old tab's input or a rollback's re-added row keeps the other six in their
 // configured order. Its toggle never mattered to the engine, so it is dropped enabled or not.
+// Card #471: a "dayBalance" row (added by card #467's second release) is dropped the same way
+// until this build grades it, so a rollback after that migration keeps the custom order.
+const IGNORED_FACTOR_KEYS: ReadonlySet<string> = new Set([RETIRED_SPACING_KEY, PENDING_DAY_BALANCE_KEY]);
 export function effectiveFactorKeys(rawConfig: AutoGenFactorConfig[] | undefined): string[] {
   const known: readonly string[] = DEFAULT_FACTOR_ORDER;
   let order: string[] = [...known];
-  const config = rawConfig?.filter((f) => f.key !== RETIRED_SPACING_KEY);
+  const config = rawConfig?.filter((f) => !IGNORED_FACTOR_KEYS.has(f.key));
   if (config && config.length) {
     const keys = new Set(config.map((f) => f.key));
     const allKnown = keys.size === config.length && config.every((f) => f.enabled && known.includes(f.key));

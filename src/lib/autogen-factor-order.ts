@@ -24,3 +24,9 @@ export function validateFactorOrder(submitted: unknown, existingKeys: string[]):
 // Card #293: "spacing" (cards #266–#289) is retired. The engine drops a stale row with this key
 // (a DB not yet migrated, an old tab's input, a rollback's re-added row) instead of falling back.
 export const RETIRED_SPACING_KEY = "spacing";
+
+// Card #471 (release (a) of card #467): "dayBalance" (even daily staffing in the fill shift) is
+// added by a later release. Until this build grades it, the engine drops a row with this key (a
+// DB migrated by that release and then rolled back, an old tab's input) the same way as spacing,
+// so the six known factors keep their configured order instead of falling back to the default.
+export const PENDING_DAY_BALANCE_KEY = "dayBalance";
