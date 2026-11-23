@@ -6353,7 +6353,8 @@ function PrintPaperSection({ initial }: { initial: PrintLayout }) {
   const valid = hundredths !== null;
   const d = DEFAULT_PRINT_LAYOUT;
   const defaults = { paper: d.paper, margin: marginInchesText(d.marginHundredths) };
-  const shrinks = valid && printFit({ ...initial, paper: draft.paper, marginHundredths: hundredths }).scale < 1;
+  // Card #462: judged at 32 printed days, the longest month (one ending on the weekend's first day).
+  const shrinks = valid && printFit({ ...initial, paper: draft.paper, marginHundredths: hundredths }, 32).scale < 1;
   return (
     <CollapsibleSection
       id="print-paper"

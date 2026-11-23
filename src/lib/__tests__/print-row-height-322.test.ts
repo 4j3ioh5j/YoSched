@@ -58,7 +58,7 @@ describe("browser print: row height from the page (card #322)", () => {
 
   it("the grid hands the row height to the print CSS, which uses it for header and day rows", () => {
     const grid = readFileSync(path.join(__dirname, "../../app/schedule-grid.tsx"), "utf8");
-    expect(grid).toMatch(/"--print-row-h": `\$\{printRowHeightIn\(printLayout\)\}in`/);
+    expect(grid).toMatch(/"--print-row-h": `\$\{printRowHeightIn\(printLayout, printedDayCount\)\}in`/);
     const css = readFileSync(path.join(__dirname, "../../app/globals.css"), "utf8");
     const print = css.slice(css.indexOf("@media print"));
     expect(print).toMatch(/tbody td \{[^}]*height: var\(--print-row-h, 0\.19in\) !important;/);

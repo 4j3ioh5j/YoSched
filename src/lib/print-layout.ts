@@ -413,22 +413,25 @@ export type PrintFit = { rowIn: number; contentMinIn: number; neededIn: number; 
  *  the page between the title and the footer. When that is less than the text needs (big
  *  margins, a big font or title), rows take what the text needs and the whole printout is
  *  shrunk (`scale` < 1) so it still fits one page. */
-export function printFit(layout: Pick<PrintLayout, "header" | "footer" | "fontSize" | "paper" | "marginHundredths">): PrintFit {
+export function printFit(layout: Pick<PrintLayout, "header" | "footer" | "fontSize" | "paper" | "marginHundredths">, days = 31): PrintFit {
   const P = PRINT_BOX;
   const page = printPage(layout);
   const inside = page.hIn - 2 * page.marginIn;
   const blocks = P.titleIn(layout.header.size) + P.footerIn(layout.footer.size) + P.slackIn;
-  const pageRow = Math.floor(((inside - blocks) / 32) * 10000) / 10000;
+  // Card #462: a month that prints 32 days (its weekend's second day added) budgets one more row;
+  // every month of 31 days or fewer keeps the same row height.
+  const rows = Math.max(31, Number.isInteger(days) ? days : 31) + 1;
+  const pageRow = Math.floor(((inside - blocks) / rows) * 10000) / 10000;
   const contentMinIn = P.cellIn(layout.fontSize);
   const rowIn = Math.max(pageRow, Math.ceil(contentMinIn * 10000) / 10000);
-  const neededIn = blocks + 32 * rowIn;
+  const neededIn = blocks + rows * rowIn;
   const scale = neededIn <= inside ? 1 : Math.floor((inside / neededIn) * 1000) / 1000;
   return { rowIn, contentMinIn, neededIn, scale };
 }
 
 /** The printout's row height in inches (see printFit). */
-export function printRowHeightIn(layout: Pick<PrintLayout, "header" | "footer" | "fontSize" | "paper" | "marginHundredths">): number {
-  return printFit(layout).rowIn;
+export function printRowHeightIn(layout: Pick<PrintLayout, "header" | "footer" | "fontSize" | "paper" | "marginHundredths">, days?: number): number {
+  return printFit(layout, days).rowIn;
 }
 
 /** Card #357: the printout's shrink factor with the width taken into account too: when the
@@ -445,10 +448,10 @@ export function printWidthScale(printableWIn: number, heightScale: number, width
 /** The print-only CSS for the page: built only from a known paper name and numbers, never from
  *  stored text. Zero page margin keeps the browser's own header and footer off (card #173); the
  *  margin is the body's padding instead. */
-export function printPageStyle(layout: PrintLayout, widthNeedIn?: number): string {
+export function printPageStyle(layout: PrintLayout, widthNeedIn?: number, days?: number): string {
   const page = printPage(layout);
   const css = PAPER_IN[isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER].css;
-  const fit = printFit({ ...layout, paper: isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER, marginHundredths: page.marginIn * 100 });
+  const fit = printFit({ ...layout, paper: isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER, marginHundredths: page.marginIn * 100 }, days);
   const scale = printWidthScale(page.wIn - 2 * page.marginIn, fit.scale, widthNeedIn);
   return `@page{size:${css} landscape;margin:0}body{padding:${page.marginIn}in !important}` + (scale < 1 ? `[data-print-root]{zoom:${scale}}` : "");
 }
@@ -535,9 +538,9 @@ export type UdPrintRoom = { reservedIn: number; autoCount: number; autoNeedPx: n
 /** Card #357: the browser printout's width (inches) for each user-defined column, from the
  *  Settings choice, fitted into the room the fixed columns and the equal-share staff and count
  *  columns leave on the page (divided by the shrink factor: the print zoom scales inches too). */
-export function printUdWidthsIn(layout: PrintLayout, cols: readonly UdPrintCol[], room: UdPrintRoom): { widths: Map<string, number>; needIn: number; bestFitIn: Map<string, number>; titleIn: Map<string, number> } {
+export function printUdWidthsIn(layout: PrintLayout, cols: readonly UdPrintCol[], room: UdPrintRoom, days?: number): { widths: Map<string, number>; needIn: number; bestFitIn: Map<string, number>; titleIn: Map<string, number> } {
   const page = printPage(layout);
-  const { scale } = printFit({ ...layout, paper: isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER, marginHundredths: page.marginIn * 100 });
+  const { scale } = printFit({ ...layout, paper: isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER, marginHundredths: page.marginIn * 100 }, days);
   const fontPt = Number.isFinite(layout.fontSize) && layout.fontSize > 0 ? layout.fontSize : DEFAULT_PRINT_FONT_SIZE;
   const chIn = (ch: number) => (finite(ch) * AUTO_COL_FALLBACK_CH * fontPt * 0.5) / 72;
   const inOf = (px: number | null, ch: number) =>

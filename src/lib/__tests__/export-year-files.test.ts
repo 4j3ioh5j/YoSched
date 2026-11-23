@@ -19,7 +19,7 @@ describe("buildYearExportFiles (card #299)", () => {
     await wb.xlsx.load(xlsx as unknown as ArrayBuffer);
     expect(wb.worksheets).toHaveLength(12);
     expect(wb.worksheets[0].name).toBe("JAN 2026");
-    const footer = String(wb.getWorksheet("JAN 2026")!.getCell("A34").value);
+    const footer = String(wb.getWorksheet("JAN 2026")!.getCell("A35").value);
     const text = new TextDecoder("latin1").decode(pdf);
     expect(text.startsWith("%PDF")).toBe(true);
     expect(text.match(/\/Type \/Page\b/g)?.length).toBe(12);

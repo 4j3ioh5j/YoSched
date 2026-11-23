@@ -144,7 +144,7 @@ describe("borders and pay-period marks", () => {
   });
 
   it("the last in-month row is marked for the bottom border", () => {
-    expect(grid).toContain("data-month-last={date === lastOfMonth || undefined}");
+    expect(grid).toContain("data-month-last={date === printLast || undefined}");
   });
 
   it("PP#nn labels sit in a print-only strip right of the table, outside its border", () => {

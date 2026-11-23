@@ -56,6 +56,10 @@ input[type="checkbox"]:disabled {
 /* Card #343: the "Print columns" view shows on screen the print-only aggregate columns
    (Tailwind-hidden otherwise). Rule-hidden staff columns are left out by the grid itself. */
 @media screen {
+  /* Card #462: the weekend's second day after a month ending on its first day: printed only. */
+  tr[data-print-only] {
+    display: none;
+  }
   /* Card #354: the lines above and below today's row. A ring on the <tr> showed only its top
      line in Chrome/Edge (the next row's cells paint over the bottom of a row's shadow), so
      each cell draws them itself. Sticky date cells are already positioned and stay sticky. */
@@ -386,9 +390,14 @@ input[type="checkbox"]:disabled {
     border-top: 3px double #000 !important;
   }
 
-  /* Print only the calendar month — hide leading/trailing pay-period padding days */
-  tr[data-outside-month] {
+  /* Print only the calendar month — hide leading/trailing pay-period padding days. Card #462:
+     except the weekend's second day after a month that ends on the weekend's first day. */
+  tr[data-outside-month]:not([data-print-extra]) {
     display: none !important;
+  }
+  /* Card #462: that extra day's row, when it is not a grid row on screen, prints. */
+  tr[data-print-only] {
+    display: table-row !important;
   }
 
   /* Aggregate (additional) columns are Tailwind-hidden on screen; reveal them in print.

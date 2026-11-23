@@ -69,10 +69,12 @@ describe("buildPrintedMonth (card #299)", () => {
   it("has the in-month days only, the sheet name and the last-day flag", () => {
     const m = buildPrintedMonth(input(), 2026, 0, NOW);
     expect(m.sheetName).toBe("JAN 2026");
-    expect(m.rows).toHaveLength(31);
+    // Card #462: January 2026 ends on a Saturday, so Sunday February 1 also prints.
+    expect(m.rows).toHaveLength(32);
     expect(m.rows[0].iso).toBe("2026-01-01");
     expect(m.rows[30].iso).toBe("2026-01-31");
-    expect(m.rows[30].monthLast).toBe(true);
+    expect(m.rows[31].iso).toBe("2026-02-01");
+    expect(m.rows[31].monthLast).toBe(true);
     expect(m.rows[0].monthLast).toBe(false);
     expect(m.rows[0].dateText).toBe("01-01");
     expect(m.rows[0].dayText).toBe("THU");
@@ -151,7 +153,8 @@ describe("buildPrintedMonth (card #299)", () => {
     const months = buildPrintedYear(input(), 2026, NOW);
     expect(months.map((m) => m.sheetName)).toEqual(["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"].map((s) => `${s} 2026`));
     expect(new Set(months.map((m) => m.footer.slice(0, 16)))).toEqual(new Set(["11/16/2026 20:05"]));
-    expect(months[1].rows).toHaveLength(28);
+    expect(months[1].rows).toHaveLength(29); // card #462: Feb 28 2026 is a Saturday, so Mar 1 prints
+    expect(months[10].rows).toHaveLength(30);
   });
 });
 

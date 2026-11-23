@@ -59,7 +59,8 @@ export function pdfMonthLayout(m: PrintedMonth): PdfMonthLayout {
   const availH = footerTop - 3 - tableTop;
   // Card #322: one row height for every month, sized so the header row and a 31-day month
   // fill the page down to the footer; a shorter month leaves room at the bottom.
-  const rowH = availH / (MAX_MONTH_DAYS + 1);
+  // Card #462: a month that prints 32 days (its weekend's second day added) takes one more row.
+  const rowH = availH / (Math.max(MAX_MONTH_DAYS, m.rows.length) + 1);
 
   const heads = headLabels(m);
   const texts = [heads, ...m.rows.map((r) => rowTexts(m, r))];

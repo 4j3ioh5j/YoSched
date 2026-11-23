@@ -75,7 +75,7 @@ describe("exportYearXlsx (card #299)", () => {
     expect(ws.getCell("B10").border.right?.style).toBe("medium"); // end of the date block
     expect(ws.getCell("F10").border.right?.style).toBe("medium"); // last column
     expect(ws.getCell("C2").border.top?.style).toBe("medium");
-    expect(ws.getCell("C33").border.bottom?.style).toBe("medium");
+    expect(ws.getCell("C34").border.bottom?.style).toBe("medium"); // card #462: Sunday Feb 1 is the last printed row
     expect(ws.getCell("C13").border.top?.style).toBe("double"); // 01-11
     expect(ws.getCell("F13").border.top?.style).toBe("double");
     expect(ws.getCell("C12").border.top?.style).toBe("thin");
@@ -92,11 +92,11 @@ describe("exportYearXlsx (card #299)", () => {
 
   it("footer row under the table ends with - YoSched", async () => {
     const ws = (await workbook()).getWorksheet("JAN 2026")!;
-    const f = ws.getCell("A34");
+    const f = ws.getCell("A35"); // card #462: Jan 2026 prints 32 days
     expect(f.value).toBe("11/16/2026 20:05 VER: 09 - YoSched");
     expect(f.font.size).toBe(8);
     expect(f.alignment?.horizontal).toBe("right");
-    expect(ws.getCell("F34").isMerged).toBe(true);
+    expect(ws.getCell("F35").isMerged).toBe(true);
   });
 
   it("page setup: landscape, one page, 0.2 inch margins, print area", async () => {
@@ -107,7 +107,7 @@ describe("exportYearXlsx (card #299)", () => {
     expect(ws.pageSetup.fitToHeight).toBe(1);
     expect(ws.pageSetup.margins?.left).toBe(0.2);
     expect(ws.pageSetup.margins?.top).toBe(0.2);
-    expect(ws.pageSetup.printArea).toBe("A1:G34"); // title, header, 31 days, footer; G = PP labels
+    expect(ws.pageSetup.printArea).toBe("A1:G35"); // title, header, 32 days (card #462), footer; G = PP labels
   });
 
   it("one date column when the split is off", async () => {

@@ -3,6 +3,7 @@
 // and the printout cannot drift apart. Saved schedule only: no Live what-if, no request markers.
 
 import { isWeekendDow } from "./scheduler-tuning";
+import { printExtraDate } from "./print-weekend";
 import { rowPrintShade, type DayShading } from "./day-shading";
 import { renderPrintTemplate, footerLine, formatDateColumn, formatDayColumn, ppLabelText, type PrintLayout, type PrintTemplateContext } from "./print-layout";
 import { isPastMonth, visibleStaffForMonth } from "./schedule-visibility";
@@ -136,8 +137,11 @@ const isoOf = (y: number, m0: number, d: number) => `${y}-${pad2(m0 + 1)}-${pad2
 export function buildPrintedMonth(input: ExportScheduleInput, year: number, month: number, now: Date): PrintedMonth {
   const daysIn = new Date(year, month + 1, 0).getDate();
   const dates = Array.from({ length: daysIn }, (_, k) => isoOf(year, month, k + 1));
+  // Card #462: a month ending on the weekend's first day also prints the weekend's second day.
+  const extra = printExtraDate(dates[daysIn - 1], input.weekendStartDow);
+  if (extra) dates.push(extra);
   const first = dates[0];
-  const last = dates[daysIn - 1];
+  const last = dates[dates.length - 1];
   const layout = input.printLayout;
 
   const cell = new Map<string, (typeof input.assignments)[number]>();
@@ -187,7 +191,9 @@ export function buildPrintedMonth(input: ExportScheduleInput, year: number, mont
   const pps = [...input.payPeriods].sort((a, b) => a.startDate.localeCompare(b.startDate));
 
   const rows: PrintedRow[] = dates.map((iso) => {
-    const dow = new Date(year, month, Number(iso.slice(8, 10))).getDay();
+    // Each row's own date (card #462: the extra day may be in the next month or year).
+    const rowDate = new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
+    const dow = rowDate.getDay();
     const shade = rowPrintShade(isWeekendDow(dow, input.weekendStartDow), holidays.has(iso), input.dayShading);
     const pp = pps.find((p) => p.startDate === iso);
     const cells: PrintedCell[] = [
@@ -210,7 +216,7 @@ export function buildPrintedMonth(input: ExportScheduleInput, year: number, mont
     return {
       iso,
       dow,
-      dateText: layout.splitDateDay ? formatDateColumn(iso, layout.dateColumnFormat) : `${DAY_NAMES[dow]} ${formatDateCompact(new Date(year, month, Number(iso.slice(8, 10))), input.dateFormat)}`,
+      dateText: layout.splitDateDay ? formatDateColumn(iso, layout.dateColumnFormat) : `${DAY_NAMES[dow]} ${formatDateCompact(rowDate, input.dateFormat)}`,
       dayText: layout.splitDateDay ? formatDayColumn(dow, layout.dayColumnFormat) : null,
       ppStart: !!pp,
       ppLabel: pp && layout.payPeriodLabels ? ppLabelText(payPeriodLabel(pp.startDate, periodLengthOf(pp)).number) : null,

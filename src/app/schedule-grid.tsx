@@ -32,6 +32,7 @@ import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { countColumnTotals } from "@/lib/count-columns";
+import { printExtraDate } from "@/lib/print-weekend";
 import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary, cutPlan, manualCellKeys } from "@/lib/grid-clipboard";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { dayCapViolations, type DayCapCell } from "@/lib/max-per-day";
@@ -386,7 +387,7 @@ function findPayPeriod(dateStr: string, payPeriods: PayPeriod[]): PayPeriod | nu
 }
 
 type RowItem =
-  | { type: "date"; date: string; isNewPP: boolean }
+  | { type: "date"; date: string; isNewPP: boolean; printOnly?: boolean }
   | { type: "pp-summary"; pp: PayPeriod };
 
 function buildRowItems(dates: string[], payPeriods: PayPeriod[]): RowItem[] {
@@ -1054,6 +1055,16 @@ export function ScheduleGrid({
   const firstOfMonth = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-01`;
   const lastOfMonth = toDateStr(new Date(viewYear, viewMonth + 1, 0));
 
+  // Card #462: a month ending on the weekend's first day (Settings) also PRINTS the weekend's
+  // second day, so a paired weekend shift prints whole. `dates` (what is scheduled, navigated,
+  // selected and sent to Auto-generate) is never widened: only the rendered rows and the
+  // print-derived values use `renderDates` / `printLast`. When the day is not already a grid
+  // row, its row is print-only (hidden on screen, so it can never be focused or edited).
+  const printExtra = useMemo(() => printExtraDate(lastOfMonth, weekendStartDow), [lastOfMonth, weekendStartDow]);
+  const printLast = printExtra ?? lastOfMonth;
+  const renderDates = useMemo(() => (printExtra && !dates.includes(printExtra) ? [...dates, printExtra] : dates), [dates, printExtra]);
+  const printedDayCount = Number(lastOfMonth.slice(8, 10)) + (printExtra ? 1 : 0);
+
   const pastMonth = isPastMonth(viewYear, viewMonth, todayDate);
 
   const offShiftTypeIds = useMemo(
@@ -1070,12 +1081,12 @@ export function ScheduleGrid({
         staff,
         localAssignments,
         firstOfMonth,
-        lastOfMonth,
+        printLast, // card #462: someone who works only the printed extra day still gets a column
         pastMonth,
         showAllStaff,
         offShiftTypeIds,
       ),
-    [staff, localAssignments, firstOfMonth, lastOfMonth, pastMonth, showAllStaff, offShiftTypeIds],
+    [staff, localAssignments, firstOfMonth, printLast, pastMonth, showAllStaff, offShiftTypeIds],
   );
 
   useEffect(() => {
@@ -1093,7 +1104,16 @@ export function ScheduleGrid({
   // auto-filled default — so a cell with no shift reads as "unscheduled"
   // rather than "off".
 
-  const rowItems = useMemo(() => buildRowItems(dates, payPeriods), [dates, payPeriods]);
+  const rowItems = useMemo(() => {
+    const items = buildRowItems(dates, payPeriods);
+    // Card #462: the print-only extra day goes last, with no pay-period summary after it.
+    if (printExtra && !dates.includes(printExtra)) {
+      const ppOf = (d: string) => payPeriods.find((pp) => d >= pp.startDate && d <= pp.endDate)?.startDate ?? "";
+      const pp = ppOf(printExtra);
+      items.push({ type: "date", date: printExtra, isNewPP: pp !== "" && pp !== ppOf(dates[dates.length - 1] ?? ""), printOnly: true });
+    }
+    return items;
+  }, [dates, payPeriods, printExtra]);
 
   const assignmentMap = useMemo(() => {
     const map = new Map<string, AssignmentData>();
@@ -1451,8 +1471,8 @@ export function ScheduleGrid({
   // Count columns name their shifts by id, so count the cells' shiftTypeId (saved grid and
   // Live what-if both carry it) — a renamed shift keeps counting.
   const columnCounts = useMemo(
-    () => countColumnTotals(countColumns, dates, staff.map((p) => p.id), (pid, date) => effectiveAssignmentMap.get(`${pid}:${date}`)?.shiftTypeId),
-    [dates, staff, effectiveAssignmentMap, countColumns],
+    () => countColumnTotals(countColumns, renderDates, staff.map((p) => p.id), (pid, date) => effectiveAssignmentMap.get(`${pid}:${date}`)?.shiftTypeId),
+    [renderDates, staff, effectiveAssignmentMap, countColumns],
   );
 
   // Shift types flagged for a dedicated column, in sort order. Each gets its own
@@ -1470,12 +1490,12 @@ export function ScheduleGrid({
   // staff's own column is hidden).
   const dedicatedColumnInitialsData = useMemo(() => {
     return dedicatedColumns.map((st) =>
-      dedicatedColumnInitials(staff, dates, st.code, (pid, date) => {
+      dedicatedColumnInitials(staff, renderDates, st.code, (pid, date) => {
         const key = `${pid}:${date}`;
         return effectiveAssignmentMap.get(key)?.code;
       }),
     );
-  }, [dedicatedColumns, dates, staff, effectiveAssignmentMap]);
+  }, [dedicatedColumns, renderDates, staff, effectiveAssignmentMap]);
 
   // Print-only column model. Computes, for the printed schedule:
   //   - hiddenIds: staff whose individual column is hidden — they match no enabled
@@ -1491,15 +1511,15 @@ export function ScheduleGrid({
     () =>
       computePrintColumns({
         visibleStaff,
-        dates,
+        dates: renderDates,
         firstOfMonth,
-        lastOfMonth,
+        lastOfMonth: printLast,
         shiftTypeIdAt: (staffId, date) => assignmentMap.get(`${staffId}:${date}`)?.shiftTypeId,
         shiftTypes,
         printColumnRules,
         printAggregateColumns,
       }),
-    [printColumnRules, printAggregateColumns, visibleStaff, dates, assignmentMap, firstOfMonth, lastOfMonth, shiftTypes],
+    [printColumnRules, printAggregateColumns, visibleStaff, renderDates, assignmentMap, firstOfMonth, printLast, shiftTypes],
   );
 
   // Card #343: the staff whose columns the grid shows. In the "printed columns only" view the
@@ -1540,7 +1560,7 @@ export function ScheduleGrid({
   const printAutoTexts = useMemo(() => {
     const texts = new Set<string>();
     const printed = visibleStaff.filter((p) => !printHiddenIds.has(p.id));
-    const inMonth = dates.filter((d) => d >= firstOfMonth && d <= lastOfMonth);
+    const inMonth = renderDates.filter((d) => d >= firstOfMonth && d <= printLast);
     for (const p of printed) {
       texts.add(p.initials);
       for (const date of inMonth) {
@@ -1556,7 +1576,7 @@ export function ScheduleGrid({
       for (const date of inMonth) countTexts.add(String(columnCounts[i]?.[date] ?? ""));
     });
     return { texts: [...texts, ...countTexts], staffTexts: [...texts], countTexts: [...countTexts], autoCount: printed.length + countColumns.length };
-  }, [visibleStaff, printHiddenIds, dates, firstOfMonth, lastOfMonth, liveMode, liveDisplayMap, assignmentMap, countColumns, columnCounts]);
+  }, [visibleStaff, printHiddenIds, renderDates, firstOfMonth, printLast, liveMode, liveDisplayMap, assignmentMap, countColumns, columnCounts]);
   // The browser measures that text in the Settings print font and size (bold, as the headers and
   // bold codes print), again once fonts finish loading (the print font loads on first use). Until
   // then the need falls back to a generous width per character (AUTO_COL_FALLBACK_CH).
@@ -1623,7 +1643,7 @@ export function ScheduleGrid({
   // choice. Each one's title and in-month day texts are measured in the print font (bold, the
   // widest weight they print in; shift cells also in the monospace font), then fitted to the page.
   const udPrintTexts = useMemo(() => {
-    const inMonth = dates.filter((d) => d >= firstOfMonth && d <= lastOfMonth);
+    const inMonth = renderDates.filter((d) => d >= firstOfMonth && d <= printLast);
     return specialColumns.flatMap((sc) => {
       if (sc.kind === "agg") {
         const c = printAggColumns[sc.col.i];
@@ -1635,7 +1655,7 @@ export function ScheduleGrid({
       }
       return [];
     });
-  }, [specialColumns, printAggColumns, dedicatedColumns, dedicatedColumnInitialsData, dates, firstOfMonth, lastOfMonth]);
+  }, [specialColumns, printAggColumns, dedicatedColumns, dedicatedColumnInitialsData, renderDates, firstOfMonth, printLast]);
   const [udMeasured, setUdMeasured] = useState<{ key: string; fitPx: number | null; titlePx: number | null }[] | null>(null);
   useEffect(() => {
     const root = printRootRef.current;
@@ -1682,8 +1702,8 @@ export function ScheduleGrid({
       autoCount: printAutoTexts.autoCount,
       autoNeedPx: printAutoNeedPx,
       autoNeedCh: autoColNeedCh(printAutoTexts.texts),
-    });
-  }, [udMeasured, udPrintTexts, printLayout, printAutoTexts, printAutoNeedPx]);
+    }, printedDayCount);
+  }, [udMeasured, udPrintTexts, printLayout, printAutoTexts, printAutoNeedPx, printedDayCount]);
   // Card #359: Settings › Column Widths shows these, once the browser has measured the text.
   useEffect(() => {
     if (!udMeasured) return;
@@ -4276,7 +4296,7 @@ export function ScheduleGrid({
       data-ud-width-mode={printColumnsOnly ? printLayout.udWidth.mode : undefined}
       data-view-no-flex={printColumnsOnly && !viewHasFlexCol ? "" : undefined}
       className={`flex-1 flex flex-col overflow-hidden ${requestMode ? "ring-2 ring-inset ring-violet-500" : ""}`}
-      style={{ "--print-font": printFontStack(printLayout.fontFamily), "--print-font-size": `${printLayout.fontSize}pt`, "--print-row-h": `${printRowHeightIn(printLayout)}in`, "--ud-eq-w": udEqPx != null ? `${udEqPx}px` : undefined } as React.CSSProperties}
+      style={{ "--print-font": printFontStack(printLayout.fontFamily), "--print-font-size": `${printLayout.fontSize}pt`, "--print-row-h": `${printRowHeightIn(printLayout, printedDayCount)}in`, "--ud-eq-w": udEqPx != null ? `${udEqPx}px` : undefined } as React.CSSProperties}
     >
       {/* Request mode indicator — "/" toggles; letters create requests, not
           assignments (Shift=avoid, Alt=soft). */}
@@ -4290,7 +4310,7 @@ export function ScheduleGrid({
       )}
       {/* Card #323: the page (paper, margin, and a shrink when the text needs it) from Settings.
           Built only from a known paper name and numbers (printPageStyle). */}
-      <style media="print">{printPageStyle(printLayout, udPrint.needIn)}</style>
+      <style media="print">{printPageStyle(printLayout, udPrint.needIn, printedDayCount)}</style>
       {/* Print-only title: the Settings header template (card #301), filled in by the
           print stamp above. */}
       <div data-print-title ref={printTitleRef} className="hidden" style={printBlockStyle(printLayout.header)} />
@@ -4813,7 +4833,9 @@ export function ScheduleGrid({
                   data-weekend={isWeekend || undefined}
                   data-holiday={isHoliday || undefined}
                   data-outside-month={isOutsideMonth || undefined}
-                  data-month-last={date === lastOfMonth || undefined}
+                  data-print-only={item.printOnly || undefined}
+                  data-print-extra={date === printExtra || undefined}
+                  data-month-last={date === printLast || undefined}
                   data-pp-start={isNewPP || undefined}
                   data-today={isToday || undefined}
                   data-print-shade={printShade ? "" : undefined}

@@ -11,7 +11,7 @@ const print = css.slice(css.indexOf("@media print"));
 
 describe("print page from Settings", () => {
   it("the grid renders the print-only page style built by printPageStyle", () => {
-    expect(grid).toMatch(/<style media="print">\{printPageStyle\(printLayout, udPrint\.needIn\)\}<\/style>/); // card #357: width-aware shrink
+    expect(grid).toMatch(/<style media="print">\{printPageStyle\(printLayout, udPrint\.needIn, printedDayCount\)\}<\/style>/); // card #357: width-aware shrink
   });
   it("cells print on one line at a fixed line height", () => {
     expect(print).toMatch(/thead th, tbody td \{[^}]*white-space: nowrap !important;[^}]*line-height: 1\.2 !important;/);
