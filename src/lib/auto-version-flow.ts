@@ -50,7 +50,8 @@ export type PrintFlowEnv = {
   showing: () => { year: number; month: number; hash: string; live: boolean } | null;
   adopt: (versions: VersionMeta[]) => void;
   stamp: (versionNumber: number) => void;
-  print: () => void;
+  /** Card #476: may be async (build and print the month's PDF); the flow waits for it. */
+  print: () => unknown;
   alert: (text: string) => void;
 };
 
@@ -81,7 +82,7 @@ export async function runPrintFlow(env: PrintFlowEnv): Promise<"printed" | "canc
     return "moved";
   }
   env.stamp(v.versionNumber);
-  env.print();
+  await env.print();
   return "printed";
 }
 
@@ -92,7 +93,7 @@ export type ExportPrep<T> = { ok: true; input: T } | { ok: false; message: strin
  * taken at the click, before any wait). Versions from the server are applied to that
  * frozen input only; later edits on screen cannot reach the file.
  */
-export async function prepareYearExport<T extends { versions: { year: number; month: number; versionNumber: number }[] }>(env: {
+export async function prepareYearExport<T extends { versions: readonly { year: number; month: number; versionNumber: number }[] }>(env: {
   mode: AutoVersionMode;
   input: T;
   months: (YearMonth & { hash: string })[];

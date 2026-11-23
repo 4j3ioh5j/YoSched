@@ -42,7 +42,9 @@ import { rejectionError, dayFullPopoverText, type RejectionError } from "@/lib/r
 import { classifyRequestRefusal, requestFailureText, requestFlaggedText, type RequestRefusal } from "@/lib/request-refusal";
 import { type PrintRule } from "@/lib/print-column-visibility";
 import { type AggregateColumn } from "@/lib/print-aggregate-columns";
-import { computePrintColumns } from "@/lib/print-month-model"; // card #299: shared with the year export
+import { computePrintColumns, type ExportScheduleInput } from "@/lib/print-month-model"; // card #299: shared with the year export
+import { buildMonthPdf, createPdfPrinter, browserPdfPrintEnv, withPrintedVersion } from "@/lib/print-month-pdf";
+import { fetchPdfFonts } from "@/lib/export-year-files";
 import { orderSpecialColumns } from "@/lib/special-columns";
 import { requestsForStaffDate, describeRequest, buildRequestPayloads, groupCellsIntoTargets, keysToRequestIntent, summarizeCellRequests, type ScheduleRequestData, type PickerMarks, type RequestCategory, type RequestKind, type RequestStrength, type RequestStatus } from "@/lib/schedule-requests";
 import { hashSnapshot, dateInMonth, type SnapshotChange, type ChangeSummary } from "@/lib/versions";
@@ -837,13 +839,41 @@ export function ScheduleGrid({
   const autoVersionOn = !liveMode && canEdit && autoVersionMode !== "off";
   // One Print at a time: a second click while the first waits for the server is ignored.
   const [printGate] = useState(() => exclusive((run: () => Promise<void>) => run()));
+  // Card #476: Print builds the month as a PDF (the year export's page) from the cells frozen at
+  // the click and prints that, not the web page. One printer per grid keeps the last PDF alive
+  // until the next print, so its print dialog is never cut off.
+  const scheduleInputRef = useRef<(live: boolean) => ExportScheduleInput>(null!);
+  const pdfPrinterRef = useRef<ReturnType<typeof createPdfPrinter> | null>(null);
+  useEffect(() => () => { pdfPrinterRef.current?.dispose(); pdfPrinterRef.current = null; }, []);
+  const printPdf = useCallback(async (frozen: ExportScheduleInput, year: number, month: number, versionNumber: number | null) => {
+    if (!printMountedRef.current) return;
+    let bytes: Uint8Array;
+    try {
+      bytes = await buildMonthPdf(withPrintedVersion(frozen, year, month, versionNumber), year, month, new Date(), () => fetchPdfFonts(BASE_PATH));
+    } catch (e) {
+      if (printMountedRef.current) window.alert(`Print failed: ${e instanceof Error ? e.message : String(e)}. Nothing was printed.`);
+      return;
+    }
+    if (!printMountedRef.current) return;
+    const printer = (pdfPrinterRef.current ??= createPdfPrinter(browserPdfPrintEnv()));
+    const outcome = await printer.print(bytes);
+    if (outcome === "failed" && printMountedRef.current) {
+      window.alert("The browser blocked printing the PDF. Allow pop-ups for this site and try again.");
+    }
+  }, []);
   const printMonth = useCallback(() => printGate(async () => {
+    const year = viewYear, month = viewMonth;
     if (!autoVersionOn) {
       const warning = unsavedPrintWarning(focalVersion ? focalVersion.versionNumber : null, monthModified);
       if (warning && !window.confirm(warning)) return;
-      window.print();
+      // Frozen at the click (after the confirm): what the screen shows, Live what-if included.
+      const frozen = scheduleInputRef.current(liveModeRef.current);
+      await printPdf(frozen, year, month, focalVersion ? focalVersion.versionNumber : null);
       return;
     }
+    // Frozen at the click, from the same saved cells as `liveMonthHash`.
+    const frozen = scheduleInputRef.current(false);
+    let printedVersion: number | null = null;
     await runPrintFlow({
       mode: autoVersionMode,
       frozen: { year: viewYear, month: viewMonth, hash: liveMonthHash },
@@ -852,11 +882,11 @@ export function ScheduleGrid({
       ensure: ensureVersions("print", autoVersionComment("print", new Date(), dateFormat, zone)),
       showing: showingNow,
       adopt: adoptVersions,
-      stamp: (n) => { printVersionRef.current = n; stampPrint(n); },
-      print: () => window.print(),
+      stamp: (n) => { printVersionRef.current = n; stampPrint(n); printedVersion = n; },
+      print: () => printPdf(frozen, year, month, printedVersion),
       alert: (t) => window.alert(t),
     });
-  }), [printGate, autoVersionOn, autoVersionMode, focalVersion, monthModified, viewYear, viewMonth, liveMonthHash, ensureVersions, dateFormat, zone, adoptVersions, stampPrint, showingNow]);
+  }), [printGate, autoVersionOn, autoVersionMode, focalVersion, monthModified, viewYear, viewMonth, liveMonthHash, ensureVersions, dateFormat, zone, adoptVersions, stampPrint, showingNow, printPdf]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p") {
@@ -1211,6 +1241,32 @@ export function ScheduleGrid({
   // outside Live this IS the saved assignment map, so normal behavior is unchanged.
   // (Edit logic still reads assignmentMap — the SAVED state — for lock checks.)
   const effectiveAssignmentMap = (liveMode && liveOutcome) ? liveDisplayMap : assignmentMap;
+
+  // Card #299 / #476: the printed schedule's whole input, deep-copied so later edits on screen
+  // cannot reach a file being built. `live` takes the cells the Live what-if shows; otherwise
+  // the saved cells. Read through a ref (set after every commit), so Print and Export always
+  // get the values on screen.
+  const scheduleInput = (live: boolean): ExportScheduleInput => {
+    const cells = live && liveMode && liveOutcome ? [...liveDisplayMap.values()] : localAssignments;
+    return structuredClone({
+      staff: staff.map((p) => ({ id: p.id, initials: p.initials, employmentTypeId: p.employmentTypeId, ftePercentage: p.ftePercentage, isActive: p.isActive })),
+      assignments: cells.map((a) => ({ staffId: a.staffId, date: a.date, shiftTypeId: a.shiftTypeId, code: a.code })),
+      shiftTypes: shiftTypes.map((st) => ({ id: st.id, code: st.code, isOffShift: st.isOffShift, isLeave: st.isLeave, dedicatedColumn: st.dedicatedColumn, boldOnSchedule: st.boldOnSchedule, printBackgroundColor: st.printBackgroundColor })),
+      payPeriods: payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
+      holidays: holidays.map((h) => ({ date: h.date })),
+      countColumns,
+      specialColumnOrder,
+      printColumnRules,
+      printAggregateColumns,
+      dayShading,
+      printLayout,
+      zone,
+      weekendStartDow,
+      dateFormat,
+      versions: [...currentVersionMapRef.current.values()].map((v) => ({ year: v.year, month: v.month, versionNumber: v.versionNumber })),
+    });
+  };
+  useEffect(() => { scheduleInputRef.current = scheduleInput; });
 
   // Reverse map for paste: UPPERCASE shift code → id (codes are unique). Lets a pasted
   // "ORC"/"x" resolve to a shift type without a server round-trip.
@@ -5607,23 +5663,7 @@ export function ScheduleGrid({
           // Card #312: the input AND the months' hashes are frozen together at the click,
           // from the same cells; versions from the server apply to that frozen input only.
           prepare={(year: number) => {
-            const input = structuredClone({
-            staff: staff.map((p) => ({ id: p.id, initials: p.initials, employmentTypeId: p.employmentTypeId, ftePercentage: p.ftePercentage, isActive: p.isActive })),
-            assignments: localAssignments.map((a) => ({ staffId: a.staffId, date: a.date, shiftTypeId: a.shiftTypeId, code: a.code })),
-            shiftTypes: shiftTypes.map((st) => ({ id: st.id, code: st.code, isOffShift: st.isOffShift, isLeave: st.isLeave, dedicatedColumn: st.dedicatedColumn, boldOnSchedule: st.boldOnSchedule, printBackgroundColor: st.printBackgroundColor })),
-            payPeriods: payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate })),
-            holidays: holidays.map((h) => ({ date: h.date })),
-            countColumns,
-            specialColumnOrder,
-            printColumnRules,
-            printAggregateColumns,
-            dayShading,
-            printLayout,
-            zone,
-            weekendStartDow,
-            dateFormat,
-            versions: [...currentVersionMapRef.current.values()].map((v) => ({ year: v.year, month: v.month, versionNumber: v.versionNumber })),
-          });
+            const input = scheduleInputRef.current(false);
             if (!autoVersionOn) return Promise.resolve({ ok: true as const, input });
             const byMonth = new Map<string, { staffId: string; date: string; shiftTypeId: string; isLocked: boolean }[]>();
             for (const a of localAssignments) {

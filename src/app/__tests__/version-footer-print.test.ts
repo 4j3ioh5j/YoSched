@@ -25,15 +25,16 @@ describe("unsaved edits: warned before printing, not printed (card #173)", () =>
 
   // Card #312: with auto-versioning off (or Live / view-only) the old confirm still guards
   // the print; otherwise runPrintFlow prints only after the version holds the cells.
-  it("every window.print() call is inside printMonth: behind the confirm, or behind runPrintFlow", () => {
-    const calls = grid.match(/window\.print\(\)/g) ?? [];
-    expect(calls.length).toBe(2);
+  // Card #476: the print is the month's PDF (printPdf), never the browser's window.print().
+  it("every print is inside printMonth: behind the confirm, or behind runPrintFlow", () => {
+    expect(grid.match(/window\.print\(\)/g) ?? []).toEqual([]);
     const start = grid.indexOf("const printMonth = useCallback(() => printGate(async () => {");
     const fn = grid.slice(start, grid.indexOf("}), [", start));
-    expect((fn.match(/window\.print\(\)/g) ?? []).length).toBe(2);
+    expect((grid.match(/printPdf\(frozen,/g) ?? []).length).toBe(2);
+    expect((fn.match(/printPdf\(frozen,/g) ?? []).length).toBe(2);
     expect(fn).toContain("unsavedPrintWarning(");
-    expect(fn).toMatch(/if \(warning && !window\.confirm\(warning\)\) return;\s*window\.print\(\);/);
-    expect(fn).toMatch(/await runPrintFlow\(\{[\s\S]*print: \(\) => window\.print\(\),/);
+    expect(fn).toMatch(/if \(warning && !window\.confirm\(warning\)\) return;\s*(\/\/[^\n]*\n\s*)*const frozen = scheduleInputRef\.current\(liveModeRef\.current\);\s*await printPdf\(frozen,/);
+    expect(fn).toMatch(/await runPrintFlow\(\{[\s\S]*print: \(\) => printPdf\(frozen, year, month, printedVersion\),/);
   });
 
   it("the Print button and Ctrl/Cmd+P both go through printMonth", () => {

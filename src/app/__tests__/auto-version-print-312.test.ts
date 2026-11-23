@@ -47,7 +47,8 @@ describe("Print saves a version first (card #312)", () => {
 
   it("the month and cells are frozen at the click and re-checked against the screen after the wait", () => {
     expect(print).toMatch(/frozen: \{ year: viewYear, month: viewMonth, hash: liveMonthHash \}/);
-    expect(print).toMatch(/stamp: \(n\) => \{ printVersionRef\.current = n; stampPrint\(n\); \}/);
+    expect(print).toMatch(/const frozen = scheduleInputRef\.current\(false\);[\s\S]*await runPrintFlow\(/);
+    expect(print).toMatch(/stamp: \(n\) => \{ printVersionRef\.current = n; stampPrint\(n\); printedVersion = n; \}/);
   });
 
   it("after the wait, an unmounted grid or a Live sandbox never prints (Codex r1)", () => {
@@ -80,10 +81,12 @@ describe("Export saves versions for the whole year first (card #312)", () => {
 
   it("the grid freezes the input and the twelve months' hashes before the wait", () => {
     const p = grid.slice(grid.indexOf("prepare={(year: number) => {"));
-    const input = p.indexOf("const input = structuredClone(");
+    const input = p.indexOf("const input = scheduleInputRef.current(false);");
     const hashes = p.indexOf("yearMonths(year).map(");
     const wait = p.indexOf("prepareYearExport(");
     expect(input).toBeGreaterThan(-1);
+    // Card #476: the shared builder deep-copies, so later edits cannot reach the frozen input.
+    expect(grid).toMatch(/const scheduleInput = \(live: boolean\): ExportScheduleInput => \{[\s\S]{0,600}return structuredClone\(\{/);
     expect(hashes).toBeGreaterThan(input);
     expect(wait).toBeGreaterThan(hashes);
   });

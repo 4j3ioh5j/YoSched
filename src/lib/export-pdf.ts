@@ -111,7 +111,7 @@ function base64(bytes: Uint8Array): string {
 export async function exportYearPdf(
   months: readonly PrintedMonth[],
   fonts: { regular: Uint8Array; bold: Uint8Array },
-  opts: { compress?: boolean } = {},
+  opts: { compress?: boolean; title?: string } = {},
 ): Promise<Uint8Array> {
   const { jsPDF } = await import("jspdf");
   const first = months[0] ? pdfPage(months[0].layout) : pdfPage({ paper: DEFAULT_PRINT_PAPER, marginHundredths: 25 });
@@ -120,7 +120,7 @@ export async function exportYearPdf(
   doc.addFont("ArchivoNarrow-Regular.ttf", FONT, "normal");
   doc.addFileToVFS("ArchivoNarrow-Bold.ttf", base64(fonts.bold));
   doc.addFont("ArchivoNarrow-Bold.ttf", FONT, "bold");
-  doc.setProperties({ title: months[0] ? `${months[0].year} schedule` : "Schedule", creator: "YoSched" });
+  doc.setProperties({ title: opts.title ?? (months[0] ? `${months[0].year} schedule` : "Schedule"), creator: "YoSched" });
 
   months.forEach((m, pi) => {
     if (pi > 0) doc.addPage(pdfPage(m.layout).format, "landscape");
