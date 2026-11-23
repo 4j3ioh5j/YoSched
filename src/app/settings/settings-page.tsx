@@ -1,5 +1,6 @@
 "use client";
 
+import { PDF_FONTS } from "@/lib/pdf-fonts";
 import { ARCHIVE_LEAVE_RULES, ARCHIVE_DAYS_MAX, dateInZone, isValidArchiveDays, type ArchiveLeaveRule } from "@/lib/request-lines";
 import { useTimeZone, TIME_ZONE_EVENT } from "@/app/time-zone-provider";
 import { formatClock, wallClock, zoneChoices } from "@/lib/time-zone";
@@ -6270,10 +6271,10 @@ const FONT_SUGGESTIONS = ["Aptos Narrow", "Arial Narrow", "Archivo Narrow", "Cal
 
 function PrintFontSection({ initial }: { initial: PrintLayout }) {
   const canEdit = useCanEdit();
-  const { saved, draft, setDraft, status, error, busy, dirty, save } = useSavedDraft({ fontFamily: initial.fontFamily, fontSize: initial.fontSize, payPeriodLabels: initial.payPeriodLabels });
+  const { saved, draft, setDraft, status, error, busy, dirty, save } = useSavedDraft({ fontFamily: initial.fontFamily, fontSize: initial.fontSize, payPeriodLabels: initial.payPeriodLabels, pdfFont: initial.pdfFont });
   const valid = validatePrintFontFamily(draft.fontFamily) && validatePrintFontSize(draft.fontSize);
   const d = DEFAULT_PRINT_LAYOUT;
-  const defaults = { fontFamily: d.fontFamily, fontSize: d.fontSize, payPeriodLabels: d.payPeriodLabels };
+  const defaults = { fontFamily: d.fontFamily, fontSize: d.fontSize, payPeriodLabels: d.payPeriodLabels, pdfFont: d.pdfFont };
   return (
     <CollapsibleSection
       id="print-font"
@@ -6298,6 +6299,17 @@ function PrintFontSection({ initial }: { initial: PrintLayout }) {
           <datalist id="print-font-suggestions">
             {FONT_SUGGESTIONS.map((f) => <option key={f} value={f} />)}
           </datalist>
+        </FieldRow>
+        <FieldRow label="PDF font" description="The font of the printed month and the year export’s PDF. A PDF carries its own font, so this is one of the fonts YoSched ships.">
+          <select
+            aria-label="PDF font"
+            value={draft.pdfFont}
+            disabled={!canEdit || busy}
+            onChange={(e) => setDraft({ ...draft, pdfFont: e.target.value })}
+            className={`${INPUT} w-56`}
+          >
+            {PDF_FONTS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+          </select>
         </FieldRow>
         <FieldRow label="Size" description="Points, 6 to 14 (the header and footer have their own sizes).">
           <DecimalField
@@ -6324,9 +6336,9 @@ function PrintFontSection({ initial }: { initial: PrintLayout }) {
         </FieldRow>
         {!valid && <p className="text-xs text-red-400">Font: letters, digits, spaces and hyphens. Size: a whole number from 6 to 14.</p>}
         <div className="flex gap-2">
-          <button type="button" disabled={!canEdit || busy || !dirty || !valid} onClick={() => save({ printFontFamily: draft.fontFamily, printFontSize: draft.fontSize, printPayPeriodLabels: draft.payPeriodLabels }, draft)} className={BTN_SAVE}>Save</button>
+          <button type="button" disabled={!canEdit || busy || !dirty || !valid} onClick={() => save({ printFontFamily: draft.fontFamily, printFontSize: draft.fontSize, printPayPeriodLabels: draft.payPeriodLabels, printPdfFont: draft.pdfFont }, draft)} className={BTN_SAVE}>Save</button>
           <button type="button" disabled={!canEdit || busy || !dirty} onClick={() => setDraft(saved)} className={BTN_PLAIN}>Cancel</button>
-          <button type="button" disabled={!canEdit || busy} onClick={() => save({ printFontFamily: defaults.fontFamily, printFontSize: defaults.fontSize, printPayPeriodLabels: defaults.payPeriodLabels }, defaults)} className={BTN_PLAIN}>Reset to default</button>
+          <button type="button" disabled={!canEdit || busy} onClick={() => save({ printFontFamily: defaults.fontFamily, printFontSize: defaults.fontSize, printPayPeriodLabels: defaults.payPeriodLabels, printPdfFont: defaults.pdfFont }, defaults)} className={BTN_PLAIN}>Reset to default</button>
         </div>
       </div>
     </CollapsibleSection>

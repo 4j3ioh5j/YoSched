@@ -849,7 +849,7 @@ export function ScheduleGrid({
     if (!printMountedRef.current) return;
     let bytes: Uint8Array;
     try {
-      bytes = await buildMonthPdf(withPrintedVersion(frozen, year, month, versionNumber), year, month, new Date(), () => fetchPdfFonts(BASE_PATH));
+      bytes = await buildMonthPdf(withPrintedVersion(frozen, year, month, versionNumber), year, month, new Date(), () => fetchPdfFonts(BASE_PATH, frozen.printLayout.pdfFont));
     } catch (e) {
       if (printMountedRef.current) window.alert(`Print failed: ${e instanceof Error ? e.message : String(e)}. Nothing was printed.`);
       return;

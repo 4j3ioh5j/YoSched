@@ -76,7 +76,7 @@ export function ExportYearDialog({ yearChoices, defaultYear, fileNameTemplate, p
           return;
         }
         const input = ensured.input;
-        const r = await runYearExport(name, () => buildYearExportFiles(input, year, now, () => fetchPdfFonts(BASE_PATH)), browserExportEnv());
+        const r = await runYearExport(name, () => buildYearExportFiles(input, year, now, () => fetchPdfFonts(BASE_PATH, input.printLayout.pdfFont)), browserExportEnv());
         if (stale()) { r.release(); return; }
         showResult(r);
       } catch (e) {

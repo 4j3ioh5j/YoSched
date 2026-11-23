@@ -190,6 +190,7 @@ describe("printLayoutFrom (prefs row → the grid's print layout)", () => {
       paper: "letter",
       marginHundredths: 25,
       udWidth: { mode: "bestFit", uniformHundredths: 50, perColumn: {} },
+      pdfFont: "archivo-narrow",
     });
   });
 
@@ -207,6 +208,7 @@ describe("printLayoutFrom (prefs row → the grid's print layout)", () => {
         printPayPeriodLabels: false,
         printPaperSize: "a4",
         printMarginHundredthsIn: 50,
+        printPdfFont: "barlow-semi-condensed",
       }),
     ).toEqual({
       header: h,
@@ -220,6 +222,7 @@ describe("printLayoutFrom (prefs row → the grid's print layout)", () => {
       paper: "a4",
       marginHundredths: 50,
       udWidth: { mode: "bestFit", uniformHundredths: 50, perColumn: {} },
+      pdfFont: "barlow-semi-condensed",
     });
   });
 

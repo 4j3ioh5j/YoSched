@@ -2,8 +2,8 @@
 // straight with jsPDF (no table plugin, so a month can never split across pages). The
 // layout is a pure function: the font shrinks only when the month would not fit the
 // page's width or height. A PDF must embed its font, and the Settings font (Aptos Narrow)
-// cannot be shipped, so it embeds Archivo Narrow (OFL, public/fonts), the same narrow
-// fallback the printout uses.
+// cannot be shipped, so it embeds a bundled OFL font (public/fonts): the Settings PDF font
+// (card #477, src/lib/pdf-fonts.ts), Archivo Narrow by default.
 
 import type { PrintedMonth } from "./print-month-model";
 import { PAPER_IN, DEFAULT_PRINT_PAPER, isPrintPaper, printPage, udWidthsIn, DEFAULT_UD_WIDTH, type PrintLayout } from "./print-layout";
@@ -18,7 +18,6 @@ export function pdfPage(layout: Pick<PrintLayout, "paper" | "marginHundredths">)
 const LABEL_W = 24.5; // 0.34", the printout's PP-label strip
 const CELL_PAD = 4;
 const MAX_STRETCH = 2.5;
-const FONT = "ArchivoNarrow";
 const MAX_MONTH_DAYS = 31;
 
 /** Width of a line of text in points: a safe upper estimate for a narrow font. */
@@ -107,19 +106,21 @@ function base64(bytes: Uint8Array): string {
   return btoa(s);
 }
 
-/** The year's 12 printed months → PDF bytes. `fonts` are the Archivo Narrow TTFs. */
+/** The year's 12 printed months → PDF bytes. `fonts` are the PDF font's two TTFs. */
 export async function exportYearPdf(
   months: readonly PrintedMonth[],
-  fonts: { regular: Uint8Array; bold: Uint8Array },
+  fonts: { regular: Uint8Array; bold: Uint8Array; family?: string },
   opts: { compress?: boolean; title?: string } = {},
 ): Promise<Uint8Array> {
   const { jsPDF } = await import("jspdf");
   const first = months[0] ? pdfPage(months[0].layout) : pdfPage({ paper: DEFAULT_PRINT_PAPER, marginHundredths: 25 });
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: first.format, compress: opts.compress ?? true });
-  doc.addFileToVFS("ArchivoNarrow-Regular.ttf", base64(fonts.regular));
-  doc.addFont("ArchivoNarrow-Regular.ttf", FONT, "normal");
-  doc.addFileToVFS("ArchivoNarrow-Bold.ttf", base64(fonts.bold));
-  doc.addFont("ArchivoNarrow-Bold.ttf", FONT, "bold");
+  // Only letters and digits: the family is a PDF name.
+  const FONT = fonts.family && /^[A-Za-z0-9]{1,64}$/.test(fonts.family) ? fonts.family : "ArchivoNarrow";
+  doc.addFileToVFS(`${FONT}-Regular.ttf`, base64(fonts.regular));
+  doc.addFont(`${FONT}-Regular.ttf`, FONT, "normal");
+  doc.addFileToVFS(`${FONT}-Bold.ttf`, base64(fonts.bold));
+  doc.addFont(`${FONT}-Bold.ttf`, FONT, "bold");
   doc.setProperties({ title: opts.title ?? (months[0] ? `${months[0].year} schedule` : "Schedule"), creator: "YoSched" });
 
   months.forEach((m, pi) => {

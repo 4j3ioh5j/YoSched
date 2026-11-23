@@ -4,6 +4,7 @@
 
 import { wallClock, zonedCalendarDate } from "./time-zone";
 import { formatDate, type DateFormatKey } from "./date-format";
+import { DEFAULT_PDF_FONT, isPdfFontId } from "./pdf-fonts";
 
 export type PrintAlign = "left" | "center" | "right";
 export type PrintBlock = { text: string; size: number; bold: boolean; align: PrintAlign };
@@ -313,6 +314,8 @@ export type PrintLayout = {
   paper: PrintPaper;
   marginHundredths: number;
   udWidth: UdWidthSettings;
+  /** Card #477: the font the PDF embeds (an id from pdf-fonts.ts). */
+  pdfFont: string;
 };
 
 export const DEFAULT_PRINT_FONT_FAMILY = "Aptos Narrow";
@@ -330,6 +333,7 @@ export const DEFAULT_PRINT_LAYOUT: PrintLayout = {
   paper: "letter",
   marginHundredths: 25,
   udWidth: DEFAULT_UD_WIDTH,
+  pdfFont: DEFAULT_PDF_FONT,
 };
 
 type PrintLayoutPrefs = {
@@ -346,6 +350,7 @@ type PrintLayoutPrefs = {
   printUdWidthMode?: unknown;
   printUdWidthHundredths?: unknown;
   printUdColumnWidths?: unknown;
+  printPdfFont?: unknown;
 };
 
 /** The SchedulingPreferences row (or null) → the print layout; each bad field → its default. */
@@ -364,6 +369,7 @@ export function printLayoutFrom(p: PrintLayoutPrefs | null | undefined): PrintLa
     paper: isPrintPaper(p.printPaperSize) ? p.printPaperSize : d.paper,
     marginHundredths: validatePrintMargin(p.printMarginHundredthsIn) ? p.printMarginHundredthsIn : d.marginHundredths,
     udWidth: parseUdWidth(p.printUdWidthMode, p.printUdWidthHundredths, p.printUdColumnWidths),
+    pdfFont: isPdfFontId(p.printPdfFont) ? p.printPdfFont : d.pdfFont,
   };
 }
 

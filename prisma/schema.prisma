@@ -425,6 +425,8 @@ model SchedulingPreferences {
   dateColumnFormat        String   @default("MM-DD")
   dayColumnFormat         String   @default("DDD")
   printPayPeriodLabels    Boolean  @default(true)
+  /// Card #477: the font the PDF embeds, an id from src/lib/pdf-fonts.ts.
+  printPdfFont            String   @default("archivo-narrow")
   /// Card #323: printout + year PDF paper ("letter" | "a4") and margin in hundredths of an inch (25..100).
   printPaperSize          String   @default("letter")
   printMarginHundredthsIn Int      @default(25)

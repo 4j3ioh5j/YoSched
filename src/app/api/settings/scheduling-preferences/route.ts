@@ -17,6 +17,7 @@ import { exportFileNameError } from "@/lib/export-filename";
 import { AUTO_VERSION_MODES, type AutoVersionMode } from "@/lib/auto-version";
 import { isActivationGroupDefault, isActivationNewHireDefault, ACTIVATION_GROUP_DEFAULTS, ACTIVATION_NEW_HIRE_DEFAULTS } from "@/lib/shift-activation";
 import { gated } from "@/lib/write-gate";
+import { isPdfFontId, PDF_FONTS } from "@/lib/pdf-fonts";
 import { isArchiveLeaveRule, ARCHIVE_LEAVE_RULES, isValidArchiveDays, ARCHIVE_DAYS_MAX } from "@/lib/request-lines";
 
 async function handleGET() {
@@ -35,7 +36,7 @@ async function handlePUT(req: NextRequest) {
   const { error } = await getSession("settings:edit");
   if (error) return error;
   const body = await req.json();
-  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, holidayUsualWeekdayPct, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, printPaperSize, printMarginHundredthsIn, printUdWidthMode, printUdWidthHundredths, printUdColumnWidths, exportFileName, autoVersionMode, requestArchiveDays, archiveLeaveMetBy } = body;
+  const { prefer3DayWeekends, prefer4DayWeekends, preferSequentialOff, deviceTrustDays, dateFormat, maxLeavePerDay, pendingRequestMode, requestConflictPolicy, approvalConflictPolicy, defaultOffStrategyOrder, defaultLiveScope, staffColumnOrder, specialColumnOrder, shiftShareBasis, holidayPolicy, leaveHoursPolicy, activationWorkedDefault, activationNeverDefault, activationNewHireDefault, shiftBalanceFrom, holidayShiftId, holidayUsualWeekdayPct, printWeekendColor, printHolidayColor, screenHolidayColor, printHeader, printFooter, printFontFamily, printFontSize, splitDateDayColumns, dateColumnFormat, dayColumnFormat, printPayPeriodLabels, printPaperSize, printPdfFont, printMarginHundredthsIn, printUdWidthMode, printUdWidthHundredths, printUdColumnWidths, exportFileName, autoVersionMode, requestArchiveDays, archiveLeaveMetBy } = body;
   // Card #203: "Count shifts from" — a YYYY-MM-DD date, or null to clear. Strictly validated.
   const balanceFromValid = shiftBalanceFrom === null || (typeof shiftBalanceFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(shiftBalanceFrom) && !Number.isNaN(Date.parse(shiftBalanceFrom + "T00:00:00Z")) && new Date(shiftBalanceFrom + "T00:00:00Z").toISOString().startsWith(shiftBalanceFrom));
   if (shiftBalanceFrom !== undefined && !balanceFromValid) {
@@ -147,6 +148,9 @@ async function handlePUT(req: NextRequest) {
     return NextResponse.json({ error: "dateColumnFormat is not a known format" }, { status: 400 });
   }
   // Card #323: paper and margin; only a known paper and a whole margin from 0.25in to 1in.
+  if (printPdfFont !== undefined && !isPdfFontId(printPdfFont)) {
+    return NextResponse.json({ error: `printPdfFont must be one of: ${PDF_FONTS.map((f) => f.id).join(", ")}` }, { status: 400 });
+  }
   if (printPaperSize !== undefined && !isPrintPaper(printPaperSize)) {
     return NextResponse.json({ error: "printPaperSize must be letter or a4" }, { status: 400 });
   }
@@ -186,6 +190,7 @@ async function handlePUT(req: NextRequest) {
     ...(dayColumnFormat !== undefined && { dayColumnFormat: dayColumnFormat as string }),
     ...(printPayPeriodLabels !== undefined && { printPayPeriodLabels: printPayPeriodLabels as boolean }),
     ...(printPaperSize !== undefined && { printPaperSize: printPaperSize as string }),
+    ...(printPdfFont !== undefined && { printPdfFont: printPdfFont as string }),
     ...(printMarginHundredthsIn !== undefined && { printMarginHundredthsIn: printMarginHundredthsIn as number }),
     ...(printUdWidthMode !== undefined && { printUdWidthMode: printUdWidthMode as string }),
     ...(printUdWidthHundredths !== undefined && { printUdWidthHundredths: printUdWidthHundredths as number }),

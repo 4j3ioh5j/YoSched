@@ -5,8 +5,10 @@ import { buildPrintedYear, type ExportScheduleInput } from "./print-month-model"
 import { exportYearXlsx } from "./export-xlsx";
 import { exportYearPdf } from "./export-pdf";
 import type { ExportBytes } from "./save-export";
+import { pdfFontById } from "./pdf-fonts";
 
-export type PdfFonts = { regular: Uint8Array; bold: Uint8Array };
+/** `family` names the font in the PDF (card #477); absent → "ArchivoNarrow", as before. */
+export type PdfFonts = { regular: Uint8Array; bold: Uint8Array; family?: string };
 
 export async function buildYearExportFiles(
   input: ExportScheduleInput,
@@ -22,13 +24,15 @@ export async function buildYearExportFiles(
   return { xlsx, pdf };
 }
 
-/** The browser's font loader: the bundled Archivo Narrow TTFs (public/fonts). */
-export async function fetchPdfFonts(basePath = ""): Promise<PdfFonts> {
+/** The browser's font loader: the Settings PDF font's bundled TTFs (public/fonts; card #477).
+ *  An unknown or missing id loads the default font. */
+export async function fetchPdfFonts(basePath = "", fontId?: unknown): Promise<PdfFonts> {
+  const font = pdfFontById(fontId);
   const get = async (file: string) => {
     const res = await fetch(`${basePath}/fonts/${file}`);
     if (!res.ok) throw new Error(`could not load the PDF font (${res.status})`);
     return new Uint8Array(await res.arrayBuffer());
   };
-  const [regular, bold] = await Promise.all([get("ArchivoNarrow-Regular.ttf"), get("ArchivoNarrow-Bold.ttf")]);
-  return { regular, bold };
+  const [regular, bold] = await Promise.all([get(font.regular), get(font.bold)]);
+  return { regular, bold, family: font.family };
 }
