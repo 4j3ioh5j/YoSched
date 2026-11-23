@@ -64,6 +64,38 @@ export function selectionToTsv(
 }
 
 /**
+ * Cut = copy + clear (card #460). The clipboard gets the same TSV a copy would give (every
+ * selected cell, as the grid shows it); the cells to clear are the selected ones on the grid
+ * that hold a shift and are not locked. Locked cells are copied but stay put (counted), the
+ * same rule Delete follows.
+ */
+export function cutPlan(
+  selectedKeys: Iterable<string>,
+  opts: {
+    dateOrder: string[];
+    staffOrder: string[];
+    codeAt: (staffId: string, date: string) => string | null | undefined;
+    isLocked: (staffId: string, date: string) => boolean;
+  }
+): { tsv: string | null; clears: { staffId: string; date: string }[]; skippedLocked: number } {
+  const keys = [...selectedKeys];
+  const tsv = selectionToTsv(keys, opts);
+  if (tsv == null) return { tsv: null, clears: [], skippedLocked: 0 };
+  const dates = new Set(opts.dateOrder);
+  const staffIds = new Set(opts.staffOrder);
+  const clears: { staffId: string; date: string }[] = [];
+  let skippedLocked = 0;
+  for (const k of keys) {
+    const cell = splitKey(k);
+    if (!cell || !dates.has(cell.date) || !staffIds.has(cell.staffId)) continue;
+    if (!opts.codeAt(cell.staffId, cell.date)) continue;
+    if (opts.isLocked(cell.staffId, cell.date)) { skippedLocked++; continue; }
+    clears.push(cell);
+  }
+  return { tsv, clears, skippedLocked };
+}
+
+/**
  * Parse clipboard text (as produced by Excel/Sheets/our own copy) into a row×column
  * grid of raw cell strings. Rows split on newlines (CRLF or LF), columns on tabs.
  * Spreadsheets append a trailing newline, so a single trailing empty line is dropped.

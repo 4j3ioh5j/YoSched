@@ -32,7 +32,7 @@ import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { countColumnTotals } from "@/lib/count-columns";
-import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary } from "@/lib/grid-clipboard";
+import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary, cutPlan } from "@/lib/grid-clipboard";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { dayCapViolations, type DayCapCell } from "@/lib/max-per-day";
 import { buildDayCapLookup, dayKeyLabel, dayKeyOf } from "@/lib/day-cap";
@@ -2479,7 +2479,7 @@ export function ScheduleGrid({
 
   const undoRef = useRef(handleUndo);
   const redoRef = useRef(handleRedo);
-  const clearRef = useRef<(target?: { staffId: string; date: string }) => Promise<void>>(async () => {});
+  const clearRef = useRef<(target?: { staffId: string; date: string } | { staffId: string; date: string }[]) => Promise<void>>(async () => {});
   useEffect(() => { undoRef.current = handleUndo; }, [handleUndo]);
   useEffect(() => { redoRef.current = handleRedo; }, [handleRedo]);
 
@@ -2711,7 +2711,8 @@ export function ScheduleGrid({
       const tsv = selectionToTsv(keys, {
         dateOrder: dates,
         staffOrder: gridStaff.map((p) => p.id),
-        codeAt: (staffId, date) => assignmentMap.get(`${staffId}:${date}`)?.code,
+        // As shown: in Live (autogeneration) the engine's unsaved cells, not the saved grid (#460).
+        codeAt: (staffId, date) => effectiveAssignmentMap.get(`${staffId}:${date}`)?.code,
       });
       if (tsv == null) return;
       e.clipboardData?.setData("text/plain", tsv);
@@ -2719,7 +2720,46 @@ export function ScheduleGrid({
     }
     document.addEventListener("copy", onCopy);
     return () => document.removeEventListener("copy", onCopy);
-  }, [selection, activeRow, activeCol, activeDedCol, assignmentMap, dates, gridStaff, showMonthPicker, modalOpen, picker, dedSelection, shiftTypeMap, staff]);
+  }, [selection, activeRow, activeCol, activeDedCol, assignmentMap, effectiveAssignmentMap, dates, gridStaff, showMonthPicker, modalOpen, picker, dedSelection, shiftTypeMap, staff]);
+
+  // Cut (card #460): copy the selected staff cells as shown, then clear them through the same
+  // path as Delete (Live: frees the engine re-solves; otherwise a saved delete with Undo).
+  // Locked cells are copied but stay. ICU/CARD rosters are not cut (Delete clears those).
+  useEffect(() => {
+    function onCut(e: ClipboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (showMonthPicker || modalOpen || picker) return;
+      if (activeDedCol || (dedSelection && dedSelection.dates.length > 0)) return;
+      let keys: string[];
+      if (selection.size > 0) {
+        keys = [...selection];
+      } else if (activeRow && activeCol) {
+        if (window.getSelection()?.toString().trim()) return; // user is cutting page text
+        keys = [`${activeCol}:${activeRow}`];
+      } else {
+        return;
+      }
+      if (!canEdit) return;
+      e.preventDefault();
+      if (requestMode && !liveModeRef.current) {
+        setPasteToast("Cut clears assignments — exit request mode (press /) first.");
+        return;
+      }
+      const plan = cutPlan(keys, {
+        dateOrder: dates,
+        staffOrder: gridStaff.map((p) => p.id),
+        codeAt: (staffId, date) => effectiveAssignmentMap.get(`${staffId}:${date}`)?.code,
+        isLocked: (staffId, date) => !!assignmentMap.get(`${staffId}:${date}`)?.isLocked,
+      });
+      if (plan.tsv == null) return;
+      e.clipboardData?.setData("text/plain", plan.tsv);
+      if (plan.skippedLocked > 0) setPasteToast(`Copied; ${plan.skippedLocked} locked cell${plan.skippedLocked !== 1 ? "s" : ""} left in place.`);
+      if (plan.clears.length > 0) void clearRef.current(plan.clears);
+    }
+    document.addEventListener("cut", onCut);
+    return () => document.removeEventListener("cut", onCut);
+  }, [selection, activeRow, activeCol, activeDedCol, assignmentMap, effectiveAssignmentMap, dates, gridStaff, showMonthPicker, modalOpen, picker, dedSelection, canEdit, requestMode]);
 
   // Paste a clipboard block (from Excel/Sheets or our own copy) positionally from the
   // active cell, filling down and right. Same guards as keydown/copy. Gated to assignment
@@ -3206,15 +3246,21 @@ export function ScheduleGrid({
     }
   }, [picker, shiftTypeMap, assignmentMap, selection, liveMode, liveEdit, blockedByDayCap]);
 
-  const handleClear = useCallback(async (target?: { staffId: string; date: string }) => {
-    const anchor = target ?? (picker ? { staffId: picker.staffId, date: picker.date } : null);
-    if (!anchor && selection.size === 0) return;
+  // target: one cell (Delete on the active cell), an exact list of cells (cut, card #460),
+  // or nothing (the picker's selection).
+  const handleClear = useCallback(async (target?: { staffId: string; date: string } | { staffId: string; date: string }[]) => {
+    const list = Array.isArray(target) ? target : null;
+    const single = Array.isArray(target) ? undefined : target;
+    const anchor = list ? null : (single ?? (picker ? { staffId: picker.staffId, date: picker.date } : null));
+    if (list ? list.length === 0 : (!anchor && selection.size === 0)) return;
 
     // Live mode: clearing a cell FREES it (the engine re-solves the hole) — never
     // a DB delete. Frees route through the what-if engine like every other edit.
     if (liveMode) {
       const candidates: ScenarioFree[] = [];
-      if (!target && selection.size > 0) {
+      if (list) {
+        candidates.push(...list);
+      } else if (!target && selection.size > 0) {
         for (const key of selection) { const [pid, d] = key.split(":"); candidates.push({ staffId: pid, date: d }); }
       } else if (anchor) {
         candidates.push(anchor);
@@ -3234,7 +3280,12 @@ export function ScheduleGrid({
     // Explicit target (Delete key) always clears just that cell;
     // selection path only used from picker (no target)
     const cells: { staffId: string; date: string }[] = [];
-    if (!target && selection.size > 0) {
+    if (list) {
+      for (const c of list) {
+        const a = assignmentMap.get(`${c.staffId}:${c.date}`);
+        if (a && !a.isLocked) cells.push(c);
+      }
+    } else if (!target && selection.size > 0) {
       for (const key of selection) {
         const a = assignmentMap.get(key);
         if (a && !a.isLocked) {
@@ -5358,6 +5409,7 @@ export function ScheduleGrid({
                 <dl className="space-y-1">
                   {[
                     ["Ctrl / Cmd + C", "Copy the selected cells to the clipboard — paste straight into Excel/Sheets"],
+                    ["Ctrl / Cmd + X", "Cut: copy the selected cells, then clear them (locked cells stay). Works in Auto-generate too"],
                     ["Ctrl / Cmd + V", "Paste a block from Excel into the grid, filling down/right from the active cell"],
                     ["ICU / CARD columns", "Work like staff cells: click to select, Ctrl+C copies, Ctrl+V fills a column of initials down (sets each day's roster). Shift+click or drag selects a date range."],
                   ].map(([k, d]) => (

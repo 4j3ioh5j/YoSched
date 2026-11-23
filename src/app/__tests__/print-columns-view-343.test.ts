@@ -26,7 +26,7 @@ describe("printed columns only view (card #343)", () => {
     expect(grid).toMatch(/const nStaff = gridStaff\.length;/);
     expect(grid).toMatch(/const aProvIdx = gridStaff\.findIndex/);
     expect(grid).toMatch(/const tProvIdx = gridStaff\.findIndex/);
-    expect(grid.match(/staffOrder: gridStaff\.map\(\(p\) => p\.id\)/g)?.length).toBe(2);
+    expect(grid.match(/staffOrder: gridStaff\.map\(\(p\) => p\.id\)/g)?.length).toBe(3); // copy, cut (card #460), paste
     expect(grid).toMatch(/const staffIndex = gridStaff\.findIndex/);
   });
 
