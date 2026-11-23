@@ -8,6 +8,7 @@ import { printLayoutFrom, DEFAULT_PRINT_LAYOUT } from "../print-layout";
 import { fetchPdfFonts } from "../export-year-files";
 import { buildMonthPdf } from "../print-month-pdf";
 import { input, NOW } from "./fixtures/export-input";
+import { ttfAdvanceEm } from "./fixtures/ttf-widths";
 
 const ROOT = join(__dirname, "../../..");
 const fontFile = (f: string) => new Uint8Array(readFileSync(join(ROOT, "public/fonts", f)));
@@ -30,39 +31,12 @@ describe("the bundled PDF fonts (card #477)", () => {
     expect(pdfFontById("gone-font").id).toBe("archivo-narrow");
     expect(pdfFontById("toString").id).toBe("archivo-narrow");
   });
-  it("no font is wider than Archivo Narrow, so the PDF's fixed width estimate still fits", async () => {
+  it("no font is wider than Archivo Narrow on average (capitals and digits)", () => {
     // Average advance of capitals + digits (the schedule's codes and dates) in em, from hmtx.
     const avg = (file: string) => {
-      const b = readFileSync(join(ROOT, "public/fonts", file));
-      const u16 = (o: number) => b.readUInt16BE(o);
-      const tables = new Map<string, number>();
-      for (let i = 0, n = u16(4); i < n; i++) tables.set(b.toString("latin1", 12 + i * 16, 16 + i * 16), b.readUInt32BE(12 + i * 16 + 8));
-      const upm = u16(tables.get("head")! + 18);
-      const nHm = u16(tables.get("hhea")! + 34);
-      const hmtx = tables.get("hmtx")!;
-      // cmap format 4 lookup
-      const cmap = tables.get("cmap")!;
-      let sub = -1;
-      for (let i = 0, n = u16(cmap + 2); i < n; i++) {
-        const pid = u16(cmap + 4 + i * 8), eid = u16(cmap + 6 + i * 8), off = b.readUInt32BE(cmap + 8 + i * 8);
-        if (pid === 3 && eid === 1 && u16(cmap + off) === 4) sub = cmap + off;
-      }
-      const seg = u16(sub + 6) / 2;
-      const ends = sub + 14, starts = ends + seg * 2 + 2, deltas = starts + seg * 2, ranges = deltas + seg * 2;
-      const gid = (c: number) => {
-        for (let s = 0; s < seg; s++) {
-          if (u16(ends + s * 2) < c) continue;
-          if (u16(starts + s * 2) > c) return 0;
-          const ro = u16(ranges + s * 2), d = u16(deltas + s * 2);
-          if (ro === 0) return (c + d) & 0xffff;
-          const g = u16(ranges + s * 2 + ro + (c - u16(starts + s * 2)) * 2);
-          return g ? (g + d) & 0xffff : 0;
-        }
-        return 0;
-      };
-      const adv = (g: number) => u16(hmtx + Math.min(g, nHm - 1) * 4) / upm;
+      const adv = ttfAdvanceEm(file);
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-      return [...chars].reduce((a, ch) => a + adv(gid(ch.charCodeAt(0))), 0) / chars.length;
+      return [...chars].reduce((a, ch) => a + adv(ch), 0) / chars.length;
     };
     const base = PDF_FONTS[0];
     for (const f of PDF_FONTS) {

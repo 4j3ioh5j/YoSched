@@ -27,7 +27,10 @@ beforeEach(() => { db.prefs = { id: "default", printPdfFont: "archivo-narrow" };
 
 describe("PUT printPdfFont (card #477)", () => {
   it("saves a bundled font's id", async () => {
-    expect((await PUT(req({ printPdfFont: "barlow-semi-condensed" }))).status).toBe(200);
+    const res = await PUT(req({ printPdfFont: "barlow-semi-condensed" }));
+    expect(res.status).toBe(200);
+    // Card #482: Settings shows "Saved" only when the answer holds the font as sent.
+    expect(await res.json()).toMatchObject({ printPdfFont: "barlow-semi-condensed" });
     expect(db.prefs).toMatchObject({ printPdfFont: "barlow-semi-condensed" });
   });
   it("400 on anything else, nothing written", async () => {

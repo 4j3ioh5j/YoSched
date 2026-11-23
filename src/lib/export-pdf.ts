@@ -20,13 +20,39 @@ const CELL_PAD = 4;
 const MAX_STRETCH = 2.5;
 const MAX_MONTH_DAYS = 31;
 
-/** Width of a line of text in points: a safe upper estimate for a narrow font. */
+/** Width of a line of text in points: a fixed per-character estimate for a narrow font. */
 const textW = (s: string, size: number) => s.length * size * 0.52;
+
+/** Card #482: how wide a cell's text draws, in points. */
+export type PdfMeasure = (text: string, size: number) => number;
+
+/** Card #482: the real width of `text` in the PDF's font, the wider of its two weights, and
+ *  never under the fixed estimate (so text the estimate covers lays out exactly as before).
+ *  Measuring leaves the document's font and size as they were. */
+export function pdfTextMeasure(doc: import("jspdf").jsPDF, family: string): PdfMeasure {
+  const cache = new Map<string, number>(); // em width of each string
+  const em = (text: string) => {
+    let w = cache.get(text);
+    if (w === undefined) {
+      const was = doc.getFont(), size = doc.getFontSize();
+      w = 0;
+      for (const style of ["normal", "bold"]) {
+        doc.setFont(family, style);
+        w = Math.max(w, doc.getStringUnitWidth(text));
+      }
+      doc.setFont(was.fontName, was.fontStyle);
+      doc.setFontSize(size);
+      cache.set(text, w);
+    }
+    return w;
+  };
+  return (text, size) => Math.max(textW(text, size), em(text) * size);
+}
 
 /** Card #357: a custom width can be narrower than a cell's text; that one cell's text shrinks to
  *  fit rather than spill into its neighbor. */
-export function pdfCellFontSize(text: string, colW: number, size: number): number {
-  const w = textW(text, size);
+export function pdfCellFontSize(text: string, colW: number, size: number, measure: PdfMeasure = textW): number {
+  const w = measure(text, size);
   const room = colW - CELL_PAD;
   return w > room && w > 0 && room > 0 ? size * room / w : size;
 }
@@ -46,7 +72,7 @@ export type PdfMonthLayout = {
 const headLabels = (m: PrintedMonth) => [...(m.splitDateDay ? ["DATE", "DAY"] : ["DATE"]), ...m.columns.map((c) => c.label)];
 const rowTexts = (m: PrintedMonth, r: PrintedMonth["rows"][number]) => [...(m.splitDateDay ? [r.dateText, r.dayText ?? ""] : [r.dateText]), ...r.cells.map((c) => c.text)];
 
-export function pdfMonthLayout(m: PrintedMonth): PdfMonthLayout {
+export function pdfMonthLayout(m: PrintedMonth, measure: PdfMeasure = textW): PdfMonthLayout {
   const L = m.layout;
   const PAGE = pdfPage(L);
   const titleTop = PAGE.margin;
@@ -64,7 +90,7 @@ export function pdfMonthLayout(m: PrintedMonth): PdfMonthLayout {
   const heads = headLabels(m);
   const texts = [heads, ...m.rows.map((r) => rowTexts(m, r))];
   const natural = (size: number) =>
-    heads.map((_, i) => Math.max(size * 2.2, ...texts.map((row) => textW(row[i] ?? "", size))) + CELL_PAD);
+    heads.map((_, i) => Math.max(size * 2.2, ...texts.map((row) => measure(row[i] ?? "", size))) + CELL_PAD);
   const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
 
   // Card #357: the user-defined columns (additional and shift columns) take the Settings width
@@ -75,7 +101,7 @@ export function pdfMonthLayout(m: PrintedMonth): PdfMonthLayout {
   const udSettings = L.udWidth ?? DEFAULT_UD_WIDTH;
   const widthsAt = (size: number) => {
     const nat = natural(size);
-    const udCols = heads.flatMap((h, i) => (isUd[i] ? [{ key: m.columns[i - lead].key ?? `#${i}`, fitIn: nat[i] / 72, titleIn: (textW(h, size) + CELL_PAD) / 72, i }] : []));
+    const udCols = heads.flatMap((h, i) => (isUd[i] ? [{ key: m.columns[i - lead].key ?? `#${i}`, fitIn: nat[i] / 72, titleIn: (measure(h, size) + CELL_PAD) / 72, i }] : []));
     const otherNat = sum(nat.filter((_, i) => !isUd[i]));
     const ud = udWidthsIn(udSettings, udCols, (availW - otherNat) / 72);
     const udW = new Map(udCols.map((c) => [c.i, ud.get(c.key)! * 72]));
@@ -121,12 +147,13 @@ export async function exportYearPdf(
   doc.addFont(`${FONT}-Regular.ttf`, FONT, "normal");
   doc.addFileToVFS(`${FONT}-Bold.ttf`, base64(fonts.bold));
   doc.addFont(`${FONT}-Bold.ttf`, FONT, "bold");
+  const measure = pdfTextMeasure(doc, FONT);
   doc.setProperties({ title: opts.title ?? (months[0] ? `${months[0].year} schedule` : "Schedule"), creator: "YoSched" });
 
   months.forEach((m, pi) => {
     if (pi > 0) doc.addPage(pdfPage(m.layout).format, "landscape");
     const L = m.layout;
-    const lay = pdfMonthLayout(m);
+    const lay = pdfMonthLayout(m, measure);
     const { tableLeft, tableTop, rowH, colW } = lay;
     const tableW = colW.reduce((a, b) => a + b, 0);
     const tableBottom = tableTop + rowH * (m.rows.length + 1);
@@ -150,7 +177,7 @@ export async function exportYearPdf(
         }
         if (t) {
           doc.setFont(FONT, bolds[i] ? "bold" : "normal");
-          doc.setFontSize(pdfCellFontSize(t, colW[i], lay.fontSize));
+          doc.setFontSize(pdfCellFontSize(t, colW[i], lay.fontSize, measure));
           doc.text(t, xs[i] + colW[i] / 2, y + rowH / 2, { align: "center", baseline: "middle" });
         }
       });

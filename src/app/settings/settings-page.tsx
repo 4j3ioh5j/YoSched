@@ -75,6 +75,7 @@ import { deptPickerTarget, deptTargetPutBody, DEPT_DEFAULT_STRENGTH, type DeptTa
 import { DecimalField } from "@/components/decimal-field";
 import { DEFAULT_STAFF_ORDER, orderStaff, STAFF_ORDER_DEFAULT_DIR, type StaffOrderCriterion, type StaffOrderDir, type StaffOrderKey } from "@/lib/staff-order";
 import { SettingsSearch } from "./settings-search";
+import { unsavedKeys } from "@/lib/save-echo";
 
 const CanEditContext = createContext(true);
 function useCanEdit() { return useContext(CanEditContext); }
@@ -6145,7 +6146,9 @@ function useSavedDraft<T>(initial: T) {
   useEffect(() => () => statusTimer.cancel(), [statusTimer]);
   const busy = status === "saving";
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
-  async function save(body: Record<string, unknown>, next: T) {
+  // Card #482: `mustEcho` lists fields the server's answer must hold as sent (an older server
+  // ignores a field it does not know and still answers 200).
+  async function save(body: Record<string, unknown>, next: T, opts?: { mustEcho?: string[] }) {
     statusTimer.cancel();
     setStatus("saving");
     setError(undefined);
@@ -6156,6 +6159,11 @@ function useSavedDraft<T>(initial: T) {
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(await res.text());
+      if (opts?.mustEcho?.length) {
+        const returned: unknown = await res.json().catch(() => null);
+        const lost = unsavedKeys(body, returned, opts.mustEcho);
+        if (lost.length) throw new Error("The server did not save every change (it may be an older version). Reload the page and try again.");
+      }
       setSaved(next);
       setDraft(next);
       setStatus("saved");
@@ -6336,9 +6344,9 @@ function PrintFontSection({ initial }: { initial: PrintLayout }) {
         </FieldRow>
         {!valid && <p className="text-xs text-red-400">Font: letters, digits, spaces and hyphens. Size: a whole number from 6 to 14.</p>}
         <div className="flex gap-2">
-          <button type="button" disabled={!canEdit || busy || !dirty || !valid} onClick={() => save({ printFontFamily: draft.fontFamily, printFontSize: draft.fontSize, printPayPeriodLabels: draft.payPeriodLabels, printPdfFont: draft.pdfFont }, draft)} className={BTN_SAVE}>Save</button>
+          <button type="button" disabled={!canEdit || busy || !dirty || !valid} onClick={() => save({ printFontFamily: draft.fontFamily, printFontSize: draft.fontSize, printPayPeriodLabels: draft.payPeriodLabels, printPdfFont: draft.pdfFont }, draft, { mustEcho: ["printPdfFont"] })} className={BTN_SAVE}>Save</button>
           <button type="button" disabled={!canEdit || busy || !dirty} onClick={() => setDraft(saved)} className={BTN_PLAIN}>Cancel</button>
-          <button type="button" disabled={!canEdit || busy} onClick={() => save({ printFontFamily: defaults.fontFamily, printFontSize: defaults.fontSize, printPayPeriodLabels: defaults.payPeriodLabels, printPdfFont: defaults.pdfFont }, defaults)} className={BTN_PLAIN}>Reset to default</button>
+          <button type="button" disabled={!canEdit || busy} onClick={() => save({ printFontFamily: defaults.fontFamily, printFontSize: defaults.fontSize, printPayPeriodLabels: defaults.payPeriodLabels, printPdfFont: defaults.pdfFont }, defaults, { mustEcho: ["printPdfFont"] })} className={BTN_PLAIN}>Reset to default</button>
         </div>
       </div>
     </CollapsibleSection>
