@@ -42,8 +42,9 @@ describe("request label is the same however the requests were entered", () => {
     expect(summarizeCellRequests([off, neg(["c"])], codeOf, rankOf)!.label).toBe("2");
     expect(summarizeCellRequests([lv, off], codeOf, rankOf)!.label).toBe("2");
   });
-  it("a single request is unchanged, and the rank is optional", () => {
-    expect(summarizeCellRequests([neg(["l", "c"])], codeOf, rankOf)!.label).toBe("ORL,ORC");
+  it("a single request also follows the shift order (panel clicks ORL then ORC), and the rank is optional", () => {
+    expect(summarizeCellRequests([neg(["l", "c"])], codeOf, rankOf)!.label).toBe("ORC,ORL");
+    expect(summarizeCellRequests([neg(["l", "c"])], codeOf)!.label).toBe("ORL,ORC");
     expect(summarizeCellRequests([neg(["l"]), neg(["c"])], codeOf)!.label).toBe("ORL,ORC");
   });
   it("the grid passes the shift order", () => {

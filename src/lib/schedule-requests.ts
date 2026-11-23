@@ -522,6 +522,17 @@ export function summarizeCellRequests(
   const statusKind: "approved" | "pending" | "denied" | "mixed" =
     states.size === 1 ? [...states][0] : "mixed";
 
+  // Card #468: shift codes, each once, in the shift display order when given (else first seen),
+  // so the label reads the same whether the panel or the hotkeys entered the requests.
+  const orderedCodes = (shiftTypeIds: readonly string[]): string => {
+    const ids = [...new Set(shiftTypeIds)];
+    if (rankOf) {
+      const pos = new Map(ids.map((id, i) => [id, i]));
+      ids.sort((a, b) => rankOf(a) - rankOf(b) || pos.get(a)! - pos.get(b)!);
+    }
+    return ids.map(codeOf).join(",");
+  };
+
   let label: string;
   if (single) {
     const r = reqs[0];
@@ -534,7 +545,7 @@ export function summarizeCellRequests(
         break;
       case "NEGATE_SHIFT":
       case "REQUEST_SHIFT":
-        label = r.shiftTypeIds.map(codeOf).join(",");
+        label = orderedCodes(r.shiftTypeIds);
         break;
     }
   } else {
@@ -544,13 +555,8 @@ export function summarizeCellRequests(
     const kinds = new Set(reqs.map((r) => r.kind));
     const kind = kinds.size === 1 ? [...kinds][0] : null;
     if (kind === "NEGATE_SHIFT" || kind === "REQUEST_SHIFT") {
-      const ids: string[] = [];
-      for (const r of reqs) for (const id of r.shiftTypeIds) if (!ids.includes(id)) ids.push(id);
-      if (rankOf) {
-        const pos = new Map(ids.map((id, i) => [id, i]));
-        ids.sort((a, b) => rankOf(a) - rankOf(b) || pos.get(a)! - pos.get(b)!);
-      }
-      label = ids.length > 0 ? ids.map(codeOf).join(",") : String(reqs.length);
+      const ids = reqs.flatMap((r) => r.shiftTypeIds);
+      label = ids.length > 0 ? orderedCodes(ids) : String(reqs.length);
     } else {
       label = String(reqs.length);
     }
