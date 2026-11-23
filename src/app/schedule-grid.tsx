@@ -32,7 +32,7 @@ import { monthGridDates } from "@/lib/grid-dates";
 import { payPeriodLabel, periodLengthOf } from "@/lib/pay-periods";
 import { dedicatedColumnInitials } from "@/lib/dedicated-columns";
 import { countColumnTotals } from "@/lib/count-columns";
-import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary, cutPlan } from "@/lib/grid-clipboard";
+import { selectionToTsv, parseClipboardGrid, resolvePaste, pasteSummary, dedicatedSelectionTsv, resolveDedicatedPaste, dedicatedPasteSummary, cutPlan, manualCellKeys } from "@/lib/grid-clipboard";
 import { resolveInitials } from "@/lib/dedicated-column-entry";
 import { dayCapViolations, type DayCapCell } from "@/lib/max-per-day";
 import { buildDayCapLookup, dayKeyLabel, dayKeyOf } from "@/lib/day-cap";
@@ -2746,15 +2746,17 @@ export function ScheduleGrid({
         setPasteToast("Cut clears assignments — exit request mode (press /) first.");
         return;
       }
+      // Card #463: in Auto-generate, hand-placed cells can't be cleared: keep them like locked ones.
+      const handPlaced = liveModeRef.current && liveBaseInputRef.current ? manualCellKeys(liveBaseInputRef.current.existingAssignments) : new Set<string>();
       const plan = cutPlan(keys, {
         dateOrder: dates,
         staffOrder: gridStaff.map((p) => p.id),
         codeAt: (staffId, date) => effectiveAssignmentMap.get(`${staffId}:${date}`)?.code,
-        isLocked: (staffId, date) => !!assignmentMap.get(`${staffId}:${date}`)?.isLocked,
+        isLocked: (staffId, date) => !!assignmentMap.get(`${staffId}:${date}`)?.isLocked || handPlaced.has(`${staffId}:${date}`),
       });
       if (plan.tsv == null) return;
       e.clipboardData?.setData("text/plain", plan.tsv);
-      if (plan.skippedLocked > 0) setPasteToast(`Copied; ${plan.skippedLocked} locked cell${plan.skippedLocked !== 1 ? "s" : ""} left in place.`);
+      if (plan.skippedLocked > 0) setPasteToast(`Copied; ${plan.skippedLocked} locked or hand-placed cell${plan.skippedLocked !== 1 ? "s" : ""} left in place.`);
       if (plan.clears.length > 0) void clearRef.current(plan.clears);
     }
     document.addEventListener("cut", onCut);
@@ -4041,16 +4043,13 @@ export function ScheduleGrid({
     // direct edit — a pin landing on a manual cell, or a free/drag emptying one —
     // bypassed that. Refuse it here with the same red-border + popover feedback used
     // for hard-illegal pins. Atomic: any manual hit snaps the whole edit back.
-    const manualSrc = new Map<string, string>(
-      base.existingAssignments
-        .filter((a) => a.source === "manual")
-        .map((a) => [`${a.staffId}:${a.date}`, a.shiftTypeId]),
-    );
-    const manualHit = [...newPins, ...newFrees].find((e) => manualSrc.has(`${e.staffId}:${e.date}`));
+    const manualKeys = manualCellKeys(base.existingAssignments);
+    const manualHit = [...newPins, ...newFrees].find((e) => manualKeys.has(`${e.staffId}:${e.date}`));
     if (manualHit) {
       const key = `${manualHit.staffId}:${manualHit.date}`;
+      const hitShift = base.existingAssignments.find((a) => `${a.staffId}:${a.date}` === key)!.shiftTypeId;
       setLiveReject([]);
-      showRejectAt([{ staffId: manualHit.staffId, date: manualHit.date, shiftTypeId: manualSrc.get(key)!, reason: "manual-locked" }]);
+      showRejectAt([{ staffId: manualHit.staffId, date: manualHit.date, shiftTypeId: hitShift, reason: "manual-locked" }]);
       return false;
     }
 

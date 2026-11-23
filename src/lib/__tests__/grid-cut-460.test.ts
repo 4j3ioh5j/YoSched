@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { cutPlan } from "../grid-clipboard";
+import { cutPlan, manualCellKeys } from "../grid-clipboard";
 
 // Card #460: Ctrl/Cmd+X did nothing anywhere, and in autogeneration (Live) Ctrl/Cmd+C copied
 // the SAVED grid, so cells the engine had just generated (not saved yet) copied as blanks and
@@ -66,5 +66,46 @@ describe("grid wiring (card #460)", () => {
 
   it("the help lists Ctrl / Cmd + X", () => {
     expect(grid).toMatch(/\["Ctrl \/ Cmd \+ X",/);
+  });
+});
+
+// Card #463: in Auto-generate, a hand-placed cell (source "manual" when the session began)
+// can't be cleared; cut must leave it in place like a locked cell, not refuse the whole cut.
+describe("cut keeps hand-placed cells during Auto-generate (card #463)", () => {
+  const grid = readFileSync(join(__dirname, "../../app/schedule-grid.tsx"), "utf8");
+
+  it("manualCellKeys lists only cells whose source is manual", () => {
+    const keys = manualCellKeys([
+      { staffId: "a", date: "2026-01-01", source: "manual" },
+      { staffId: "b", date: "2026-01-01", source: "engine" },
+      { staffId: "a", date: "2026-01-02", source: "manual" },
+      { staffId: "c", date: "2026-01-03" },
+    ]);
+    expect([...keys].sort()).toEqual(["a:2026-01-01", "a:2026-01-02"]);
+    expect(manualCellKeys([]).size).toBe(0);
+  });
+
+  it("a mixed selection clears the generated cells and keeps the hand-placed one", () => {
+    const manual = new Set(["a:2026-01-01"]);
+    const codes = new Map([["a:2026-01-01", "D"], ["b:2026-01-01", "N"]]);
+    const plan = cutPlan(["a:2026-01-01", "b:2026-01-01"], {
+      dateOrder: ["2026-01-01"],
+      staffOrder: ["a", "b"],
+      codeAt: (s, d) => codes.get(`${s}:${d}`),
+      isLocked: (s, d) => manual.has(`${s}:${d}`),
+    });
+    expect(plan.tsv).toBe("D\tN");
+    expect(plan.clears).toEqual([{ staffId: "b", date: "2026-01-01" }]);
+    expect(plan.skippedLocked).toBe(1);
+  });
+
+  it("liveEdit and cut share the one hand-placed set; cut uses it only in Auto-generate", () => {
+    const live = grid.slice(grid.indexOf("function liveEdit("), grid.indexOf("function liveEdit(") + 1500);
+    expect(live).toMatch(/manualCellKeys\(base\.existingAssignments\)/);
+    const i = grid.indexOf("function onCut(");
+    const cut = grid.slice(i, grid.indexOf('document.addEventListener("cut", onCut)', i));
+    expect(cut).toMatch(/liveModeRef\.current && liveBaseInputRef\.current \? manualCellKeys\(liveBaseInputRef\.current\.existingAssignments\)/);
+    expect(cut).toMatch(/isLocked: \(staffId, date\) => !!assignmentMap\.get\(`\$\{staffId\}:\$\{date\}`\)\?\.isLocked \|\| handPlaced\.has\(`\$\{staffId\}:\$\{date\}`\)/);
+    expect(cut).toMatch(/locked or hand-placed/);
   });
 });

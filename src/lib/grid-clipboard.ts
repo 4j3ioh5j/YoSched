@@ -69,6 +69,12 @@ export function selectionToTsv(
  * that hold a shift and are not locked. Locked cells are copied but stay put (counted), the
  * same rule Delete follows.
  */
+// Card #463: the cells hand-placed before Auto-generate began (source "manual"). They
+// can't be changed in Auto-generate; liveEdit refuses them and cut leaves them in place.
+export function manualCellKeys(rows: readonly { staffId: string; date: string; source?: string | null }[]): Set<string> {
+  return new Set(rows.filter((a) => a.source === "manual").map((a) => `${a.staffId}:${a.date}`));
+}
+
 export function cutPlan(
   selectedKeys: Iterable<string>,
   opts: {
