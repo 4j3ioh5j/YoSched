@@ -119,6 +119,71 @@ describe("createPdfPrinter (card #476)", () => {
   });
 });
 
+// Card #480: leaving the page while the PDF frame still loads must not print or open a tab later.
+describe("createPdfPrinter: dispose during a load (card #480)", () => {
+  function deferredLoad(log: string[]) {
+    let settle!: { ok: () => void; fail: () => void };
+    const loadFrame = (url: string) => new Promise<PdfPrintFrame>((res, rej) => {
+      settle = {
+        ok: () => res({ print: () => log.push(`print ${url}`), remove: () => log.push(`remove ${url}`) }),
+        fail: () => rej(new Error("timeout")),
+      };
+    });
+    return { loadFrame, settle: () => settle };
+  }
+
+  it("a load that finishes after dispose neither prints nor keeps the frame or URL", async () => {
+    const log: string[] = [];
+    const d = deferredLoad(log);
+    const { env } = fakeEnv({ loadFrame: d.loadFrame });
+    const origCreate = env.createObjectURL; env.createObjectURL = (b) => { const u = origCreate(b); log.push(`create ${u}`); return u; };
+    env.revokeObjectURL = (u) => log.push(`revoke ${u}`);
+    const p = createPdfPrinter(env);
+    const pending = p.print(new Uint8Array([1]));
+    p.dispose();
+    d.settle().ok();
+    expect(await pending).toBe("canceled");
+    expect(log).not.toContain("print blob:1");
+    expect(log).toContain("remove blob:1");
+    expect(log).toContain("revoke blob:1");
+    p.dispose();
+    expect(log.filter((l) => l === "revoke blob:1").length).toBe(1);
+  });
+
+  it("a load that fails after dispose does not open a new tab, and frees the URL", async () => {
+    const log: string[] = [];
+    const d = deferredLoad(log);
+    const { env } = fakeEnv({ loadFrame: d.loadFrame, open: (u) => { log.push(`open ${u}`); return true; } });
+    env.revokeObjectURL = (u) => log.push(`revoke ${u}`);
+    const p = createPdfPrinter(env);
+    const pending = p.print(new Uint8Array([1]));
+    p.dispose();
+    d.settle().fail();
+    expect(await pending).toBe("canceled");
+    expect(log.some((l) => l.startsWith("open"))).toBe(false);
+    expect(log).toContain("revoke blob:1");
+  });
+
+  it("a newer print supersedes one still loading: only the newer one prints", async () => {
+    const log: string[] = [];
+    const d1 = deferredLoad(log);
+    let call = 0;
+    const { env } = fakeEnv({
+      loadFrame: (url) => (++call === 1 ? d1.loadFrame(url) : Promise.resolve({ print: () => log.push(`print ${url}`), remove: () => log.push(`remove ${url}`) })),
+    });
+    env.revokeObjectURL = (u) => log.push(`revoke ${u}`);
+    const p = createPdfPrinter(env);
+    const first = p.print(new Uint8Array([1]));
+    expect(await p.print(new Uint8Array([2]))).toBe("printed");
+    d1.settle().ok();
+    expect(await first).toBe("canceled");
+    expect(log).toContain("print blob:2");
+    expect(log).not.toContain("print blob:1");
+    expect(log).toContain("revoke blob:1");
+    expect(log).not.toContain("remove blob:2");
+  });
+});
+
 describe("runPrintFlow awaits an async print (card #476)", () => {
   it("returns only after the PDF print finished, with the version stamped first", async () => {
     const order: string[] = [];

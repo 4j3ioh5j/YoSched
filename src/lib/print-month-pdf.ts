@@ -43,15 +43,20 @@ export type PdfPrintEnv = {
   open: (url: string) => boolean;
 };
 
-export type PdfPrintOutcome = "printed" | "opened" | "failed";
+/** "canceled": dispose() or a newer print came while this PDF was still loading. */
+export type PdfPrintOutcome = "printed" | "opened" | "failed" | "canceled";
 
 /**
  * A printer that keeps at most one PDF alive: the last frame (and its URL) stays until the next
  * print or dispose(), because removing it while the print dialog is open would cancel the print.
+ * A load still in flight when dispose() or a newer print comes is canceled (card #480): when it
+ * settles it neither prints nor opens a tab, and frees its own frame and URL.
  */
 export function createPdfPrinter(env: PdfPrintEnv) {
   let last: { url: string; frame: PdfPrintFrame | null } | null = null;
+  let generation = 0;
   const release = () => {
+    generation++;
     if (!last) return;
     const { url, frame } = last;
     last = null;
@@ -61,10 +66,21 @@ export function createPdfPrinter(env: PdfPrintEnv) {
   return {
     async print(bytes: Uint8Array): Promise<PdfPrintOutcome> {
       release();
+      const mine = generation;
       const url = env.createObjectURL(new Blob([bytes as BlobPart], { type: "application/pdf" }));
       let frame: PdfPrintFrame | null = null;
       try {
         frame = await env.loadFrame(url);
+      } catch {
+        // Failed to load: fall through to the new-tab fallback below, unless canceled meanwhile.
+      }
+      if (mine !== generation) {
+        frame?.remove();
+        env.revokeObjectURL(url);
+        return "canceled";
+      }
+      try {
+        if (!frame) throw new Error("the PDF did not load");
         frame.print();
         last = { url, frame };
         return "printed";
