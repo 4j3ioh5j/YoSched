@@ -13,7 +13,7 @@ import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
 import { tallyBalances, sharesOf, spreadPenalty, spreadChange, addDays, targetPayPeriods, type BalanceTally } from "./shift-balance";
 import { gapBreaks, gapList, gapListShrank, gapTrialBeats, type GapTrialOutcome } from "./shift-gap";
 import { readTuning, isWeekendDate, weekendSecondDow, type SchedulerTuning } from "./scheduler-tuning";
-import { RETIRED_SPACING_KEY, PENDING_DAY_BALANCE_KEY } from "./autogen-factor-order";
+import { RETIRED_SPACING_KEY, PENDING_DAY_BALANCE_KEY, PENDING_LONG_WEEKENDS_KEY } from "./autogen-factor-order";
 import { isoDow, isoNext, isoPrev, isoNoonMs } from "./date-memo";
 
 export type ScheduleStaff = {
@@ -340,7 +340,8 @@ export const DEFAULT_FACTOR_ORDER = [
 // configured order. Its toggle never mattered to the engine, so it is dropped enabled or not.
 // Card #471: a "dayBalance" row (added by card #467's second release) is dropped the same way
 // until this build grades it, so a rollback after that migration keeps the custom order.
-const IGNORED_FACTOR_KEYS: ReadonlySet<string> = new Set([RETIRED_SPACING_KEY, PENDING_DAY_BALANCE_KEY]);
+// Card #472: the "longWeekends" row from the same release is dropped the same way.
+const IGNORED_FACTOR_KEYS: ReadonlySet<string> = new Set([RETIRED_SPACING_KEY, PENDING_DAY_BALANCE_KEY, PENDING_LONG_WEEKENDS_KEY]);
 export function effectiveFactorKeys(rawConfig: AutoGenFactorConfig[] | undefined): string[] {
   const known: readonly string[] = DEFAULT_FACTOR_ORDER;
   let order: string[] = [...known];

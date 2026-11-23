@@ -30,3 +30,7 @@ export const RETIRED_SPACING_KEY = "spacing";
 // DB migrated by that release and then rolled back, an old tab's input) the same way as spacing,
 // so the six known factors keep their configured order instead of falling back to the default.
 export const PENDING_DAY_BALANCE_KEY = "dayBalance";
+
+// Card #472 (release (a2) of card #467): "longWeekends" (long weekends off, ranked just above
+// dayBalance) is added by the same later release and is dropped the same way until then.
+export const PENDING_LONG_WEEKENDS_KEY = "longWeekends";
