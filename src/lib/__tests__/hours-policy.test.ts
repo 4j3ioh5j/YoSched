@@ -328,11 +328,11 @@ describe("policy reaches every placement path", () => {
   });
 
   it("grading puts Prohibited hours rows first, keeping their relative order", () => {
-    expect(effectiveFactorKeys(factors(ORDER))).toEqual(ORDER);
+    expect(effectiveFactorKeys(factors(ORDER))).toEqual([...ORDER, "longWeekends", "dayBalance"]);
     expect(effectiveFactorKeys(factors(ORDER, "prohibited", "discouraged"))).toEqual(
-      ["overHours", "hardLimits", "coverage", "underHours", "requests", "fairness"]);
+      ["overHours", "hardLimits", "coverage", "underHours", "requests", "fairness", "longWeekends", "dayBalance"]);
     expect(effectiveFactorKeys(factors(DAVID_ORDER, "prohibited", "prohibited"))).toEqual(
-      ["underHours", "overHours", "hardLimits", "coverage", "requests", "fairness"]);
+      ["underHours", "overHours", "hardLimits", "coverage", "requests", "fairness", "longWeekends", "dayBalance"]);
     // An invalid order falls back to the default, but the policy still applies.
     const badWithUnder = [...factors(ORDER, undefined, "prohibited")].map((f) => (f.key === "fairness" ? { ...f, enabled: false } : f));
     expect(effectiveFactorKeys(badWithUnder)[0]).toBe("underHours");

@@ -278,7 +278,7 @@ describe("compound trades keep the end state legal (card #176)", () => {
     const cond = [1, 2, 3, 4, 5].map((d) => ({ type: "available" as const, strength: "rule" as const, conditionStaffId: "bc", conditionType: "working" as const, ...wEvery(d) }));
     const ef = staff("ef", "EF", { availabilityRules: cond, isAutoScheduled: false });
     // EF's whole fortnight is typed in by hand, on the days BC works before the repair.
-    const pre = autoSchedule({ ...base, skipCompoundRepairForTest: true });
+    const pre = autoSchedule({ ...base, skipCompoundRepairForTest: true, skipDayBalancePass: true });
     const bcWorks = (d: string) => { const c = codeAt(base, pre, "bc", d); return !!c && c !== "X"; };
     const efDays = [...W1, ...W2].filter(bcWorks).map((d) => manual("ef", d, "st-or", "OR"));
     const inp = { ...base, staff: [...base.staff, ef], existingAssignments: [...base.existingAssignments, ...efDays] };

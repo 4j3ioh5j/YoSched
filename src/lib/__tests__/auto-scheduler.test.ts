@@ -2108,7 +2108,7 @@ describe("compareScheduleQuality (lexicographic, #220 priority)", () => {
   const q = (rank: number[]): ScheduleQuality => ({
     breakdown: {
       coverage: 0, hardLimits: 0, overHours: 0, underHours: 0,
-      requestsDenied: 0, fairnessSpread: 0, hardBreaches: 0, coverageShortfall: 0,
+      requestsDenied: 0, fairnessSpread: 0, longWeekends: 0, dayBalance: 0, hardBreaches: 0, coverageShortfall: 0,
     },
     rank,
   });
@@ -2142,7 +2142,7 @@ describe("autoSchedule — quality breakdown (Slice 4a)", () => {
     expect(res.quality.breakdown.overHours).toBe(0);
     expect(res.quality.breakdown.underHours).toBe(0);
     expect(res.quality.breakdown.requestsDenied).toBe(0);
-    expect(res.quality.rank).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(res.quality.rank).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
   });
 
   it("accumulates under-target PP-hours (overHours stays 0) when target is unreachable", () => {

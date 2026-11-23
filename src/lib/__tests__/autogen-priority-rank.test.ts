@@ -8,8 +8,8 @@ import { buildRankFromConfig, DEFAULT_FACTOR_ORDER, type AutoGenFactorConfig } f
 
 // Distinct term values so a reorder is observable in the output vector. Keyed by the
 // six Slice-2a factors (was the two aggregates coverageAndHardLimits / ppHours).
-const TERMS = { hardLimits: 10, coverage: 20, overHours: 30, underHours: 40, requests: 50, fairness: 60 };
-const DEFAULT_RANK = [10, 20, 30, 40, 50, 60];
+const TERMS = { hardLimits: 10, coverage: 20, overHours: 30, underHours: 40, requests: 50, fairness: 60, longWeekends: 70, dayBalance: 80 };
+const DEFAULT_RANK = [10, 20, 30, 40, 50, 60, 70, 80];
 
 const cfg = (key: string, sortOrder: number, enabled = true): AutoGenFactorConfig => ({ key, sortOrder, enabled });
 // All six known factors, enabled, in the given key order.
@@ -25,6 +25,8 @@ describe("buildRankFromConfig", () => {
       "underHours",
       "requests",
       "fairness",
+      "longWeekends",
+      "dayBalance",
     ]);
     // The split is the point: coverage sits above BOTH hour terms (8/4 fix on by
     // default) while hardLimits stays above coverage (hard caps protected by default).
@@ -61,17 +63,17 @@ describe("buildRankFromConfig", () => {
 
   it("coverage ranked above hardLimits → coverage leads the vector (the Option-B trade)", () => {
     const coverageFirst = fullConfig(["coverage", "hardLimits", "overHours", "underHours", "requests", "fairness"]);
-    expect(buildRankFromConfig(TERMS, coverageFirst)).toEqual([20, 10, 30, 40, 50, 60]);
+    expect(buildRankFromConfig(TERMS, coverageFirst)).toEqual([20, 10, 30, 40, 50, 60, 70, 80]);
   });
 
   it("reordered config → reordered rank vector", () => {
     const reordered = fullConfig(["fairness", "underHours", "overHours", "requests", "coverage", "hardLimits"]);
-    expect(buildRankFromConfig(TERMS, reordered)).toEqual([60, 40, 30, 50, 20, 10]);
+    expect(buildRankFromConfig(TERMS, reordered)).toEqual([60, 40, 30, 50, 20, 10, 70, 80]);
   });
 
   it("a single swap of two adjacent factors → that swap reflected", () => {
     const swapped = fullConfig(["coverage", "hardLimits", "overHours", "underHours", "requests", "fairness"]);
-    expect(buildRankFromConfig(TERMS, swapped)).toEqual([20, 10, 30, 40, 50, 60]);
+    expect(buildRankFromConfig(TERMS, swapped)).toEqual([20, 10, 30, 40, 50, 60, 70, 80]);
   });
 
   it("missing a known factor → fallback to canonical", () => {

@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth-guard";
 import { buildAutoScheduleInput } from "@/lib/build-auto-schedule-input";
 import { owningMonthKey, isValidDateRange } from "@/lib/auto-clear";
 import { gated } from "@/lib/write-gate";
+import { factorsForClient, FACTORS_HEADER } from "@/lib/autogen-factor-order";
 
 // Serves the engine input bundle (same data the POST generator runs on) so Live
 // mode can run client-side what-if re-solves without a round-trip per edit (#231).
@@ -25,6 +26,9 @@ async function handleGET(req: NextRequest) {
   // Card #174: Live re-solves see the same frozen earlier month as POST/PUT.
   const runMonth = isValidDateRange(startDate, endDate) ? owningMonthKey(startDate, endDate) : undefined;
   const input = await buildAutoScheduleInput(startDate, endDate, { runMonth });
+  // Card #467: an older open tab's engine would fall back to its default order on a factor row it
+  // doesn't know, so the newest rows go only to a browser that lists them.
+  if (input.factorOrder) input.factorOrder = factorsForClient(input.factorOrder, req.headers.get(FACTORS_HEADER));
   return NextResponse.json(input);
 }
 

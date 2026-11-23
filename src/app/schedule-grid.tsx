@@ -17,7 +17,8 @@ import { type FollowRuleRow, buildFollowRuleMap } from "@/lib/follow-rules";
 import { applyScenario, applyScenarioExpanding, cellsToCommitOnAccept, freesForScopeWithExplicit, type ScenarioOutcome, type ScenarioPin, type ScenarioFree, type ScenarioPinRejection } from "@/lib/scenario";
 import { LIVE_SCOPES, LIVE_SCOPE_LABELS, LIVE_SCOPE_HINTS, DEFAULT_LIVE_SCOPE, type LiveScope } from "@/lib/live-scope";
 import { rowPrintShade, screenHolidayTint, DEFAULT_DAY_SHADING, type DayShading } from "@/lib/day-shading";
-import { type AutoScheduleInput } from "@/lib/auto-scheduler";
+import { type AutoScheduleInput, DEFAULT_FACTOR_ORDER } from "@/lib/auto-scheduler";
+import { FACTORS_HEADER } from "@/lib/autogen-factor-order";
 import { liveBundleProblem } from "@/lib/live-bundle";
 import { formatDate, formatDateCompact, formatDateWithWeekday, calendarMonthBounds, type DateFormatKey, DEFAULT_DATE_FORMAT } from "@/lib/date-format";
 import { unsavedPrintWarning } from "@/lib/print-stamp";
@@ -3816,7 +3817,10 @@ export function ScheduleGrid({
     if (!dates.length) return;
     setLiveLoading(true);
     try {
-      const res = await fetch(`/api/auto-schedule/inputs?start=${dates[0]}&end=${dates[dates.length - 1]}`);
+      // Card #467: say which priority factors this build's engine knows (the route omits newer rows otherwise).
+      const res = await fetch(`/api/auto-schedule/inputs?start=${dates[0]}&end=${dates[dates.length - 1]}`, {
+        headers: { [FACTORS_HEADER]: DEFAULT_FACTOR_ORDER.join(",") },
+      });
       if (!res.ok) {
         console.error("Live: failed to load engine inputs", res.status);
         return;

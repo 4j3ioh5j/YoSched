@@ -25,12 +25,16 @@ export function validateFactorOrder(submitted: unknown, existingKeys: string[]):
 // (a DB not yet migrated, an old tab's input, a rollback's re-added row) instead of falling back.
 export const RETIRED_SPACING_KEY = "spacing";
 
-// Card #471 (release (a) of card #467): "dayBalance" (even daily staffing in the fill shift) is
-// added by a later release. Until this build grades it, the engine drops a row with this key (a
-// DB migrated by that release and then rolled back, an old tab's input) the same way as spacing,
-// so the six known factors keep their configured order instead of falling back to the default.
-export const PENDING_DAY_BALANCE_KEY = "dayBalance";
 
-// Card #472 (release (a2) of card #467): "longWeekends" (long weekends off, ranked just above
-// dayBalance) is added by the same later release and is dropped the same way until then.
-export const PENDING_LONG_WEEKENDS_KEY = "longWeekends";
+// Card #467: the two lowest factors ("Long weekends off", "Even OR staffing across days"). An engine
+// that knows them appends any that a saved order lacks; an engine older than 0.640.0 falls back to
+// its default order when it meets an unknown row, so the Live input bundle sends these rows only to
+// a browser that says it knows them (FACTORS_HEADER lists the keys its engine knows).
+export const LATER_FACTOR_KEYS: readonly string[] = ["longWeekends", "dayBalance"];
+export const FACTORS_HEADER = "x-yosched-factors";
+
+/** The factor rows for a browser engine: drops a later factor the browser didn't list in FACTORS_HEADER. */
+export function factorsForClient<T extends { key: string }>(rows: readonly T[], header: string | null): T[] {
+  const known = new Set((header ?? "").split(",").map((k) => k.trim()).filter(Boolean));
+  return rows.filter((r) => !LATER_FACTOR_KEYS.includes(r.key) || known.has(r.key));
+}

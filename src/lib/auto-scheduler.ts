@@ -13,7 +13,9 @@ import { parseHoursPolicy, type HoursPolicy } from "./autogen-hours-policy";
 import { tallyBalances, sharesOf, spreadPenalty, spreadChange, addDays, targetPayPeriods, type BalanceTally } from "./shift-balance";
 import { gapBreaks, gapList, gapListShrank, gapTrialBeats, type GapTrialOutcome } from "./shift-gap";
 import { readTuning, isWeekendDate, weekendSecondDow, type SchedulerTuning } from "./scheduler-tuning";
-import { RETIRED_SPACING_KEY, PENDING_DAY_BALANCE_KEY, PENDING_LONG_WEEKENDS_KEY } from "./autogen-factor-order";
+import { LATER_FACTOR_KEYS, RETIRED_SPACING_KEY } from "./autogen-factor-order";
+import { gradedIsOff, paddedOffCalendar, scoreOffRuns } from "./long-weekends";
+import { dayBalanceSpread } from "./day-balance";
 import { isoDow, isoNext, isoPrev, isoNoonMs } from "./date-memo";
 
 export type ScheduleStaff = {
@@ -259,6 +261,8 @@ export type ScheduleQuality = {
     underHours: number;        // Σ max(0, target − worked) over staff×PP (measures #217, under side)
     requestsDenied: number;    // non-human-approved REQUEST_SHIFT work-days not honored, per covered date (#221)
     fairnessSpread: number;    // stddev of FTE-normalized desirability load across staff
+    longWeekends: number;      // card #467: minus the long-weekend score of everyone's actual days off
+    dayBalance: number;        // card #467: Σ over pay periods of n·Σc² − (Σc)² of the fill shift's daily headcount
     // Derived aggregate (coverage + hardLimits). NOT a rank tier — kept so the
     // feasibility floor in autoScheduleCandidates keeps its Slice-1 meaning until
     // the Slice-2b floor redesign. Equals the old T0 `hardBreaches`.
@@ -319,7 +323,13 @@ export const DEFAULT_FACTOR_ORDER = [
   "underHours",
   "requests",
   "fairness",
+  // Card #467: appended at the bottom, long weekends above evening out (the owner's order).
+  "longWeekends",
+  "dayBalance",
 ] as const;
+
+// Card #467: factors added after the original six. A config without them (a DB before the
+// migration, an inputs response for an old tab) keeps its order and gains them at the bottom.
 
 // Build the lexicographic rank vector from the configured factor order. `terms` holds
 // the computed objective values keyed by factor. The config is HONORED only when it is
@@ -338,19 +348,19 @@ export const DEFAULT_FACTOR_ORDER = [
 // Card #293: the retired "spacing" factor (cards #266–#289) is the one key dropped first: a DB
 // not yet migrated, an old tab's input or a rollback's re-added row keeps the other six in their
 // configured order. Its toggle never mattered to the engine, so it is dropped enabled or not.
-// Card #471: a "dayBalance" row (added by card #467's second release) is dropped the same way
-// until this build grades it, so a rollback after that migration keeps the custom order.
-// Card #472: the "longWeekends" row from the same release is dropped the same way.
-const IGNORED_FACTOR_KEYS: ReadonlySet<string> = new Set([RETIRED_SPACING_KEY, PENDING_DAY_BALANCE_KEY, PENDING_LONG_WEEKENDS_KEY]);
+// Cards #471/#472 dropped the then-pending longWeekends/dayBalance rows; card #467 grades them.
+// A config missing either of them (and nothing else) keeps its order with the missing ones appended.
 export function effectiveFactorKeys(rawConfig: AutoGenFactorConfig[] | undefined): string[] {
   const known: readonly string[] = DEFAULT_FACTOR_ORDER;
   let order: string[] = [...known];
-  const config = rawConfig?.filter((f) => !IGNORED_FACTOR_KEYS.has(f.key));
+  const config = rawConfig?.filter((f) => f.key !== RETIRED_SPACING_KEY);
   if (config && config.length) {
     const keys = new Set(config.map((f) => f.key));
     const allKnown = keys.size === config.length && config.every((f) => f.enabled && known.includes(f.key));
-    const sorted = () => [...config].sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.key);
-    if (allKnown && config.length === known.length) order = sorted();
+    const missing = known.filter((k) => !keys.has(k));
+    if (allKnown && missing.every((k) => LATER_FACTOR_KEYS.includes(k))) {
+      order = [...[...config].sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.key), ...missing];
+    }
   }
   return withProhibitedHoursFirst(order, config);
 }
@@ -652,6 +662,9 @@ export type AutoScheduleInput = {
   // Tests only (card #176): skip the compound hours repair, so a test can compare a run with it
   // against the same run without it. Never set by the input builder.
   skipCompoundRepairForTest?: boolean;
+  /** Card #467: skip the even-staffing-across-days pass. Set by the holiday shadow run (who normally works a
+   *  holiday is judged without evening out, which would move people off the holiday itself) and by tests. */
+  skipDayBalancePass?: boolean;
   /** Test-only (card #232): skip finishing half pairs, to exercise the later repairs on the old shapes. */
   skipFinishPairsForTest?: boolean;
   /** Test-only (card #233): skip the joint day choice of paired spread shifts (the old greedy days). */
@@ -715,6 +728,7 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
   seed,
   writableFrom,
   skipCompoundRepairForTest,
+  skipDayBalancePass,
   skipFinishPairsForTest,
   skipJointSpreadForTest,
   skipGapTrialForTest,
@@ -988,6 +1002,7 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
         seed: undefined,
         holidays: holidays.filter((h) => !runHolidays.has(h.date)),
         schedulingPreferences: { ...schedulingPreferences, holidayPolicy: "none" },
+        skipDayBalancePass: true,
       });
       for (const x of sh.suggestions) {
         if (!runHolidays.has(x.date)) continue;
@@ -3656,55 +3671,13 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
       return Math.min(1, Math.ceil((target - hours) / perDay) / avail);
     };
 
+    // Card #467: the legacy STEP 3 view — holidays and non-working weekdays count as off even
+    // when worked; the "Long weekends off" grader reads actual cells instead. Same scorer.
     function scoreOffDays(offDays: Set<string>, allWorkdaysInPP: string[], staffWorkingDays: number[]): number {
       if (offDays.size === 0) return 0;
-
-      const workingSet = new Set(staffWorkingDays);
-      const firstDate = allWorkdaysInPP[0];
-      const lastDate = allWorkdaysInPP[allWorkdaysInPP.length - 1];
-
-      const start = new Date(firstDate + "T12:00:00");
-      start.setDate(start.getDate() - 3);
-      const end = new Date(lastDate + "T12:00:00");
-      end.setDate(end.getDate() + 3);
-
-      const calendar: { date: string; isOff: boolean; isNonWorkDay: boolean }[] = [];
-      const cur = new Date(start);
-      while (cur <= end) {
-        const d = toDateStr(cur);
-        const dow = cur.getDay();
-        const isNonWorkDay = !workingSet.has(dow);
-        const hol = holidaySet.has(d);
-        const isOff = isNonWorkDay || hol || offDays.has(d);
-        calendar.push({ date: d, isOff, isNonWorkDay });
-        cur.setDate(cur.getDate() + 1);
-      }
-
-      let score = 0;
-      let runLen = 0;
-      let runTouchesNonWorkDay = false;
-
-      for (let i = 0; i <= calendar.length; i++) {
-        const entry = calendar[i];
-        if (entry && entry.isOff) {
-          runLen++;
-          if (entry.isNonWorkDay) runTouchesNonWorkDay = true;
-        } else {
-          if (runLen >= 2 && schedulingPreferences.preferSequentialOff) {
-            score += (runLen - 1) * schedulingPreferences.sequentialOffWeight;
-          }
-          if (runLen >= 3 && runTouchesNonWorkDay && schedulingPreferences.prefer3DayWeekends) {
-            score += schedulingPreferences.threeDayWeekendWeight;
-          }
-          if (runLen >= 4 && runTouchesNonWorkDay && schedulingPreferences.prefer4DayWeekends) {
-            score += schedulingPreferences.fourDayWeekendWeight;
-          }
-          runLen = 0;
-          runTouchesNonWorkDay = false;
-        }
-      }
-
-      return score;
+      const calendar = paddedOffCalendar(allWorkdaysInPP[0], allWorkdaysInPP[allWorkdaysInPP.length - 1], staffWorkingDays,
+        (d, isNonWorkDay) => isNonWorkDay || holidaySet.has(d) || offDays.has(d));
+      return scoreOffRuns(calendar, schedulingPreferences);
     }
 
     function* combinations(indices: number[], k: number): Generator<number[]> {
@@ -4286,10 +4259,81 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
   // Hours are compared in hundredths so fractional overrides (7.5 h) stay exact.
   const cents = (h: number): number => Math.round(h * 100);
 
-  function compoundHoursRepair(fill: ScheduleShiftType): void {
+  // ── Card #467: the two lowest priority factors, read from the grid as it stands ──
+  // Pay periods that meet the run, in date order.
+  const runPPs = [...payPeriods]
+    .filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate))
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+  // "Even OR staffing across days": the dates whose fill-shift headcount is evened out — the
+  // run's writable, non-holiday dates in the pay period whose weekday has a fill-shift staffing
+  // requirement (a minimum or a preferred count).
+  const fillDayKeys = new Set(
+    fillShift ? staffingRequirements.filter((sr) => sr.shiftTypeId === fillShift.id && (sr.minCount > 0 || (sr.preferredCount ?? 0) > 0)).map((sr) => sr.dayKey) : [],
+  );
+  function balanceDatesIn(pp: PayPeriod): string[] {
+    return dates.filter((d) => d >= pp.startDate && d <= pp.endDate && !isFrozen(d) && !holidaySet.has(d) && fillDayKeys.has(String(getDow(d))));
+  }
+  function dayBalanceIn(pp: PayPeriod): number {
+    return fillShift ? dayBalanceSpread(balanceDatesIn(pp).map((d) => countCoverage(fillShift.code, d))) : 0;
+  }
+  function dayBalanceNow(): number {
+    return runPPs.reduce((s, pp) => s + dayBalanceIn(pp), 0);
+  }
+  // "Long weekends off": a person's long-weekend score over every pay period of the run, from the
+  // ACTUAL cells (a worked weekend or holiday is not off; a blank day in the run becomes X).
+  function longWeekendScoreOf(p: ScheduleStaff): number {
+    const workingDows = getBaseWorkDays(p.availabilityRules);
+    let score = 0;
+    for (const pp of runPPs) {
+      const ppRun = dates.filter((d) => d >= pp.startDate && d <= pp.endDate);
+      if (ppRun.length === 0) continue;
+      const calendar = paddedOffCalendar(ppRun[0], ppRun[ppRun.length - 1], workingDows, (d, isNonWorkDay) => {
+        const c = grid.get(`${p.id}:${d}`);
+        return gradedIsOff(c ? isAwayShift(c.shiftTypeId) : undefined, dateSet.has(d), isNonWorkDay, holidaySet.has(d));
+      });
+      score += scoreOffRuns(calendar, schedulingPreferences);
+    }
+    return score;
+  }
+  // Lower is better, like every factor: minus the total long-weekend score.
+  function longWeekendsNow(): number {
+    const total = activeStaff.reduce((s, p) => s + longWeekendScoreOf(p), 0);
+    return total === 0 ? 0 : -Math.round(total * 1e6) / 1e6;
+  }
+  // Fairness: the spread of the FTE-normalized desirability load across staff in fairness,
+  // measured on the grid as it stands (see the quality assembly). `blanksAsOff`: before STEP 4,
+  // read a blank writable day in the run as the X it will become (the even-staffing pass).
+  function fairnessSpreadNow(blanksAsOff = false): number {
+    const desScores: number[] = [];
+    for (const p of activeStaff) {
+      // Card #71: staff whose employment type is not in fairness never sway the equity spread.
+      if (!p.inFairness) continue;
+      const fte = p.ftePercentage > 0 ? p.ftePercentage : 1;
+      let des = 0;
+      for (const date of dates) {
+        const cell = grid.get(`${p.id}:${date}`);
+        const id = cell ? cell.shiftTypeId : blanksAsOff && offShift && !isFrozen(date) ? offShift.id : null;
+        if (id === null) continue;
+        des += dwMap.get(`${id}:${getDow(date)}`) ?? 0;
+      }
+      desScores.push(des / fte);
+    }
+    const desMean = desScores.reduce((s, v) => s + v, 0) / (desScores.length || 1);
+    const desVar = desScores.reduce((s, v) => s + (v - desMean) ** 2, 0) / (desScores.length || 1);
+    return Math.round(Math.sqrt(desVar) * 1000) / 1000;
+  }
+  // The factors the "Even OR staffing" pass may change (everything above them is held fixed by
+  // its hard checks), in the admin's order.
+  const balanceFactorKeys = effectiveFactorKeys(factorOrder).filter((k) => k === "fairness" || k === "longWeekends" || k === "dayBalance");
+
+  function compoundHoursRepair(fill: ScheduleShiftType, mode: "hours" | "balance" = "hours"): void {
     const ppRangesAll: PayPeriodRange[] = payPeriods.map((pp) => ({ startDate: pp.startDate, endDate: pp.endDate }));
     const repairPPs = payPeriods.filter((pp) => dates.some((d) => d >= pp.startDate && d <= pp.endDate));
     const LIMITS = { odd: 12, intermediaries: 40, checksPerStep: 200, phaseBIters: 500, phaseCIters: 200, reshapeOpts: 12 };
+    // Card #467: the even-staffing pass's bounds for the whole run (moves kept, moves refused) and
+    // per date per pay period (moves into or out of one day).
+    const BALANCE_LIMITS = { accepted: 200, rejected: 2000, perDate: 4 };
+    let balanceAccepted = 0, balanceRejected = 0;
     const capHit = new Set<string>();
 
     for (const pp of repairPPs) {
@@ -4938,6 +4982,88 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
         }
       }
 
+      if (mode === "balance") {
+        balancePhase();
+        journal.length = 0; // committed
+        continue;
+      }
+
+      // ── Card #467: "Even OR staffing across days" ──
+      // Move one person's fill day from a heavier day to a lighter one (at least 2 apart) in this
+      // pay period. Same person, same fill hours on both days, so nobody's pay-period hours move;
+      // every hard check of the repair holds (coverage minimums, the day's Max, follow rules,
+      // availability and conditional rules, Hard gaps, followers), soft requests are kept, and no
+      // request touches either day. Kept only when the first of fairness, long weekends and day
+      // balance (in the admin's order) that changes gets better.
+      function balancePhase(): void {
+        if (followerBySource.has(fill.id)) return; // a fill day that owes a follower never moves alone
+        const bDates = balanceDatesIn(pp);
+        if (bDates.length < 2) return;
+        const requestOn = (p: ScheduleStaff, d: string): boolean => requestList.some((r) => r.staffId === p.id && coversDate(r, d));
+        // Conditional leave judgments made before this pass (card #175 leave-off-on-ruled-out days):
+        // the leave this run placed for a rule owner must stay on the same side of their rule.
+        const leaveJudgments = (): string => {
+          const out: string[] = [];
+          for (const p of condOwners) for (const d of ppDates) {
+            const c = cellOf(p, d);
+            if (!c || (c.step !== "request-leave" && c.step !== LEAVE_OFF_STEP)) continue;
+            if (evaluateAvailability(p.availabilityRules, d, payPeriods, (pid, x) => isWorking(pid, x)).available) out.push(`${p.id}:${d}`);
+          }
+          return out.join(",");
+        };
+        const factorsOf = (p: ScheduleStaff): Record<string, number> => ({
+          fairness: fairnessSpreadNow(true), longWeekends: -longWeekendScoreOf(p), dayBalance: dayBalanceIn(pp),
+        });
+        // Codex #2401: day balance must get better, and no factor ranked ABOVE it may get worse
+        // (an improvement in one higher factor never pays for a loss in another). Factors the
+        // admin ranked below day balance may give way.
+        const dayBalanceAt = balanceFactorKeys.indexOf("dayBalance");
+        const better = (a: Record<string, number>, b: Record<string, number>): boolean => {
+          if (dayBalanceAt < 0 || !(b.dayBalance - a.dayBalance < -1e-9)) return false;
+          for (const k of balanceFactorKeys.slice(0, dayBalanceAt)) if (b[k] - a[k] > 1e-9) return false;
+          return true;
+        };
+        const movesAt = new Map<string, number>();
+        function moveDay(p: ScheduleStaff, H: string, L: string): boolean {
+          if (swapBreaksHardMin(p, fill, H)) return false;
+          repairSet(p.id, H, null, "", "");
+          changed.push({ p, d: H });
+          if (!canReceiveFill(p, L)) return false; // attempt() rolls back
+          repairSet(p.id, L, fill, "fill", `${fill.code} (even staffing across days)`);
+          changed.push({ p, d: L });
+          return true;
+        }
+        for (;;) {
+          if (balanceAccepted >= BALANCE_LIMITS.accepted) { capHit.add("even staffing moves"); return; }
+          const count = new Map(bDates.map((d) => [d, countCoverage(fill.code, d)]));
+          const pairs: [string, string][] = [];
+          for (const H of bDates) for (const L of bDates) {
+            if (count.get(H)! - count.get(L)! >= 2 && (movesAt.get(H) ?? 0) < BALANCE_LIMITS.perDate && (movesAt.get(L) ?? 0) < BALANCE_LIMITS.perDate) pairs.push([H, L]);
+          }
+          pairs.sort((a, b) => (count.get(b[0])! - count.get(b[1])!) - (count.get(a[0])! - count.get(a[1])!) || (a[0] + a[1] < b[0] + b[1] ? -1 : 1));
+          let moved = false;
+          search: for (const [H, L] of pairs) {
+            for (const p of people) {
+              if (!isFillCell(p, H) || !isOpen(p, L) || fillH(p, H) !== fillH(p, L)) continue;
+              if (requestOn(p, H) || requestOn(p, L)) continue;
+              // Codex #2401: never adds a soft-avoided pair (e.g. OR before X); a cleared day ends as X.
+              if (avoidDelta([[p, H, null], [p, L, fill.id]]) > 0) continue;
+              if (balanceRejected >= BALANCE_LIMITS.rejected) { capHit.add("even staffing checks"); return; }
+              const before = factorsOf(p);
+              const judged = leaveJudgments();
+              const ok = attempt([() => moveDay(p, H, L)], true, () => followersOk(p) && leaveJudgments() === judged && better(before, factorsOf(p)));
+              if (!ok) { balanceRejected++; continue; }
+              balanceAccepted++;
+              movesAt.set(H, (movesAt.get(H) ?? 0) + 1);
+              movesAt.set(L, (movesAt.get(L) ?? 0) + 1);
+              moved = true;
+              break search;
+            }
+          }
+          if (!moved) return;
+        }
+      }
+
       const start = total();
       if (start === 0) continue;
       const startDevs = new Map(people.map((p) => [p.id, devOf(p)]));
@@ -4951,7 +5077,11 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
       if (reshapeShifts.length > 0 && !skipShiftMixForTest) phaseC(); // each compound kept only if it strictly improves
       journal.length = 0; // committed
     }
-    for (const what of capHit) warnings.push(`Hours repair: search limit reached (${what}); some hours may stay off target`);
+    for (const what of capHit) {
+      warnings.push(mode === "balance"
+        ? `Even staffing across days: search limit reached (${what}); some days may stay uneven`
+        : `Hours repair: search limit reached (${what}); some hours may stay off target`);
+    }
   }
 
   if (fillShift) {
@@ -5648,6 +5778,11 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
     trimLeaveToTarget(offShift);
   }
 
+  // ── Card #467: even out the fill shift's headcount across days (the lowest factors) ──
+  // After every placement, repair and leave cleanup, before the audits and STEP 4, so each move
+  // is judged on the finished grid (a blank day reads as its eventual X).
+  if (fillShift && !skipDayBalancePass) compoundHoursRepair(fillShift, "balance");
+
   // ── Post-repair hours audit ──
   // Emit one warning per residual nonzero PP-hour deviation, AFTER the repair so
   // it reflects final state. Tag deviations driven by scarce-eligibility shifts
@@ -5844,22 +5979,10 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
   // the FINISHED grid (so it differentiates candidates — the input `fairness` is
   // history-based and identical across them). FTE-normalized desirability score per
   // staff, then its standard deviation: lower = more even = fairer.
-  const desScores: number[] = [];
-  for (const staff of activeStaff) {
-    // Card #71: staff whose employment type is not in fairness never sway the equity spread.
-    if (!staff.inFairness) continue;
-    const fte = staff.ftePercentage > 0 ? staff.ftePercentage : 1;
-    let des = 0;
-    for (const date of dates) {
-      const cell = grid.get(`${staff.id}:${date}`);
-      if (!cell) continue;
-      des += dwMap.get(`${cell.shiftTypeId}:${getDow(date)}`) ?? 0;
-    }
-    desScores.push(des / fte);
-  }
-  const desMean = desScores.reduce((s, v) => s + v, 0) / (desScores.length || 1);
-  const desVar = desScores.reduce((s, v) => s + (v - desMean) ** 2, 0) / (desScores.length || 1);
-  const qFairnessSpread = Math.round(Math.sqrt(desVar) * 1000) / 1000;
+  const qFairnessSpread = fairnessSpreadNow();
+  // Card #467: the two lowest factors, on the finished grid (STEP 4's X cells are in it now).
+  const qLongWeekends = longWeekendsNow();
+  const qDayBalance = dayBalanceNow();
 
   const quality: ScheduleQuality = {
     breakdown: {
@@ -5869,6 +5992,8 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
       underHours: qUnderHours,
       requestsDenied: qRequestsDenied,
       fairnessSpread: qFairnessSpread,
+      longWeekends: qLongWeekends,
+      dayBalance: qDayBalance,
       // Derived aggregate kept for the Slice-1 feasibility floor (redesigned in 2b).
       hardBreaches: qCoverage + qHardLimits,
       coverageShortfall: qCoverageShortfall,
@@ -5881,6 +6006,8 @@ function autoScheduleCore(input: AutoScheduleInput): AutoScheduleResult {
         underHours: qUnderHours,
         requests: qRequestsDenied,
         fairness: qFairnessSpread,
+        longWeekends: qLongWeekends,
+        dayBalance: qDayBalance,
       },
       factorOrder,
     ),

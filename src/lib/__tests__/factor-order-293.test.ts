@@ -8,22 +8,24 @@ import { DEFAULT_FACTOR_ORDER, autoSchedule, effectiveFactorKeys, type AutoGenFa
 import { fixture } from "./engine-266-fixture";
 
 const LIVE6 = ["hardLimits", "coverage", "underHours", "requests", "overHours", "fairness"];
+// Card #467: a six-row order gains the two lowest factors at the bottom.
+const LIVE8 = [...LIVE6, "longWeekends", "dayBalance"];
 const LIVE7 = ["hardLimits", "coverage", "underHours", "requests", "overHours", "spacing", "fairness"];
 const cfg = (keys: string[], disabled: string[] = []): AutoGenFactorConfig[] =>
   keys.map((key, i) => ({ key, sortOrder: i, enabled: !disabled.includes(key) }));
 
 describe("the factor order without Spacing (card #293)", () => {
-  it("the default order has six factors and no spacing", () => {
+  it("the default order has eight factors (card #467) and no spacing", () => {
     expect([...DEFAULT_FACTOR_ORDER]).not.toContain("spacing");
-    expect(DEFAULT_FACTOR_ORDER.length).toBe(6);
+    expect(DEFAULT_FACTOR_ORDER.length).toBe(8);
   });
   it("the live six rows keep their order", () => {
-    expect(effectiveFactorKeys(cfg(LIVE6))).toEqual(LIVE6);
+    expect(effectiveFactorKeys(cfg(LIVE6))).toEqual(LIVE8);
   });
   it("a stale seventh spacing row is ignored, enabled or not, wherever it sits", () => {
-    expect(effectiveFactorKeys(cfg(LIVE7))).toEqual(LIVE6);
-    expect(effectiveFactorKeys(cfg(LIVE7, ["spacing"]))).toEqual(LIVE6);
-    expect(effectiveFactorKeys(cfg(["spacing", ...LIVE6]))).toEqual(LIVE6);
+    expect(effectiveFactorKeys(cfg(LIVE7))).toEqual(LIVE8);
+    expect(effectiveFactorKeys(cfg(LIVE7, ["spacing"]))).toEqual(LIVE8);
+    expect(effectiveFactorKeys(cfg(["spacing", ...LIVE6]))).toEqual(LIVE8);
   });
   it("an unknown key other than spacing still falls back to the default", () => {
     expect(effectiveFactorKeys(cfg([...LIVE6, "bogus"]))).toEqual([...DEFAULT_FACTOR_ORDER]);
@@ -31,7 +33,7 @@ describe("the factor order without Spacing (card #293)", () => {
   it("the quality has no spacing term and its rank has one entry per factor", () => {
     const r = autoSchedule({ ...fixture(), factorOrder: cfg(LIVE7) });
     expect(Object.keys(r.quality.breakdown)).not.toContain("spacing");
-    expect(r.quality.rank.length).toBe(6);
+    expect(r.quality.rank.length).toBe(8);
   });
 });
 

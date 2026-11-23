@@ -89,6 +89,16 @@ export const FACTOR_META: Record<string, FactorMeta> = {
     label: "Fairness / equity spread",
     description: "Distribute undesirable shifts evenly across staff (FTE-normalized).",
   },
+  longWeekends: {
+    label: "Long weekends off",
+    description:
+      "Group each person's days off next to their weekend (a Friday or Monday off), using the long-weekend settings under Scheduling Preferences.",
+  },
+  dayBalance: {
+    label: "Even OR staffing across days",
+    description:
+      "Even out how many people work the fill shift each day (a 6/11/6/7/8 week moves toward 7/8/7/8/8) by moving a person's fill day from a busy day to a light one. Never changes anyone's pay-period hours.",
+  },
 };
 
 // Note on what reordering does. Tracks David's locked decisions (handoff #252/#376 +
