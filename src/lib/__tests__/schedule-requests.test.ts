@@ -640,12 +640,12 @@ describe("requestCategory / summarizeCellRequests", () => {
     expect(s).toMatchObject({ category: "want", label: "CALL" });
   });
 
-  it("multiple same-category requests → category kept, label is the count", () => {
+  it("multiple same-kind shift requests → category kept, label lists the codes (card #468)", () => {
     const s = summarizeCellRequests(
       [req({ kind: "NEGATE_SHIFT", shiftTypeIds: ["orc"] }), req({ kind: "NEGATE_SHIFT", shiftTypeIds: ["orl"] })],
       codeOf
     );
-    expect(s).toMatchObject({ category: "restricted", label: "2", single: false, count: 2 });
+    expect(s).toMatchObject({ category: "restricted", label: `${codeOf("orc")},${codeOf("orl")}`, single: false, count: 2 });
   });
 
   it("mixed categories → 'mixed' + count", () => {

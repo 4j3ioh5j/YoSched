@@ -1147,6 +1147,12 @@ export function ScheduleGrid({
     for (const st of shiftTypes) map.set(st.id, st);
     return map;
   }, [shiftTypes]);
+  // Card #468: shift display order, so a cell's combined request codes read in the same order
+  // however the requests were entered.
+  const shiftRankOf = useMemo(() => {
+    const rank = new Map(shiftTypes.map((st, i) => [st.id, i]));
+    return (id: string) => rank.get(id) ?? Number.MAX_SAFE_INTEGER;
+  }, [shiftTypes]);
 
   // In Live mode the grid renders from the in-browser re-solve, not the saved
   // assignments: liveDisplayMap is the result grid as renderable cells, and
@@ -4927,7 +4933,7 @@ export function ScheduleGrid({
                     // Tooltip always sees EVERY request on the cell — independent of the
                     // RQ toggle and the status filter (those only shape the visual pills).
                     const reqsForTip = allRequestsByCell.get(cellKey);
-                    const reqSummary = reqs ? summarizeCellRequests(reqs, (id) => shiftTypeMap.get(id)?.code ?? id) : null;
+                    const reqSummary = reqs ? summarizeCellRequests(reqs, (id) => shiftTypeMap.get(id)?.code ?? id, shiftRankOf) : null;
                     const reqCls = reqSummary ? REQ_CAT_CLASSES[reqSummary.category] : null;
                     // Approval-state treatment: approved/mixed = solid category ring,
                     // pending = faint + dimmed, denied = struck rose (overrides color).
@@ -5029,7 +5035,7 @@ export function ScheduleGrid({
                         {cw && <WarningDot warnings={cw} setTooltip={setTooltip} />}
                         {reqSummary && a && (
                           // Assigned cell with request(s): bare corner marker (no pill) carries the tooltip.
-                          // label is letters for a single request, the count for multiple.
+                          // label is the shift codes when the requests are one kind (card #468), else the count.
                           // Card #338: never printed (in print the cell is position: static, so
                           // every marker would pile up in the page's top-left corner).
                           <span

@@ -502,7 +502,9 @@ export type CellRequestSummary = {
  *  count. Returns null when there are no requests. Pure. */
 export function summarizeCellRequests(
   reqs: Array<Pick<ScheduleRequestData, "kind" | "shiftTypeIds" | "leaveShiftTypeId" | "status">>,
-  codeOf: (shiftTypeId: string) => string
+  codeOf: (shiftTypeId: string) => string,
+  /** Shift display order (card #468): combined codes from several requests follow it. */
+  rankOf?: (shiftTypeId: string) => number
 ): CellRequestSummary | null {
   if (reqs.length === 0) return null;
 
@@ -536,7 +538,22 @@ export function summarizeCellRequests(
         break;
     }
   } else {
-    label = String(reqs.length);
+    // Card #468: several requests of the same shift kind (the hotkeys save one request per key)
+    // show their codes, exactly as one request naming those shifts would. Different kinds of
+    // request on one cell still show the count.
+    const kinds = new Set(reqs.map((r) => r.kind));
+    const kind = kinds.size === 1 ? [...kinds][0] : null;
+    if (kind === "NEGATE_SHIFT" || kind === "REQUEST_SHIFT") {
+      const ids: string[] = [];
+      for (const r of reqs) for (const id of r.shiftTypeIds) if (!ids.includes(id)) ids.push(id);
+      if (rankOf) {
+        const pos = new Map(ids.map((id, i) => [id, i]));
+        ids.sort((a, b) => rankOf(a) - rankOf(b) || pos.get(a)! - pos.get(b)!);
+      }
+      label = ids.length > 0 ? ids.map(codeOf).join(",") : String(reqs.length);
+    } else {
+      label = String(reqs.length);
+    }
   }
 
   return { category, label, single, count: reqs.length, hasApproved, statusKind };
