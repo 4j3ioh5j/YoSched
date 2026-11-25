@@ -52,8 +52,8 @@ describe("browser print: row height from the page (card #322)", () => {
     expect(printRowHeightIn(withBlocks(6, 6))).toBeGreaterThan(printRowHeightIn(withBlocks(32, 32)));
   });
 
-  it("card #323: the page is the Settings paper (US Letter by default) with its margin (0.25in by default)", () => {
-    expect(printPage(DEFAULT_PRINT_LAYOUT)).toEqual({ wIn: 11, hIn: 8.5, marginIn: 0.25 });
+  it("card #323: the page is the Settings paper (US Letter by default) with its margin (0.5in by default, card #556)", () => {
+    expect(printPage(DEFAULT_PRINT_LAYOUT)).toEqual({ wIn: 11, hIn: 8.5, marginIn: 0.5 });
   });
 
   it("the grid hands the row height to the print CSS, which uses it for header and day rows", () => {

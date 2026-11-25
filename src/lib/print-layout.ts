@@ -331,7 +331,7 @@ export const DEFAULT_PRINT_LAYOUT: PrintLayout = {
   dayColumnFormat: DEFAULT_DAY_COLUMN_FORMAT,
   payPeriodLabels: true,
   paper: "letter",
-  marginHundredths: 25,
+  marginHundredths: 50,
   udWidth: DEFAULT_UD_WIDTH,
   pdfFont: DEFAULT_PDF_FONT,
 };
@@ -367,39 +367,48 @@ export function printLayoutFrom(p: PrintLayoutPrefs | null | undefined): PrintLa
     dayColumnFormat: isDayColumnFormat(p.dayColumnFormat) ? p.dayColumnFormat : d.dayColumnFormat,
     payPeriodLabels: typeof p.printPayPeriodLabels === "boolean" ? p.printPayPeriodLabels : d.payPeriodLabels,
     paper: isPrintPaper(p.printPaperSize) ? p.printPaperSize : d.paper,
-    marginHundredths: validatePrintMargin(p.printMarginHundredthsIn) ? p.printMarginHundredthsIn : d.marginHundredths,
+    marginHundredths: effectivePrintMargin(p.printMarginHundredthsIn),
     udWidth: parseUdWidth(p.printUdWidthMode, p.printUdWidthHundredths, p.printUdColumnWidths),
     pdfFont: isPdfFontId(p.printPdfFont) ? p.printPdfFont : d.pdfFont,
   };
 }
 
 /** Card #323: the paper the printout and the year PDF are laid out for (landscape), and the
- *  margin on every side. The margin floor, 0.25in, is the widest unprintable edge among common
- *  office printers, so "Actual size" never clips; the default is that floor (David: "the
- *  largest that will print consistently on all standard printers using US letter"). */
+ *  margin on every side. Card #556: the margin floor and default are 0.5in. Printed landscape,
+ *  the page's left edge lands on the paper's leading or trailing edge, the widest unprintable
+ *  edge on many US printers (up to about 0.5in); 0.25in was cut off there on Windows. */
 export const PRINT_PAPERS = ["letter", "a4"] as const;
 export type PrintPaper = (typeof PRINT_PAPERS)[number];
 export const PAPER_IN: Record<PrintPaper, { wIn: number; hIn: number; label: string; css: string; jspdf: string }> = {
   letter: { wIn: 11, hIn: 8.5, label: "US Letter (11 × 8.5 in)", css: "letter", jspdf: "letter" },
   a4: { wIn: 297 / 25.4, hIn: 210 / 25.4, label: "A4 (297 × 210 mm)", css: "A4", jspdf: "a4" },
 };
-export const PRINT_MARGIN_MIN = 25;
+export const PRINT_MARGIN_MIN = 50;
+/** The floor before card #556: a margin saved from 25 up to the new floor prints at the floor. */
+const OLD_PRINT_MARGIN_MIN = 25;
 export const PRINT_MARGIN_MAX = 100;
 export const DEFAULT_PRINT_PAPER: PrintPaper = "letter";
-export const DEFAULT_PRINT_MARGIN = 25;
+export const DEFAULT_PRINT_MARGIN = 50;
 
 export function isPrintPaper(v: unknown): v is PrintPaper {
   return typeof v === "string" && (PRINT_PAPERS as readonly string[]).includes(v);
 }
-/** Margin in hundredths of an inch: a whole number from 25 (0.25in) to 100 (1in). */
+/** Margin in hundredths of an inch: a whole number from 50 (0.5in) to 100 (1in). */
 export function validatePrintMargin(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v >= PRINT_MARGIN_MIN && v <= PRINT_MARGIN_MAX;
+}
+/** Card #556: the margin a stored value prints at. One saved under the old floor (0.25in up to
+ *  0.5in) is raised to the floor; anything else invalid is the default. */
+export function effectivePrintMargin(v: unknown): number {
+  if (validatePrintMargin(v)) return v;
+  if (typeof v === "number" && Number.isInteger(v) && v >= OLD_PRINT_MARGIN_MIN && v < PRINT_MARGIN_MIN) return PRINT_MARGIN_MIN;
+  return DEFAULT_PRINT_MARGIN;
 }
 
 /** The landscape page and its margin, in inches. Junk in the layout falls back to the defaults. */
 export function printPage(layout: Pick<PrintLayout, "paper" | "marginHundredths">): { wIn: number; hIn: number; marginIn: number } {
   const paper = PAPER_IN[isPrintPaper(layout.paper) ? layout.paper : DEFAULT_PRINT_PAPER];
-  const m = validatePrintMargin(layout.marginHundredths) ? layout.marginHundredths : DEFAULT_PRINT_MARGIN;
+  const m = effectivePrintMargin(layout.marginHundredths);
   return { wIn: paper.wIn, hIn: paper.hIn, marginIn: m / 100 };
 }
 

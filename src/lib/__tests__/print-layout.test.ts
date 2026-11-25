@@ -188,7 +188,7 @@ describe("printLayoutFrom (prefs row → the grid's print layout)", () => {
       dayColumnFormat: "DDD",
       payPeriodLabels: true,
       paper: "letter",
-      marginHundredths: 25,
+      marginHundredths: 50,
       udWidth: { mode: "bestFit", uniformHundredths: 50, perColumn: {} },
       pdfFont: "archivo-narrow",
     });

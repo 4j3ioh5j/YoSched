@@ -19,7 +19,8 @@ describe("Paper & Margin section", () => {
   it("margin text ↔ hundredths", () => {
     expect(marginInchesText(25)).toBe("0.25");
     expect(marginInchesText(100)).toBe("1.00");
-    expect(parseMarginInches("0.25")).toBe(25);
+    expect(parseMarginInches("0.25")).toBeNull(); // card #556: under the 0.5in floor
+    expect(parseMarginInches("0.50")).toBe(50);
     expect(parseMarginInches("1")).toBe(100);
     expect(parseMarginInches(".5")).toBe(50);
     expect(parseMarginInches("0.333")).toBeNull();

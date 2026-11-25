@@ -6357,7 +6357,7 @@ function PrintFontSection({ initial }: { initial: PrintLayout }) {
 export function marginInchesText(h: number): string {
   return (h / 100).toFixed(2);
 }
-/** "0.25" / ".5" / "1" → hundredths of an inch, or null unless it is 0.25 to 1.00 in steps of 0.01. */
+/** "0.5" / ".75" / "1" → hundredths of an inch, or null unless it is 0.50 to 1.00 in steps of 0.01. */
 export function parseMarginInches(t: string): number | null {
   const m = /^\s*(\d*)(?:\.(\d{0,2}))?\s*$/.exec(t);
   if (!m || (m[1] === "" && !m[2])) return null;
@@ -6379,7 +6379,7 @@ function PrintPaperSection({ initial }: { initial: PrintLayout }) {
     <CollapsibleSection
       id="print-paper"
       title="Paper & Margin"
-      description="The paper the printed schedule and the year PDF are laid out for (landscape), and the blank edge on every side. 0.25 in is the smallest edge every common printer can print to."
+      description="The paper the printed schedule and the year PDF are laid out for (landscape), and the blank edge on every side. 0.50 in is the smallest edge most US printers can print to, from Windows or a Mac."
       status={status}
       error={error}
     >
@@ -6395,7 +6395,7 @@ function PrintPaperSection({ initial }: { initial: PrintLayout }) {
             {PRINT_PAPERS.map((p) => <option key={p} value={p}>{PAPER_IN[p].label}</option>)}
           </select>
         </FieldRow>
-        <FieldRow label="Margin" description="Inches on every side, 0.25 to 1.00.">
+        <FieldRow label="Margin" description="Inches on every side, 0.50 to 1.00.">
           <input
             type="text"
             inputMode="decimal"
@@ -6407,7 +6407,7 @@ function PrintPaperSection({ initial }: { initial: PrintLayout }) {
           />
           <span className="ml-2 text-xs text-slate-400">in</span>
         </FieldRow>
-        {!valid && <p className="text-xs text-red-400">Margin: a number of inches from 0.25 to 1.00, at most two decimals.</p>}
+        {!valid && <p className="text-xs text-red-400">Margin: a number of inches from 0.50 to 1.00, at most two decimals.</p>}
         {shrinks && <p className="text-xs text-amber-400">At this margin and the saved font, header and footer sizes, a 31-day month is shrunk slightly so it still fits one page.</p>}
         <div className="flex gap-2">
           <button type="button" disabled={!canEdit || busy || !dirty || !valid} onClick={() => save({ printPaperSize: draft.paper, printMarginHundredthsIn: hundredths }, draft)} className={BTN_SAVE}>Save</button>

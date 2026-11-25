@@ -16,7 +16,7 @@ const many = Array.from({ length: 40 }, (_, i) => ({ id: `s${i}`, initials: `S${
 
 describe("pdfPage", () => {
   it("landscape Letter / A4 in points, margin from Settings", () => {
-    expect(pdfPage(DEFAULT_PRINT_LAYOUT)).toEqual({ w: 792, h: 612, margin: 18, format: "letter" });
+    expect(pdfPage(DEFAULT_PRINT_LAYOUT)).toEqual({ w: 792, h: 612, margin: 36, format: "letter" });
     const a4 = pdfPage({ ...DEFAULT_PRINT_LAYOUT, paper: "a4", marginHundredths: 100 });
     expect(a4.w).toBeCloseTo(841.89, 1);
     expect(a4.h).toBeCloseTo(595.28, 1);
@@ -27,7 +27,7 @@ describe("pdfPage", () => {
 
 describe("every month stays inside the margin, both papers, smallest and largest margin", () => {
   for (const paper of ["letter", "a4"] as const) {
-    for (const marginHundredths of [25, 100]) {
+    for (const marginHundredths of [50, 100]) {
       for (const extra of [{}, big]) {
         const layout: PrintLayout = { ...DEFAULT_PRINT_LAYOUT, ...extra, paper, marginHundredths };
         it(`${paper} ${marginHundredths} ${extra === big ? "big" : "default"}`, () => {

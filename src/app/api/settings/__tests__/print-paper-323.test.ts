@@ -23,21 +23,21 @@ import { PUT } from "../scheduling-preferences/route";
 
 const req = (body: unknown) => ({ json: async () => body }) as unknown as NextRequest;
 
-beforeEach(() => { db.prefs = { id: "default", printPaperSize: "letter", printMarginHundredthsIn: 25 }; db.writes = 0; });
+beforeEach(() => { db.prefs = { id: "default", printPaperSize: "letter", printMarginHundredthsIn: 50 }; db.writes = 0; });
 
 describe("PUT paper and margin (card #323)", () => {
-  it("saves a known paper and a whole margin from 25 to 100", async () => {
+  it("saves a known paper and a whole margin from 50 to 100", async () => {
     expect((await PUT(req({ printPaperSize: "a4", printMarginHundredthsIn: 100 }))).status).toBe(200);
     expect(db.prefs).toMatchObject({ printPaperSize: "a4", printMarginHundredthsIn: 100 });
-    expect((await PUT(req({ printMarginHundredthsIn: 25 }))).status).toBe(200);
-    expect(db.prefs).toMatchObject({ printPaperSize: "a4", printMarginHundredthsIn: 25 });
+    expect((await PUT(req({ printMarginHundredthsIn: 50 }))).status).toBe(200);
+    expect(db.prefs).toMatchObject({ printPaperSize: "a4", printMarginHundredthsIn: 50 });
   });
   it("400 on an unknown paper or a margin out of range, nothing written", async () => {
-    for (const body of [{ printPaperSize: "legal" }, { printPaperSize: "A4" }, { printPaperSize: null }, { printMarginHundredthsIn: 24 }, { printMarginHundredthsIn: 101 }, { printMarginHundredthsIn: 1.5 }, { printMarginHundredthsIn: "x" }, { printMarginHundredthsIn: null }]) {
+    for (const body of [{ printPaperSize: "legal" }, { printPaperSize: "A4" }, { printPaperSize: null }, { printMarginHundredthsIn: 24 }, { printMarginHundredthsIn: 25 }, { printMarginHundredthsIn: 49 }, { printMarginHundredthsIn: 101 }, { printMarginHundredthsIn: 1.5 }, { printMarginHundredthsIn: "x" }, { printMarginHundredthsIn: null }]) {
       const r = await PUT(req(body));
       expect(r.status, JSON.stringify(body)).toBe(400);
     }
     expect(db.writes).toBe(0);
-    expect(db.prefs).toMatchObject({ printPaperSize: "letter", printMarginHundredthsIn: 25 });
+    expect(db.prefs).toMatchObject({ printPaperSize: "letter", printMarginHundredthsIn: 50 });
   });
 });

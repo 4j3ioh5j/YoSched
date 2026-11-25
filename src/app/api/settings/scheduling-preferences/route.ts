@@ -155,7 +155,7 @@ async function handlePUT(req: NextRequest) {
     return NextResponse.json({ error: "printPaperSize must be letter or a4" }, { status: 400 });
   }
   if (printMarginHundredthsIn !== undefined && !validatePrintMargin(printMarginHundredthsIn)) {
-    return NextResponse.json({ error: "printMarginHundredthsIn must be a whole number from 25 to 100" }, { status: 400 });
+    return NextResponse.json({ error: "printMarginHundredthsIn must be a whole number from 50 to 100" }, { status: 400 });
   }
   // Card #357: the user-defined column width choice; strict on write.
   const udCheck = validateUdWidthPatch({ printUdWidthMode, printUdWidthHundredths, printUdColumnWidths });
